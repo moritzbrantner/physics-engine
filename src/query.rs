@@ -1,8 +1,7 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    BodyId, ContactNormal, RigidBody, TimeOfImpact, Vec3i, World, collision::SUBTICKS_PER_TICK,
-    overlap_aabb, swept_aabb,
+    BodyId, ContactNormal, RigidBody, TimeOfImpact, Vec3i, World, overlap_aabb, swept_aabb,
 };
 
 /// Axis-aligned query shape in the current world snapshot.
@@ -156,5 +155,3 @@ fn query_body(query: Aabb, velocity: Vec3i) -> RigidBody {
 fn snapshot_body(body: &RigidBody) -> RigidBody {
     RigidBody::fixed(body.id(), body.position(), body.half_extents())
 }
-
-const _: u64 = SUBTICKS_PER_TICK;
