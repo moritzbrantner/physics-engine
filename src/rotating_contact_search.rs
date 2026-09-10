@@ -126,6 +126,14 @@ impl From<OrientedBoxError3d> for RotatingContactSearchError3d {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContactBracket3d {
+    lower_numerator: u32,
+    upper_numerator: u32,
+    denominator: u32,
+    upper_contact: ObbContactSeed3d,
+}
+
 /// Searches candidate rotating-box pairs on a deterministic fixed sample grid and refines the first
 /// observed contact bracket.
 ///
@@ -155,18 +163,24 @@ pub fn sampled_rotating_contact_search(
         return Ok(None);
     }
 
-    let by_id: BTreeMap<BodyId, &RigidBox3d> =
-        boxes.iter().map(|rigid_box| (rigid_box.body().id(), rigid_box)).collect();
+    let by_id: BTreeMap<BodyId, &RigidBox3d> = boxes
+        .iter()
+        .map(|rigid_box| (rigid_box.body().id(), rigid_box))
+        .collect();
     let mut best: Option<RotatingContactSearchHit3d> = None;
     for pair in pairs {
         let left = by_id
             .get(&pair.left)
             .copied()
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
+            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                pair.left,
+            ))?;
         let right = by_id
             .get(&pair.right)
             .copied()
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
+            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                pair.right,
+            ))?;
         let Some(hit) = search_pair(left, right, pair, config)? else {
             continue;
         };
@@ -224,51 +238,47 @@ fn search_pair(
             continue;
         };
 
-        return Ok(Some(refine_contact_bracket(
-            left,
-            right,
-            pair,
-            config,
-            numerator - 1,
-            numerator,
+        let bracket = ContactBracket3d {
+            lower_numerator: numerator - 1,
+            upper_numerator: numerator,
             denominator,
-            contact,
+            upper_contact: contact,
+        };
+        return Ok(Some(refine_contact_bracket(
+            left, right, pair, config, bracket,
         )?));
     }
     Ok(None)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn refine_contact_bracket(
     left: &RigidBox3d,
     right: &RigidBox3d,
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
-    mut lower_numerator: u32,
-    mut upper_numerator: u32,
-    mut denominator: u32,
-    mut upper_contact: ObbContactSeed3d,
+    mut bracket: ContactBracket3d,
 ) -> Result<RotatingContactSearchHit3d, RotatingContactSearchError3d> {
     for _ in 0..config.refinement_steps {
-        let midpoint_numerator = lower_numerator.checked_add(upper_numerator).ok_or(
+        let midpoint_numerator = bracket
+            .lower_numerator
+            .checked_add(bracket.upper_numerator)
+            .ok_or(RotatingContactSearchError3d::ResolutionTooFine {
+                sample_count: config.sample_count,
+                refinement_steps: config.refinement_steps,
+            })?;
+        bracket.denominator = bracket.denominator.checked_mul(2).ok_or(
             RotatingContactSearchError3d::ResolutionTooFine {
                 sample_count: config.sample_count,
                 refinement_steps: config.refinement_steps,
             },
         )?;
-        denominator = denominator.checked_mul(2).ok_or(
+        bracket.lower_numerator = bracket.lower_numerator.checked_mul(2).ok_or(
             RotatingContactSearchError3d::ResolutionTooFine {
                 sample_count: config.sample_count,
                 refinement_steps: config.refinement_steps,
             },
         )?;
-        lower_numerator = lower_numerator.checked_mul(2).ok_or(
-            RotatingContactSearchError3d::ResolutionTooFine {
-                sample_count: config.sample_count,
-                refinement_steps: config.refinement_steps,
-            },
-        )?;
-        upper_numerator = upper_numerator.checked_mul(2).ok_or(
+        bracket.upper_numerator = bracket.upper_numerator.checked_mul(2).ok_or(
             RotatingContactSearchError3d::ResolutionTooFine {
                 sample_count: config.sample_count,
                 refinement_steps: config.refinement_steps,
@@ -280,23 +290,23 @@ fn refine_contact_bracket(
             right,
             config.free_flight,
             midpoint_numerator,
-            denominator,
+            bracket.denominator,
         )?;
         if let Some(contact) = obb_contact_seed(
             sampled_left.oriented_box(),
             sampled_right.oriented_box(),
         )? {
-            upper_numerator = midpoint_numerator;
-            upper_contact = contact;
+            bracket.upper_numerator = midpoint_numerator;
+            bracket.upper_contact = contact;
         } else {
-            lower_numerator = midpoint_numerator;
+            bracket.lower_numerator = midpoint_numerator;
         }
     }
 
     Ok(RotatingContactSearchHit3d {
-        time: SampledContactTime3d::canonical(upper_numerator, denominator),
+        time: SampledContactTime3d::canonical(bracket.upper_numerator, bracket.denominator),
         pair,
-        contact: upper_contact,
+        contact: bracket.upper_contact,
     })
 }
 
@@ -372,7 +382,10 @@ mod tests {
     #[test]
     fn initial_contact_returns_zero_time() {
         let hit = sampled_rotating_contact_search(
-            &[dynamic(4, Vec3i::ZERO, Vec3i::ZERO), fixed(9, Vec3i::new(2, 0, 0))],
+            &[
+                dynamic(4, Vec3i::ZERO, Vec3i::ZERO),
+                fixed(9, Vec3i::new(2, 0, 0)),
+            ],
             config(4, 3),
         )
         .expect("valid sampled search")
