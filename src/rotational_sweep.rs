@@ -107,11 +107,7 @@ pub fn rotational_sweep_bounds(
         start_center[1].max(end_center[1]),
         start_center[2].max(end_center[2]),
     ];
-    rotational_sweep_bounds_for_center_interval(
-        start.half_extents,
-        center_minimum,
-        center_maximum,
-    )
+    rotational_sweep_bounds_for_center_interval(start.half_extents, center_minimum, center_maximum)
 }
 
 pub(crate) fn rotational_sweep_bounds_for_center_interval(
@@ -151,9 +147,7 @@ fn validate_endpoint(box_shape: OrientedBox3d) -> Result<(), RotationalSweepErro
     Ok(())
 }
 
-fn orientation_independent_radius(
-    half_extents: Vec3i,
-) -> Result<i64, RotationalSweepError3d> {
+fn orientation_independent_radius(half_extents: Vec3i) -> Result<i64, RotationalSweepError3d> {
     let extents = [half_extents.x, half_extents.y, half_extents.z];
     let squared = extents
         .into_iter()
