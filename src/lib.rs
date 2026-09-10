@@ -1,12 +1,15 @@
 //! Reusable deterministic physics simulation primitives.
 //!
-//! The engine currently owns translational 3D rigid-body semantics: deterministic world state,
-//! gravity, fixed/dynamic bodies, continuous collision detection, time-of-impact resolution,
-//! restitution, deterministic spatial queries, and physics-native collider geometry. Rendering,
-//! ECS storage, game loops and scene ownership belong to consumers.
+//! The engine owns deterministic translational rigid-body stepping plus an engine-local rotational
+//! state foundation: gravity, fixed/dynamic bodies, continuous collision detection, time-of-impact
+//! resolution, restitution, deterministic spatial queries, physics-native collider geometry,
+//! fixed-point orientation/angular velocity, box inertia, and angular impulse evidence. The current
+//! `World` solver remains translational and AABB-only. Rendering, ECS storage, game loops and scene
+//! ownership belong to consumers.
 
 #![forbid(unsafe_code)]
 
+mod angular;
 mod body;
 mod collider;
 mod collision;
@@ -14,6 +17,10 @@ mod math;
 mod query;
 mod world;
 
+pub use angular::{
+    ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d, BoxInertia3d,
+    ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse, integrate_orientation,
+};
 pub use body::{BodyId, BodyKind, MATERIAL_SCALE, Material, RigidBody};
 pub use collider::{Collider, ColliderContact, ColliderError, ColliderShape, collider_contact};
 pub use collision::{
