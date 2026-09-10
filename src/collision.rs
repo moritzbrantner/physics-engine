@@ -259,10 +259,10 @@ pub(crate) fn swept_bounds_overlap(
     horizon_subticks: i128,
 ) -> bool {
     (0..3).all(|axis| {
-        let left_end = left.center_scaled[axis]
-            + i128::from(left.velocity[axis]) * horizon_subticks;
-        let right_end = right.center_scaled[axis]
-            + i128::from(right.velocity[axis]) * horizon_subticks;
+        let left_end =
+            left.center_scaled[axis] + i128::from(left.velocity[axis]) * horizon_subticks;
+        let right_end =
+            right.center_scaled[axis] + i128::from(right.velocity[axis]) * horizon_subticks;
         let left_min = left.center_scaled[axis].min(left_end) - left.half_scaled[axis];
         let left_max = left.center_scaled[axis].max(left_end) + left.half_scaled[axis];
         let right_min = right.center_scaled[axis].min(right_end) - right.half_scaled[axis];
