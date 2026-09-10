@@ -40,14 +40,10 @@ fn equal_mass_elastic_collision_exchanges_axis_velocity() {
         ..WorldConfig::default()
     });
     world
-        .add_body(
-            body(1, Vec3i::new(-5, 0, 0), Vec3i::new(10, 0, 0)).with_material(elastic),
-        )
+        .add_body(body(1, Vec3i::new(-5, 0, 0), Vec3i::new(10, 0, 0)).with_material(elastic))
         .unwrap();
     world
-        .add_body(
-            body(2, Vec3i::new(5, 0, 0), Vec3i::new(-10, 0, 0)).with_material(elastic),
-        )
+        .add_body(body(2, Vec3i::new(5, 0, 0), Vec3i::new(-10, 0, 0)).with_material(elastic))
         .unwrap();
 
     world.step(1).unwrap();
