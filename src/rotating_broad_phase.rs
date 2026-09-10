@@ -22,7 +22,11 @@ impl fmt::Display for RotatingBroadPhaseError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateBodyId(id) => {
-                write!(formatter, "rotational broad phase received duplicate body id {}", id.0)
+                write!(
+                    formatter,
+                    "rotational broad phase received duplicate body id {}",
+                    id.0
+                )
             }
             Self::FreeFlight(error) => {
                 write!(formatter, "rotational broad-phase sweep failed: {error}")
@@ -131,12 +135,7 @@ mod tests {
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
-            RigidBody::dynamic(
-                BodyId(id),
-                position,
-                velocity,
-                Vec3i::new(1, 1, 1),
-            ),
+            RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(1, 1, 1)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid dynamic box")
@@ -187,10 +186,7 @@ mod tests {
         );
         assert!(
             rotational_sweep_candidate_pairs(
-                &[
-                    fixed(3, Vec3i::ZERO),
-                    fixed(4, Vec3i::new(1, 0, 0)),
-                ],
+                &[fixed(3, Vec3i::ZERO), fixed(4, Vec3i::new(1, 0, 0)),],
                 config,
             )
             .expect("valid fixed candidates")
