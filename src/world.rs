@@ -2,9 +2,7 @@ use std::{cmp::Ordering, collections::BTreeMap, fmt};
 
 use crate::{
     BodyId, BodyKind, ContactNormal, MATERIAL_SCALE, Material, RigidBody, TimeOfImpact, Vec3i,
-    collision::{
-        MotionAabb, MotionSweepHit, Ratio, SUBTICK_SCALE, sweep_motion, swept_bounds_overlap,
-    },
+    collision::{MotionAabb, MotionSweepHit, Ratio, SUBTICK_SCALE, sweep_motion},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,7 +25,9 @@ impl Default for WorldConfig {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StepStats {
     pub body_count: usize,
+    /// Candidate pair comparisons after the sweep-and-prune X-axis rejection.
     pub pair_checks: usize,
+    /// Pairs whose swept bounds overlap in all three axes.
     pub swept_candidates: usize,
     pub toi_tests: usize,
     pub collision_events: usize,
@@ -76,18 +76,13 @@ impl fmt::Display for PhysicsError {
                 "physics body {} has restitution {value}, expected 0..={MATERIAL_SCALE}",
                 id.0
             ),
-            Self::FixedBodyVelocity(id) => {
-                write!(
-                    formatter,
-                    "fixed physics body {} has non-zero velocity",
-                    id.0
-                )
-            }
+            Self::FixedBodyVelocity(id) => write!(
+                formatter,
+                "fixed physics body {} has non-zero velocity",
+                id.0
+            ),
             Self::NonPositiveTicks(ticks) => {
-                write!(
-                    formatter,
-                    "physics step requires positive ticks, got {ticks}"
-                )
+                write!(formatter, "physics step requires positive ticks, got {ticks}")
             }
             Self::ArithmeticOverflow(id) => {
                 write!(formatter, "physics arithmetic overflow for body {}", id.0)
@@ -198,9 +193,10 @@ impl World {
 
     /// Advances the world on one continuous Q32.32 timeline.
     ///
-    /// Gravity is applied first, then the globally earliest swept AABB impact is resolved. The
-    /// remainder of the requested interval continues with the post-impact velocity, so fast bodies
-    /// cannot tunnel through thin fixed bodies merely because no frame landed on the contact point.
+    /// Gravity is applied first, then a deterministic swept sweep-and-prune broad phase limits the
+    /// candidate set. The globally earliest AABB impact is resolved and the remainder of the
+    /// requested interval continues with the post-impact velocity, so fast bodies cannot tunnel
+    /// through thin fixed bodies merely because no frame landed on the contact point.
     pub fn step(&mut self, ticks: i32) -> Result<StepReport, PhysicsError> {
         if ticks <= 0 {
             return Err(PhysicsError::NonPositiveTicks(ticks));
@@ -391,55 +387,144 @@ struct IndexedHit {
     hit: MotionSweepHit,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct BroadPhaseBounds {
+    body_index: usize,
+    min: [i128; 3],
+    max: [i128; 3],
+}
+
 fn find_earliest_hits(
     states: &[BodyState],
     remaining_subticks: i128,
     stats: &mut StepStats,
 ) -> Vec<IndexedHit> {
+    let (candidate_pairs, pair_checks) = broad_phase_pairs(states, remaining_subticks);
+    stats.pair_checks += pair_checks;
+
     let mut earliest_time: Option<Ratio> = None;
     let mut hits = Vec::new();
 
-    for left in 0..states.len() {
-        for right in (left + 1)..states.len() {
+    for (left, right) in candidate_pairs {
+        if contact_between(&states[left], &states[right]).is_some() {
+            continue;
+        }
+
+        stats.swept_candidates += 1;
+        stats.toi_tests += 1;
+        let Some(hit) = sweep_motion(
+            states[left].motion(),
+            states[right].motion(),
+            remaining_subticks,
+        ) else {
+            continue;
+        };
+
+        match earliest_time {
+            None => {
+                earliest_time = Some(hit.time);
+                hits.push(IndexedHit { left, right, hit });
+            }
+            Some(time) => match hit.time.compare(time) {
+                Ordering::Less => {
+                    earliest_time = Some(hit.time);
+                    hits.clear();
+                    hits.push(IndexedHit { left, right, hit });
+                }
+                Ordering::Equal => hits.push(IndexedHit { left, right, hit }),
+                Ordering::Greater => {}
+            },
+        }
+    }
+    hits
+}
+
+/// Produces deterministic swept candidate pairs using X-axis sweep-and-prune followed by Y/Z
+/// interval rejection. The swept bounds cover every position each body can occupy during the
+/// remaining constant-velocity interval, so this stage may produce false positives but must not
+/// reject a genuine TOI candidate.
+fn broad_phase_pairs(states: &[BodyState], horizon_subticks: i128) -> (Vec<(usize, usize)>, usize) {
+    let mut entries = states
+        .iter()
+        .enumerate()
+        .map(|(body_index, state)| swept_bounds(body_index, state, horizon_subticks))
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left.min[0]
+            .cmp(&right.min[0])
+            .then_with(|| {
+                states[left.body_index]
+                    .body
+                    .id
+                    .cmp(&states[right.body_index].body.id)
+            })
+            .then_with(|| left.body_index.cmp(&right.body_index))
+    });
+
+    let mut active = Vec::<usize>::new();
+    let mut pairs = Vec::new();
+    let mut pair_checks = 0_usize;
+
+    for current_index in 0..entries.len() {
+        let current = entries[current_index];
+        active.retain(|other_index| entries[*other_index].max[0] >= current.min[0]);
+
+        for &other_index in &active {
+            let other = entries[other_index];
+            let (left, right) = ordered_pair(other.body_index, current.body_index);
             if states[left].body.kind == BodyKind::Fixed
                 && states[right].body.kind == BodyKind::Fixed
             {
                 continue;
             }
-            stats.pair_checks += 1;
-            if contact_between(&states[left], &states[right]).is_some() {
-                continue;
-            }
 
-            let left_motion = states[left].motion();
-            let right_motion = states[right].motion();
-            if !swept_bounds_overlap(left_motion, right_motion, remaining_subticks) {
-                continue;
-            }
-            stats.swept_candidates += 1;
-            stats.toi_tests += 1;
-            let Some(hit) = sweep_motion(left_motion, right_motion, remaining_subticks) else {
-                continue;
-            };
-
-            match earliest_time {
-                None => {
-                    earliest_time = Some(hit.time);
-                    hits.push(IndexedHit { left, right, hit });
-                }
-                Some(time) => match hit.time.compare(time) {
-                    Ordering::Less => {
-                        earliest_time = Some(hit.time);
-                        hits.clear();
-                        hits.push(IndexedHit { left, right, hit });
-                    }
-                    Ordering::Equal => hits.push(IndexedHit { left, right, hit }),
-                    Ordering::Greater => {}
-                },
+            pair_checks += 1;
+            if intervals_overlap(other.min[1], other.max[1], current.min[1], current.max[1])
+                && intervals_overlap(other.min[2], other.max[2], current.min[2], current.max[2])
+            {
+                pairs.push((left, right));
             }
         }
+        active.push(current_index);
     }
-    hits
+
+    pairs.sort_unstable();
+    (pairs, pair_checks)
+}
+
+fn swept_bounds(
+    body_index: usize,
+    state: &BodyState,
+    horizon_subticks: i128,
+) -> BroadPhaseBounds {
+    let motion = state.motion();
+    let mut min = [0_i128; 3];
+    let mut max = [0_i128; 3];
+
+    for axis in 0..3 {
+        let start = motion.center_scaled[axis];
+        let end = start + i128::from(motion.velocity[axis]) * horizon_subticks;
+        min[axis] = start.min(end) - motion.half_scaled[axis];
+        max[axis] = start.max(end) + motion.half_scaled[axis];
+    }
+
+    BroadPhaseBounds {
+        body_index,
+        min,
+        max,
+    }
+}
+
+const fn ordered_pair(left: usize, right: usize) -> (usize, usize) {
+    if left < right {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
+const fn intervals_overlap(left_min: i128, left_max: i128, right_min: i128, right_max: i128) -> bool {
+    left_min <= right_max && right_min <= left_max
 }
 
 fn stabilize_contacts(
@@ -448,27 +533,23 @@ fn stabilize_contacts(
     stats: &mut StepStats,
 ) -> Result<(), PhysicsError> {
     for _ in 0..max_passes {
+        let (candidate_pairs, _) = broad_phase_pairs(states, 0);
         let mut changed = false;
-        for left in 0..states.len() {
-            for right in (left + 1)..states.len() {
-                if states[left].body.kind == BodyKind::Fixed
-                    && states[right].body.kind == BodyKind::Fixed
-                {
-                    continue;
-                }
-                let Some(contact) = contact_between(&states[left], &states[right]) else {
-                    continue;
-                };
-                if contact.penetration_scaled > 0 {
-                    project_to_contact(states, left, right, contact.normal)?;
-                    changed = true;
-                }
-                if resolve_contact_velocity(states, left, right, contact.normal)? {
-                    stats.contact_resolutions += 1;
-                    changed = true;
-                }
+
+        for (left, right) in candidate_pairs {
+            let Some(contact) = contact_between(&states[left], &states[right]) else {
+                continue;
+            };
+            if contact.penetration_scaled > 0 {
+                project_to_contact(states, left, right, contact.normal)?;
+                changed = true;
+            }
+            if resolve_contact_velocity(states, left, right, contact.normal)? {
+                stats.contact_resolutions += 1;
+                changed = true;
             }
         }
+
         if !changed {
             break;
         }
