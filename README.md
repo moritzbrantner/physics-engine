@@ -6,7 +6,7 @@ The repository is intentionally a **physics engine, not a game engine**. It owns
 
 ## Current foundation
 
-The first production slice is deliberately narrow but real:
+The engine now has a deliberately narrow but real reusable core:
 
 - 3D translational axis-aligned rigid bodies;
 - fixed and dynamic body kinds with stable engine-local IDs;
@@ -17,10 +17,14 @@ The first production slice is deliberately narrow but real:
 - deterministic overlap stabilization and mass-aware separation;
 - restitution for dynamic/fixed and dynamic/dynamic impacts;
 - bounded collision events per step;
-- public non-mutating swept-AABB query;
-- integration tests specifically proving fast bodies do not tunnel through thin walls.
+- deterministic swept sweep-and-prune broad-phase candidate generation;
+- snapshot overlap, swept-AABB and ray queries ordered by TOI and body ID;
+- physics-native AABB and sphere collider geometry with exact integer contact evidence;
+- integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
 This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
+
+The current `World` simulation deliberately remains AABB-only. Sphere support is present first as an independent collider/contact contract so mixed-shape dynamics can be migrated without silently approximating spheres as boxes.
 
 ## Example
 
@@ -57,9 +61,12 @@ ECS / game / simulation consumer
     physics-engine
           |
           +-- body/world state
+          +-- collider geometry
+          +-- broad phase
           +-- collision detection
           +-- CCD / time of impact
           +-- contact response
+          +-- spatial queries
           +-- constraints and solvers (next)
 ```
 
@@ -70,13 +77,12 @@ ECS / game / simulation consumer
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
 1. friction and persistent/resting contact constraints;
-2. broad-phase spatial acceleration backed by the reusable spatial kernels;
-3. orientation, angular velocity and box inertia;
-4. OBB contacts, sphere/OBB contacts and rotational CCD;
+2. orientation, angular velocity and box inertia;
+3. OBB contacts plus a physics-native collider attachment on rigid bodies;
+4. sphere/sphere and sphere/OBB response plus mixed-shape continuous collision detection;
 5. joints/constraints and sleeping/islands;
-6. ray casts, shape casts and overlap queries;
-7. a thin ECS adapter that maps entity IDs/components to engine bodies;
-8. WASM bindings so browser demos execute the Rust engine directly.
+6. a thin ECS adapter that maps entity IDs/components to engine bodies;
+7. WASM bindings so browser demos execute the Rust engine directly.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap.
 
