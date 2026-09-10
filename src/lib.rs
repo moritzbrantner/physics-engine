@@ -4,9 +4,10 @@
 //! contact geometry foundations: gravity, fixed/dynamic bodies, continuous collision detection,
 //! time-of-impact resolution, restitution, deterministic spatial queries, physics-native collider
 //! geometry, fixed-point orientation/angular velocity, box inertia, angular impulse evidence, exact
-//! quantized OBB SAT contact seeds, conservative rotational sweep bounds, and canonical rotating-box
-//! free-flight sampling. The current `World` solver remains translational and AABB-only. Rendering,
-//! ECS storage, game loops and scene ownership belong to consumers.
+//! quantized OBB SAT contact seeds, conservative rotational sweep bounds, canonical rotating-box
+//! free-flight sampling, and deterministic rotational broad-phase pairing. The current `World` solver
+//! remains translational and AABB-only. Rendering, ECS storage, game loops and scene ownership belong
+//! to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -19,6 +20,7 @@ mod oriented_box;
 mod query;
 mod rigid_box;
 mod rigid_box_free_flight;
+mod rotating_broad_phase;
 mod rotational_sweep;
 mod world;
 
@@ -41,6 +43,9 @@ pub use rigid_box::{RigidBox3d, RigidBoxError3d};
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, rigid_box_free_flight_sweep_bounds,
     sample_rigid_box_free_flight,
+};
+pub use rotating_broad_phase::{
+    RotatingBroadPhaseError3d, RotationalSweepPair3d, rotational_sweep_candidate_pairs,
 };
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
