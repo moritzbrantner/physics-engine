@@ -22,11 +22,12 @@ The engine now has a deliberately narrow but real reusable core:
 - physics-native AABB and sphere collider geometry with exact integer contact evidence;
 - deterministic fixed-point quaternion orientation and angular-velocity integration;
 - exact box principal inertia ratios and off-center angular impulse evidence;
+- quantized oriented-box vertices and exact SAT contact seeds with stable support masks;
 - integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
 This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
 
-The current `World` simulation deliberately remains AABB-only and translational. Sphere support is present first as an independent collider/contact contract, and angular state is present as an independent deterministic rotational foundation. Neither implies mixed-shape or rotational collision response until those semantics are migrated and validated explicitly.
+The current `World` simulation deliberately remains AABB-only and translational. Sphere support and OBB SAT are independent contact-geometry contracts, and angular state is an independent deterministic rotational foundation. None of these imply mixed-shape or rotational collision response until those semantics are migrated and validated explicitly.
 
 ## Example
 
@@ -69,6 +70,7 @@ ECS / game / simulation consumer
           +-- CCD / time of impact
           +-- contact response
           +-- rotational state / inertia
+          +-- OBB contact geometry
           +-- spatial queries
           +-- constraints and solvers (next)
 ```
@@ -80,12 +82,11 @@ ECS / game / simulation consumer
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
 1. friction and persistent/resting contact constraints;
-2. OBB geometry and exact contact seeds;
-3. rotational contact search, response and repeated-event stepping while preserving the explicit sampled-versus-analytic CCD boundary;
-4. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
-5. joints/constraints and sleeping/islands;
-6. a thin ECS adapter that maps entity IDs/components to engine bodies;
-7. WASM bindings so browser demos execute the Rust engine directly.
+2. rotational contact search, response and repeated-event stepping while preserving the explicit sampled-versus-analytic CCD boundary;
+3. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
+4. joints/constraints and sleeping/islands;
+5. a thin ECS adapter that maps entity IDs/components to engine bodies;
+6. WASM bindings so browser demos execute the Rust engine directly.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 
