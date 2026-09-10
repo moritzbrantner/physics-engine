@@ -206,28 +206,27 @@ fn aabb_aabb_contact(
     right: Vec3i,
     right_half: Vec3i,
 ) -> Result<ColliderContact, ColliderError> {
-    let direction = delta(left, right);
+    let center_delta = delta(left, right);
     let left_half = axes(left_half);
     let right_half = axes(right_half);
-    let mut separated_squared = 0_i128;
+    let mut direction = [0_i64; 3];
 
     for axis in 0..3 {
-        let center_distance = i128::from(direction[axis]).abs();
+        let center_distance = i128::from(center_delta[axis]).abs();
         let combined_half = i128::from(left_half[axis])
             .checked_add(i128::from(right_half[axis]))
             .ok_or(ColliderError::ArithmeticOverflow)?;
         let gap = center_distance.saturating_sub(combined_half).max(0);
-        separated_squared = separated_squared
-            .checked_add(
-                gap.checked_mul(gap)
-                    .ok_or(ColliderError::ArithmeticOverflow)?,
-            )
-            .ok_or(ColliderError::ArithmeticOverflow)?;
+        let gap = i64::try_from(gap).map_err(|_| ColliderError::ArithmeticOverflow)?;
+        direction[axis] = match center_delta[axis].cmp(&0) {
+            std::cmp::Ordering::Less => -gap,
+            std::cmp::Ordering::Equal | std::cmp::Ordering::Greater => gap,
+        };
     }
 
     Ok(ColliderContact {
         direction,
-        distance_squared: separated_squared,
+        distance_squared: squared_length(direction)?,
         threshold_squared: 0,
     })
 }
@@ -308,6 +307,20 @@ mod tests {
         assert_eq!(left.distance_squared, right.distance_squared);
         assert_eq!(left.threshold_squared, right.threshold_squared);
         assert_eq!(left.direction, right.direction.map(|value| -value));
+    }
+
+    #[test]
+    fn aabb_direction_matches_closest_feature_distance() {
+        let left = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(2, 2, 2)));
+        let right = Collider::new(
+            Vec3i::new(10, 3, 0),
+            ColliderShape::aabb(Vec3i::new(2, 2, 2)),
+        );
+        let contact = collider_contact(left, right).unwrap();
+
+        assert_eq!(contact.direction, [6, 0, 0]);
+        assert_eq!(contact.distance_squared, 36);
+        assert!(!contact.overlaps());
     }
 
     #[test]
