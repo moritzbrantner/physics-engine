@@ -1,0 +1,17 @@
+[package]
+name = "physics-engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.98"
+description = "Deterministic continuous-collision physics kernel"
+
+[lib]
+name = "physics_engine"
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

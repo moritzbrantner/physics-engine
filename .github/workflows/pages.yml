@@ -1,0 +1,56 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: physics-engine-pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-pages:
+    name: Build or reuse Pages artifact
+    permissions:
+      actions: read
+      contents: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@eaf67b9a00fc52d45b1ba509c86f05cd87b4ac91
+    with:
+      source_sha: ${{ github.sha }}
+      artifact_key: physics-engine-pages-v1
+      build_command: bash scripts/build-pages.sh
+      artifact_paths: pages-dist
+      reuse_across_runs: true
+      artifact_retention_days: 7
+
+  deploy-pages:
+    needs: build-pages
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@eaf67b9a00fc52d45b1ba509c86f05cd87b4ac91
+    with:
+      node_version: ""
+      bun_version: ""
+      install_command: ""
+      build_command: ""
+      artifact_path: pages-dist
+      prebuilt_artifact_run_id: ${{ needs.build-pages.outputs.producer_run_id }}
+      prebuilt_artifact_receipt_name: ${{ needs.build-pages.outputs.receipt_artifact_name }}
+      prebuilt_artifact_name: ${{ needs.build-pages.outputs.artifact_name }}
+      prebuilt_artifact_digest: ${{ needs.build-pages.outputs.artifact_digest }}
+      prebuilt_source_sha: ${{ needs.build-pages.outputs.source_sha }}
+      prebuilt_artifact_key: ${{ needs.build-pages.outputs.artifact_key }}
+      prebuilt_identity_digest: ${{ needs.build-pages.outputs.identity_digest }}
+      cache_bun: false
+      cache_node: false
+      concurrency_group: physics-engine-pages
+      cancel_in_progress: false

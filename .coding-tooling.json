@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "profile": "repository-foundation-v1",
+  "tiers": {
+    "fast": ["format:check", "lint", "build", "test"],
+    "standard": ["format:check", "lint", "build", "test"]
+  },
+  "requiredCapabilities": ["format:check", "lint", "build", "test"],
+  "merge": {
+    "authority": "hosted",
+    "requiredChecks": ["validate"]
+  }
+}

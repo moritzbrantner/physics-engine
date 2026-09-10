@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Prepare Rust toolchain
+        run: rustc --version && cargo --version
+
+      - name: Run deterministic fast tier
+        uses: moritzbrantner/coding-tooling@20afb614772346991b3e7ac60b5857ecab5472e3
+        with:
+          tier: fast
+          install-mode: none
+
+      - name: Build Pages artifact
+        run: bash scripts/build-pages.sh
