@@ -82,7 +82,10 @@ impl fmt::Display for PhysicsError {
                 id.0
             ),
             Self::NonPositiveTicks(ticks) => {
-                write!(formatter, "physics step requires positive ticks, got {ticks}")
+                write!(
+                    formatter,
+                    "physics step requires positive ticks, got {ticks}"
+                )
             }
             Self::ArithmeticOverflow(id) => {
                 write!(formatter, "physics arithmetic overflow for body {}", id.0)
@@ -492,11 +495,7 @@ fn broad_phase_pairs(states: &[BodyState], horizon_subticks: i128) -> (Vec<(usiz
     (pairs, pair_checks)
 }
 
-fn swept_bounds(
-    body_index: usize,
-    state: &BodyState,
-    horizon_subticks: i128,
-) -> BroadPhaseBounds {
+fn swept_bounds(body_index: usize, state: &BodyState, horizon_subticks: i128) -> BroadPhaseBounds {
     let motion = state.motion();
     let mut min = [0_i128; 3];
     let mut max = [0_i128; 3];
@@ -523,7 +522,12 @@ const fn ordered_pair(left: usize, right: usize) -> (usize, usize) {
     }
 }
 
-const fn intervals_overlap(left_min: i128, left_max: i128, right_min: i128, right_max: i128) -> bool {
+const fn intervals_overlap(
+    left_min: i128,
+    left_max: i128,
+    right_min: i128,
+    right_max: i128,
+) -> bool {
     left_min <= right_max && right_min <= left_max
 }
 
