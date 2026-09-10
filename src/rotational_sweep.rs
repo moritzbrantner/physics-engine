@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::{AngularError3d, OrientedBox3d};
+use crate::{AngularError3d, OrientedBox3d, Vec3i};
 
 /// Conservative axis-aligned bounds for one translating, arbitrarily rotating box.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,7 @@ impl RotationalSweepBounds3d {
 pub enum RotationalSweepError3d {
     ShapeMismatch,
     InvalidHalfExtents,
+    InvalidCenterInterval,
     Angular(AngularError3d),
     ArithmeticOverflow,
 }
@@ -39,6 +40,10 @@ impl fmt::Display for RotationalSweepError3d {
             Self::InvalidHalfExtents => write!(
                 formatter,
                 "rotational sweep requires strictly positive box half extents"
+            ),
+            Self::InvalidCenterInterval => write!(
+                formatter,
+                "rotational sweep center interval has a minimum greater than its maximum"
             ),
             Self::Angular(error) => {
                 write!(formatter, "rotational sweep orientation failed: {error}")
@@ -65,8 +70,8 @@ impl From<AngularError3d> for RotationalSweepError3d {
 /// evidence only: it does not prove contact, time of impact, or analytic rotational CCD.
 ///
 /// The caller is responsible for ensuring the translational trajectory stays inside the axis-wise
-/// endpoint interval. A later accelerated free-flight sampler must widen this bound when an interior
-/// translational extremum can leave that interval.
+/// endpoint interval. Accelerated motion should use a wider proven center interval rather than assuming
+/// that its extrema occur at the endpoints.
 ///
 /// # Errors
 ///
@@ -82,7 +87,6 @@ pub fn rotational_sweep_bounds(
         return Err(RotationalSweepError3d::ShapeMismatch);
     }
 
-    let radius = orientation_independent_radius(start)?;
     let start_center = [
         i64::from(start.center.x),
         i64::from(start.center.y),
@@ -93,15 +97,43 @@ pub fn rotational_sweep_bounds(
         i64::from(end.center.y),
         i64::from(end.center.z),
     ];
+    let center_minimum = [
+        start_center[0].min(end_center[0]),
+        start_center[1].min(end_center[1]),
+        start_center[2].min(end_center[2]),
+    ];
+    let center_maximum = [
+        start_center[0].max(end_center[0]),
+        start_center[1].max(end_center[1]),
+        start_center[2].max(end_center[2]),
+    ];
+    rotational_sweep_bounds_for_center_interval(
+        start.half_extents,
+        center_minimum,
+        center_maximum,
+    )
+}
+
+pub(crate) fn rotational_sweep_bounds_for_center_interval(
+    half_extents: Vec3i,
+    center_minimum: [i64; 3],
+    center_maximum: [i64; 3],
+) -> Result<RotationalSweepBounds3d, RotationalSweepError3d> {
+    if half_extents.x <= 0 || half_extents.y <= 0 || half_extents.z <= 0 {
+        return Err(RotationalSweepError3d::InvalidHalfExtents);
+    }
+    if (0..3).any(|axis| center_minimum[axis] > center_maximum[axis]) {
+        return Err(RotationalSweepError3d::InvalidCenterInterval);
+    }
+
+    let radius = orientation_independent_radius(half_extents)?;
     let mut minimum = [0_i64; 3];
     let mut maximum = [0_i64; 3];
     for axis in 0..3 {
-        minimum[axis] = start_center[axis]
-            .min(end_center[axis])
+        minimum[axis] = center_minimum[axis]
             .checked_sub(radius)
             .ok_or(RotationalSweepError3d::ArithmeticOverflow)?;
-        maximum[axis] = start_center[axis]
-            .max(end_center[axis])
+        maximum[axis] = center_maximum[axis]
             .checked_add(radius)
             .ok_or(RotationalSweepError3d::ArithmeticOverflow)?;
     }
@@ -119,12 +151,10 @@ fn validate_endpoint(box_shape: OrientedBox3d) -> Result<(), RotationalSweepErro
     Ok(())
 }
 
-fn orientation_independent_radius(box_shape: OrientedBox3d) -> Result<i64, RotationalSweepError3d> {
-    let extents = [
-        box_shape.half_extents.x,
-        box_shape.half_extents.y,
-        box_shape.half_extents.z,
-    ];
+fn orientation_independent_radius(
+    half_extents: Vec3i,
+) -> Result<i64, RotationalSweepError3d> {
+    let extents = [half_extents.x, half_extents.y, half_extents.z];
     let squared = extents
         .into_iter()
         .map(|extent| {
