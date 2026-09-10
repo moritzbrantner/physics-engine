@@ -519,10 +519,7 @@ fn negate_axis(axis: [i128; 3]) -> Result<[i128; 3], OrientedBoxError3d> {
     ])
 }
 
-fn projection(
-    vertices: &[Vec3i; 8],
-    axis: [i128; 3],
-) -> Result<(i128, i128), OrientedBoxError3d> {
+fn projection(vertices: &[Vec3i; 8], axis: [i128; 3]) -> Result<(i128, i128), OrientedBoxError3d> {
     let first = dot_position(vertices[0], axis)?;
     vertices[1..]
         .iter()
@@ -751,8 +748,7 @@ mod tests {
     #[test]
     fn separated_boxes_return_no_contact() {
         assert_eq!(
-            obb_contact_seed(cube(Vec3i::ZERO), cube(Vec3i::new(3, 0, 0)))
-                .expect("valid OBB pair"),
+            obb_contact_seed(cube(Vec3i::ZERO), cube(Vec3i::new(3, 0, 0))).expect("valid OBB pair"),
             None
         );
     }
@@ -814,11 +810,7 @@ mod tests {
 
     #[test]
     fn invalid_dimensions_and_zero_orientation_fail_closed() {
-        let invalid = OrientedBox3d::new(
-            Vec3i::ZERO,
-            Vec3i::new(1, 0, 1),
-            Orientation3d::IDENTITY,
-        );
+        let invalid = OrientedBox3d::new(Vec3i::ZERO, Vec3i::new(1, 0, 1), Orientation3d::IDENTITY);
         assert_eq!(
             obb_contact_seed(invalid, cube(Vec3i::ZERO)),
             Err(OrientedBoxError3d::InvalidHalfExtents)
