@@ -1,11 +1,11 @@
 //! Reusable deterministic physics simulation primitives.
 //!
-//! The engine owns deterministic translational rigid-body stepping plus an engine-local rotational
-//! state foundation: gravity, fixed/dynamic bodies, continuous collision detection, time-of-impact
-//! resolution, restitution, deterministic spatial queries, physics-native collider geometry,
-//! fixed-point orientation/angular velocity, box inertia, and angular impulse evidence. The current
-//! `World` solver remains translational and AABB-only. Rendering, ECS storage, game loops and scene
-//! ownership belong to consumers.
+//! The engine owns deterministic translational rigid-body stepping plus engine-local rotational and
+//! contact geometry foundations: gravity, fixed/dynamic bodies, continuous collision detection,
+//! time-of-impact resolution, restitution, deterministic spatial queries, physics-native collider
+//! geometry, fixed-point orientation/angular velocity, box inertia, angular impulse evidence, and
+//! exact quantized OBB SAT contact seeds. The current `World` solver remains translational and
+//! AABB-only. Rendering, ECS storage, game loops and scene ownership belong to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -14,6 +14,7 @@ mod body;
 mod collider;
 mod collision;
 mod math;
+mod oriented_box;
 mod query;
 mod world;
 
@@ -27,5 +28,9 @@ pub use collision::{
     ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,
 };
 pub use math::Vec3i;
+pub use oriented_box::{
+    ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, obb_contact_seed,
+    oriented_box_vertices,
+};
 pub use query::{Aabb, QueryError, QueryHit, Ray};
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
