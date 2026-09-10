@@ -253,24 +253,6 @@ pub(crate) fn sweep_motion(
     })
 }
 
-pub(crate) fn swept_bounds_overlap(
-    left: MotionAabb,
-    right: MotionAabb,
-    horizon_subticks: i128,
-) -> bool {
-    (0..3).all(|axis| {
-        let left_end =
-            left.center_scaled[axis] + i128::from(left.velocity[axis]) * horizon_subticks;
-        let right_end =
-            right.center_scaled[axis] + i128::from(right.velocity[axis]) * horizon_subticks;
-        let left_min = left.center_scaled[axis].min(left_end) - left.half_scaled[axis];
-        let left_max = left.center_scaled[axis].max(left_end) + left.half_scaled[axis];
-        let right_min = right.center_scaled[axis].min(right_end) - right.half_scaled[axis];
-        let right_max = right.center_scaled[axis].max(right_end) + right.half_scaled[axis];
-        left_min <= right_max && right_min <= left_max
-    })
-}
-
 fn motion_overlap(left: MotionAabb, right: MotionAabb) -> bool {
     (0..3).all(|axis| {
         (left.center_scaled[axis] - right.center_scaled[axis]).abs()
