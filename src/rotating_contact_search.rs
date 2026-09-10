@@ -94,13 +94,22 @@ impl fmt::Display for RotatingContactSearchError3d {
                 id.0
             ),
             Self::BroadPhase(error) => {
-                write!(formatter, "rotating contact search broad phase failed: {error}")
+                write!(
+                    formatter,
+                    "rotating contact search broad phase failed: {error}"
+                )
             }
             Self::FreeFlight(error) => {
-                write!(formatter, "rotating contact search free flight failed: {error}")
+                write!(
+                    formatter,
+                    "rotating contact search free flight failed: {error}"
+                )
             }
             Self::Contact(error) => {
-                write!(formatter, "rotating contact search OBB query failed: {error}")
+                write!(
+                    formatter,
+                    "rotating contact search OBB query failed: {error}"
+                )
             }
         }
     }
@@ -169,18 +178,12 @@ pub fn sampled_rotating_contact_search(
         .collect();
     let mut best: Option<RotatingContactSearchHit3d> = None;
     for pair in pairs {
-        let left = by_id
-            .get(&pair.left)
-            .copied()
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
-                pair.left,
-            ))?;
-        let right = by_id
-            .get(&pair.right)
-            .copied()
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
-                pair.right,
-            ))?;
+        let left = by_id.get(&pair.left).copied().ok_or(
+            RotatingContactSearchError3d::MissingCandidateBody(pair.left),
+        )?;
+        let right = by_id.get(&pair.right).copied().ok_or(
+            RotatingContactSearchError3d::MissingCandidateBody(pair.right),
+        )?;
         let Some(hit) = search_pair(left, right, pair, config)? else {
             continue;
         };
@@ -231,10 +234,9 @@ fn search_pair(
     for numerator in 1..=denominator {
         let (sampled_left, sampled_right) =
             sample_pair(left, right, config.free_flight, numerator, denominator)?;
-        let Some(contact) = obb_contact_seed(
-            sampled_left.oriented_box(),
-            sampled_right.oriented_box(),
-        )? else {
+        let Some(contact) =
+            obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
+        else {
             continue;
         };
 
@@ -292,10 +294,9 @@ fn refine_contact_bracket(
             midpoint_numerator,
             bracket.denominator,
         )?;
-        if let Some(contact) = obb_contact_seed(
-            sampled_left.oriented_box(),
-            sampled_right.oriented_box(),
-        )? {
+        if let Some(contact) =
+            obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
+        {
             bracket.upper_numerator = midpoint_numerator;
             bracket.upper_contact = contact;
         } else {
@@ -405,9 +406,10 @@ mod tests {
     fn linear_contact_is_refined_to_known_contact_side() {
         let moving = dynamic(2, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
         let obstacle = fixed(8, Vec3i::ZERO);
-        let hit = sampled_rotating_contact_search(&[moving.clone(), obstacle.clone()], config(4, 3))
-            .expect("valid sampled search")
-            .expect("linear path should contact");
+        let hit =
+            sampled_rotating_contact_search(&[moving.clone(), obstacle.clone()], config(4, 3))
+                .expect("valid sampled search")
+                .expect("linear path should contact");
 
         assert_eq!(
             hit.time,
@@ -434,11 +436,9 @@ mod tests {
     fn search_result_is_stable_across_input_order() {
         let moving = dynamic(11, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
         let obstacle = fixed(3, Vec3i::ZERO);
-        let forward = sampled_rotating_contact_search(
-            &[moving.clone(), obstacle.clone()],
-            config(8, 2),
-        )
-        .expect("valid forward search");
+        let forward =
+            sampled_rotating_contact_search(&[moving.clone(), obstacle.clone()], config(8, 2))
+                .expect("valid forward search");
         let reverse = sampled_rotating_contact_search(&[obstacle, moving], config(8, 2))
             .expect("valid reverse search");
 
