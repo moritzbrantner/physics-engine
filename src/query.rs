@@ -58,7 +58,10 @@ impl fmt::Display for QueryError {
         match self {
             Self::InvalidHalfExtents => write!(formatter, "query AABB has negative half extents"),
             Self::NonPositiveTicks(ticks) => {
-                write!(formatter, "physics query requires positive ticks, got {ticks}")
+                write!(
+                    formatter,
+                    "physics query requires positive ticks, got {ticks}"
+                )
             }
         }
     }
