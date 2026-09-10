@@ -43,14 +43,7 @@ fn ray_cast_returns_nearest_hit_first() {
     assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].body, BodyId(1));
     assert_eq!(hits[0].time.subticks(), 7 * SUBTICKS_PER_TICK / 10 + 1);
-    assert_eq!(
-        hits[0].normal,
-        Some(ContactNormal {
-            x: -1,
-            y: 0,
-            z: 0,
-        })
-    );
+    assert_eq!(hits[0].normal, Some(ContactNormal { x: -1, y: 0, z: 0 }));
     assert_eq!(hits[1].body, BodyId(2));
 }
 
