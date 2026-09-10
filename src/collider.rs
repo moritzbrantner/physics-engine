@@ -72,8 +72,12 @@ pub enum ColliderError {
 impl fmt::Display for ColliderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NegativeAabbHalfExtent => write!(formatter, "AABB collider has a negative half extent"),
-            Self::NegativeSphereRadius => write!(formatter, "sphere collider has a negative radius"),
+            Self::NegativeAabbHalfExtent => {
+                write!(formatter, "AABB collider has a negative half extent")
+            }
+            Self::NegativeSphereRadius => {
+                write!(formatter, "sphere collider has a negative radius")
+            }
             Self::ArithmeticOverflow => write!(formatter, "collider contact arithmetic overflow"),
         }
     }
@@ -86,10 +90,12 @@ impl Error for ColliderError {}
 /// This is a geometry/contact query. It does not integrate time or apply impulses: the world CCD
 /// solver remains the authority for time-of-impact and collision response. Touching counts as
 /// contact, matching the existing AABB world contract.
-pub fn collider_contact(
-    left: Collider,
-    right: Collider,
-) -> Result<ColliderContact, ColliderError> {
+///
+/// # Errors
+///
+/// Returns [`ColliderError`] when either shape has invalid dimensions or checked contact arithmetic
+/// cannot be represented.
+pub fn collider_contact(left: Collider, right: Collider) -> Result<ColliderContact, ColliderError> {
     validate_shape(left.shape)?;
     validate_shape(right.shape)?;
 
@@ -238,16 +244,20 @@ fn squared_length(vector: [i64; 3]) -> Result<i128, ColliderError> {
     })
 }
 
-const fn delta(left: Vec3i, right: Vec3i) -> [i64; 3] {
+fn delta(left: Vec3i, right: Vec3i) -> [i64; 3] {
     [
-        right.x as i64 - left.x as i64,
-        right.y as i64 - left.y as i64,
-        right.z as i64 - left.z as i64,
+        i64::from(right.x) - i64::from(left.x),
+        i64::from(right.y) - i64::from(left.y),
+        i64::from(right.z) - i64::from(left.z),
     ]
 }
 
-const fn axes(vector: Vec3i) -> [i64; 3] {
-    [vector.x as i64, vector.y as i64, vector.z as i64]
+fn axes(vector: Vec3i) -> [i64; 3] {
+    [
+        i64::from(vector.x),
+        i64::from(vector.y),
+        i64::from(vector.z),
+    ]
 }
 
 #[cfg(test)]
@@ -278,7 +288,10 @@ mod tests {
     #[test]
     fn sphere_aabb_corner_uses_exact_squared_distance() {
         let sphere = Collider::new(Vec3i::new(4, 4, 0), ColliderShape::sphere(3));
-        let aabb = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(2, 2, 2)));
+        let aabb = Collider::new(
+            Vec3i::ZERO,
+            ColliderShape::aabb(Vec3i::new(2, 2, 2)),
+        );
         let contact = collider_contact(sphere, aabb).unwrap();
 
         assert!(contact.overlaps());
@@ -290,7 +303,10 @@ mod tests {
     #[test]
     fn aabb_sphere_is_symmetric_except_for_direction() {
         let sphere = Collider::new(Vec3i::new(5, 0, 0), ColliderShape::sphere(2));
-        let aabb = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(3, 3, 3)));
+        let aabb = Collider::new(
+            Vec3i::ZERO,
+            ColliderShape::aabb(Vec3i::new(3, 3, 3)),
+        );
         let left = collider_contact(sphere, aabb).unwrap();
         let right = collider_contact(aabb, sphere).unwrap();
 
@@ -302,7 +318,10 @@ mod tests {
 
     #[test]
     fn existing_aabb_touching_semantics_are_preserved() {
-        let left = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(2, 2, 2)));
+        let left = Collider::new(
+            Vec3i::ZERO,
+            ColliderShape::aabb(Vec3i::new(2, 2, 2)),
+        );
         let right = Collider::new(
             Vec3i::new(4, 0, 0),
             ColliderShape::aabb(Vec3i::new(2, 2, 2)),
@@ -314,7 +333,10 @@ mod tests {
     #[test]
     fn invalid_shapes_fail_closed() {
         let sphere = Collider::new(Vec3i::ZERO, ColliderShape::sphere(-1));
-        let aabb = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(1, 1, 1)));
+        let aabb = Collider::new(
+            Vec3i::ZERO,
+            ColliderShape::aabb(Vec3i::new(1, 1, 1)),
+        );
 
         assert_eq!(
             collider_contact(sphere, aabb),
