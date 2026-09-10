@@ -71,10 +71,8 @@ impl RigidBox3d {
             return Err(RigidBoxError3d::FixedAngularVelocity(body.id()));
         }
 
-        let angular = AngularState3d::new(
-            angular.orientation.normalized()?,
-            angular.angular_velocity,
-        );
+        let angular =
+            AngularState3d::new(angular.orientation.normalized()?, angular.angular_velocity);
         Ok(Self { body, angular })
     }
 
@@ -105,9 +103,7 @@ impl RigidBox3d {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, Vec3i,
-    };
+    use crate::{AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, Vec3i};
 
     use super::{RigidBox3d, RigidBoxError3d};
 
@@ -135,23 +131,18 @@ mod tests {
         let body = RigidBody::fixed(BodyId(5), Vec3i::ZERO, Vec3i::new(1, 1, 1));
         let result = RigidBox3d::new(
             body,
-            AngularState3d::new(
-                Orientation3d::IDENTITY,
-                AngularVelocity3d::new(1, 0, 0),
-            ),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::new(1, 0, 0)),
         );
 
-        assert_eq!(result, Err(RigidBoxError3d::FixedAngularVelocity(BodyId(5))));
+        assert_eq!(
+            result,
+            Err(RigidBoxError3d::FixedAngularVelocity(BodyId(5)))
+        );
     }
 
     #[test]
     fn degenerate_box_is_rejected() {
-        let body = RigidBody::dynamic(
-            BodyId(6),
-            Vec3i::ZERO,
-            Vec3i::ZERO,
-            Vec3i::new(1, 0, 1),
-        );
+        let body = RigidBody::dynamic(BodyId(6), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 0, 1));
         assert_eq!(
             RigidBox3d::new(
                 body,
