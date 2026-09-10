@@ -16,11 +16,7 @@ pub struct RigidBoxFreeFlightConfig3d {
 
 impl RigidBoxFreeFlightConfig3d {
     #[must_use]
-    pub const fn new(
-        gravity: Vec3i,
-        timestep_numerator: i32,
-        timestep_denominator: i32,
-    ) -> Self {
+    pub const fn new(gravity: Vec3i, timestep_numerator: i32, timestep_denominator: i32) -> Self {
         Self {
             gravity,
             timestep_numerator,
@@ -72,7 +68,9 @@ impl fmt::Display for RigidBoxFreeFlightError3d {
                 "rigid-box free-flight arithmetic overflowed for body {}",
                 body.0
             ),
-            Self::Angular(error) => write!(formatter, "rigid-box free-flight rotation failed: {error}"),
+            Self::Angular(error) => {
+                write!(formatter, "rigid-box free-flight rotation failed: {error}")
+            }
             Self::Sweep(error) => write!(formatter, "rigid-box free-flight sweep failed: {error}"),
         }
     }
@@ -112,11 +110,8 @@ pub fn sample_rigid_box_free_flight(
     fraction_numerator: u32,
     fraction_denominator: u32,
 ) -> Result<RigidBox3d, RigidBoxFreeFlightError3d> {
-    let (step_numerator, step_denominator) = sample_step_ratio(
-        config,
-        fraction_numerator,
-        fraction_denominator,
-    )?;
+    let (step_numerator, step_denominator) =
+        sample_step_ratio(config, fraction_numerator, fraction_denominator)?;
     if step_numerator == 0 || rigid_box.body.kind() == BodyKind::Fixed {
         return Ok(rigid_box.clone());
     }
@@ -138,11 +133,8 @@ pub fn sample_rigid_box_free_flight(
             .map_err(|_| RigidBoxFreeFlightError3d::ArithmeticOverflow(id))?;
         velocity.set_component(axis, next_velocity);
 
-        let position_delta = rounded_ratio(
-            i128::from(next_velocity),
-            step_numerator,
-            step_denominator,
-        )?;
+        let position_delta =
+            rounded_ratio(i128::from(next_velocity), step_numerator, step_denominator)?;
         let next_position = i128::from(position.component(axis))
             .checked_add(position_delta)
             .ok_or(RigidBoxFreeFlightError3d::ArithmeticOverflow(id))?;
@@ -182,7 +174,11 @@ pub fn rigid_box_free_flight_sweep_bounds(
 ) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
     let (step_numerator, step_denominator) = sample_step_ratio(config, 1, 1)?;
     let center = rigid_box.body.position();
-    let center = [i64::from(center.x), i64::from(center.y), i64::from(center.z)];
+    let center = [
+        i64::from(center.x),
+        i64::from(center.y),
+        i64::from(center.z),
+    ];
     let mut center_minimum = center;
     let mut center_maximum = center;
 
@@ -194,9 +190,8 @@ pub fn rigid_box_free_flight_sweep_bounds(
                 step_numerator,
                 step_denominator,
             )?;
-            let displacement = i64::try_from(displacement).map_err(|_| {
-                RigidBoxFreeFlightError3d::ArithmeticOverflow(rigid_box.body.id())
-            })?;
+            let displacement = i64::try_from(displacement)
+                .map_err(|_| RigidBoxFreeFlightError3d::ArithmeticOverflow(rigid_box.body.id()))?;
             center_minimum[axis] = center[axis].checked_sub(displacement).ok_or(
                 RigidBoxFreeFlightError3d::ArithmeticOverflow(rigid_box.body.id()),
             )?;
@@ -284,9 +279,8 @@ fn conservative_axis_displacement(
     numerator: i32,
     denominator: i32,
 ) -> Result<u128, RigidBoxFreeFlightError3d> {
-    let numerator = u128::from(
-        u32::try_from(numerator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
-    );
+    let numerator =
+        u128::from(u32::try_from(numerator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?);
     let denominator = u128::from(
         u32::try_from(denominator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
     );
@@ -307,10 +301,7 @@ fn conservative_axis_displacement(
     )
 }
 
-fn ceil_ratio(
-    numerator: u128,
-    denominator: u128,
-) -> Result<u128, RigidBoxFreeFlightError3d> {
+fn ceil_ratio(numerator: u128, denominator: u128) -> Result<u128, RigidBoxFreeFlightError3d> {
     if denominator == 0 {
         return Err(RigidBoxFreeFlightError3d::RatioTooLarge);
     }
@@ -341,8 +332,8 @@ mod tests {
     };
 
     use super::{
-        RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
-        rigid_box_free_flight_sweep_bounds, sample_rigid_box_free_flight,
+        RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, rigid_box_free_flight_sweep_bounds,
+        sample_rigid_box_free_flight,
     };
 
     fn rotating_box(body: RigidBody, angular_velocity: AngularVelocity3d) -> RigidBox3d {
@@ -414,12 +405,12 @@ mod tests {
             AngularVelocity3d::default(),
         );
         let config = RigidBoxFreeFlightConfig3d::new(Vec3i::new(-200, 0, 0), 1, 1);
-        let end = sample_rigid_box_free_flight(&rigid_box, config, 1, 1)
-            .expect("valid endpoint sample");
+        let end =
+            sample_rigid_box_free_flight(&rigid_box, config, 1, 1).expect("valid endpoint sample");
         let endpoint_only = rotational_sweep_bounds(rigid_box.oriented_box(), end.oriented_box())
             .expect("valid endpoint sweep");
-        let quarter = sample_rigid_box_free_flight(&rigid_box, config, 1, 4)
-            .expect("valid interior sample");
+        let quarter =
+            sample_rigid_box_free_flight(&rigid_box, config, 1, 4).expect("valid interior sample");
         assert!(
             oriented_box_vertices(quarter.oriented_box())
                 .expect("valid quarter OBB")
@@ -465,12 +456,7 @@ mod tests {
     #[test]
     fn malformed_fraction_fails_closed() {
         let rigid_box = rotating_box(
-            RigidBody::dynamic(
-                BodyId(5),
-                Vec3i::ZERO,
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            ),
+            RigidBody::dynamic(BodyId(5), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1)),
             AngularVelocity3d::default(),
         );
         let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
