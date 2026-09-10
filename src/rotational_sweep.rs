@@ -40,7 +40,9 @@ impl fmt::Display for RotationalSweepError3d {
                 formatter,
                 "rotational sweep requires strictly positive box half extents"
             ),
-            Self::Angular(error) => write!(formatter, "rotational sweep orientation failed: {error}"),
+            Self::Angular(error) => {
+                write!(formatter, "rotational sweep orientation failed: {error}")
+            }
             Self::ArithmeticOverflow => write!(formatter, "rotational sweep bounds overflowed"),
         }
     }
@@ -117,9 +119,7 @@ fn validate_endpoint(box_shape: OrientedBox3d) -> Result<(), RotationalSweepErro
     Ok(())
 }
 
-fn orientation_independent_radius(
-    box_shape: OrientedBox3d,
-) -> Result<i64, RotationalSweepError3d> {
+fn orientation_independent_radius(box_shape: OrientedBox3d) -> Result<i64, RotationalSweepError3d> {
     let extents = [
         box_shape.half_extents.x,
         box_shape.half_extents.y,
@@ -172,10 +172,7 @@ mod tests {
         OrientedBox3d::new(center, Vec3i::new(20, 3, 2), orientation)
     }
 
-    fn assert_contains_vertices(
-        bounds: super::RotationalSweepBounds3d,
-        box_shape: OrientedBox3d,
-    ) {
+    fn assert_contains_vertices(bounds: super::RotationalSweepBounds3d, box_shape: OrientedBox3d) {
         for vertex in oriented_box_vertices(box_shape).expect("valid oriented box") {
             assert!(bounds.contains([
                 i64::from(vertex.x),
@@ -228,11 +225,8 @@ mod tests {
 
     #[test]
     fn invalid_shape_and_orientation_fail_closed() {
-        let invalid_shape = OrientedBox3d::new(
-            Vec3i::ZERO,
-            Vec3i::new(1, 0, 1),
-            Orientation3d::IDENTITY,
-        );
+        let invalid_shape =
+            OrientedBox3d::new(Vec3i::ZERO, Vec3i::new(1, 0, 1), Orientation3d::IDENTITY);
         assert_eq!(
             rotational_sweep_bounds(invalid_shape, invalid_shape),
             Err(RotationalSweepError3d::InvalidHalfExtents)
