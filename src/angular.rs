@@ -323,11 +323,7 @@ fn integrated_component(
     i32::try_from(next).map_err(|_| AngularError3d::ArithmeticOverflow)
 }
 
-fn normalized_component(
-    component: i32,
-    scale: i128,
-    norm: i128,
-) -> Result<i32, AngularError3d> {
+fn normalized_component(component: i32, scale: i128, norm: i128) -> Result<i32, AngularError3d> {
     let numerator = i128::from(component)
         .checked_mul(scale)
         .ok_or(AngularError3d::ArithmeticOverflow)?;
@@ -442,31 +438,26 @@ mod tests {
             Err(AngularError3d::NegativeTimestepNumerator(-1))
         );
         assert_eq!(
-            integrate_orientation(
-                Orientation3d::IDENTITY,
-                AngularVelocity3d::default(),
-                1,
-                0,
-            ),
+            integrate_orientation(Orientation3d::IDENTITY, AngularVelocity3d::default(), 1, 0,),
             Err(AngularError3d::NonPositiveTimestepDenominator(0))
         );
     }
 
     #[test]
     fn box_inertia_uses_full_cuboid_formula() {
-        let body = RigidBody::dynamic(
-            BodyId(7),
-            Vec3i::ZERO,
-            Vec3i::ZERO,
-            Vec3i::new(2, 3, 4),
-        )
-        .with_mass(6);
+        let body = RigidBody::dynamic(BodyId(7), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(2, 3, 4))
+            .with_mass(6);
 
         assert_eq!(
-            box_inertia(&body).expect("valid box inertia").principal_numerators,
+            box_inertia(&body)
+                .expect("valid box inertia")
+                .principal_numerators,
             [150, 120, 78]
         );
-        assert_eq!(box_inertia(&body).expect("valid box inertia").denominator, 3);
+        assert_eq!(
+            box_inertia(&body).expect("valid box inertia").denominator,
+            3
+        );
     }
 
     #[test]
@@ -480,13 +471,8 @@ mod tests {
 
     #[test]
     fn dynamic_zero_mass_fails_closed() {
-        let body = RigidBody::dynamic(
-            BodyId(9),
-            Vec3i::ZERO,
-            Vec3i::ZERO,
-            Vec3i::new(1, 1, 1),
-        )
-        .with_mass(0);
+        let body = RigidBody::dynamic(BodyId(9), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1))
+            .with_mass(0);
 
         assert_eq!(box_inertia(&body), Err(AngularError3d::ZeroMass(BodyId(9))));
     }
