@@ -288,10 +288,7 @@ mod tests {
     #[test]
     fn sphere_aabb_corner_uses_exact_squared_distance() {
         let sphere = Collider::new(Vec3i::new(4, 4, 0), ColliderShape::sphere(3));
-        let aabb = Collider::new(
-            Vec3i::ZERO,
-            ColliderShape::aabb(Vec3i::new(2, 2, 2)),
-        );
+        let aabb = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(2, 2, 2)));
         let contact = collider_contact(sphere, aabb).unwrap();
 
         assert!(contact.overlaps());
@@ -303,10 +300,7 @@ mod tests {
     #[test]
     fn aabb_sphere_is_symmetric_except_for_direction() {
         let sphere = Collider::new(Vec3i::new(5, 0, 0), ColliderShape::sphere(2));
-        let aabb = Collider::new(
-            Vec3i::ZERO,
-            ColliderShape::aabb(Vec3i::new(3, 3, 3)),
-        );
+        let aabb = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(3, 3, 3)));
         let left = collider_contact(sphere, aabb).unwrap();
         let right = collider_contact(aabb, sphere).unwrap();
 
@@ -318,10 +312,7 @@ mod tests {
 
     #[test]
     fn existing_aabb_touching_semantics_are_preserved() {
-        let left = Collider::new(
-            Vec3i::ZERO,
-            ColliderShape::aabb(Vec3i::new(2, 2, 2)),
-        );
+        let left = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(2, 2, 2)));
         let right = Collider::new(
             Vec3i::new(4, 0, 0),
             ColliderShape::aabb(Vec3i::new(2, 2, 2)),
@@ -333,10 +324,7 @@ mod tests {
     #[test]
     fn invalid_shapes_fail_closed() {
         let sphere = Collider::new(Vec3i::ZERO, ColliderShape::sphere(-1));
-        let aabb = Collider::new(
-            Vec3i::ZERO,
-            ColliderShape::aabb(Vec3i::new(1, 1, 1)),
-        );
+        let aabb = Collider::new(Vec3i::ZERO, ColliderShape::aabb(Vec3i::new(1, 1, 1)));
 
         assert_eq!(
             collider_contact(sphere, aabb),
