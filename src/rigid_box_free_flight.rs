@@ -306,7 +306,7 @@ fn ceil_ratio(numerator: u128, denominator: u128) -> Result<u128, RigidBoxFreeFl
         return Err(RigidBoxFreeFlightError3d::RatioTooLarge);
     }
     let quotient = numerator / denominator;
-    if numerator % denominator == 0 {
+    if numerator.is_multiple_of(denominator) {
         Ok(quotient)
     } else {
         quotient
