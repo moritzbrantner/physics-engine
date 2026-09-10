@@ -2,7 +2,9 @@ use std::{cmp::Ordering, collections::BTreeMap, fmt};
 
 use crate::{
     BodyId, BodyKind, ContactNormal, MATERIAL_SCALE, Material, RigidBody, TimeOfImpact, Vec3i,
-    collision::{MotionAabb, MotionSweepHit, Ratio, SUBTICK_SCALE, sweep_motion, swept_bounds_overlap},
+    collision::{
+        MotionAabb, MotionSweepHit, Ratio, SUBTICK_SCALE, sweep_motion, swept_bounds_overlap,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,10 +77,17 @@ impl fmt::Display for PhysicsError {
                 id.0
             ),
             Self::FixedBodyVelocity(id) => {
-                write!(formatter, "fixed physics body {} has non-zero velocity", id.0)
+                write!(
+                    formatter,
+                    "fixed physics body {} has non-zero velocity",
+                    id.0
+                )
             }
             Self::NonPositiveTicks(ticks) => {
-                write!(formatter, "physics step requires positive ticks, got {ticks}")
+                write!(
+                    formatter,
+                    "physics step requires positive ticks, got {ticks}"
+                )
             }
             Self::ArithmeticOverflow(id) => {
                 write!(formatter, "physics arithmetic overflow for body {}", id.0)
@@ -152,7 +161,10 @@ impl World {
     }
 
     pub fn set_velocity(&mut self, id: BodyId, velocity: Vec3i) -> Result<(), PhysicsError> {
-        let body = self.bodies.get_mut(&id).ok_or(PhysicsError::MissingBody(id))?;
+        let body = self
+            .bodies
+            .get_mut(&id)
+            .ok_or(PhysicsError::MissingBody(id))?;
         if body.kind == BodyKind::Fixed && velocity != Vec3i::ZERO {
             return Err(PhysicsError::FixedBodyVelocity(id));
         }
@@ -161,7 +173,10 @@ impl World {
     }
 
     pub fn set_position(&mut self, id: BodyId, position: Vec3i) -> Result<(), PhysicsError> {
-        let body = self.bodies.get_mut(&id).ok_or(PhysicsError::MissingBody(id))?;
+        let body = self
+            .bodies
+            .get_mut(&id)
+            .ok_or(PhysicsError::MissingBody(id))?;
         body.position = position;
         Ok(())
     }
@@ -173,7 +188,10 @@ impl World {
                 material.restitution_milli(),
             ));
         }
-        let body = self.bodies.get_mut(&id).ok_or(PhysicsError::MissingBody(id))?;
+        let body = self
+            .bodies
+            .get_mut(&id)
+            .ok_or(PhysicsError::MissingBody(id))?;
         body.material = material;
         Ok(())
     }
@@ -578,8 +596,7 @@ fn resolve_contact_velocity(
             let value = right_value - (left_value - right_value) * restitution / scale;
             left.body.velocity.set_component(
                 axis,
-                i32::try_from(value)
-                    .map_err(|_| PhysicsError::ArithmeticOverflow(left.body.id))?,
+                i32::try_from(value).map_err(|_| PhysicsError::ArithmeticOverflow(left.body.id))?,
             );
         }
         (BodyKind::Fixed, BodyKind::Dynamic) => {
