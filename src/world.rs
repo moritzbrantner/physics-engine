@@ -497,18 +497,20 @@ fn contact_between(left: &BodyState, right: &BodyState) -> Option<Contact> {
     let distance = left.center_scaled[axis] - right.center_scaled[axis];
     let relative_velocity = i64::from(left.body.velocity.component(axis))
         - i64::from(right.body.velocity.component(axis));
-    let component = if distance > 0 {
-        1
-    } else if distance < 0 {
-        -1
-    } else if relative_velocity > 0 {
-        -1
-    } else if relative_velocity < 0 {
-        1
-    } else if left.body.id < right.body.id {
-        -1
-    } else {
-        1
+    let component = match distance.cmp(&0) {
+        Ordering::Greater => 1,
+        Ordering::Less => -1,
+        Ordering::Equal => match relative_velocity.cmp(&0) {
+            Ordering::Greater => -1,
+            Ordering::Less => 1,
+            Ordering::Equal => {
+                if left.body.id < right.body.id {
+                    -1
+                } else {
+                    1
+                }
+            }
+        },
     };
     Some(Contact {
         normal: ContactNormal::for_axis(axis, component),
