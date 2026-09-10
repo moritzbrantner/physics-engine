@@ -3,9 +3,10 @@
 //! The engine owns deterministic translational rigid-body stepping plus engine-local rotational and
 //! contact geometry foundations: gravity, fixed/dynamic bodies, continuous collision detection,
 //! time-of-impact resolution, restitution, deterministic spatial queries, physics-native collider
-//! geometry, fixed-point orientation/angular velocity, box inertia, angular impulse evidence, and
-//! exact quantized OBB SAT contact seeds. The current `World` solver remains translational and
-//! AABB-only. Rendering, ECS storage, game loops and scene ownership belong to consumers.
+//! geometry, fixed-point orientation/angular velocity, box inertia, angular impulse evidence, exact
+//! quantized OBB SAT contact seeds, and conservative rotational sweep bounds. The current `World`
+//! solver remains translational and AABB-only. Rendering, ECS storage, game loops and scene ownership
+//! belong to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -16,6 +17,7 @@ mod collision;
 mod math;
 mod oriented_box;
 mod query;
+mod rotational_sweep;
 mod world;
 
 pub use angular::{
@@ -33,4 +35,7 @@ pub use oriented_box::{
     oriented_box_vertices,
 };
 pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use rotational_sweep::{
+    RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
+};
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
