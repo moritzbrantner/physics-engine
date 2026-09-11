@@ -5,15 +5,15 @@ use crate::{
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
     RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
     rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
-    sampled_rotating_contact_search,
+    sampled_rotating_contact_search, sampled_rotating_recontact_search,
 };
 
-/// One shared pre-response world reconstructed at the globally earliest sampled rotating contact time.
+/// One shared pre-response world reconstructed at an admitted sampled rotating contact time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RotatingContactFrontier3d {
     /// Every rotating body sampled directly from the common interval start at [`Self::time`].
     pub boxes: Vec<RigidBox3d>,
-    /// Earliest sampled contact fraction admitted by the configured search policy.
+    /// Sampled contact fraction admitted by the search policy that selected this frontier.
     pub time: SampledContactTime3d,
     /// Every broad-phase candidate that is in OBB contact in the shared frontier state.
     pub contacts: Vec<RotatingContactSearchHit3d>,
@@ -113,8 +113,8 @@ impl From<OrientedBoxError3d> for RotatingContactFrontierError3d {
 /// [`sampled_rotating_contact_search`] supplies the earliest admitted sampled contact fraction. Every body
 /// is then sampled directly from the original state at exactly that rational fraction. The frontier
 /// re-evaluates every conservative rotational broad-phase candidate in that shared state and retains all
-/// equal-time OBB contacts, so a later response solver can consume one deterministic contact set rather
-/// than resolving independently sampled pairs in discovery order.
+/// equal-time OBB contacts, so response consumes one deterministic contact set rather than independently
+/// sampled pairs in discovery order.
 ///
 /// The original earliest hit must still exist with identical contact evidence in the reconstructed state;
 /// drift fails closed. This remains **sampled rotational collision handling, not analytic rotational CCD**:
@@ -131,6 +131,45 @@ pub fn earliest_rotating_contact_frontier(
     let Some(earliest) = sampled_rotating_contact_search(boxes, config)? else {
         return Ok(None);
     };
+    Ok(Some(reconstruct_frontier(boxes, config, earliest)?))
+}
+
+/// Reconstructs the earliest strictly-positive sampled re-contact frontier from one common interval start.
+///
+/// [`sampled_rotating_recontact_search`] ignores a pair already touching at time zero until the coarse grid
+/// observes a clear sample and a later contact. Once that positive hit is selected, this function uses the
+/// same reconstruction authority as [`earliest_rotating_contact_frontier`]: all bodies are sampled from the
+/// same interval start and **all** contacts present at that shared state are retained, including persistent
+/// contacts that were intentionally not eligible to select the next event.
+///
+/// This split is important for repeated-event stepping. Persistent contacts cannot monopolize event
+/// discovery, but they re-enter the shared frontier when a genuine later sampled event occurs and therefore
+/// remain available to the simultaneous response solver. The result is still sampled, not analytic CCD.
+///
+/// # Errors
+///
+/// Returns [`RotatingContactFrontierError3d`] for the same search/reconstruction inconsistencies as
+/// [`earliest_rotating_contact_frontier`].
+pub fn next_rotating_contact_frontier(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let Some(earliest) = sampled_rotating_recontact_search(boxes, config)? else {
+        return Ok(None);
+    };
+    if earliest.time.numerator == 0 {
+        return Err(RotatingContactFrontierError3d::InvalidSearchTime(
+            earliest.time,
+        ));
+    }
+    Ok(Some(reconstruct_frontier(boxes, config, earliest)?))
+}
+
+fn reconstruct_frontier(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    earliest: RotatingContactSearchHit3d,
+) -> Result<RotatingContactFrontier3d, RotatingContactFrontierError3d> {
     if earliest.time.denominator == 0 || earliest.time.numerator > earliest.time.denominator {
         return Err(RotatingContactFrontierError3d::InvalidSearchTime(
             earliest.time,
@@ -197,12 +236,12 @@ pub fn earliest_rotating_contact_frontier(
             earliest.time,
         ))?;
 
-    Ok(Some(RotatingContactFrontier3d {
+    Ok(RotatingContactFrontier3d {
         boxes: sampled,
         time: earliest.time,
         contacts,
         remaining_numerator,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -213,7 +252,7 @@ mod tests {
         SampledContactTime3d, Vec3i,
     };
 
-    use super::earliest_rotating_contact_frontier;
+    use super::{earliest_rotating_contact_frontier, next_rotating_contact_frontier};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half_extents: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -293,6 +332,54 @@ mod tests {
         assert_ne!(
             frontier.boxes[0].body().position(),
             boxes[0].body().position()
+        );
+    }
+
+    #[test]
+    fn positive_frontier_skips_persistent_selector_but_retains_it_in_shared_state() {
+        let boxes = [
+            dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
+            fixed(2, Vec3i::ZERO),
+            dynamic(
+                3,
+                Vec3i::new(-10, 10, 0),
+                Vec3i::new(20, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            fixed(4, Vec3i::new(0, 10, 0)),
+        ];
+        let frontier = next_rotating_contact_frontier(&boxes, config())
+            .expect("valid positive frontier")
+            .expect("later contact should select a frontier");
+
+        assert!(frontier.time.numerator > 0);
+        assert!(frontier.contacts.iter().any(|contact| {
+            contact.pair
+                == RotationalSweepPair3d {
+                    left: BodyId(1),
+                    right: BodyId(2),
+                }
+        }));
+        assert!(frontier.contacts.iter().any(|contact| {
+            contact.pair
+                == RotationalSweepPair3d {
+                    left: BodyId(3),
+                    right: BodyId(4),
+                }
+        }));
+    }
+
+    #[test]
+    fn persistent_contact_alone_does_not_create_positive_frontier() {
+        let boxes = [
+            dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
+            fixed(2, Vec3i::ZERO),
+        ];
+
+        assert_eq!(
+            next_rotating_contact_frontier(&boxes, config())
+                .expect("valid persistent frontier query"),
+            None
         );
     }
 
