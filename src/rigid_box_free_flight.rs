@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    AngularError3d, AngularState3d, BodyId, BodyKind, RigidBox3d, RotationalSweepBounds3d,
-    RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
+    AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, RigidBox3d,
+    RotationalSweepBounds3d, RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
     rotational_sweep::rotational_sweep_bounds_for_center_interval, wide_ratio::mul_div_round_i128,
 };
 
@@ -96,7 +96,7 @@ impl From<RotationalSweepError3d> for RigidBoxFreeFlightError3d {
 /// state, so sample count does not silently alter motion. Linear motion uses the same semi-implicit
 /// ordering as the existing translational `World` for a full integer tick: apply proportional gravity
 /// to velocity, then advance position with the resulting velocity. Orientation uses the engine's
-/// deterministic fixed-point quaternion integrator.
+/// deterministic fixed-point quaternion integrator unless the box has an explicit rotation lock.
 ///
 /// The public segment timestep remains an `i32` ratio, but composing it with the `u32` sample fraction
 /// stays wide internally. Repeated-event refinement can therefore use large reduced denominators without
@@ -149,16 +149,27 @@ pub fn sample_rigid_box_free_flight(
     body.velocity = velocity;
     body.position = position;
 
-    let angular = AngularState3d::new(
-        integrate_orientation_ratio(
+    let angular = if rigid_box.rotation_locked {
+        AngularState3d::new(
             rigid_box.angular.orientation,
+            AngularVelocity3d::default(),
+        )
+    } else {
+        AngularState3d::new(
+            integrate_orientation_ratio(
+                rigid_box.angular.orientation,
+                rigid_box.angular.angular_velocity,
+                step_numerator,
+                step_denominator,
+            )?,
             rigid_box.angular.angular_velocity,
-            step_numerator,
-            step_denominator,
-        )?,
-        rigid_box.angular.angular_velocity,
-    );
-    Ok(RigidBox3d { body, angular })
+        )
+    };
+    Ok(RigidBox3d {
+        body,
+        angular,
+        rotation_locked: rigid_box.rotation_locked,
+    })
 }
 
 /// Conservatively bounds every direct free-flight sample over the configured interval.
@@ -354,6 +365,32 @@ mod tests {
 
         assert_eq!(sampled.body(), world.body(BodyId(1)).expect("body remains"));
         assert_ne!(sampled.angular().orientation, Orientation3d::IDENTITY);
+    }
+
+    #[test]
+    fn rotation_locked_box_translates_without_changing_orientation() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(7),
+                Vec3i::ZERO,
+                Vec3i::new(60, 0, 0),
+                Vec3i::new(2, 3, 4),
+            ),
+            AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE),
+        )
+        .with_rotation_locked();
+        let sampled = sample_rigid_box_free_flight(
+            &rigid_box,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60),
+            1,
+            1,
+        )
+        .expect("valid locked free flight");
+
+        assert!(sampled.body().position().x > rigid_box.body().position().x);
+        assert_eq!(sampled.angular().orientation, rigid_box.angular().orientation);
+        assert!(sampled.angular().angular_velocity.is_zero());
+        assert!(sampled.rotation_locked());
     }
 
     #[test]
