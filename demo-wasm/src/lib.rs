@@ -427,18 +427,16 @@ mod tests {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
         assert!(sandbox.grounded().expect("valid foot probe"));
-        let before = sandbox
-            .world
-            .body(PLAYER_ID)
-            .expect("player")
-            .position()
-            .y;
+        let before = sandbox.world.body(PLAYER_ID).expect("player").position().y;
 
         assert_eq!(sandbox.step(0, 0, true), 0);
 
         let player = sandbox.world.body(PLAYER_ID).expect("player after jump");
         assert!(player.position().y > before, "jump did not move upward");
-        assert!(player.velocity().y > 0, "jump did not preserve upward velocity");
+        assert!(
+            player.velocity().y > 0,
+            "jump did not preserve upward velocity"
+        );
         assert!(!sandbox.grounded().expect("valid airborne foot probe"));
     }
 
