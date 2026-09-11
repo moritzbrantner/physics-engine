@@ -27,7 +27,10 @@ impl fmt::Display for RotatingContactResponseError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroSolverPasses => {
-                write!(formatter, "rotating contact response requires at least one solver pass")
+                write!(
+                    formatter,
+                    "rotating contact response requires at least one solver pass"
+                )
             }
             Self::MissingBody(id) => write!(
                 formatter,
@@ -61,9 +64,7 @@ struct BodyDelta3d {
 
 impl BodyDelta3d {
     fn is_zero(self) -> bool {
-        self.position == [0; 3]
-            && self.linear_velocity == [0; 3]
-            && self.angular_velocity == [0; 3]
+        self.position == [0; 3] && self.linear_velocity == [0; 3] && self.angular_velocity == [0; 3]
     }
 
     fn accumulate(
@@ -144,12 +145,12 @@ pub fn resolve_rotating_contact_frontier(
         let mut deltas = vec![BodyDelta3d::default(); snapshot.len()];
 
         for contact in &frontier.contacts {
-            let left_index = *indices
-                .get(&contact.pair.left)
-                .ok_or(RotatingContactResponseError3d::MissingBody(contact.pair.left))?;
-            let right_index = *indices
-                .get(&contact.pair.right)
-                .ok_or(RotatingContactResponseError3d::MissingBody(contact.pair.right))?;
+            let left_index = *indices.get(&contact.pair.left).ok_or(
+                RotatingContactResponseError3d::MissingBody(contact.pair.left),
+            )?;
+            let right_index = *indices.get(&contact.pair.right).ok_or(
+                RotatingContactResponseError3d::MissingBody(contact.pair.right),
+            )?;
             let response = resolve_obb_contact(
                 snapshot[left_index].clone(),
                 snapshot[right_index].clone(),
@@ -165,13 +166,13 @@ pub fn resolve_rotating_contact_frontier(
         for (rigid_box, delta) in boxes.iter_mut().zip(deltas) {
             apply_delta(rigid_box, delta)?;
         }
-        passes_used = passes_used
-            .checked_add(1)
-            .ok_or(RotatingContactResponseError3d::ArithmeticOverflow(
+        passes_used = passes_used.checked_add(1).ok_or(
+            RotatingContactResponseError3d::ArithmeticOverflow(
                 boxes
                     .first()
                     .map_or(BodyId(0), |rigid_box| rigid_box.body.id),
-            ))?;
+            ),
+        )?;
     }
 
     Ok(RotatingContactResponse3d {
@@ -194,21 +195,9 @@ fn apply_delta(
         add_i32(rigid_box.body.position.z, delta.position[2], id)?,
     );
     rigid_box.body.velocity = crate::Vec3i::new(
-        add_i32(
-            rigid_box.body.velocity.x,
-            delta.linear_velocity[0],
-            id,
-        )?,
-        add_i32(
-            rigid_box.body.velocity.y,
-            delta.linear_velocity[1],
-            id,
-        )?,
-        add_i32(
-            rigid_box.body.velocity.z,
-            delta.linear_velocity[2],
-            id,
-        )?,
+        add_i32(rigid_box.body.velocity.x, delta.linear_velocity[0], id)?,
+        add_i32(rigid_box.body.velocity.y, delta.linear_velocity[1], id)?,
+        add_i32(rigid_box.body.velocity.z, delta.linear_velocity[2], id)?,
     );
     rigid_box.angular.angular_velocity = crate::AngularVelocity3d::new(
         add_i32(
@@ -230,11 +219,7 @@ fn apply_delta(
     Ok(())
 }
 
-fn add_i32(
-    current: i32,
-    delta: i128,
-    id: BodyId,
-) -> Result<i32, RotatingContactResponseError3d> {
+fn add_i32(current: i32, delta: i128, id: BodyId) -> Result<i32, RotatingContactResponseError3d> {
     let next = i128::from(current)
         .checked_add(delta)
         .ok_or(RotatingContactResponseError3d::ArithmeticOverflow(id))?;
@@ -253,12 +238,7 @@ mod tests {
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
-            RigidBody::dynamic(
-                BodyId(id),
-                position,
-                velocity,
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid dynamic box")
@@ -273,11 +253,7 @@ mod tests {
     }
 
     fn config() -> RotatingContactSearchConfig3d {
-        RotatingContactSearchConfig3d::new(
-            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
-            4,
-            3,
-        )
+        RotatingContactSearchConfig3d::new(RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1), 4, 3)
     }
 
     #[test]
