@@ -3,8 +3,7 @@ use std::{error::Error, fmt};
 use crate::{
     AngularError3d, AngularState3d, BodyId, BodyKind, RigidBox3d, RotationalSweepBounds3d,
     RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
-    rotational_sweep::rotational_sweep_bounds_for_center_interval,
-    wide_ratio::mul_div_round_i128,
+    rotational_sweep::rotational_sweep_bounds_for_center_interval, wide_ratio::mul_div_round_i128,
 };
 
 /// Explicit rational timestep and acceleration for collision-free rotating-box sampling.
@@ -310,8 +309,9 @@ fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody,
-        RigidBox3d, Vec3i, World, WorldConfig, oriented_box_vertices, rotational_sweep_bounds,
+        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d,
+        RigidBody, RigidBox3d, Vec3i, World, WorldConfig, oriented_box_vertices,
+        rotational_sweep_bounds,
     };
 
     use super::{
