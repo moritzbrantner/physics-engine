@@ -239,10 +239,10 @@ pub(crate) fn integrate_orientation_ratio(
         checked_sum([wz * qw, wx * qy, -(wy * qx)])?,
         checked_sum([-(wx * qx), -(wy * qy), -(wz * qz)])?,
     ];
-    let numerator = i128::try_from(timestep_numerator)
-        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    let timestep_denominator = i128::try_from(timestep_denominator)
-        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let numerator =
+        i128::try_from(timestep_numerator).map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let timestep_denominator =
+        i128::try_from(timestep_denominator).map_err(|_| AngularError3d::ArithmeticOverflow)?;
     let denominator = i128::from(2_i32)
         .checked_mul(i128::from(ANGULAR_VELOCITY_SCALE))
         .and_then(|value| value.checked_mul(timestep_denominator))
