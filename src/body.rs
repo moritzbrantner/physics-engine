@@ -16,17 +16,32 @@ pub enum BodyKind {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Material {
     restitution_milli: u16,
+    friction_milli: u16,
 }
 
 impl Material {
     #[must_use]
     pub const fn new(restitution_milli: u16) -> Self {
-        Self { restitution_milli }
+        Self {
+            restitution_milli,
+            friction_milli: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_friction(mut self, friction_milli: u16) -> Self {
+        self.friction_milli = friction_milli;
+        self
     }
 
     #[must_use]
     pub const fn restitution_milli(self) -> u16 {
         self.restitution_milli
+    }
+
+    #[must_use]
+    pub const fn friction_milli(self) -> u16 {
+        self.friction_milli
     }
 }
 
