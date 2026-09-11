@@ -7,16 +7,33 @@ use crate::{
 };
 
 /// Explicit rational timestep and acceleration for collision-free rotating-box sampling.
+///
+/// Public callers still construct this from `i32` components. The stored ratio is widened so internal
+/// repeated-event composition can remain exact instead of forcing every remaining segment back through
+/// the narrower public input representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RigidBoxFreeFlightConfig3d {
     pub gravity: Vec3i,
-    pub timestep_numerator: i32,
-    pub timestep_denominator: i32,
+    pub timestep_numerator: i128,
+    pub timestep_denominator: i128,
 }
 
 impl RigidBoxFreeFlightConfig3d {
     #[must_use]
     pub const fn new(gravity: Vec3i, timestep_numerator: i32, timestep_denominator: i32) -> Self {
+        Self {
+            gravity,
+            timestep_numerator: timestep_numerator as i128,
+            timestep_denominator: timestep_denominator as i128,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn new_wide(
+        gravity: Vec3i,
+        timestep_numerator: i128,
+        timestep_denominator: i128,
+    ) -> Self {
         Self {
             gravity,
             timestep_numerator,
@@ -27,8 +44,8 @@ impl RigidBoxFreeFlightConfig3d {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RigidBoxFreeFlightError3d {
-    NegativeTimestepNumerator(i32),
-    NonPositiveTimestepDenominator(i32),
+    NegativeTimestepNumerator(i128),
+    NonPositiveTimestepDenominator(i128),
     ZeroFractionDenominator,
     FractionOutOfRange { numerator: u32, denominator: u32 },
     RatioTooLarge,
@@ -98,9 +115,9 @@ impl From<RotationalSweepError3d> for RigidBoxFreeFlightError3d {
 /// to velocity, then advance position with the resulting velocity. Orientation uses the engine's
 /// deterministic fixed-point quaternion integrator unless the box has an explicit rotation lock.
 ///
-/// The public segment timestep remains an `i32` ratio, but composing it with the `u32` sample fraction
-/// stays wide internally. Repeated-event refinement can therefore use large reduced denominators without
-/// introducing a narrower representational boundary than the public segment itself.
+/// Internal segment time can use the widened exact ratio produced by repeated-event advancement.
+/// Composing that segment with the sampled `u32` fraction cross-cancels before multiplication, so the
+/// rational stays exact as long as the engine's `i128` internal time budget can represent it.
 ///
 /// `fraction_numerator / fraction_denominator` must be within `0..=1`.
 ///
@@ -245,14 +262,28 @@ fn sample_step_ratio(
         });
     }
 
-    let numerator = u128::from(config.timestep_numerator.unsigned_abs())
-        .checked_mul(u128::from(fraction_numerator))
+    let mut numerator = config.timestep_numerator.unsigned_abs();
+    let mut denominator = config.timestep_denominator.unsigned_abs();
+    let mut fraction_numerator = u128::from(fraction_numerator);
+    let mut fraction_denominator = u128::from(fraction_denominator);
+
+    let numerator_cross = greatest_common_divisor(numerator, fraction_denominator);
+    numerator /= numerator_cross;
+    fraction_denominator /= numerator_cross;
+    let denominator_cross = greatest_common_divisor(denominator, fraction_numerator);
+    denominator /= denominator_cross;
+    fraction_numerator /= denominator_cross;
+
+    numerator = numerator
+        .checked_mul(fraction_numerator)
         .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let denominator = u128::from(config.timestep_denominator.unsigned_abs())
-        .checked_mul(u128::from(fraction_denominator))
+    denominator = denominator
+        .checked_mul(fraction_denominator)
         .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let divisor = greatest_common_divisor(numerator, denominator);
-    Ok((numerator / divisor, denominator / divisor))
+    if numerator > i128::MAX as u128 || denominator > i128::MAX as u128 {
+        return Err(RigidBoxFreeFlightError3d::RatioTooLarge);
+    }
+    Ok((numerator, denominator))
 }
 
 fn rounded_ratio(
