@@ -330,12 +330,7 @@ mod tests {
     #[test]
     fn no_event_leaves_the_full_tail_unconsumed() {
         let boxes = [
-            dynamic(
-                1,
-                Vec3i::new(-100, 0, 0),
-                Vec3i::ZERO,
-                Material::new(0),
-            ),
+            dynamic(1, Vec3i::new(-100, 0, 0), Vec3i::ZERO, Material::new(0)),
             fixed(2, Vec3i::new(100, 0, 0), Material::new(0)),
         ];
         let advance =
@@ -349,12 +344,7 @@ mod tests {
     #[test]
     fn time_zero_event_is_resolved_without_consuming_the_tail() {
         let boxes = [
-            dynamic(
-                1,
-                Vec3i::ZERO,
-                Vec3i::new(60, 0, 0),
-                Material::new(0),
-            ),
+            dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0), Material::new(0)),
             fixed(2, Vec3i::new(2, 0, 0), Material::new(0)),
         ];
         let advance = advance_repeated_rotating_events(&boxes, config(8))
