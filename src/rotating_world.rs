@@ -6,7 +6,8 @@ use crate::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
     RotationalSweepPair3d, SampledContactTime3d, Vec3i, advance_repeated_rotating_events,
-    obb_contact_seed, resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
+    obb_contact_seed, oriented_box_vertices, resolve_rotating_contact_frontier,
+    sample_rigid_box_free_flight,
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -208,6 +209,7 @@ impl RotatingWorld3d {
 
     /// Returns stable `BodyId`-ordered OBB overlaps for an arbitrary oriented query box.
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        oriented_box_vertices(query)?;
         let mut hits = Vec::new();
         for (id, rigid_box) in &self.boxes {
             if obb_contact_seed(query, rigid_box.oriented_box())?.is_some() {
@@ -555,6 +557,18 @@ mod tests {
 
     #[test]
     fn controlled_velocity_and_overlap_queries_preserve_stable_identity() {
+        let empty_world = world(Vec3i::ZERO);
+        assert!(
+            empty_world
+                .overlap_query(OrientedBox3d::new(
+                    Vec3i::ZERO,
+                    Vec3i::new(1, 0, 1),
+                    Orientation3d::IDENTITY,
+                ))
+                .is_err(),
+            "empty-world queries must still validate their geometry"
+        );
+
         let mut world = world(Vec3i::ZERO);
         world
             .add_box(dynamic(1, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(2, 2, 2)))
