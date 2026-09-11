@@ -398,13 +398,7 @@ fn coulomb_clamp_vector(
         }
     }
 
-    tangent_impulse_from_pivot(
-        low,
-        negative,
-        oriented_tangent,
-        pivot,
-        pivot_denominator,
-    )
+    tangent_impulse_from_pivot(low, negative, oriented_tangent, pivot, pivot_denominator)
 }
 
 fn tangent_impulse_from_pivot(
@@ -428,11 +422,7 @@ fn tangent_impulse_from_pivot(
         impulse[index] = if index == pivot {
             pivot_impulse
         } else {
-            mul_div_round_i128(
-                pivot_impulse,
-                oriented_tangent[index],
-                pivot_denominator,
-            )?
+            mul_div_round_i128(pivot_impulse, oriented_tangent[index], pivot_denominator)?
         };
     }
     Ok(impulse)
