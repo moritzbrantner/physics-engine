@@ -261,8 +261,7 @@ fn consume_tail(
                 unsafe_body = Some(id);
                 break;
             }
-            let (next, contacts) =
-                free_flight_and_stabilize(current, slice_config, solver_passes)?;
+            let (next, contacts) = free_flight_and_stabilize(current, slice_config, solver_passes)?;
             current = next;
             contact_count = contact_count.saturating_add(contacts);
         }
