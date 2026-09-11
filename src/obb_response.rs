@@ -175,12 +175,7 @@ pub fn resolve_obb_contact(
                 negate_axis(impulse)?,
                 !tied_zero_depth,
             )?;
-            apply_body_impulse(
-                &mut resolved_right,
-                right_offset,
-                impulse,
-                !tied_zero_depth,
-            )?;
+            apply_body_impulse(&mut resolved_right, right_offset, impulse, !tied_zero_depth)?;
         }
         impulse
     } else {
@@ -763,7 +758,8 @@ fn project_pair(
             Ok(())
         }
         (BodyKind::Dynamic, BodyKind::Fixed) => {
-            left.body.position = offset_position(left.body.position, negate_i64_vector(correction)?)?;
+            left.body.position =
+                offset_position(left.body.position, negate_i64_vector(correction)?)?;
             Ok(())
         }
         (BodyKind::Dynamic, BodyKind::Dynamic) => {
@@ -1070,11 +1066,7 @@ mod tests {
     fn tied_zero_depth_corner_impact_makes_progress_without_invented_torque() {
         let left = dynamic(1, Vec3i::ZERO, Vec3i::new(10, 10, 0));
         let right = RigidBox3d::new(
-            RigidBody::fixed(
-                BodyId(2),
-                Vec3i::new(20, 20, 0),
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::fixed(BodyId(2), Vec3i::new(20, 20, 0), Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid fixed box");
@@ -1135,11 +1127,7 @@ mod tests {
         )
         .expect("valid dynamic box");
         let wall = RigidBox3d::new(
-            RigidBody::fixed(
-                BodyId(2),
-                Vec3i::new(19, 0, 0),
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid wall");
@@ -1164,11 +1152,7 @@ mod tests {
         )
         .expect("valid dynamic box");
         let wall = RigidBox3d::new(
-            RigidBody::fixed(
-                BodyId(2),
-                Vec3i::new(19, 0, 0),
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid wall");
