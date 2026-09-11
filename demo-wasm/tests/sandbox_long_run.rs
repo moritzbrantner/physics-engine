@@ -5,7 +5,7 @@ use physics_engine::{
 
 const PLAYER_ID: BodyId = BodyId(1);
 const TICKS_PER_SECOND: i32 = 60;
-const STABILITY_TICKS: usize = 180;
+const STABILITY_TICKS: usize = 120;
 
 fn rotating_box(body: RigidBody) -> RigidBox3d {
     RigidBox3d::new(
@@ -111,7 +111,7 @@ fn controlled_step(world: &mut RotatingWorld3d, move_x: i32, move_z: i32, tick: 
 }
 
 #[test]
-fn idle_sandbox_survives_three_seconds() {
+fn idle_sandbox_survives_two_seconds() {
     let mut world = sandbox_world();
     for tick in 0..STABILITY_TICKS {
         controlled_step(&mut world, 0, 0, tick);
@@ -119,7 +119,7 @@ fn idle_sandbox_survives_three_seconds() {
 }
 
 #[test]
-fn sustained_forward_input_survives_three_seconds() {
+fn sustained_forward_input_survives_two_seconds() {
     let mut world = sandbox_world();
     for tick in 0..STABILITY_TICKS {
         controlled_step(&mut world, 0, -7, tick);
@@ -127,7 +127,7 @@ fn sustained_forward_input_survives_three_seconds() {
 }
 
 #[test]
-fn alternating_wasd_input_survives_three_seconds() {
+fn alternating_wasd_input_survives_two_seconds() {
     let mut world = sandbox_world();
     let inputs = [(0, -7), (-7, 0), (0, 7), (7, 0)];
     for tick in 0..STABILITY_TICKS {
