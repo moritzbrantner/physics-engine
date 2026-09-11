@@ -274,19 +274,13 @@ impl Sandbox {
 
     fn angular_at(&self, index: u32) -> AngularState3d {
         if index == 0 {
-            return AngularState3d::new(
-                Orientation3d::IDENTITY,
-                AngularVelocity3d::default(),
-            );
+            return AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default());
         }
         self.box_world
             .boxes()
             .nth(index.saturating_sub(1) as usize)
             .map_or(
-                AngularState3d::new(
-                    Orientation3d::IDENTITY,
-                    AngularVelocity3d::default(),
-                ),
+                AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
                 RigidBox3d::angular,
             )
     }
