@@ -272,9 +272,11 @@ fn scale_remaining_time(
         .checked_mul(u128::from(event_time.denominator))
         .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?;
     let divisor = greatest_common_divisor(numerator, denominator);
-    bounded_ratio_floor(numerator / divisor, denominator / divisor).map(|(numerator, denominator)| {
-        RigidBoxFreeFlightConfig3d::new(current.gravity, numerator, denominator)
-    })
+    bounded_ratio_floor(numerator / divisor, denominator / divisor).map(
+        |(numerator, denominator)| {
+            RigidBoxFreeFlightConfig3d::new(current.gravity, numerator, denominator)
+        },
+    )
 }
 
 fn bounded_ratio_floor(
