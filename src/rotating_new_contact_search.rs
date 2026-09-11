@@ -149,10 +149,19 @@ fn validate_resolution(
     if config.sample_count == 0 {
         return Err(RotatingContactSearchError3d::ZeroSampleCount);
     }
-    if u32::from(config.sample_count)
+    let scale = 1_u64
         .checked_shl(u32::from(config.refinement_steps))
-        .is_none()
-    {
+        .ok_or(RotatingContactSearchError3d::ResolutionTooFine {
+            sample_count: config.sample_count,
+            refinement_steps: config.refinement_steps,
+        })?;
+    let final_denominator = u64::from(config.sample_count)
+        .checked_mul(scale)
+        .ok_or(RotatingContactSearchError3d::ResolutionTooFine {
+            sample_count: config.sample_count,
+            refinement_steps: config.refinement_steps,
+        })?;
+    if final_denominator > u64::from(u32::MAX) {
         return Err(RotatingContactSearchError3d::ResolutionTooFine {
             sample_count: config.sample_count,
             refinement_steps: config.refinement_steps,
@@ -194,7 +203,8 @@ fn gcd_u32(mut left: u32, mut right: u32) -> u32 {
 mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
+        RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, RotatingContactSearchError3d,
+        Vec3i,
     };
 
     use super::sampled_new_rotating_contact_search;
@@ -261,6 +271,27 @@ mod tests {
 
         assert!(hit.time.numerator > 0);
         assert!(hit.time.numerator < hit.time.denominator);
+    }
+
+    #[test]
+    fn overflowing_refined_denominator_fails_before_pair_search() {
+        let boxes = [
+            dynamic(1, Vec3i::ZERO, Vec3i::ZERO),
+            fixed(2, Vec3i::new(2, 0, 0)),
+        ];
+        let config = RotatingContactSearchConfig3d::new(
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
+            32_768,
+            17,
+        );
+
+        assert_eq!(
+            sampled_new_rotating_contact_search(&boxes, config),
+            Err(RotatingContactSearchError3d::ResolutionTooFine {
+                sample_count: 32_768,
+                refinement_steps: 17,
+            })
+        );
     }
 
     #[test]
