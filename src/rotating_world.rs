@@ -521,7 +521,7 @@ fn ceil_div(value: u128, denominator: u128, id: BodyId) -> Result<u128, Rotating
         return Err(RotatingWorldError3d::PersistentTailArithmeticOverflow(id));
     }
     let quotient = value / denominator;
-    if value % denominator == 0 {
+    if value.is_multiple_of(denominator) {
         Ok(quotient)
     } else {
         quotient
