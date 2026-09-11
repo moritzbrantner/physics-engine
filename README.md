@@ -28,7 +28,7 @@ The engine now has a deliberately narrow but real reusable core:
 - direct deterministic rotating-box free-flight sampling with acceleration-aware conservative sweep bounds;
 - deterministic rotational broad-phase candidate pairs;
 - sampled rotating OBB first-contact search plus strictly-positive clear/re-contact search;
-- reconstruction of one shared equal-time rotating-contact frontier;
+- shared first-contact and strictly-positive re-contact frontier reconstruction;
 - deterministic OBB/frontier response with coupled simultaneous-contact handling and precision-preserving angular inertia math;
 - integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
@@ -37,6 +37,8 @@ This is the clean ownership replacement for putting physics semantics directly i
 The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, and frontier response are separate engine-owned foundations being assembled into the rotating event solver without changing the established translational contract.
 
 The rotational contact path is deliberately sampled. First-contact search can detect and refine contact observed by its coarse grid. Re-contact search adds the state transition needed by repeated events: a pair already touching at the interval start is ignored until a coarse sample proves it clear and a later sample observes contact again. Persistent time-zero contact therefore cannot hide every later event merely by being rediscovered first. This still does not become analytic rotational CCD: a clear interval or contact island that exists wholly between adjacent coarse samples can be missed, and refinement only sharpens an already observed clear/contact bracket.
+
+Both first-contact and re-contact hits now use one shared frontier reconstruction authority. A persistent pair may be ineligible to select the next positive event, but if it is still touching when another pair selects that event, it is included again in the shared frontier and remains visible to simultaneous response. That distinction is the search-side foundation required before exact rational remaining-time orchestration can be added.
 
 Frontier response likewise remains narrower than a full frame solver. It resolves the shared sampled state with bounded simultaneous passes, couples duplicate same-direction constraints rather than blindly multiplying their impulses, preserves progress at tied zero-depth impacts, and retains rotational precision for large valid inertias. Repeated remaining-time advancement and persistent-contact support over an entire frame are the next layer.
 
@@ -85,7 +87,7 @@ ECS / game / simulation consumer
           +-- rotational/free-flight sweep bounds
           +-- direct rotating-box free flight
           +-- sampled first-contact / re-contact search
-          +-- shared rotating-contact frontier
+          +-- shared first-contact / re-contact frontier
           +-- coupled rotating frontier response
           +-- spatial queries
           +-- repeated rotating event solver (next)
@@ -97,7 +99,7 @@ ECS / game / simulation consumer
 
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
-1. reconstruct a shared strictly-positive re-contact frontier and consume exact rational remaining time across repeated sampled events;
+1. consume exact rational remaining time across repeated sampled rotating events;
 2. persistent/resting contact stabilization over those remaining-time segments;
 3. friction and fuller contact-manifold constraints;
 4. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
