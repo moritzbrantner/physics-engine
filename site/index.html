@@ -3,59 +3,70 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>physics-engine · continuous collision detection</title>
+    <title>physics-engine · interactive sandbox</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main>
       <header>
         <p class="eyebrow">physics-engine</p>
-        <h1>See the collision between frames.</h1>
+        <h1>Walk through the physics.</h1>
         <p class="lede">
-          The engine follows motion across the interval, finds time of impact, resolves the contact,
-          and then uses the remainder of the step. This page visualizes that contract; Rust remains
-          the authoritative implementation.
+          This acceptance sandbox runs the repository's Rust <code>World</code> in WebAssembly. The
+          browser owns input and drawing; body state, gravity, collision detection, continuous time of
+          impact and response stay authoritative in the physics engine.
         </p>
       </header>
 
       <section class="demo" aria-labelledby="demo-title">
         <div class="demo-heading">
           <div>
-            <p class="eyebrow">CCD explainer</p>
-            <h2 id="demo-title">Swept AABB instead of frame-end overlap</h2>
+            <p class="eyebrow">Interactive acceptance world</p>
+            <h2 id="demo-title">Movement, jumping, dynamic bodies and projectile CCD</h2>
           </div>
-          <button id="restart" type="button">Restart</button>
+          <div class="actions" aria-label="Simulation controls">
+            <button id="reset" type="button">Reset</button>
+            <button id="pause" type="button">Pause</button>
+            <button id="single-step" type="button">Step</button>
+          </div>
         </div>
-        <canvas id="scene" width="960" height="360" aria-label="Continuous collision demonstration"></canvas>
-        <div class="controls">
-          <label>
-            Speed
-            <input id="speed" type="range" min="180" max="1400" step="20" value="900" />
-            <output id="speed-value">900 units/s</output>
-          </label>
-          <label>
-            Restitution
-            <input id="restitution" type="range" min="0" max="1000" step="50" value="350" />
-            <output id="restitution-value">0.35</output>
-          </label>
+
+        <div class="viewport-shell">
+          <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>
+          <div class="help" aria-hidden="true">WASD move · Space jump · Mouse look · Click shoot · R reset · P pause · N step</div>
         </div>
-        <p id="status" class="status" aria-live="polite"></p>
+        <p id="debug" class="debug" aria-live="polite"></p>
+        <p id="status" class="status" aria-live="polite">Loading the Rust physics sandbox…</p>
+      </section>
+
+      <section class="notes" aria-labelledby="fixture-title">
+        <p class="eyebrow">What this fixture exercises</p>
+        <h2 id="fixture-title">A deliberately small but real integration surface</h2>
+        <p>
+          The world contains a grounded player body, stacked dynamic boxes, platforms and steps, plus
+          a thin wall placed in the projectile path. Fast shots therefore exercise swept AABB CCD
+          instead of relying on frame-end overlap. Pause and single-step make failures easier to inspect.
+        </p>
+        <p>
+          The current production <code>World</code> is still translational and AABB-only, so the player
+          is box-shaped and the staircase is built from boxes. Capsules, slopes, friction and richer
+          character-controller behavior belong in later engine slices rather than being faked here.
+        </p>
       </section>
 
       <section class="architecture" aria-labelledby="boundary-title">
         <p class="eyebrow">Boundary</p>
-        <h2 id="boundary-title">A physics engine, not a game engine</h2>
-        <p>
-          This repository owns bodies, motion, collision detection, time of impact and response.
-          ECS, rendering, input, scenes and the game loop compose it from the outside.
-        </p>
-        <pre>consumer / ECS / game
-        |
-        v
-  physics-engine
-  bodies · CCD · TOI · response</pre>
+        <h2 id="boundary-title">The demo consumes the engine; it does not become the engine</h2>
+        <pre>browser input + rendering
+          |
+          v
+ demo-wasm acceptance adapter
+          |
+          v
+    physics-engine
+ bodies · queries · CCD · TOI · response</pre>
       </section>
     </main>
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

@@ -71,6 +71,21 @@ let report = world.step(1)?;
 # Ok::<(), physics_engine::PhysicsError>(())
 ```
 
+## Interactive acceptance sandbox
+
+GitHub Pages now builds a small first-person acceptance world through `demo-wasm`. The adapter depends on this crate and exposes only the state needed by the browser consumer; it does not reimplement collision detection or response in JavaScript.
+
+The fixture currently exercises:
+
+- WASD-controlled horizontal movement with engine-owned gravity and collision response;
+- grounded queries and jumping;
+- stacked dynamic boxes and fixed platforms/steps;
+- high-speed projectile bodies fired at a deliberately thin wall so swept-AABB CCD is directly observable;
+- pause, reset and single-step controls for inspecting deterministic behavior;
+- lightweight per-tick collision/broad-phase evidence from the actual `World` step report.
+
+The player is intentionally box-shaped because the production `World` remains translational/AABB-only. Capsules, slopes, friction and a richer character controller should be added as real engine capabilities rather than approximated in the renderer.
+
 ## Ownership boundary
 
 ```text
@@ -109,10 +124,10 @@ The existing `ecs-lab` experiments already contain useful evidence for more adva
 3. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
 4. joints/constraints and sleeping/islands;
 5. a thin ECS adapter that maps entity IDs/components to engine bodies;
-6. WASM bindings so browser demos execute the Rust engine directly.
+6. general-purpose WASM bindings beyond the narrow acceptance-demo adapter.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 
 ## Validation
 
-`Validate` runs the repository's coding-tooling fast tier. GitHub Pages hosts an interactive CCD explainer; it is a visualization of the contract, not an independent authoritative physics implementation.
+`Validate` runs the repository's coding-tooling fast tier, tests the `demo-wasm` adapter natively, and builds the same adapter for `wasm32-unknown-unknown`. GitHub Pages deploys that Rust-backed interactive acceptance sandbox.
