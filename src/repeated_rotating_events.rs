@@ -159,7 +159,7 @@ pub fn advance_repeated_rotating_events(
         });
     };
 
-    let mut state = boxes.to_vec();
+    let mut state;
     let mut events = Vec::new();
     let mut frontier = first_frontier;
 
