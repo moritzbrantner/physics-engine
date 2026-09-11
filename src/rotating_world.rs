@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBoxError3d, RepeatedRotatingEventConfig3d,
-    RepeatedRotatingEventError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
-    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
-    SampledContactTime3d, Vec3i, advance_repeated_rotating_events, obb_contact_seed,
-    resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
+    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBox3d, OrientedBoxError3d,
+    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
+    RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
+    RotationalSweepPair3d, SampledContactTime3d, Vec3i, advance_repeated_rotating_events,
+    obb_contact_seed, resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -48,6 +48,7 @@ pub struct RotatingWorldStepReport3d {
 pub enum RotatingWorldError3d {
     DuplicateBody(BodyId),
     MissingBody(BodyId),
+    FixedBodyVelocity(BodyId),
     NegativeTimestepNumerator(i32),
     NonPositiveTimestepDenominator(i32),
     PersistentTailResolutionLimit(u32),
@@ -64,6 +65,11 @@ impl fmt::Display for RotatingWorldError3d {
         match self {
             Self::DuplicateBody(id) => write!(formatter, "duplicate rotating body {}", id.0),
             Self::MissingBody(id) => write!(formatter, "rotating body {} does not exist", id.0),
+            Self::FixedBodyVelocity(id) => write!(
+                formatter,
+                "fixed rotating body {} cannot receive linear velocity",
+                id.0
+            ),
             Self::NegativeTimestepNumerator(value) => write!(
                 formatter,
                 "rotating world timestep numerator must be non-negative, got {value}"
@@ -175,6 +181,43 @@ impl RotatingWorld3d {
 
     pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {
         self.boxes.values()
+    }
+
+    /// Replaces one dynamic body's linear velocity while preserving its rotational state.
+    ///
+    /// This is intended for controlled bodies and external impulses that are already expressed in the
+    /// engine's canonical velocity units. Fixed bodies reject non-zero velocity.
+    pub fn set_linear_velocity(
+        &mut self,
+        id: BodyId,
+        velocity: Vec3i,
+    ) -> Result<(), RotatingWorldError3d> {
+        let rigid_box = self
+            .boxes
+            .get_mut(&id)
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        if rigid_box.body.kind() == BodyKind::Fixed {
+            if velocity != Vec3i::ZERO {
+                return Err(RotatingWorldError3d::FixedBodyVelocity(id));
+            }
+            return Ok(());
+        }
+        rigid_box.body.velocity = velocity;
+        Ok(())
+    }
+
+    /// Returns stable `BodyId`-ordered OBB overlaps for an arbitrary oriented query box.
+    pub fn overlap_query(
+        &self,
+        query: OrientedBox3d,
+    ) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        let mut hits = Vec::new();
+        for (id, rigid_box) in &self.boxes {
+            if obb_contact_seed(query, rigid_box.oriented_box())?.is_some() {
+                hits.push(*id);
+            }
+        }
+        Ok(hits)
     }
 
     pub fn step(
@@ -403,10 +446,14 @@ fn tail_motion_within_extent(
     }
 
     let angular = rigid_box.angular().angular_velocity;
-    let angular_speed_l1 = u128::from(angular.x.unsigned_abs())
-        .checked_add(u128::from(angular.y.unsigned_abs()))
-        .and_then(|value| value.checked_add(u128::from(angular.z.unsigned_abs())))
-        .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
+    let angular_speed_l1 = if rigid_box.rotation_locked() {
+        0
+    } else {
+        u128::from(angular.x.unsigned_abs())
+            .checked_add(u128::from(angular.y.unsigned_abs()))
+            .and_then(|value| value.checked_add(u128::from(angular.z.unsigned_abs())))
+            .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?
+    };
     let radius_bound = u128::from(half.x.unsigned_abs())
         .checked_add(u128::from(half.y.unsigned_abs()))
         .and_then(|value| value.checked_add(u128::from(half.z.unsigned_abs())))
@@ -477,10 +524,11 @@ fn contact_frontier(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody,
+        RigidBox3d, Vec3i,
     };
 
-    use super::{RotatingWorld3d, RotatingWorldConfig3d};
+    use super::{RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -506,6 +554,37 @@ mod tests {
             solver_passes: 8,
             max_events: 16,
         })
+    }
+
+    #[test]
+    fn controlled_velocity_and_overlap_queries_preserve_stable_identity() {
+        let mut world = world(Vec3i::ZERO);
+        world
+            .add_box(dynamic(1, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(2, 2, 2)))
+            .expect("dynamic");
+        world
+            .add_box(fixed(2, Vec3i::new(5, 0, 0), Vec3i::new(2, 2, 2)))
+            .expect("fixed");
+        world
+            .set_linear_velocity(BodyId(1), Vec3i::new(60, 0, 0))
+            .expect("controlled velocity");
+        assert_eq!(
+            world.box_by_id(BodyId(1)).expect("dynamic").body().velocity(),
+            Vec3i::new(60, 0, 0)
+        );
+        assert_eq!(
+            world.set_linear_velocity(BodyId(2), Vec3i::new(1, 0, 0)),
+            Err(RotatingWorldError3d::FixedBodyVelocity(BodyId(2)))
+        );
+
+        let hits = world
+            .overlap_query(OrientedBox3d::new(
+                Vec3i::new(2, 0, 0),
+                Vec3i::new(1, 1, 1),
+                Orientation3d::IDENTITY,
+            ))
+            .expect("valid overlap query");
+        assert_eq!(hits, vec![BodyId(1), BodyId(2)]);
     }
 
     #[test]
