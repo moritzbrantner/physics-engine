@@ -6,9 +6,9 @@
 //! geometry, fixed-point orientation/angular velocity, box inertia, angular impulse evidence, exact
 //! quantized OBB SAT contact seeds, conservative rotational sweep bounds, canonical rotating-box
 //! free-flight sampling, deterministic rotational broad-phase pairing, explicit sampled rotating
-//! contact search, shared sampled rotating-contact frontiers, and deterministic OBB/frontier response.
-//! The current `World` solver remains translational and AABB-only. Rendering, ECS storage, game loops and
-//! scene ownership belong to consumers.
+//! contact/re-contact search, shared sampled rotating-contact frontiers, and deterministic OBB/frontier
+//! response. The current `World` solver remains translational and AABB-only. Rendering, ECS storage,
+//! game loops and scene ownership belong to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -26,6 +26,7 @@ mod rotating_broad_phase;
 mod rotating_contact_frontier;
 mod rotating_contact_response;
 mod rotating_contact_search;
+mod rotating_recontact_search;
 mod rotational_sweep;
 mod wide_ratio;
 mod world;
@@ -66,6 +67,7 @@ pub use rotating_contact_search::{
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
     SampledContactTime3d, sampled_rotating_contact_search,
 };
+pub use rotating_recontact_search::sampled_rotating_recontact_search;
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
