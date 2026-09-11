@@ -1,6 +1,8 @@
 use std::{error::Error, fmt};
 
-use crate::{AngularError3d, AngularState3d, BodyId, BodyKind, OrientedBox3d, RigidBody};
+use crate::{
+    AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBody,
+};
 
 /// Engine-native rotating cuboid state.
 ///
@@ -10,6 +12,7 @@ use crate::{AngularError3d, AngularState3d, BodyId, BodyKind, OrientedBox3d, Rig
 pub struct RigidBox3d {
     pub(crate) body: RigidBody,
     pub(crate) angular: AngularState3d,
+    pub(crate) rotation_locked: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,7 +76,26 @@ impl RigidBox3d {
 
         let angular =
             AngularState3d::new(angular.orientation.normalized()?, angular.angular_velocity);
-        Ok(Self { body, angular })
+        Ok(Self {
+            body,
+            angular,
+            rotation_locked: false,
+        })
+    }
+
+    /// Prevents collision response and free-flight integration from changing this box's orientation.
+    ///
+    /// The current orientation is preserved while angular velocity is cleared. This is intended for
+    /// constrained rigid bodies such as upright character-controller proxies; translational collision
+    /// response remains fully dynamic.
+    #[must_use]
+    pub fn with_rotation_locked(mut self) -> Self {
+        self.rotation_locked = true;
+        self.angular = AngularState3d::new(
+            self.angular.orientation,
+            AngularVelocity3d::default(),
+        );
+        self
     }
 
     #[must_use]
@@ -84,6 +106,11 @@ impl RigidBox3d {
     #[must_use]
     pub const fn angular(&self) -> AngularState3d {
         self.angular
+    }
+
+    #[must_use]
+    pub const fn rotation_locked(&self) -> bool {
+        self.rotation_locked
     }
 
     #[must_use]
@@ -124,6 +151,29 @@ mod tests {
         assert_eq!(rigid_box.body(), &body);
         assert_eq!(rigid_box.oriented_box().center, body.position());
         assert_eq!(rigid_box.oriented_box().half_extents, body.half_extents());
+        assert!(!rigid_box.rotation_locked());
+    }
+
+    #[test]
+    fn rotation_lock_preserves_pose_and_clears_spin() {
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(7),
+                Vec3i::ZERO,
+                Vec3i::new(1, 2, 3),
+                Vec3i::new(2, 3, 4),
+            ),
+            AngularState3d::new(
+                Orientation3d::IDENTITY,
+                AngularVelocity3d::new(100, 200, 300),
+            ),
+        )
+        .expect("valid rotating box")
+        .with_rotation_locked();
+
+        assert!(rigid_box.rotation_locked());
+        assert_eq!(rigid_box.angular().orientation, Orientation3d::IDENTITY);
+        assert!(rigid_box.angular().angular_velocity.is_zero());
     }
 
     #[test]
