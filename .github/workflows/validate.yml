@@ -27,5 +27,8 @@ jobs:
           tier: fast
           install-mode: none
 
+      - name: Test sandbox adapter
+        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
+
       - name: Build Pages artifact
         run: bash scripts/build-pages.sh
