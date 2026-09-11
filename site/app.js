@@ -1,21 +1,31 @@
 const canvas = document.querySelector("#scene");
-const context = canvas.getContext("2d");
 const status = document.querySelector("#status");
 const debug = document.querySelector("#debug");
 const resetButton = document.querySelector("#reset");
 const pauseButton = document.querySelector("#pause");
 const stepButton = document.querySelector("#single-step");
+const viewportShell = document.querySelector(".viewport-shell");
+
+const gl = canvas.getContext("webgl2", {
+  antialias: true,
+  alpha: false,
+  depth: true,
+  premultipliedAlpha: false,
+});
 
 const FIXED_STEP_MS = 1000 / 60;
 const MOVE_SPEED = 7;
 const PROJECTILE_SPEED = 96;
 const LOOK_SENSITIVITY = 0.0022;
 const KEYBOARD_LOOK_SPEED = 1.8;
-const NEAR_PLANE = 2;
+const FOV_RADIANS = (70 * Math.PI) / 180;
+const NEAR_PLANE = 0.8;
+const FAR_PLANE = 1400;
+const FLOATS_PER_VERTEX = 9;
 const keys = new Set();
-const textureCache = new Map();
 
 let engine = null;
+let renderer = null;
 let yaw = 0;
 let pitch = 0;
 let paused = false;
@@ -25,6 +35,22 @@ let accumulator = 0;
 let dragLook = false;
 let dragDistance = 0;
 let lastPointer = null;
+
+const BOX_FACES = [
+  { indices: [0, 2, 3, 1], normal: [0, 0, -1], axes: [0, 1] },
+  { indices: [4, 5, 7, 6], normal: [0, 0, 1], axes: [0, 1] },
+  { indices: [0, 4, 6, 2], normal: [-1, 0, 0], axes: [2, 1] },
+  { indices: [1, 3, 7, 5], normal: [1, 0, 0], axes: [2, 1] },
+  { indices: [0, 1, 5, 4], normal: [0, -1, 0], axes: [0, 2] },
+  { indices: [2, 6, 7, 3], normal: [0, 1, 0], axes: [0, 2] },
+];
+
+const FACE_UVS = [
+  [0, 0],
+  [0, 1],
+  [1, 1],
+  [1, 0],
+];
 
 async function loadEngine() {
   const response = await fetch("physics_engine_demo.wasm");
@@ -45,7 +71,7 @@ function reset() {
   jumpQueued = false;
   accumulator = 0;
   pauseButton.textContent = "Pause";
-  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrow keys look, and click or F fires a CCD projectile.";
+  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots.";
 }
 
 function movementVelocity() {
@@ -112,10 +138,7 @@ function resizeCanvas() {
     canvas.width = width;
     canvas.height = height;
   }
-}
-
-function themeColor(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
 function cameraSpace(point, camera) {
@@ -135,83 +158,6 @@ function cameraSpace(point, camera) {
   ];
 }
 
-function projectCamera(point) {
-  const [x, y, depth] = point;
-  const focal = canvas.height * 0.9;
-  return [canvas.width / 2 + (x * focal) / depth, canvas.height / 2 - (y * focal) / depth];
-}
-
-function clipSegmentToNearPlane(a, b) {
-  const aInside = a[2] >= NEAR_PLANE;
-  const bInside = b[2] >= NEAR_PLANE;
-  if (!aInside && !bInside) return null;
-  if (aInside && bInside) return [a, b];
-
-  const from = aInside ? a : b;
-  const to = aInside ? b : a;
-  const t = (NEAR_PLANE - from[2]) / (to[2] - from[2]);
-  const clipped = [
-    from[0] + (to[0] - from[0]) * t,
-    from[1] + (to[1] - from[1]) * t,
-    NEAR_PLANE,
-  ];
-  return aInside ? [from, clipped] : [clipped, from];
-}
-
-function clipPolygonToNearPlane(points) {
-  if (points.length === 0) return [];
-  const clipped = [];
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const previous = points[(index + points.length - 1) % points.length];
-    const currentInside = current[2] >= NEAR_PLANE;
-    const previousInside = previous[2] >= NEAR_PLANE;
-
-    if (currentInside !== previousInside) {
-      const t = (NEAR_PLANE - previous[2]) / (current[2] - previous[2]);
-      clipped.push([
-        previous[0] + (current[0] - previous[0]) * t,
-        previous[1] + (current[1] - previous[1]) * t,
-        NEAR_PLANE,
-      ]);
-    }
-    if (currentInside) clipped.push(current);
-  }
-  return clipped;
-}
-
-function drawLine(from, to, camera, strokeStyle, alpha = 1) {
-  const clipped = clipSegmentToNearPlane(cameraSpace(from, camera), cameraSpace(to, camera));
-  if (!clipped) return;
-  const a = projectCamera(clipped[0]);
-  const b = projectCamera(clipped[1]);
-  context.globalAlpha = alpha;
-  context.strokeStyle = strokeStyle;
-  context.beginPath();
-  context.moveTo(a[0], a[1]);
-  context.lineTo(b[0], b[1]);
-  context.stroke();
-  context.globalAlpha = 1;
-}
-
-function drawGrid(camera) {
-  const grid = themeColor("--grid");
-  context.lineWidth = 1;
-  for (let coordinate = -480; coordinate <= 480; coordinate += 80) {
-    drawLine([coordinate, 0.2, -480], [coordinate, 0.2, 480], camera, grid, 0.22);
-    drawLine([-480, 0.2, coordinate], [480, 0.2, coordinate], camera, grid, 0.22);
-  }
-}
-
-const BOX_FACES = [
-  [0, 2, 3, 1],
-  [4, 5, 7, 6],
-  [0, 4, 6, 2],
-  [1, 3, 7, 5],
-  [0, 1, 5, 4],
-  [2, 6, 7, 3],
-];
-
 function boxVertices(body) {
   const [x, y, z] = body.position;
   const [hx, hy, hz] = body.half;
@@ -227,188 +173,293 @@ function boxVertices(body) {
   ];
 }
 
-function polygonArea(points) {
-  let area = 0;
-  for (let index = 0; index < points.length; index += 1) {
-    const current = points[index];
-    const next = points[(index + 1) % points.length];
-    area += current[0] * next[1] - next[0] * current[1];
-  }
-  return area / 2;
-}
-
-function projectedFace(vertices, face, camera) {
-  const cameraPoints = face.map((index) => cameraSpace(vertices[index], camera));
-  const clipped = clipPolygonToNearPlane(cameraPoints);
-  if (clipped.length < 3) return null;
-  const screen = clipped.map(projectCamera);
-  const area = polygonArea(screen);
-  if (area >= -0.1) return null;
-  return {
-    screen,
-    depth: clipped.reduce((sum, point) => sum + point[2], 0) / clipped.length,
-  };
-}
-
-function texturePattern(kind) {
-  if (textureCache.has(kind)) return textureCache.get(kind);
-  const tile = document.createElement("canvas");
-  tile.width = 32;
-  tile.height = 32;
-  const tileContext = tile.getContext("2d");
-
-  if (kind === "wall") {
-    tileContext.fillStyle = "#2b3139";
-    tileContext.fillRect(0, 0, 32, 32);
-    tileContext.strokeStyle = "#59636f";
-    tileContext.lineWidth = 2;
-    for (const y of [0, 16, 32]) {
-      tileContext.beginPath();
-      tileContext.moveTo(0, y);
-      tileContext.lineTo(32, y);
-      tileContext.stroke();
-    }
-    tileContext.beginPath();
-    tileContext.moveTo(8, 0);
-    tileContext.lineTo(8, 16);
-    tileContext.moveTo(24, 0);
-    tileContext.lineTo(24, 16);
-    tileContext.moveTo(0, 16);
-    tileContext.lineTo(0, 32);
-    tileContext.moveTo(16, 16);
-    tileContext.lineTo(16, 32);
-    tileContext.moveTo(32, 16);
-    tileContext.lineTo(32, 32);
-    tileContext.stroke();
-  } else if (kind === "floor") {
-    tileContext.fillStyle = "#171d24";
-    tileContext.fillRect(0, 0, 32, 32);
-    tileContext.fillStyle = "#1f2730";
-    tileContext.fillRect(0, 0, 16, 16);
-    tileContext.fillRect(16, 16, 16, 16);
-    tileContext.strokeStyle = "#394653";
-    tileContext.lineWidth = 1;
-    tileContext.strokeRect(0.5, 0.5, 31, 31);
-  } else if (kind === "crate") {
-    tileContext.fillStyle = "#5a3b1f";
-    tileContext.fillRect(0, 0, 32, 32);
-    tileContext.strokeStyle = "#d29922";
-    tileContext.lineWidth = 2;
-    tileContext.strokeRect(1, 1, 30, 30);
-    tileContext.beginPath();
-    tileContext.moveTo(2, 2);
-    tileContext.lineTo(30, 30);
-    tileContext.moveTo(30, 2);
-    tileContext.lineTo(2, 30);
-    tileContext.stroke();
-  } else {
-    tileContext.fillStyle = "#343b44";
-    tileContext.fillRect(0, 0, 32, 32);
-    tileContext.fillStyle = "#505965";
-    for (const [x, y] of [[5, 7], [19, 4], [26, 19], [11, 25]]) {
-      tileContext.fillRect(x, y, 2, 2);
-    }
-  }
-
-  const pattern = context.createPattern(tile, "repeat");
-  textureCache.set(kind, pattern);
-  return pattern;
-}
-
-function textureKind(body) {
-  if (body.role === 2) return "crate";
-  if (body.role !== 0) return "concrete";
+function materialFor(body) {
+  if (body.role === 3) return 4;
+  if (body.role === 2) return 3;
+  if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
-  if (body.position[1] < 0 && hx >= 400 && hz >= 400) return "floor";
-  if (hy >= 60) return "wall";
-  return "concrete";
+  if (body.position[1] < 0 && hx >= 400 && hz >= 400) return 0;
+  if (hy >= 60) return 1;
+  return 2;
 }
 
-function roleColor(role) {
-  if (role === 2) return themeColor("--dynamic");
-  if (role === 3) return themeColor("--projectile");
-  return themeColor("--fixed");
+function textureScale(material, body, face) {
+  if (material === 3 || material === 4) return [1, 1];
+  const full = body.half.map((value) => Math.max(1, value * 2));
+  const u = full[face.axes[0]];
+  const v = full[face.axes[1]];
+  if (material === 1) return [Math.max(1, u / 42), Math.max(1, v / 22)];
+  if (material === 0) return [Math.max(1, u / 64), Math.max(1, v / 64)];
+  return [Math.max(1, u / 52), Math.max(1, v / 52)];
 }
 
-function drawFace(face, fillStyle, strokeStyle, alpha) {
-  const [first, ...rest] = face.screen;
-  context.beginPath();
-  context.moveTo(first[0], first[1]);
-  for (const point of rest) context.lineTo(point[0], point[1]);
-  context.closePath();
-  context.globalAlpha = alpha;
-  context.fillStyle = fillStyle;
-  context.fill();
-  context.globalAlpha = Math.min(1, alpha + 0.15);
-  context.strokeStyle = strokeStyle;
-  context.lineWidth = 1.3;
-  context.stroke();
-  context.globalAlpha = 1;
+function faceCenter(vertices, indices) {
+  const result = [0, 0, 0];
+  for (const index of indices) {
+    result[0] += vertices[index][0];
+    result[1] += vertices[index][1];
+    result[2] += vertices[index][2];
+  }
+  return result.map((value) => value / indices.length);
 }
 
-function drawBody(body, camera) {
-  if (body.role === 1) return;
-  const vertices = boxVertices(body);
-  const stroke = roleColor(body.role);
-  const faces = BOX_FACES
-    .map((face) => projectedFace(vertices, face, camera))
-    .filter(Boolean)
-    .sort((left, right) => right.depth - left.depth);
+function faceVisible(vertices, face, camera) {
+  const center = faceCenter(vertices, face.indices);
+  const towardCamera = [camera[0] - center[0], camera[1] - center[1], camera[2] - center[2]];
+  return (
+    towardCamera[0] * face.normal[0] +
+      towardCamera[1] * face.normal[1] +
+      towardCamera[2] * face.normal[2] >
+    0
+  );
+}
 
-  const fill = body.role === 3 ? stroke : texturePattern(textureKind(body));
-  const alpha = body.role === 0 ? 0.92 : 0.96;
-  for (const face of faces) drawFace(face, fill, stroke, alpha);
+function appendVertex(data, position, normal, uv, material, camera) {
+  const cameraPosition = cameraSpace(position, camera);
+  data.push(
+    cameraPosition[0],
+    cameraPosition[1],
+    cameraPosition[2],
+    normal[0],
+    normal[1],
+    normal[2],
+    uv[0],
+    uv[1],
+    material,
+  );
+}
 
-  if (body.role === 3) {
-    const centerCamera = cameraSpace(body.position, camera);
-    if (centerCamera[2] >= NEAR_PLANE) {
-      const center = projectCamera(centerCamera);
-      context.fillStyle = stroke;
-      context.beginPath();
-      context.arc(center[0], center[1], Math.max(2.5, 12 / Math.sqrt(centerCamera[2])), 0, Math.PI * 2);
-      context.fill();
+function buildSceneVertices(bodies, camera) {
+  const data = [];
+  for (const body of bodies) {
+    if (body.role === 1) continue;
+    const material = materialFor(body);
+    const vertices = boxVertices(body);
+
+    for (const face of BOX_FACES) {
+      if (!faceVisible(vertices, face, camera)) continue;
+      const [scaleU, scaleV] = textureScale(material, body, face);
+      const uv = FACE_UVS.map(([u, v]) => [u * scaleU, v * scaleV]);
+      const corners = face.indices.map((index) => vertices[index]);
+      const triangles = [
+        [0, 1, 2],
+        [0, 2, 3],
+      ];
+      for (const triangle of triangles) {
+        for (const corner of triangle) {
+          appendVertex(data, corners[corner], face.normal, uv[corner], material, camera);
+        }
+      }
     }
   }
+  return new Float32Array(data);
 }
 
-function drawCrosshair() {
-  const x = canvas.width / 2;
-  const y = canvas.height / 2;
-  const size = Math.max(7, canvas.height * 0.012);
-  context.strokeStyle = themeColor("--crosshair");
-  context.lineWidth = 1.5;
-  context.beginPath();
-  context.moveTo(x - size, y);
-  context.lineTo(x + size, y);
-  context.moveTo(x, y - size);
-  context.lineTo(x, y + size);
-  context.stroke();
+function compileShader(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const message = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(`WebGL shader compile failed: ${message}`);
+  }
+  return shader;
 }
 
-function drawBackground() {
-  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, "#0b1a27");
-  gradient.addColorStop(0.55, "#111820");
-  gradient.addColorStop(1, themeColor("--canvas"));
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, canvas.width, canvas.height);
+function createRenderer() {
+  if (!gl) throw new Error("WebGL2 is unavailable in this browser");
+
+  const vertexShader = compileShader(
+    gl.VERTEX_SHADER,
+    `#version 300 es
+    precision highp float;
+    layout(location = 0) in vec3 aPosition;
+    layout(location = 1) in vec3 aNormal;
+    layout(location = 2) in vec2 aUv;
+    layout(location = 3) in float aMaterial;
+
+    uniform float uAspect;
+    uniform float uTanHalfFov;
+    uniform float uNear;
+    uniform float uFar;
+
+    out vec3 vNormal;
+    out vec2 vUv;
+    flat out float vMaterial;
+    out float vDepth;
+
+    void main() {
+      float yScale = 1.0 / uTanHalfFov;
+      float xScale = yScale / uAspect;
+      float zScale = (uFar + uNear) / (uFar - uNear);
+      float zOffset = (2.0 * uFar * uNear) / (uFar - uNear);
+      gl_Position = vec4(
+        aPosition.x * xScale,
+        aPosition.y * yScale,
+        zScale * aPosition.z - zOffset,
+        aPosition.z
+      );
+      vNormal = aNormal;
+      vUv = aUv;
+      vMaterial = aMaterial;
+      vDepth = aPosition.z;
+    }`,
+  );
+
+  const fragmentShader = compileShader(
+    gl.FRAGMENT_SHADER,
+    `#version 300 es
+    precision highp float;
+
+    in vec3 vNormal;
+    in vec2 vUv;
+    flat in float vMaterial;
+    in float vDepth;
+    out vec4 outColor;
+
+    float gridLine(vec2 uv) {
+      vec2 cell = fract(uv);
+      vec2 edge = min(cell, 1.0 - cell);
+      vec2 aa = max(fwidth(uv) * 1.35, vec2(0.002));
+      float xLine = 1.0 - smoothstep(0.0, aa.x, edge.x);
+      float yLine = 1.0 - smoothstep(0.0, aa.y, edge.y);
+      return max(xLine, yLine);
+    }
+
+    float boxBorder(vec2 uv) {
+      vec2 edge = min(uv, 1.0 - uv);
+      float border = 1.0 - smoothstep(0.035, 0.07, min(edge.x, edge.y));
+      float diagonalA = 1.0 - smoothstep(0.025, 0.055, abs(uv.x - uv.y));
+      float diagonalB = 1.0 - smoothstep(0.025, 0.055, abs((1.0 - uv.x) - uv.y));
+      return max(border, max(diagonalA, diagonalB) * 0.55);
+    }
+
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    void main() {
+      vec3 base;
+      vec3 detail;
+      float pattern = 0.0;
+
+      if (vMaterial < 0.5) {
+        base = vec3(0.105, 0.13, 0.16);
+        detail = vec3(0.22, 0.27, 0.33);
+        pattern = gridLine(vUv) * 0.34;
+      } else if (vMaterial < 1.5) {
+        base = vec3(0.24, 0.28, 0.33);
+        detail = vec3(0.43, 0.49, 0.56);
+        vec2 brickUv = vUv;
+        brickUv.x += mod(floor(brickUv.y), 2.0) * 0.5;
+        pattern = gridLine(brickUv) * 0.48;
+      } else if (vMaterial < 2.5) {
+        base = vec3(0.34, 0.38, 0.43);
+        detail = vec3(0.46, 0.51, 0.57);
+        float speckle = step(0.91, hash(floor(vUv * 5.0)));
+        pattern = speckle * 0.18;
+      } else if (vMaterial < 3.5) {
+        base = vec3(0.42, 0.25, 0.09);
+        detail = vec3(0.88, 0.58, 0.17);
+        pattern = boxBorder(fract(vUv));
+      } else {
+        base = vec3(0.86, 0.19, 0.17);
+        detail = vec3(1.0, 0.52, 0.34);
+        pattern = 0.28;
+      }
+
+      vec3 lightDirection = normalize(vec3(-0.35, 0.82, 0.26));
+      float diffuse = 0.62 + 0.38 * max(dot(normalize(vNormal), lightDirection), 0.0);
+      vec3 color = mix(base, detail, clamp(pattern, 0.0, 1.0)) * diffuse;
+
+      vec3 fogColor = vec3(0.055, 0.085, 0.115);
+      float fog = smoothstep(540.0, 1100.0, vDepth);
+      color = mix(color, fogColor, fog * 0.72);
+
+      outColor = vec4(color, 1.0);
+    }`,
+  );
+
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const message = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    throw new Error(`WebGL program link failed: ${message}`);
+  }
+
+  gl.deleteShader(vertexShader);
+  gl.deleteShader(fragmentShader);
+
+  const buffer = gl.createBuffer();
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+
+  const stride = FLOATS_PER_VERTEX * Float32Array.BYTES_PER_ELEMENT;
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 3 * Float32Array.BYTES_PER_ELEMENT);
+  gl.enableVertexAttribArray(2);
+  gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 6 * Float32Array.BYTES_PER_ELEMENT);
+  gl.enableVertexAttribArray(3);
+  gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 8 * Float32Array.BYTES_PER_ELEMENT);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.disable(gl.BLEND);
+  gl.disable(gl.CULL_FACE);
+
+  const uniforms = {
+    aspect: gl.getUniformLocation(program, "uAspect"),
+    tanHalfFov: gl.getUniformLocation(program, "uTanHalfFov"),
+    near: gl.getUniformLocation(program, "uNear"),
+    far: gl.getUniformLocation(program, "uFar"),
+  };
+
+  return { program, buffer, vao, uniforms };
+}
+
+function renderWebGl(bodies, camera) {
+  const vertices = buildSceneVertices(bodies, camera);
+
+  gl.clearColor(0.055, 0.085, 0.115, 1);
+  gl.clearDepth(1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.useProgram(renderer.program);
+  gl.bindVertexArray(renderer.vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+
+  gl.uniform1f(renderer.uniforms.aspect, canvas.width / canvas.height);
+  gl.uniform1f(renderer.uniforms.tanHalfFov, Math.tan(FOV_RADIANS / 2));
+  gl.uniform1f(renderer.uniforms.near, NEAR_PLANE);
+  gl.uniform1f(renderer.uniforms.far, FAR_PLANE);
+
+  gl.drawArrays(gl.TRIANGLES, 0, vertices.length / FLOATS_PER_VERTEX);
+}
+
+function ensureCrosshair() {
+  if (viewportShell.querySelector(".crosshair")) return;
+  const crosshair = document.createElement("div");
+  crosshair.className = "crosshair";
+  crosshair.setAttribute("aria-hidden", "true");
+  viewportShell.append(crosshair);
 }
 
 function render() {
   resizeCanvas();
-  drawBackground();
-
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
   if (!player) return;
   const camera = [player.position[0], player.position[1] + 13, player.position[2]];
 
-  drawGrid(camera);
-  bodies
-    .filter((body) => body.role !== 1)
-    .sort((left, right) => cameraSpace(right.position, camera)[2] - cameraSpace(left.position, camera)[2])
-    .forEach((body) => drawBody(body, camera));
-  drawCrosshair();
+  renderWebGl(bodies, camera);
 
   const grounded = engine.sandbox_grounded() === 1 ? "grounded" : "airborne";
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
@@ -417,26 +468,18 @@ function render() {
   debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_pair_checks()} pair checks · ${engine.sandbox_last_collision_events()} collision events this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
 }
 
-function applyLook(deltaX, deltaY) {
-  yaw += deltaX * LOOK_SENSITIVITY;
-  if (yaw > Math.PI) yaw -= Math.PI * 2;
-  if (yaw < -Math.PI) yaw += Math.PI * 2;
-  pitch = Math.max(-1.35, Math.min(1.35, pitch + deltaY * LOOK_SENSITIVITY));
-}
-
-function applyKeyboardLook(elapsedMs) {
-  const seconds = elapsedMs / 1000;
-  const horizontal = Number(keys.has("ArrowRight")) - Number(keys.has("ArrowLeft"));
-  const vertical = Number(keys.has("ArrowDown")) - Number(keys.has("ArrowUp"));
-  if (horizontal !== 0) yaw += horizontal * KEYBOARD_LOOK_SPEED * seconds;
-  if (vertical !== 0) pitch = Math.max(-1.35, Math.min(1.35, pitch + vertical * KEYBOARD_LOOK_SPEED * seconds));
+function updateKeyboardLook(elapsedSeconds) {
+  const yawInput = Number(keys.has("ArrowRight")) - Number(keys.has("ArrowLeft"));
+  const pitchInput = Number(keys.has("ArrowDown")) - Number(keys.has("ArrowUp"));
+  yaw += yawInput * KEYBOARD_LOOK_SPEED * elapsedSeconds;
+  pitch = Math.max(-1.25, Math.min(1.25, pitch + pitchInput * KEYBOARD_LOOK_SPEED * elapsedSeconds));
 }
 
 function frame(timestamp) {
   if (previousTimestamp === null) previousTimestamp = timestamp;
   const elapsed = Math.min(timestamp - previousTimestamp, 250);
   previousTimestamp = timestamp;
-  applyKeyboardLook(elapsed);
+  updateKeyboardLook(elapsed / 1000);
 
   if (!paused) {
     accumulator += elapsed;
@@ -453,70 +496,63 @@ function frame(timestamp) {
   requestAnimationFrame(frame);
 }
 
+function applyLookDelta(deltaX, deltaY) {
+  yaw += deltaX * LOOK_SENSITIVITY;
+  pitch = Math.max(-1.25, Math.min(1.25, pitch + deltaY * LOOK_SENSITIVITY));
+}
+
 canvas.addEventListener("pointerdown", (event) => {
-  canvas.focus({ preventScroll: true });
+  canvas.focus();
+  dragLook = true;
+  dragDistance = 0;
+  lastPointer = [event.clientX, event.clientY];
+  canvas.setPointerCapture?.(event.pointerId);
+
   if (document.pointerLockElement !== canvas) {
-    if (event.button !== 0) return;
-    dragLook = true;
-    dragDistance = 0;
-    lastPointer = [event.clientX, event.clientY];
-    try {
-      const request = canvas.requestPointerLock?.();
-      if (request && typeof request.catch === "function") {
-        request.catch(() => {
-          status.textContent = "Pointer lock was unavailable; hold and drag on the world to look, or use the arrow keys.";
-        });
-      }
-    } catch {
-      status.textContent = "Pointer lock was unavailable; hold and drag on the world to look, or use the arrow keys.";
-    }
-    return;
+    canvas.requestPointerLock?.();
+  } else if (event.button === 0) {
+    shoot();
   }
-  if (event.button === 0) shoot();
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!dragLook || document.pointerLockElement === canvas || !lastPointer) return;
+  const deltaX = event.clientX - lastPointer[0];
+  const deltaY = event.clientY - lastPointer[1];
+  dragDistance += Math.abs(deltaX) + Math.abs(deltaY);
+  lastPointer = [event.clientX, event.clientY];
+  applyLookDelta(deltaX, deltaY);
+});
+
+canvas.addEventListener("pointerup", (event) => {
+  if (document.pointerLockElement !== canvas && event.button === 0 && dragDistance < 6) shoot();
+  dragLook = false;
+  lastPointer = null;
+  canvas.releasePointerCapture?.(event.pointerId);
+});
+
+canvas.addEventListener("pointercancel", () => {
+  dragLook = false;
+  lastPointer = null;
 });
 
 document.addEventListener("mousemove", (event) => {
-  if (document.pointerLockElement === canvas) {
-    applyLook(event.movementX, event.movementY);
-    return;
-  }
-  if (!dragLook || (event.buttons & 1) === 0 || !lastPointer) return;
-  const deltaX = event.clientX - lastPointer[0];
-  const deltaY = event.clientY - lastPointer[1];
-  dragDistance += Math.hypot(deltaX, deltaY);
-  lastPointer = [event.clientX, event.clientY];
-  applyLook(deltaX, deltaY);
-});
-
-document.addEventListener("pointerup", (event) => {
-  if (event.button !== 0 || !dragLook) return;
-  const shouldShoot = document.pointerLockElement !== canvas && dragDistance < 4;
-  dragLook = false;
-  lastPointer = null;
-  if (shouldShoot) shoot();
+  if (document.pointerLockElement !== canvas) return;
+  applyLookDelta(event.movementX, event.movementY);
 });
 
 document.addEventListener("pointerlockchange", () => {
-  dragLook = false;
-  lastPointer = null;
-  if (document.pointerLockElement === canvas) {
-    status.textContent = "Mouse captured. WASD moves, Space jumps, mouse look rotates the camera, and click fires.";
-  } else {
-    status.textContent = "Mouse released. Click the world to capture it again; drag or arrow keys can still rotate the camera.";
-  }
-});
-
-document.addEventListener("pointerlockerror", () => {
-  status.textContent = "Pointer lock was unavailable; hold and drag on the world to look, or use the arrow keys.";
+  status.textContent = document.pointerLockElement === canvas
+    ? "Mouse captured. Press Esc to release it."
+    : "Mouse free. Click the world to capture it, or drag / use arrow keys to look.";
 });
 
 document.addEventListener("keydown", (event) => {
   keys.add(event.code);
-  if (event.code === "Space") {
+  if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) {
     event.preventDefault();
-    if (!event.repeat) jumpQueued = true;
   }
-  if (event.code.startsWith("Arrow")) event.preventDefault();
+  if (event.code === "Space" && !event.repeat) jumpQueued = true;
   if (event.code === "KeyF" && !event.repeat) shoot();
   if (event.code === "KeyR" && !event.repeat) reset();
   if (event.code === "KeyP" && !event.repeat) {
@@ -527,11 +563,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("keyup", (event) => keys.delete(event.code));
-window.addEventListener("blur", () => {
-  keys.clear();
-  dragLook = false;
-  lastPointer = null;
-});
+window.addEventListener("blur", () => keys.clear());
 
 resetButton.addEventListener("click", reset);
 pauseButton.addEventListener("click", () => {
@@ -547,7 +579,10 @@ stepButton.addEventListener("click", () => {
 });
 
 try {
+  if (!gl) throw new Error("WebGL2 is unavailable in this browser");
+  renderer = createRenderer();
   engine = await loadEngine();
+  ensureCrosshair();
   reset();
   requestAnimationFrame(frame);
 } catch (error) {
