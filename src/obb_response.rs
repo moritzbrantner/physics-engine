@@ -4,11 +4,12 @@ use crate::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE,
     ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactSeed3d, Orientation3d, OrientedBoxError3d,
     RigidBox3d, Vec3i, box_inertia, obb_contact_seed, oriented_box_vertices,
+    wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
 };
 
 const RESPONSE_SCALE: i128 = 1_i128 << 50;
 
-/// Reduced deterministic OBB contact evidence plus the normal impulse applied at that contact.
+/// Reduced deterministic OBB contact evidence plus the vector impulse applied at that contact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObbResolvedContact3d {
     pub point: Vec3i,
@@ -18,9 +19,10 @@ pub struct ObbResolvedContact3d {
     pub axis_length_squared: u128,
     pub left_support_mask: u8,
     pub right_support_mask: u8,
-    /// Scalar multiplier for [`Self::axis`]. The right body receives `axis * units` and the left
-    /// body receives the equal-and-opposite impulse.
-    pub normal_impulse_units: i64,
+    /// Impulse applied to the right body; the left body receives the equal-and-opposite vector.
+    /// Keeping the vector directly avoids discarding representable impulses when a non-unit SAT axis
+    /// would require a fractional scalar multiplier.
+    pub normal_impulse: [i128; 3],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,6 +77,12 @@ impl From<OrientedBoxError3d> for ObbContactResponseError3d {
     }
 }
 
+impl From<WideRatioError> for ObbContactResponseError3d {
+    fn from(_: WideRatioError) -> Self {
+        Self::ArithmeticOverflow
+    }
+}
+
 /// Resolves one engine-native overlapping OBB pair with deterministic linear/angular normal response
 /// and penetration projection.
 ///
@@ -89,10 +97,14 @@ impl From<OrientedBoxError3d> for ObbContactResponseError3d {
 /// `min(left, right)` material rule; this extraction does not silently change the translational solver's
 /// established behavior.
 ///
-/// Exact zero-depth contacts tied across multiple SAT axes remain observation-only because no unique
-/// physical normal has won yet. Tangential friction and full polygon manifold clipping are intentionally
-/// separate capabilities. This function resolves contact state only; it does not discover time of impact
-/// and therefore makes no analytic rotational CCD claim.
+/// A zero-depth contact tied across multiple SAT axes still needs to make forward progress when bodies are
+/// approaching. The stable SAT tie-break axis is therefore used as a deterministic translation constraint,
+/// but angular impulse is suppressed for that one ambiguous contact so feature ordering cannot invent an
+/// arbitrary torque. Once a unique normal or a real manifold exists, ordinary angular response applies.
+///
+/// Tangential friction and full polygon manifold clipping are intentionally separate capabilities. This
+/// function resolves contact state only; it does not discover time of impact and therefore makes no analytic
+/// rotational CCD claim.
 ///
 /// # Errors
 ///
@@ -137,16 +149,15 @@ pub fn resolve_obb_contact(
         checked_sub(i128::from(right_velocity[2]), i128::from(left_velocity[2]))?,
     ];
     let normal_velocity = checked_dot(relative_velocity, seed.axis)?;
-    let ambiguous_zero_depth_touch = seed.overlap_numerator == 0 && seed.minimum_axis_ties > 1;
+    let tied_zero_depth = seed.overlap_numerator == 0 && seed.minimum_axis_ties > 1;
 
     let mut resolved_left = left;
     let mut resolved_right = right;
-    let normal_impulse_units = if !ambiguous_zero_depth_touch
-        && normal_velocity < 0
+    let normal_impulse = if normal_velocity < 0
         && (resolved_left.body.kind == BodyKind::Dynamic
             || resolved_right.body.kind == BodyKind::Dynamic)
     {
-        let impulse = normal_impulse(
+        let impulse = normal_impulse_vector(
             &resolved_left,
             left_offset,
             &resolved_right,
@@ -155,22 +166,25 @@ pub fn resolve_obb_contact(
             seed.axis_length_squared,
             normal_velocity,
             allow_restitution,
+            !tied_zero_depth,
         )?;
-        if impulse > 0 {
+        if impulse != [0; 3] {
             apply_body_impulse(
                 &mut resolved_left,
                 left_offset,
-                scale_axis(seed.axis, -i128::from(impulse))?,
+                negate_axis(impulse)?,
+                !tied_zero_depth,
             )?;
             apply_body_impulse(
                 &mut resolved_right,
                 right_offset,
-                scale_axis(seed.axis, i128::from(impulse))?,
+                impulse,
+                !tied_zero_depth,
             )?;
         }
         impulse
     } else {
-        0
+        [0; 3]
     };
 
     if seed.overlap_numerator > 0
@@ -196,7 +210,7 @@ pub fn resolve_obb_contact(
             axis_length_squared: seed.axis_length_squared,
             left_support_mask: seed.left_support_mask,
             right_support_mask: seed.right_support_mask,
-            normal_impulse_units,
+            normal_impulse,
         }),
     })
 }
@@ -266,16 +280,18 @@ fn reduced_contact_point(
         return Ok(point);
     }
 
-    if left.body.kind == right.body.kind {
-        return midpoint(left_support, right_support);
-    }
-
     let left_spread = support_spread_squared(left_vertices, left_mask, left_support)?;
     let right_spread = support_spread_squared(right_vertices, right_mask, right_support)?;
     let anchor = match left_spread.cmp(&right_spread) {
         std::cmp::Ordering::Less => left_support,
         std::cmp::Ordering::Greater => right_support,
-        std::cmp::Ordering::Equal => return midpoint(left_support, right_support),
+        std::cmp::Ordering::Equal => {
+            if left.body.id < right.body.id {
+                left_support
+            } else {
+                right_support
+            }
+        }
     };
     project_to_support_midplane(
         anchor,
@@ -468,14 +484,6 @@ fn project_to_support_midplane(
     ))
 }
 
-fn midpoint(left: Vec3i, right: Vec3i) -> Result<Vec3i, ObbContactResponseError3d> {
-    Ok(Vec3i::new(
-        midpoint_axis(left.x, right.x)?,
-        midpoint_axis(left.y, right.y)?,
-        midpoint_axis(left.z, right.z)?,
-    ))
-}
-
 fn midpoint_axis(left: i32, right: i32) -> Result<i32, ObbContactResponseError3d> {
     to_i32(div_round_nearest(
         checked_add(i128::from(left), i128::from(right))?,
@@ -529,7 +537,7 @@ fn add_linear_rotation(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn normal_impulse(
+fn normal_impulse_vector(
     left: &RigidBox3d,
     left_offset: [i64; 3],
     right: &RigidBox3d,
@@ -538,13 +546,26 @@ fn normal_impulse(
     axis_length_squared: u128,
     normal_velocity: i128,
     allow_restitution: bool,
-) -> Result<i64, ObbContactResponseError3d> {
+    include_angular: bool,
+) -> Result<[i128; 3], ObbContactResponseError3d> {
     let effective_inverse_mass = checked_add(
-        body_effective_inverse_mass_scaled(left, left_offset, axis, axis_length_squared)?,
-        body_effective_inverse_mass_scaled(right, right_offset, axis, axis_length_squared)?,
+        body_effective_inverse_mass_scaled(
+            left,
+            left_offset,
+            axis,
+            axis_length_squared,
+            include_angular,
+        )?,
+        body_effective_inverse_mass_scaled(
+            right,
+            right_offset,
+            axis,
+            axis_length_squared,
+            include_angular,
+        )?,
     )?;
     if effective_inverse_mass <= 0 {
-        return Ok(0);
+        return Ok([0; 3]);
     }
 
     let restitution = if allow_restitution {
@@ -559,10 +580,26 @@ fn normal_impulse(
         .checked_neg()
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
     let bounce_scale = checked_add(i128::from(MATERIAL_SCALE), i128::from(restitution))?;
-    let numerator = checked_mul(checked_mul(closing_speed, bounce_scale)?, RESPONSE_SCALE)?;
+    let numerator = checked_mul(closing_speed, bounce_scale)?;
     let denominator = checked_mul(i128::from(MATERIAL_SCALE), effective_inverse_mass)?;
-    i64::try_from(div_round_nearest(numerator, denominator)?)
-        .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)
+    scale_ratio_vector(numerator, denominator, axis, RESPONSE_SCALE)
+}
+
+fn scale_ratio_vector(
+    numerator: i128,
+    denominator: i128,
+    axis: [i128; 3],
+    axis_scale: i128,
+) -> Result<[i128; 3], ObbContactResponseError3d> {
+    if numerator < 0 || denominator <= 0 || axis_scale <= 0 {
+        return Err(ObbContactResponseError3d::ArithmeticOverflow);
+    }
+    let mut impulse = [0_i128; 3];
+    for (target, component) in impulse.iter_mut().zip(axis) {
+        let scaled_component = checked_mul(component, axis_scale)?;
+        *target = mul_div_round_i128(numerator, scaled_component, denominator)?;
+    }
+    Ok(impulse)
 }
 
 fn body_effective_inverse_mass_scaled(
@@ -570,25 +607,37 @@ fn body_effective_inverse_mass_scaled(
     contact_offset: [i64; 3],
     axis: [i128; 3],
     axis_length_squared: u128,
+    include_angular: bool,
 ) -> Result<i128, ObbContactResponseError3d> {
     if rigid_box.body.kind == BodyKind::Fixed {
         return Ok(0);
     }
-    let length_squared = i128::try_from(axis_length_squared)
-        .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
-    let translational =
-        checked_mul(RESPONSE_SCALE, length_squared)? / i128::from(rigid_box.body.mass_units);
+    let translational = i128::try_from(mul_div_round_u128(
+        axis_length_squared,
+        RESPONSE_SCALE as u128,
+        u128::from(rigid_box.body.mass_units),
+    )?)
+    .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
+    if !include_angular {
+        return Ok(translational);
+    }
+
     let angular_impulse = cross_i64_i128(contact_offset, axis)?;
     let local = rotate_inverse(rigid_box.angular.orientation, angular_impulse)?;
     let inertia = box_inertia(&rigid_box.body)?;
+    let scale = (RESPONSE_SCALE as u128)
+        .checked_mul(u128::from(inertia.denominator))
+        .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
     let mut rotational = 0_i128;
     for (index, component) in local.into_iter().enumerate() {
-        let inverse_inertia =
-            inverse_inertia_scaled(inertia.principal_numerators[index], inertia.denominator)?;
-        rotational = checked_add(
-            rotational,
-            checked_mul(checked_mul(component, component)?, inverse_inertia)?,
-        )?;
+        let squared = checked_mul(component, component)?;
+        let term = i128::try_from(mul_div_round_u128(
+            squared as u128,
+            scale,
+            inertia.principal_numerators[index],
+        )?)
+        .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
+        rotational = checked_add(rotational, term)?;
     }
     checked_add(translational, rotational)
 }
@@ -597,6 +646,7 @@ fn apply_body_impulse(
     rigid_box: &mut RigidBox3d,
     contact_offset: [i64; 3],
     impulse: [i128; 3],
+    include_angular: bool,
 ) -> Result<(), ObbContactResponseError3d> {
     if rigid_box.body.kind == BodyKind::Fixed {
         return Ok(());
@@ -607,21 +657,21 @@ fn apply_body_impulse(
         add_linear_impulse_axis(rigid_box.body.velocity.y, impulse[1], mass_units)?,
         add_linear_impulse_axis(rigid_box.body.velocity.z, impulse[2], mass_units)?,
     );
+    if !include_angular {
+        return Ok(());
+    }
 
     let angular_impulse = cross_i64_i128(contact_offset, impulse)?;
     let local_impulse = rotate_inverse(rigid_box.angular.orientation, angular_impulse)?;
     let inertia = box_inertia(&rigid_box.body)?;
+    let angular_scale = i128::from(inertia.denominator)
+        .checked_mul(i128::from(ANGULAR_VELOCITY_SCALE))
+        .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
     let mut local_delta = [0_i128; 3];
     for (index, (target, component)) in local_delta.iter_mut().zip(local_impulse).enumerate() {
-        let inverse_inertia =
-            inverse_inertia_scaled(inertia.principal_numerators[index], inertia.denominator)?;
-        *target = div_round_nearest(
-            checked_mul(
-                checked_mul(component, inverse_inertia)?,
-                i128::from(ANGULAR_VELOCITY_SCALE),
-            )?,
-            RESPONSE_SCALE,
-        )?;
+        let principal = i128::try_from(inertia.principal_numerators[index])
+            .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
+        *target = mul_div_round_i128(component, angular_scale, principal)?;
     }
     let world_delta = rotate_forward(rigid_box.angular.orientation, local_delta)?;
     rigid_box.angular.angular_velocity = AngularVelocity3d::new(
@@ -643,18 +693,6 @@ fn add_linear_impulse_axis(
 
 fn add_angular_axis(current: i32, delta: i128) -> Result<i32, ObbContactResponseError3d> {
     to_i32(checked_add(i128::from(current), delta)?)
-}
-
-fn inverse_inertia_scaled(
-    principal_numerator: u128,
-    denominator: u32,
-) -> Result<i128, ObbContactResponseError3d> {
-    if principal_numerator == 0 {
-        return Err(ObbContactResponseError3d::ArithmeticOverflow);
-    }
-    let principal = i128::try_from(principal_numerator)
-        .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
-    Ok(checked_mul(RESPONSE_SCALE, i128::from(denominator))? / principal)
 }
 
 fn minimum_translation_vector(
@@ -725,7 +763,7 @@ fn project_pair(
             Ok(())
         }
         (BodyKind::Dynamic, BodyKind::Fixed) => {
-            left.body.position = offset_position(left.body.position, negate_vector(correction)?)?;
+            left.body.position = offset_position(left.body.position, negate_i64_vector(correction)?)?;
             Ok(())
         }
         (BodyKind::Dynamic, BodyKind::Dynamic) => {
@@ -765,7 +803,21 @@ fn offset_position(position: Vec3i, delta: [i64; 3]) -> Result<Vec3i, ObbContact
     ))
 }
 
-fn negate_vector(vector: [i64; 3]) -> Result<[i64; 3], ObbContactResponseError3d> {
+fn negate_i64_vector(vector: [i64; 3]) -> Result<[i64; 3], ObbContactResponseError3d> {
+    Ok([
+        vector[0]
+            .checked_neg()
+            .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?,
+        vector[1]
+            .checked_neg()
+            .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?,
+        vector[2]
+            .checked_neg()
+            .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?,
+    ])
+}
+
+fn negate_axis(vector: [i128; 3]) -> Result<[i128; 3], ObbContactResponseError3d> {
     Ok([
         vector[0]
             .checked_neg()
@@ -798,14 +850,6 @@ fn cross_component(
     right_b: i128,
 ) -> Result<i128, ObbContactResponseError3d> {
     checked_sub(checked_mul(left_a, right_a)?, checked_mul(left_b, right_b)?)
-}
-
-fn scale_axis(axis: [i128; 3], scale: i128) -> Result<[i128; 3], ObbContactResponseError3d> {
-    Ok([
-        checked_mul(axis[0], scale)?,
-        checked_mul(axis[1], scale)?,
-        checked_mul(axis[2], scale)?,
-    ])
 }
 
 fn rotate_inverse(
@@ -977,7 +1021,7 @@ mod tests {
         RigidBody, RigidBox3d, Vec3i,
     };
 
-    use super::{ObbContactResponseError3d, resolve_obb_contact};
+    use super::{ObbContactResponseError3d, resolve_obb_contact, scale_ratio_vector};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -995,7 +1039,7 @@ mod tests {
         let contact = response.contact.expect("contact");
 
         assert_eq!(contact.axis, [1, 0, 0]);
-        assert!(contact.normal_impulse_units > 0);
+        assert_eq!(contact.normal_impulse, [30, 0, 0]);
         assert_eq!(response.left.body.velocity.x, 30);
         assert_eq!(response.right.body.velocity.x, 30);
         assert_eq!(
@@ -1023,6 +1067,61 @@ mod tests {
     }
 
     #[test]
+    fn tied_zero_depth_corner_impact_makes_progress_without_invented_torque() {
+        let left = dynamic(1, Vec3i::ZERO, Vec3i::new(10, 10, 0));
+        let right = RigidBox3d::new(
+            RigidBody::fixed(
+                BodyId(2),
+                Vec3i::new(20, 20, 0),
+                Vec3i::new(10, 10, 10),
+            ),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid fixed box");
+        let response = resolve_obb_contact(left, right, true).expect("valid tied response");
+        let contact = response.contact.expect("corner contact");
+
+        assert_eq!(contact.overlap_numerator, 0);
+        assert_ne!(contact.normal_impulse, [0; 3]);
+        assert_ne!(response.left.body.velocity, Vec3i::new(10, 10, 0));
+        assert_eq!(
+            response.left.angular.angular_velocity,
+            AngularVelocity3d::default()
+        );
+    }
+
+    #[test]
+    fn fractional_scalar_impulse_survives_non_unit_axis_scaling() {
+        assert_eq!(
+            scale_ratio_vector(2, 5, [2, 1, 0], 1).expect("representable vector"),
+            [1, 0, 0]
+        );
+    }
+
+    #[test]
+    fn large_inertia_still_produces_representable_angular_response() {
+        let half = Vec3i::new(100_000_000, 100_000_000, 100_000_000);
+        let left = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(1),
+                Vec3i::new(0, 50_000_000, 0),
+                Vec3i::new(1_000_000, 0, 0),
+                half,
+            ),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid large dynamic box");
+        let right = RigidBox3d::new(
+            RigidBody::fixed(BodyId(2), Vec3i::new(199_999_999, 0, 0), half),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid large fixed box");
+        let response = resolve_obb_contact(left, right, true).expect("valid large response");
+
+        assert_ne!(response.left.angular.angular_velocity.z, 0);
+    }
+
+    #[test]
     fn fixed_wall_remains_unchanged() {
         let left = RigidBox3d::new(
             RigidBody::dynamic(
@@ -1036,7 +1135,11 @@ mod tests {
         )
         .expect("valid dynamic box");
         let wall = RigidBox3d::new(
-            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
+            RigidBody::fixed(
+                BodyId(2),
+                Vec3i::new(19, 0, 0),
+                Vec3i::new(10, 10, 10),
+            ),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid wall");
@@ -1061,7 +1164,11 @@ mod tests {
         )
         .expect("valid dynamic box");
         let wall = RigidBox3d::new(
-            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
+            RigidBody::fixed(
+                BodyId(2),
+                Vec3i::new(19, 0, 0),
+                Vec3i::new(10, 10, 10),
+            ),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid wall");
