@@ -150,10 +150,7 @@ pub fn sample_rigid_box_free_flight(
     body.position = position;
 
     let angular = if rigid_box.rotation_locked {
-        AngularState3d::new(
-            rigid_box.angular.orientation,
-            AngularVelocity3d::default(),
-        )
+        AngularState3d::new(rigid_box.angular.orientation, AngularVelocity3d::default())
     } else {
         AngularState3d::new(
             integrate_orientation_ratio(
@@ -388,7 +385,10 @@ mod tests {
         .expect("valid locked free flight");
 
         assert!(sampled.body().position().x > rigid_box.body().position().x);
-        assert_eq!(sampled.angular().orientation, rigid_box.angular().orientation);
+        assert_eq!(
+            sampled.angular().orientation,
+            rigid_box.angular().orientation
+        );
         assert!(sampled.angular().angular_velocity.is_zero());
         assert!(sampled.rotation_locked());
     }
