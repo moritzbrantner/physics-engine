@@ -141,14 +141,21 @@ impl Sandbox {
         let Some(player) = self.world.body(PLAYER_ID) else {
             return Ok(false);
         };
-        let hits = self.world.cast_aabb(
-            Aabb::new(player.position(), player.half_extents()),
-            Vec3i::new(0, -2, 0),
-            1,
-        )?;
-        Ok(hits
+        let position = player.position();
+        let half = player.half_extents();
+        let probe = Aabb::new(
+            Vec3i::new(position.x, position.y - half.y - 1, position.z),
+            Vec3i::new(
+                half.x.saturating_sub(1).max(0),
+                1,
+                half.z.saturating_sub(1).max(0),
+            ),
+        );
+        Ok(self
+            .world
+            .overlap_query(probe)?
             .into_iter()
-            .any(|hit| hit.body != PLAYER_ID && hit.normal.is_some_and(|normal| normal.y > 0)))
+            .any(|id| id != PLAYER_ID))
     }
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
@@ -402,11 +409,35 @@ pub extern "C" fn sandbox_error_code() -> i32 {
 mod tests {
     use super::{PLAYER_ID, Sandbox};
 
+    fn settle_player(sandbox: &mut Sandbox) {
+        for _ in 0..16 {
+            assert_eq!(sandbox.step(0, 0, false), 0);
+        }
+    }
+
     #[test]
     fn sandbox_contains_authoritative_player_and_test_world() {
         let sandbox = Sandbox::new().expect("valid sandbox");
         assert!(sandbox.world.body(PLAYER_ID).is_some());
         assert!(sandbox.world.bodies().count() >= 10);
+    }
+
+    #[test]
+    fn grounded_player_can_jump() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        assert!(sandbox.grounded().expect("valid foot probe"));
+        let before = sandbox.world.body(PLAYER_ID).expect("player").position().y;
+
+        assert_eq!(sandbox.step(0, 0, true), 0);
+
+        let player = sandbox.world.body(PLAYER_ID).expect("player after jump");
+        assert!(player.position().y > before, "jump did not move upward");
+        assert!(
+            player.velocity().y > 0,
+            "jump did not preserve upward velocity"
+        );
+        assert!(!sandbox.grounded().expect("valid airborne foot probe"));
     }
 
     #[test]

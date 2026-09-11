@@ -9,7 +9,11 @@ const stepButton = document.querySelector("#single-step");
 const FIXED_STEP_MS = 1000 / 60;
 const MOVE_SPEED = 7;
 const PROJECTILE_SPEED = 96;
+const LOOK_SENSITIVITY = 0.0022;
+const KEYBOARD_LOOK_SPEED = 1.8;
+const NEAR_PLANE = 2;
 const keys = new Set();
+const textureCache = new Map();
 
 let engine = null;
 let yaw = 0;
@@ -18,6 +22,9 @@ let paused = false;
 let jumpQueued = false;
 let previousTimestamp = null;
 let accumulator = 0;
+let dragLook = false;
+let dragDistance = 0;
+let lastPointer = null;
 
 async function loadEngine() {
   const response = await fetch("physics_engine_demo.wasm");
@@ -38,7 +45,7 @@ function reset() {
   jumpQueued = false;
   accumulator = 0;
   pauseButton.textContent = "Pause";
-  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, and click fires a CCD projectile.";
+  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrow keys look, and click or F fires a CCD projectile.";
 }
 
 function movementVelocity() {
@@ -128,17 +135,56 @@ function cameraSpace(point, camera) {
   ];
 }
 
-function project(point, camera) {
-  const [x, y, depth] = cameraSpace(point, camera);
-  if (depth <= 1) return null;
+function projectCamera(point) {
+  const [x, y, depth] = point;
   const focal = canvas.height * 0.9;
-  return [canvas.width / 2 + (x * focal) / depth, canvas.height / 2 - (y * focal) / depth, depth];
+  return [canvas.width / 2 + (x * focal) / depth, canvas.height / 2 - (y * focal) / depth];
+}
+
+function clipSegmentToNearPlane(a, b) {
+  const aInside = a[2] >= NEAR_PLANE;
+  const bInside = b[2] >= NEAR_PLANE;
+  if (!aInside && !bInside) return null;
+  if (aInside && bInside) return [a, b];
+
+  const from = aInside ? a : b;
+  const to = aInside ? b : a;
+  const t = (NEAR_PLANE - from[2]) / (to[2] - from[2]);
+  const clipped = [
+    from[0] + (to[0] - from[0]) * t,
+    from[1] + (to[1] - from[1]) * t,
+    NEAR_PLANE,
+  ];
+  return aInside ? [from, clipped] : [clipped, from];
+}
+
+function clipPolygonToNearPlane(points) {
+  if (points.length === 0) return [];
+  const clipped = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const previous = points[(index + points.length - 1) % points.length];
+    const currentInside = current[2] >= NEAR_PLANE;
+    const previousInside = previous[2] >= NEAR_PLANE;
+
+    if (currentInside !== previousInside) {
+      const t = (NEAR_PLANE - previous[2]) / (current[2] - previous[2]);
+      clipped.push([
+        previous[0] + (current[0] - previous[0]) * t,
+        previous[1] + (current[1] - previous[1]) * t,
+        NEAR_PLANE,
+      ]);
+    }
+    if (currentInside) clipped.push(current);
+  }
+  return clipped;
 }
 
 function drawLine(from, to, camera, strokeStyle, alpha = 1) {
-  const a = project(from, camera);
-  const b = project(to, camera);
-  if (!a || !b) return;
+  const clipped = clipSegmentToNearPlane(cameraSpace(from, camera), cameraSpace(to, camera));
+  if (!clipped) return;
+  const a = projectCamera(clipped[0]);
+  const b = projectCamera(clipped[1]);
   context.globalAlpha = alpha;
   context.strokeStyle = strokeStyle;
   context.beginPath();
@@ -150,16 +196,20 @@ function drawLine(from, to, camera, strokeStyle, alpha = 1) {
 
 function drawGrid(camera) {
   const grid = themeColor("--grid");
+  context.lineWidth = 1;
   for (let coordinate = -480; coordinate <= 480; coordinate += 80) {
-    drawLine([coordinate, 0, -480], [coordinate, 0, 480], camera, grid, 0.55);
-    drawLine([-480, 0, coordinate], [480, 0, coordinate], camera, grid, 0.55);
+    drawLine([coordinate, 0.2, -480], [coordinate, 0.2, 480], camera, grid, 0.22);
+    drawLine([-480, 0.2, coordinate], [480, 0.2, coordinate], camera, grid, 0.22);
   }
 }
 
-const BOX_EDGES = [
-  [0, 1], [1, 3], [3, 2], [2, 0],
-  [4, 5], [5, 7], [7, 6], [6, 4],
-  [0, 4], [1, 5], [2, 6], [3, 7],
+const BOX_FACES = [
+  [0, 2, 3, 1],
+  [4, 5, 7, 6],
+  [0, 4, 6, 2],
+  [1, 3, 7, 5],
+  [0, 1, 5, 4],
+  [2, 6, 7, 3],
 ];
 
 function boxVertices(body) {
@@ -177,27 +227,145 @@ function boxVertices(body) {
   ];
 }
 
+function polygonArea(points) {
+  let area = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    area += current[0] * next[1] - next[0] * current[1];
+  }
+  return area / 2;
+}
+
+function projectedFace(vertices, face, camera) {
+  const cameraPoints = face.map((index) => cameraSpace(vertices[index], camera));
+  const clipped = clipPolygonToNearPlane(cameraPoints);
+  if (clipped.length < 3) return null;
+  const screen = clipped.map(projectCamera);
+  const area = polygonArea(screen);
+  if (area >= -0.1) return null;
+  return {
+    screen,
+    depth: clipped.reduce((sum, point) => sum + point[2], 0) / clipped.length,
+  };
+}
+
+function texturePattern(kind) {
+  if (textureCache.has(kind)) return textureCache.get(kind);
+  const tile = document.createElement("canvas");
+  tile.width = 32;
+  tile.height = 32;
+  const tileContext = tile.getContext("2d");
+
+  if (kind === "wall") {
+    tileContext.fillStyle = "#2b3139";
+    tileContext.fillRect(0, 0, 32, 32);
+    tileContext.strokeStyle = "#59636f";
+    tileContext.lineWidth = 2;
+    for (const y of [0, 16, 32]) {
+      tileContext.beginPath();
+      tileContext.moveTo(0, y);
+      tileContext.lineTo(32, y);
+      tileContext.stroke();
+    }
+    tileContext.beginPath();
+    tileContext.moveTo(8, 0);
+    tileContext.lineTo(8, 16);
+    tileContext.moveTo(24, 0);
+    tileContext.lineTo(24, 16);
+    tileContext.moveTo(0, 16);
+    tileContext.lineTo(0, 32);
+    tileContext.moveTo(16, 16);
+    tileContext.lineTo(16, 32);
+    tileContext.moveTo(32, 16);
+    tileContext.lineTo(32, 32);
+    tileContext.stroke();
+  } else if (kind === "floor") {
+    tileContext.fillStyle = "#171d24";
+    tileContext.fillRect(0, 0, 32, 32);
+    tileContext.fillStyle = "#1f2730";
+    tileContext.fillRect(0, 0, 16, 16);
+    tileContext.fillRect(16, 16, 16, 16);
+    tileContext.strokeStyle = "#394653";
+    tileContext.lineWidth = 1;
+    tileContext.strokeRect(0.5, 0.5, 31, 31);
+  } else if (kind === "crate") {
+    tileContext.fillStyle = "#5a3b1f";
+    tileContext.fillRect(0, 0, 32, 32);
+    tileContext.strokeStyle = "#d29922";
+    tileContext.lineWidth = 2;
+    tileContext.strokeRect(1, 1, 30, 30);
+    tileContext.beginPath();
+    tileContext.moveTo(2, 2);
+    tileContext.lineTo(30, 30);
+    tileContext.moveTo(30, 2);
+    tileContext.lineTo(2, 30);
+    tileContext.stroke();
+  } else {
+    tileContext.fillStyle = "#343b44";
+    tileContext.fillRect(0, 0, 32, 32);
+    tileContext.fillStyle = "#505965";
+    for (const [x, y] of [[5, 7], [19, 4], [26, 19], [11, 25]]) {
+      tileContext.fillRect(x, y, 2, 2);
+    }
+  }
+
+  const pattern = context.createPattern(tile, "repeat");
+  textureCache.set(kind, pattern);
+  return pattern;
+}
+
+function textureKind(body) {
+  if (body.role === 2) return "crate";
+  if (body.role !== 0) return "concrete";
+  const [hx, hy, hz] = body.half;
+  if (body.position[1] < 0 && hx >= 400 && hz >= 400) return "floor";
+  if (hy >= 60) return "wall";
+  return "concrete";
+}
+
 function roleColor(role) {
   if (role === 2) return themeColor("--dynamic");
   if (role === 3) return themeColor("--projectile");
   return themeColor("--fixed");
 }
 
+function drawFace(face, fillStyle, strokeStyle, alpha) {
+  const [first, ...rest] = face.screen;
+  context.beginPath();
+  context.moveTo(first[0], first[1]);
+  for (const point of rest) context.lineTo(point[0], point[1]);
+  context.closePath();
+  context.globalAlpha = alpha;
+  context.fillStyle = fillStyle;
+  context.fill();
+  context.globalAlpha = Math.min(1, alpha + 0.15);
+  context.strokeStyle = strokeStyle;
+  context.lineWidth = 1.3;
+  context.stroke();
+  context.globalAlpha = 1;
+}
+
 function drawBody(body, camera) {
   if (body.role === 1) return;
   const vertices = boxVertices(body);
-  context.lineWidth = body.role === 3 ? 2.5 : 1.5;
   const stroke = roleColor(body.role);
-  for (const [from, to] of BOX_EDGES) {
-    drawLine(vertices[from], vertices[to], camera, stroke, body.role === 0 ? 0.7 : 1);
-  }
+  const faces = BOX_FACES
+    .map((face) => projectedFace(vertices, face, camera))
+    .filter(Boolean)
+    .sort((left, right) => right.depth - left.depth);
+
+  const fill = body.role === 3 ? stroke : texturePattern(textureKind(body));
+  const alpha = body.role === 0 ? 0.92 : 0.96;
+  for (const face of faces) drawFace(face, fill, stroke, alpha);
 
   if (body.role === 3) {
-    const center = project(body.position, camera);
-    if (center) {
+    const centerCamera = cameraSpace(body.position, camera);
+    if (centerCamera[2] >= NEAR_PLANE) {
+      const center = projectCamera(centerCamera);
       context.fillStyle = stroke;
       context.beginPath();
-      context.arc(center[0], center[1], Math.max(2, 10 / Math.sqrt(center[2])), 0, Math.PI * 2);
+      context.arc(center[0], center[1], Math.max(2.5, 12 / Math.sqrt(centerCamera[2])), 0, Math.PI * 2);
       context.fill();
     }
   }
@@ -217,10 +385,18 @@ function drawCrosshair() {
   context.stroke();
 }
 
+function drawBackground() {
+  const gradient = context.createLinearGradient(0, 0, 0, canvas.height);
+  gradient.addColorStop(0, "#0b1a27");
+  gradient.addColorStop(0.55, "#111820");
+  gradient.addColorStop(1, themeColor("--canvas"));
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+}
+
 function render() {
   resizeCanvas();
-  context.fillStyle = themeColor("--canvas");
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  drawBackground();
 
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
@@ -235,13 +411,32 @@ function render() {
   drawCrosshair();
 
   const grounded = engine.sandbox_grounded() === 1 ? "grounded" : "airborne";
-  debug.textContent = `${bodies.length} bodies · ${grounded} · ${engine.sandbox_last_pair_checks()} pair checks · ${engine.sandbox_last_collision_events()} collision events this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
+  const yawDegrees = Math.round((yaw * 180) / Math.PI);
+  const pitchDegrees = Math.round((pitch * 180) / Math.PI);
+  debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_pair_checks()} pair checks · ${engine.sandbox_last_collision_events()} collision events this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+}
+
+function applyLook(deltaX, deltaY) {
+  yaw += deltaX * LOOK_SENSITIVITY;
+  if (yaw > Math.PI) yaw -= Math.PI * 2;
+  if (yaw < -Math.PI) yaw += Math.PI * 2;
+  pitch = Math.max(-1.35, Math.min(1.35, pitch + deltaY * LOOK_SENSITIVITY));
+}
+
+function applyKeyboardLook(elapsedMs) {
+  const seconds = elapsedMs / 1000;
+  const horizontal = Number(keys.has("ArrowRight")) - Number(keys.has("ArrowLeft"));
+  const vertical = Number(keys.has("ArrowDown")) - Number(keys.has("ArrowUp"));
+  if (horizontal !== 0) yaw += horizontal * KEYBOARD_LOOK_SPEED * seconds;
+  if (vertical !== 0) pitch = Math.max(-1.35, Math.min(1.35, pitch + vertical * KEYBOARD_LOOK_SPEED * seconds));
 }
 
 function frame(timestamp) {
   if (previousTimestamp === null) previousTimestamp = timestamp;
   const elapsed = Math.min(timestamp - previousTimestamp, 250);
   previousTimestamp = timestamp;
+  applyKeyboardLook(elapsed);
 
   if (!paused) {
     accumulator += elapsed;
@@ -259,17 +454,60 @@ function frame(timestamp) {
 }
 
 canvas.addEventListener("pointerdown", (event) => {
+  canvas.focus({ preventScroll: true });
   if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock();
+    if (event.button !== 0) return;
+    dragLook = true;
+    dragDistance = 0;
+    lastPointer = [event.clientX, event.clientY];
+    try {
+      const request = canvas.requestPointerLock?.();
+      if (request && typeof request.catch === "function") {
+        request.catch(() => {
+          status.textContent = "Pointer lock was unavailable; hold and drag on the world to look, or use the arrow keys.";
+        });
+      }
+    } catch {
+      status.textContent = "Pointer lock was unavailable; hold and drag on the world to look, or use the arrow keys.";
+    }
     return;
   }
   if (event.button === 0) shoot();
 });
 
 document.addEventListener("mousemove", (event) => {
-  if (document.pointerLockElement !== canvas) return;
-  yaw += event.movementX * 0.0022;
-  pitch = Math.max(-1.35, Math.min(1.35, pitch + event.movementY * 0.0022));
+  if (document.pointerLockElement === canvas) {
+    applyLook(event.movementX, event.movementY);
+    return;
+  }
+  if (!dragLook || (event.buttons & 1) === 0 || !lastPointer) return;
+  const deltaX = event.clientX - lastPointer[0];
+  const deltaY = event.clientY - lastPointer[1];
+  dragDistance += Math.hypot(deltaX, deltaY);
+  lastPointer = [event.clientX, event.clientY];
+  applyLook(deltaX, deltaY);
+});
+
+document.addEventListener("pointerup", (event) => {
+  if (event.button !== 0 || !dragLook) return;
+  const shouldShoot = document.pointerLockElement !== canvas && dragDistance < 4;
+  dragLook = false;
+  lastPointer = null;
+  if (shouldShoot) shoot();
+});
+
+document.addEventListener("pointerlockchange", () => {
+  dragLook = false;
+  lastPointer = null;
+  if (document.pointerLockElement === canvas) {
+    status.textContent = "Mouse captured. WASD moves, Space jumps, mouse look rotates the camera, and click fires.";
+  } else {
+    status.textContent = "Mouse released. Click the world to capture it again; drag or arrow keys can still rotate the camera.";
+  }
+});
+
+document.addEventListener("pointerlockerror", () => {
+  status.textContent = "Pointer lock was unavailable; hold and drag on the world to look, or use the arrow keys.";
 });
 
 document.addEventListener("keydown", (event) => {
@@ -278,6 +516,8 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     if (!event.repeat) jumpQueued = true;
   }
+  if (event.code.startsWith("Arrow")) event.preventDefault();
+  if (event.code === "KeyF" && !event.repeat) shoot();
   if (event.code === "KeyR" && !event.repeat) reset();
   if (event.code === "KeyP" && !event.repeat) {
     paused = !paused;
@@ -287,7 +527,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("keyup", (event) => keys.delete(event.code));
-window.addEventListener("blur", () => keys.clear());
+window.addEventListener("blur", () => {
+  keys.clear();
+  dragLook = false;
+  lastPointer = null;
+});
 
 resetButton.addEventListener("click", reset);
 pauseButton.addEventListener("click", () => {

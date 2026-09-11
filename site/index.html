@@ -33,7 +33,7 @@
 
         <div class="viewport-shell">
           <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>
-          <div class="help" aria-hidden="true">WASD move · Space jump · Mouse look · Click shoot · R reset · P pause · N step</div>
+          <div class="help" aria-hidden="true">WASD move · Space jump · Mouse / arrows look · Click / F shoot · R reset · P pause · N step</div>
         </div>
         <p id="debug" class="debug" aria-live="polite"></p>
         <p id="status" class="status" aria-live="polite">Loading the Rust physics sandbox…</p>
@@ -46,6 +46,11 @@
           The world contains a grounded player body, stacked dynamic boxes, platforms and steps, plus
           a thin wall placed in the projectile path. Fast shots therefore exercise swept AABB CCD
           instead of relying on frame-end overlap. Pause and single-step make failures easier to inspect.
+        </p>
+        <p>
+          Basic procedural floor, wall, concrete and crate textures make the fixture readable without
+          introducing an asset dependency. The renderer clips geometry at the camera near plane so
+          looking around close to large walls does not make whole faces disappear.
         </p>
         <p>
           The current production <code>World</code> is still translational and AABB-only, so the player
