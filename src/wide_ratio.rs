@@ -88,6 +88,7 @@ impl ExactRatio {
     }
 
     /// Returns the canonical pair when both sides fit the signed 128-bit compatibility surface.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn as_i128_pair(self) -> Option<(i128, i128)> {
         let numerator = self.numerator.to_u128()?;
@@ -204,6 +205,7 @@ impl WideNatural {
         result
     }
 
+    #[cfg(test)]
     fn to_u128(self) -> Option<u128> {
         if self.limbs[2..].iter().any(|limb| *limb != 0) {
             return None;
