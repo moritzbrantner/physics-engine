@@ -36,12 +36,18 @@ pub fn sampled_new_rotating_contact_search(
     let mut earliest: Option<RotatingContactSearchHit3d> = None;
 
     for pair in candidates {
-        let left = by_id
-            .get(&pair.left)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
-        let right = by_id
-            .get(&pair.right)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
+        let left =
+            by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right =
+            by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         let start_contact = obb_contact_seed(left.oriented_box(), right.oriented_box())?;
         let candidate = if start_contact.is_some() {
             sampled_recontact_after_start(left, right, pair, config)?
@@ -76,12 +82,7 @@ fn sampled_recontact_after_start(
         match sampled_contact(left, right, config, numerator, coarse_denominator)? {
             Some(contact) => {
                 if let Some(clear_numerator) = last_clear {
-                    bracket = Some((
-                        clear_numerator,
-                        numerator,
-                        coarse_denominator,
-                        contact,
-                    ));
+                    bracket = Some((clear_numerator, numerator, coarse_denominator, contact));
                     break;
                 }
             }
@@ -106,14 +107,16 @@ fn sampled_recontact_after_start(
                 sample_count: config.sample_count,
                 refinement_steps: config.refinement_steps,
             })?;
-        denominator = denominator
-            .checked_mul(2)
-            .ok_or(RotatingContactSearchError3d::ResolutionTooFine {
-                sample_count: config.sample_count,
-                refinement_steps: config.refinement_steps,
-            })?;
+        denominator =
+            denominator
+                .checked_mul(2)
+                .ok_or(RotatingContactSearchError3d::ResolutionTooFine {
+                    sample_count: config.sample_count,
+                    refinement_steps: config.refinement_steps,
+                })?;
         let midpoint = lower + (upper - lower) / 2;
-        if let Some(midpoint_contact) = sampled_contact(left, right, config, midpoint, denominator)? {
+        if let Some(midpoint_contact) = sampled_contact(left, right, config, midpoint, denominator)?
+        {
             upper = midpoint;
             contact = midpoint_contact;
         } else {
@@ -135,18 +138,8 @@ fn sampled_contact(
     numerator: u32,
     denominator: u32,
 ) -> Result<Option<ObbContactSeed3d>, RotatingContactSearchError3d> {
-    let left = sample_rigid_box_free_flight(
-        left,
-        config.free_flight,
-        numerator,
-        denominator,
-    )?;
-    let right = sample_rigid_box_free_flight(
-        right,
-        config.free_flight,
-        numerator,
-        denominator,
-    )?;
+    let left = sample_rigid_box_free_flight(left, config.free_flight, numerator, denominator)?;
+    let right = sample_rigid_box_free_flight(right, config.free_flight, numerator, denominator)?;
     Ok(obb_contact_seed(left.oriented_box(), right.oriented_box())?)
 }
 
@@ -223,11 +216,7 @@ mod tests {
     }
 
     fn config(gravity: Vec3i) -> RotatingContactSearchConfig3d {
-        RotatingContactSearchConfig3d::new(
-            RigidBoxFreeFlightConfig3d::new(gravity, 1, 1),
-            4,
-            3,
-        )
+        RotatingContactSearchConfig3d::new(RigidBoxFreeFlightConfig3d::new(gravity, 1, 1), 4, 3)
     }
 
     #[test]
@@ -282,6 +271,9 @@ mod tests {
         ];
         let search = || sampled_new_rotating_contact_search(&boxes, config(Vec3i::ZERO));
 
-        assert_eq!(search().expect("first search"), search().expect("second search"));
+        assert_eq!(
+            search().expect("first search"),
+            search().expect("second search")
+        );
     }
 }
