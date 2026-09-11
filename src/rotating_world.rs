@@ -565,9 +565,7 @@ mod tests {
         RigidBox3d, RigidBoxFreeFlightConfig3d, Vec3i,
     };
 
-    use super::{
-        RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, tail_slice_config,
-    };
+    use super::{RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, tail_slice_config};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -597,11 +595,8 @@ mod tests {
 
     #[test]
     fn widened_tail_denominator_can_be_sliced_exactly() {
-        let remaining = RigidBoxFreeFlightConfig3d::new_wide(
-            Vec3i::ZERO,
-            35_582_088,
-            2_147_483_647,
-        );
+        let remaining =
+            RigidBoxFreeFlightConfig3d::new_wide(Vec3i::ZERO, 35_582_088, 2_147_483_647);
         let sliced = tail_slice_config(remaining, 2).expect("wide tail slice");
         assert_eq!(sliced.timestep_numerator, 17_791_044);
         assert_eq!(sliced.timestep_denominator, 2_147_483_647);
