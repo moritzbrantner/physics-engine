@@ -13,10 +13,10 @@ The engine now has a deliberately narrow but real reusable core:
 - integer public state with a private Q32.32 continuous timeline;
 - gravity and deterministic body ordering;
 - swept AABB continuous collision detection and time of impact;
-- globally earliest collision-event stepping with remaining-time continuation;
+- globally earliest translational collision-event stepping with remaining-time continuation;
 - deterministic overlap stabilization and mass-aware separation;
 - restitution for dynamic/fixed and dynamic/dynamic impacts;
-- bounded collision events per step;
+- bounded translational collision events per step;
 - deterministic swept sweep-and-prune broad-phase candidate generation;
 - snapshot overlap, swept-AABB and ray queries ordered by TOI and body ID;
 - physics-native AABB and sphere collider geometry with exact integer contact evidence;
@@ -27,15 +27,18 @@ The engine now has a deliberately narrow but real reusable core:
 - engine-native rotating cuboid state over the existing translational `RigidBody` contract;
 - direct deterministic rotating-box free-flight sampling with acceleration-aware conservative sweep bounds;
 - deterministic rotational broad-phase candidate pairs;
-- sampled rotating OBB contact search with explicit coarse-grid and refinement semantics;
-- reconstruction of one shared equal-time rotating-contact frontier for downstream response;
+- sampled rotating OBB first-contact search plus strictly-positive clear/re-contact search;
+- reconstruction of one shared equal-time rotating-contact frontier;
+- deterministic OBB/frontier response with coupled simultaneous-contact handling and precision-preserving angular inertia math;
 - integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
 This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
 
-The current `World` simulation deliberately remains AABB-only and translational. Sphere support, OBB SAT, rotational sweep bounds, angular state, rotating-box free flight, rotational broad phase, sampled rotating contact search, and shared sampled contact frontiers are independent foundations. None of these imply mixed-shape or rotational collision response until those semantics are migrated and validated explicitly. Endpoint-only sweep bounds retain their stated trajectory precondition; the rotating-box free-flight envelope widens them conservatively so acceleration and velocity reversals cannot hide sampled contacts.
+The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, and frontier response are separate engine-owned foundations being assembled into the rotating event solver without changing the established translational contract.
 
-The rotational contact search is deliberately sampled. It can detect and refine a contact that appears at one of its coarse samples, but a contact island that begins and ends entirely between adjacent coarse samples can still be missed. Refinement improves the reported upper contact bound after a coarse contact has been observed; it does not convert the algorithm into analytic rotational CCD. The frontier preserves that exact boundary: it reconstructs all bodies from the common interval start at the admitted sampled time and gathers the contacts present in that shared state, but it does not claim the sampled time is the analytic first time of impact.
+The rotational contact path is deliberately sampled. First-contact search can detect and refine contact observed by its coarse grid. Re-contact search adds the state transition needed by repeated events: a pair already touching at the interval start is ignored until a coarse sample proves it clear and a later sample observes contact again. Persistent time-zero contact therefore cannot hide every later event merely by being rediscovered first. This still does not become analytic rotational CCD: a clear interval or contact island that exists wholly between adjacent coarse samples can be missed, and refinement only sharpens an already observed clear/contact bracket.
+
+Frontier response likewise remains narrower than a full frame solver. It resolves the shared sampled state with bounded simultaneous passes, couples duplicate same-direction constraints rather than blindly multiplying their impulses, preserves progress at tied zero-depth impacts, and retains rotational precision for large valid inertias. Repeated remaining-time advancement and persistent-contact support over an entire frame are the next layer.
 
 ## Example
 
@@ -81,10 +84,11 @@ ECS / game / simulation consumer
           +-- OBB contact geometry
           +-- rotational/free-flight sweep bounds
           +-- direct rotating-box free flight
-          +-- sampled rotating contact search
+          +-- sampled first-contact / re-contact search
           +-- shared rotating-contact frontier
+          +-- coupled rotating frontier response
           +-- spatial queries
-          +-- constraints and solvers (next)
+          +-- repeated rotating event solver (next)
 ```
 
 `physics-engine` must never depend on `ecs-lab`, a renderer, Three.js/WebGPU, or a game runtime.
@@ -93,12 +97,13 @@ ECS / game / simulation consumer
 
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
-1. friction and persistent/resting contact constraints;
-2. rotational contact response over the shared frontier, then repeated-event stepping while preserving the explicit sampled-versus-analytic CCD boundary;
-3. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
-4. joints/constraints and sleeping/islands;
-5. a thin ECS adapter that maps entity IDs/components to engine bodies;
-6. WASM bindings so browser demos execute the Rust engine directly.
+1. reconstruct a shared strictly-positive re-contact frontier and consume exact rational remaining time across repeated sampled events;
+2. persistent/resting contact stabilization over those remaining-time segments;
+3. friction and fuller contact-manifold constraints;
+4. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
+5. joints/constraints and sleeping/islands;
+6. a thin ECS adapter that maps entity IDs/components to engine bodies;
+7. WASM bindings so browser demos execute the Rust engine directly.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 
