@@ -1,12 +1,12 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBoxError3d,
-    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
-    RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    RotationalSweepPair3d, SampledContactTime3d, Vec3i, advance_repeated_rotating_events,
-    obb_contact_seed, resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
+    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBoxError3d, RepeatedRotatingEventConfig3d,
+    RepeatedRotatingEventError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
+    SampledContactTime3d, Vec3i, advance_repeated_rotating_events, obb_contact_seed,
+    resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -484,7 +484,9 @@ mod tests {
             ))
             .expect("box");
 
-        world.step(1, 1).expect("persistent tail must remain constrained");
+        world
+            .step(1, 1)
+            .expect("persistent tail must remain constrained");
 
         let body = world.box_by_id(BodyId(2)).expect("box remains").body();
         assert!(
