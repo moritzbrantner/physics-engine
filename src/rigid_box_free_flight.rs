@@ -107,6 +107,7 @@ impl RigidBoxFreeFlightConfig3d {
             && self.timestep.is_zero()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn timestep_i128(self) -> Option<(i128, i128)> {
         if self.invalid_numerator.is_some() || self.invalid_denominator.is_some() {
