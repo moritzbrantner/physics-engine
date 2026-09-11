@@ -1,9 +1,9 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind,
-    MATERIAL_SCALE, ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactSeed3d, Orientation3d,
-    OrientedBoxError3d, RigidBox3d, Vec3i, box_inertia, obb_contact_seed, oriented_box_vertices,
+    ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE,
+    ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactSeed3d, Orientation3d, OrientedBoxError3d,
+    RigidBox3d, Vec3i, box_inertia, obb_contact_seed, oriented_box_vertices,
 };
 
 const RESPONSE_SCALE: i128 = 1_i128 << 50;
@@ -54,7 +54,9 @@ impl fmt::Display for ObbContactResponseError3d {
             ),
             Self::Angular(error) => write!(formatter, "OBB angular response failed: {error}"),
             Self::Geometry(error) => write!(formatter, "OBB contact geometry failed: {error}"),
-            Self::ArithmeticOverflow => write!(formatter, "OBB contact response arithmetic overflowed"),
+            Self::ArithmeticOverflow => {
+                write!(formatter, "OBB contact response arithmetic overflowed")
+            }
         }
     }
 }
@@ -218,10 +220,7 @@ fn validate_pair(left: &RigidBox3d, right: &RigidBox3d) -> Result<(), ObbContact
     Ok(())
 }
 
-fn support_centroid(
-    vertices: &[Vec3i; 8],
-    mask: u8,
-) -> Result<Vec3i, ObbContactResponseError3d> {
+fn support_centroid(vertices: &[Vec3i; 8], mask: u8) -> Result<Vec3i, ObbContactResponseError3d> {
     let mut sum = [0_i128; 3];
     let mut count = 0_i128;
     for (index, vertex) in vertices.iter().enumerate() {
@@ -320,7 +319,8 @@ fn axis_aligned_face_overlap_centroid(
         component(right_support, normal_axis),
     )?;
     for tangent_axis in tangent_axes {
-        let (left_minimum, left_maximum) = support_interval(left_vertices, left_mask, tangent_axis)?;
+        let (left_minimum, left_maximum) =
+            support_interval(left_vertices, left_mask, tangent_axis)?;
         let (right_minimum, right_maximum) =
             support_interval(right_vertices, right_mask, tangent_axis)?;
         let overlap_minimum = left_minimum.max(right_minimum);
@@ -446,10 +446,7 @@ fn project_to_support_midplane(
         return Err(ObbContactResponseError3d::ArithmeticOverflow);
     }
     let target_projection = div_round_nearest(
-        checked_add(
-            dot_vec(left_support, axis)?,
-            dot_vec(right_support, axis)?,
-        )?,
+        checked_add(dot_vec(left_support, axis)?, dot_vec(right_support, axis)?)?,
         2,
     )?;
     let projection_delta = checked_sub(target_projection, dot_vec(anchor, axis)?)?;
@@ -579,8 +576,8 @@ fn body_effective_inverse_mass_scaled(
     }
     let length_squared = i128::try_from(axis_length_squared)
         .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
-    let translational = checked_mul(RESPONSE_SCALE, length_squared)?
-        / i128::from(rigid_box.body.mass_units);
+    let translational =
+        checked_mul(RESPONSE_SCALE, length_squared)? / i128::from(rigid_box.body.mass_units);
     let angular_impulse = cross_i64_i128(contact_offset, axis)?;
     let local = rotate_inverse(rigid_box.angular.orientation, angular_impulse)?;
     let inertia = box_inertia(&rigid_box.body)?;
@@ -644,10 +641,7 @@ fn add_linear_impulse_axis(
     to_i32(checked_add(i128::from(current), delta)?)
 }
 
-fn add_angular_axis(
-    current: i32,
-    delta: i128,
-) -> Result<i32, ObbContactResponseError3d> {
+fn add_angular_axis(current: i32, delta: i128) -> Result<i32, ObbContactResponseError3d> {
     to_i32(checked_add(i128::from(current), delta)?)
 }
 
@@ -693,12 +687,9 @@ fn minimum_translation_vector(
         )?;
     }
     Ok([
-        i64::try_from(correction[0])
-            .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?,
-        i64::try_from(correction[1])
-            .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?,
-        i64::try_from(correction[2])
-            .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?,
+        i64::try_from(correction[0]).map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?,
+        i64::try_from(correction[1]).map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?,
+        i64::try_from(correction[2]).map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?,
     ])
 }
 
@@ -766,10 +757,7 @@ fn project_pair(
     }
 }
 
-fn offset_position(
-    position: Vec3i,
-    delta: [i64; 3],
-) -> Result<Vec3i, ObbContactResponseError3d> {
+fn offset_position(position: Vec3i, delta: [i64; 3]) -> Result<Vec3i, ObbContactResponseError3d> {
     Ok(Vec3i::new(
         to_i32(checked_add(i128::from(position.x), i128::from(delta[0]))?)?,
         to_i32(checked_add(i128::from(position.y), i128::from(delta[1]))?)?,
@@ -812,10 +800,7 @@ fn cross_component(
     checked_sub(checked_mul(left_a, right_a)?, checked_mul(left_b, right_b)?)
 }
 
-fn scale_axis(
-    axis: [i128; 3],
-    scale: i128,
-) -> Result<[i128; 3], ObbContactResponseError3d> {
+fn scale_axis(axis: [i128; 3], scale: i128) -> Result<[i128; 3], ObbContactResponseError3d> {
     Ok([
         checked_mul(axis[0], scale)?,
         checked_mul(axis[1], scale)?,
@@ -902,10 +887,7 @@ fn rotate_with_matrix(
     Ok(output)
 }
 
-fn scaled_twice(
-    value: i128,
-    scale: i128,
-) -> Result<i128, ObbContactResponseError3d> {
+fn scaled_twice(value: i128, scale: i128) -> Result<i128, ObbContactResponseError3d> {
     div_round_nearest(checked_mul(value, 2)?, scale)
 }
 
@@ -929,10 +911,7 @@ fn dot_vec(vector: Vec3i, axis: [i128; 3]) -> Result<i128, ObbContactResponseErr
     )
 }
 
-fn checked_dot(
-    left: [i128; 3],
-    right: [i128; 3],
-) -> Result<i128, ObbContactResponseError3d> {
+fn checked_dot(left: [i128; 3], right: [i128; 3]) -> Result<i128, ObbContactResponseError3d> {
     checked_add(
         checked_add(
             checked_mul(left[0], right[0])?,
@@ -994,20 +973,15 @@ fn to_i32(value: i128) -> Result<i32, ObbContactResponseError3d> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
-        Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d, RigidBody,
+        RigidBox3d, Vec3i,
     };
 
     use super::{ObbContactResponseError3d, resolve_obb_contact};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
-            RigidBody::dynamic(
-                BodyId(id),
-                position,
-                velocity,
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid dynamic box")
@@ -1024,9 +998,18 @@ mod tests {
         assert!(contact.normal_impulse_units > 0);
         assert_eq!(response.left.body.velocity.x, 30);
         assert_eq!(response.right.body.velocity.x, 30);
-        assert_eq!(response.left.angular.angular_velocity, AngularVelocity3d::default());
-        assert_eq!(response.right.angular.angular_velocity, AngularVelocity3d::default());
-        assert_eq!(response.right.body.position.x - response.left.body.position.x, 20);
+        assert_eq!(
+            response.left.angular.angular_velocity,
+            AngularVelocity3d::default()
+        );
+        assert_eq!(
+            response.right.angular.angular_velocity,
+            AngularVelocity3d::default()
+        );
+        assert_eq!(
+            response.right.body.position.x - response.left.body.position.x,
+            20
+        );
     }
 
     #[test]
@@ -1053,11 +1036,7 @@ mod tests {
         )
         .expect("valid dynamic box");
         let wall = RigidBox3d::new(
-            RigidBody::fixed(
-                BodyId(2),
-                Vec3i::new(19, 0, 0),
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid wall");
@@ -1082,11 +1061,7 @@ mod tests {
         )
         .expect("valid dynamic box");
         let wall = RigidBox3d::new(
-            RigidBody::fixed(
-                BodyId(2),
-                Vec3i::new(19, 0, 0),
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid wall");
