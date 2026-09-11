@@ -72,9 +72,8 @@ fn mul_wide_u128(left: u128, right: u128) -> [u64; 4] {
         let mut carry = 0_u128;
         for (right_index, right_limb) in right.into_iter().enumerate() {
             let index = left_index + right_index;
-            let value = u128::from(result[index])
-                + u128::from(left_limb) * u128::from(right_limb)
-                + carry;
+            let value =
+                u128::from(result[index]) + u128::from(left_limb) * u128::from(right_limb) + carry;
             result[index] = value as u64;
             carry = value >> 64;
         }
@@ -91,10 +90,7 @@ fn mul_wide_u128(left: u128, right: u128) -> [u64; 4] {
     result
 }
 
-fn div_wide_u128(
-    numerator: [u64; 4],
-    denominator: u128,
-) -> Result<(u128, u128), WideRatioError> {
+fn div_wide_u128(numerator: [u64; 4], denominator: u128) -> Result<(u128, u128), WideRatioError> {
     if denominator == 0 {
         return Err(WideRatioError::ZeroDenominator);
     }
