@@ -30,20 +30,22 @@ The engine now has a deliberately narrow but real reusable core:
 - sampled rotating OBB first-contact search plus strictly-positive clear/re-contact search;
 - shared first-contact and strictly-positive re-contact frontier reconstruction;
 - deterministic OBB/frontier response with coupled simultaneous-contact handling and precision-preserving angular inertia math;
+- deterministic Coulomb-limited tangential OBB friction using fixed-point material coefficients and rotation-aware contact velocity;
 - bounded repeated sampled rotating-event advancement with exact rational remaining-time reduction;
+- a rotating-box world that consumes persistent/resting-contact tails deterministically under an explicit slice bound;
 - integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
 This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
 
-The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, frontier response, and repeated sampled-event advancement are separate engine-owned foundations that do not change the established translational contract.
+The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, frontier response, repeated sampled-event advancement, frictional OBB response, and persistent-tail consumption live in the separate engine-owned rotating-cuboid path and do not change the established translational contract.
 
 The rotational contact path is deliberately sampled. First-contact search can detect and refine contact observed by its coarse grid. Re-contact search adds the state transition needed by repeated events: a pair already touching at the interval start is ignored until a coarse sample proves it clear and a later sample observes contact again. Persistent time-zero contact therefore cannot hide every later event merely by being rediscovered first. This still does not become analytic rotational CCD: a clear interval or contact island that exists wholly between adjacent coarse samples can be missed, and refinement only sharpens an already observed clear/contact bracket.
 
 First-contact and re-contact hits use one shared frontier reconstruction authority. A persistent pair may be ineligible to select the next positive event, but if it is still touching when another pair selects that event, it is included again in the shared frontier and remains visible to simultaneous response.
 
-`advance_repeated_rotating_events` now chains those foundations vertically. It resolves the first admitted frontier, reduces the remaining timestep exactly, searches the new segment for a strictly-positive re-contact frontier, resolves it, and repeats under an explicit event bound. Recorded event times are segment-relative. If no later sampled event is found, the function returns the exact unconsumed rational tail instead of free-flying to frame end.
+`advance_repeated_rotating_events` chains those foundations vertically. It resolves the first admitted frontier, reduces the remaining timestep exactly, searches the new segment for a strictly-positive re-contact frontier, resolves it, and repeats under an explicit event bound. Recorded event times are segment-relative. If no later sampled event is found, the low-level function returns the exact unconsumed rational tail rather than assuming free flight is safe.
 
-That explicit tail is intentional. The engine does not yet own persistent/resting-contact stabilization across an arbitrary remaining segment, so “no more sampled event found” is not treated as proof that free flight is safe. The next solver layer is responsible for consuming that tail while maintaining resting-contact constraints.
+`RotatingWorld3d` owns the next solver layer: it consumes that exact tail in bounded persistent-contact slices, keeps contact response active across the remaining segment, and fails closed when its configured bound cannot safely consume the requested step. The split is intentional: repeated-event advancement remains reusable evidence about discovered events and exact remaining time, while world stepping owns frame completion under resting-contact constraints.
 
 ## Example
 
@@ -84,7 +86,7 @@ The fixture currently exercises:
 - pause, reset and single-step controls for inspecting deterministic behavior;
 - lightweight per-tick collision/broad-phase evidence from the actual `World` step report.
 
-The player is intentionally box-shaped because the production `World` remains translational/AABB-only. Capsules, slopes, friction and a richer character controller should be added as real engine capabilities rather than approximated in the renderer.
+The player is intentionally box-shaped because the acceptance sandbox still uses the translational/AABB-only `World` path. Capsules, slopes and a richer character controller should be added as real engine capabilities rather than approximated in the renderer; rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
 
 ## Ownership boundary
 
@@ -102,15 +104,16 @@ ECS / game / simulation consumer
           +-- contact response
           +-- rotational state / inertia
           +-- OBB contact geometry
+          +-- OBB tangential friction
           +-- rotational/free-flight sweep bounds
           +-- direct rotating-box free flight
           +-- sampled first-contact / re-contact search
           +-- shared first-contact / re-contact frontier
           +-- coupled rotating frontier response
           +-- repeated sampled event advancement
-          +-- exact unconsumed tail
+          +-- exact repeated-event tail accounting
+          +-- rotating-world persistent-tail solver
           +-- spatial queries
-          +-- persistent-tail solver (next)
 ```
 
 `physics-engine` must never depend on `ecs-lab`, a renderer, Three.js/WebGPU, or a game runtime.
@@ -119,12 +122,11 @@ ECS / game / simulation consumer
 
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
-1. persistent/resting contact stabilization that safely consumes the exact remaining tail;
-2. friction and fuller contact-manifold constraints;
-3. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
-4. joints/constraints and sleeping/islands;
-5. a thin ECS adapter that maps entity IDs/components to engine bodies;
-6. general-purpose WASM bindings beyond the narrow acceptance-demo adapter.
+1. fuller contact-manifold constraints beyond the current deterministic reduced contact-point normal/friction response;
+2. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
+3. joints/constraints and sleeping/islands;
+4. a thin ECS adapter that maps entity IDs/components to engine bodies;
+5. general-purpose WASM bindings beyond the narrow acceptance-demo adapter.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 

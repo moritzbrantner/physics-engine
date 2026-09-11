@@ -7,10 +7,10 @@
 //! quantized OBB SAT contact seeds, conservative rotational sweep bounds, canonical rotating-box
 //! free-flight sampling, deterministic rotational broad-phase pairing, explicit sampled rotating
 //! contact/re-contact search, shared first/re-contact frontiers, deterministic OBB/frontier response,
-//! bounded repeated sampled-event advancement, and a rotating-box world that consumes persistent
-//! contact tails deterministically. The original `World` solver remains translational and AABB-only;
-//! `RotatingWorld3d` is the engine-owned rotating-cuboid solver. Rendering, ECS storage, game loops and
-//! scene ownership belong to consumers.
+//! Coulomb-limited OBB friction, bounded repeated sampled-event advancement, and a rotating-box world
+//! that consumes persistent contact tails deterministically. The original `World` solver remains
+//! translational and AABB-only; `RotatingWorld3d` is the engine-owned rotating-cuboid solver. Rendering,
+//! ECS storage, game loops and scene ownership belong to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -19,6 +19,7 @@ mod body;
 mod collider;
 mod collision;
 mod math;
+mod obb_friction;
 mod obb_response;
 mod oriented_box;
 mod query;
@@ -45,9 +46,8 @@ pub use collision::{
     ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,
 };
 pub use math::Vec3i;
-pub use obb_response::{
-    ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d, resolve_obb_contact,
-};
+pub use obb_friction::resolve_obb_contact;
+pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
 pub use oriented_box::{
     ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, obb_contact_seed,
     oriented_box_vertices,
