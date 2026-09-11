@@ -482,8 +482,6 @@ mod tests {
                 .expect("bounded denominator composition");
             assert!(remaining.timestep_numerator > 0);
             assert!(remaining.timestep_denominator > 0);
-            assert!(remaining.timestep_numerator <= i32::MAX);
-            assert!(remaining.timestep_denominator <= i32::MAX);
             assert!(
                 i128::from(remaining.timestep_numerator)
                     * i128::from(previous.timestep_denominator)
