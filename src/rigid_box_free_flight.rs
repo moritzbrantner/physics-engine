@@ -3,7 +3,8 @@ use std::{error::Error, fmt};
 use crate::{
     AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, RigidBox3d,
     RotationalSweepBounds3d, RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
-    rotational_sweep::rotational_sweep_bounds_for_center_interval, wide_ratio::mul_div_round_i128,
+    rotational_sweep::rotational_sweep_bounds_for_center_interval,
+    wide_ratio::{mul_div_ceil_u128, mul_div_round_i128},
 };
 
 /// Explicit rational timestep and acceleration for collision-free rotating-box sampling.
@@ -189,9 +190,11 @@ pub fn sample_rigid_box_free_flight(
 /// Conservatively bounds every direct free-flight sample over the configured interval.
 ///
 /// Per axis, the center interval uses an absolute upper bound on speed after acceleration and then on
-/// displacement. This may overproduce broad-phase candidates, but it cannot lose a sampled contact when
-/// velocity reverses and the center reaches an interior extremum outside the start/end interval.
-/// Arbitrary orientation is enclosed by the same circumscribed-box radius as [`crate::rotational_sweep_bounds`].
+/// displacement. Wide multiply/divide keeps that upper bound exact even when the widened repeated-event
+/// numerator would overflow `u128` if multiplied before division. This may overproduce broad-phase
+/// candidates, but it cannot lose a sampled contact when velocity reverses and the center reaches an
+/// interior extremum outside the start/end interval. Arbitrary orientation is enclosed by the same
+/// circumscribed-box radius as [`crate::rotational_sweep_bounds`].
 ///
 /// # Errors
 ///
@@ -305,35 +308,17 @@ fn conservative_axis_displacement(
     numerator: u128,
     denominator: u128,
 ) -> Result<u128, RigidBoxFreeFlightError3d> {
-    let acceleration_delta = ceil_ratio(
-        u128::from(acceleration.unsigned_abs())
-            .checked_mul(numerator)
-            .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?,
+    let acceleration_delta = mul_div_ceil_u128(
+        u128::from(acceleration.unsigned_abs()),
+        numerator,
         denominator,
-    )?;
+    )
+    .map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?;
     let maximum_speed = u128::from(velocity.unsigned_abs())
         .checked_add(acceleration_delta)
         .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    ceil_ratio(
-        maximum_speed
-            .checked_mul(numerator)
-            .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?,
-        denominator,
-    )
-}
-
-fn ceil_ratio(numerator: u128, denominator: u128) -> Result<u128, RigidBoxFreeFlightError3d> {
-    if denominator == 0 {
-        return Err(RigidBoxFreeFlightError3d::RatioTooLarge);
-    }
-    let quotient = numerator / denominator;
-    if numerator.is_multiple_of(denominator) {
-        Ok(quotient)
-    } else {
-        quotient
-            .checked_add(1)
-            .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)
-    }
+    mul_div_ceil_u128(maximum_speed, numerator, denominator)
+        .map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)
 }
 
 fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
@@ -461,6 +446,28 @@ mod tests {
             .expect("wide composed sample ratio should remain representable internally");
 
         assert_ne!(sampled.angular().orientation, Orientation3d::IDENTITY);
+    }
+
+    #[test]
+    fn wide_conservative_sweep_avoids_intermediate_overflow() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(8),
+                Vec3i::ZERO,
+                Vec3i::new(1, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularVelocity3d::default(),
+        );
+        let config = RigidBoxFreeFlightConfig3d::new_wide(
+            Vec3i::new(0, -3_600, 0),
+            i128::MAX / 4,
+            i128::MAX / 2,
+        );
+        let bounds = rigid_box_free_flight_sweep_bounds(&rigid_box, config)
+            .expect("wide conservative bound remains representable after division");
+        assert!(bounds.minimum[1] < 0);
+        assert!(bounds.maximum[1] > 0);
     }
 
     #[test]
