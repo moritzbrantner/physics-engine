@@ -98,11 +98,7 @@ impl BodyDelta3d {
         add_vector(&mut self.angular_velocity, other.angular_velocity, id)
     }
 
-    fn divided(
-        self,
-        divisor: u32,
-        id: BodyId,
-    ) -> Result<Self, RotatingContactResponseError3d> {
+    fn divided(self, divisor: u32, id: BodyId) -> Result<Self, RotatingContactResponseError3d> {
         if divisor == 0 {
             return Err(RotatingContactResponseError3d::ArithmeticOverflow(id));
         }
@@ -279,10 +275,7 @@ fn gcd_u128(mut left: u128, mut right: u128) -> u128 {
     left
 }
 
-fn negate_axis(
-    axis: [i128; 3],
-    id: BodyId,
-) -> Result<[i128; 3], RotatingContactResponseError3d> {
+fn negate_axis(axis: [i128; 3], id: BodyId) -> Result<[i128; 3], RotatingContactResponseError3d> {
     Ok([
         axis[0]
             .checked_neg()
@@ -391,12 +384,7 @@ mod tests {
 
     use super::resolve_rotating_contact_frontier;
 
-    fn dynamic(
-        id: u64,
-        position: Vec3i,
-        velocity: Vec3i,
-        half_extents: Vec3i,
-    ) -> RigidBox3d {
+    fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half_extents: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
             RigidBody::dynamic(BodyId(id), position, velocity, half_extents),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
@@ -437,17 +425,8 @@ mod tests {
     #[test]
     fn partitioned_wall_does_not_double_a_stopping_impulse() {
         let boxes = [
-            dynamic(
-                1,
-                Vec3i::ZERO,
-                Vec3i::new(60, 0, 0),
-                Vec3i::new(10, 10, 10),
-            ),
-            fixed(
-                2,
-                Vec3i::new(19, -5, 0),
-                Vec3i::new(10, 5, 10),
-            ),
+            dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0), Vec3i::new(10, 10, 10)),
+            fixed(2, Vec3i::new(19, -5, 0), Vec3i::new(10, 5, 10)),
             fixed(3, Vec3i::new(19, 5, 0), Vec3i::new(10, 5, 10)),
         ];
         let frontier = earliest_rotating_contact_frontier(&boxes, config())
