@@ -30,17 +30,20 @@ The engine now has a deliberately narrow but real reusable core:
 - sampled rotating OBB first-contact search plus strictly-positive clear/re-contact search;
 - shared first-contact and strictly-positive re-contact frontier reconstruction;
 - deterministic OBB/frontier response with coupled simultaneous-contact handling and precision-preserving angular inertia math;
+- bounded repeated sampled rotating-event advancement with exact rational remaining-time reduction;
 - integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
 This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
 
-The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, and frontier response are separate engine-owned foundations being assembled into the rotating event solver without changing the established translational contract.
+The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, frontier response, and repeated sampled-event advancement are separate engine-owned foundations that do not change the established translational contract.
 
 The rotational contact path is deliberately sampled. First-contact search can detect and refine contact observed by its coarse grid. Re-contact search adds the state transition needed by repeated events: a pair already touching at the interval start is ignored until a coarse sample proves it clear and a later sample observes contact again. Persistent time-zero contact therefore cannot hide every later event merely by being rediscovered first. This still does not become analytic rotational CCD: a clear interval or contact island that exists wholly between adjacent coarse samples can be missed, and refinement only sharpens an already observed clear/contact bracket.
 
-Both first-contact and re-contact hits now use one shared frontier reconstruction authority. A persistent pair may be ineligible to select the next positive event, but if it is still touching when another pair selects that event, it is included again in the shared frontier and remains visible to simultaneous response. That distinction is the search-side foundation required before exact rational remaining-time orchestration can be added.
+First-contact and re-contact hits use one shared frontier reconstruction authority. A persistent pair may be ineligible to select the next positive event, but if it is still touching when another pair selects that event, it is included again in the shared frontier and remains visible to simultaneous response.
 
-Frontier response likewise remains narrower than a full frame solver. It resolves the shared sampled state with bounded simultaneous passes, couples duplicate same-direction constraints rather than blindly multiplying their impulses, preserves progress at tied zero-depth impacts, and retains rotational precision for large valid inertias. Repeated remaining-time advancement and persistent-contact support over an entire frame are the next layer.
+`advance_repeated_rotating_events` now chains those foundations vertically. It resolves the first admitted frontier, reduces the remaining timestep exactly, searches the new segment for a strictly-positive re-contact frontier, resolves it, and repeats under an explicit event bound. Recorded event times are segment-relative. If no later sampled event is found, the function returns the exact unconsumed rational tail instead of free-flying to frame end.
+
+That explicit tail is intentional. The engine does not yet own persistent/resting-contact stabilization across an arbitrary remaining segment, so “no more sampled event found” is not treated as proof that free flight is safe. The next solver layer is responsible for consuming that tail while maintaining resting-contact constraints.
 
 ## Example
 
@@ -89,8 +92,10 @@ ECS / game / simulation consumer
           +-- sampled first-contact / re-contact search
           +-- shared first-contact / re-contact frontier
           +-- coupled rotating frontier response
+          +-- repeated sampled event advancement
+          +-- exact unconsumed tail
           +-- spatial queries
-          +-- repeated rotating event solver (next)
+          +-- persistent-tail solver (next)
 ```
 
 `physics-engine` must never depend on `ecs-lab`, a renderer, Three.js/WebGPU, or a game runtime.
@@ -99,13 +104,12 @@ ECS / game / simulation consumer
 
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
-1. consume exact rational remaining time across repeated sampled rotating events;
-2. persistent/resting contact stabilization over those remaining-time segments;
-3. friction and fuller contact-manifold constraints;
-4. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
-5. joints/constraints and sleeping/islands;
-6. a thin ECS adapter that maps entity IDs/components to engine bodies;
-7. WASM bindings so browser demos execute the Rust engine directly.
+1. persistent/resting contact stabilization that safely consumes the exact remaining tail;
+2. friction and fuller contact-manifold constraints;
+3. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
+4. joints/constraints and sleeping/islands;
+5. a thin ECS adapter that maps entity IDs/components to engine bodies;
+6. WASM bindings so browser demos execute the Rust engine directly.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 
