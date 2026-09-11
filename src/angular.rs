@@ -1,9 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::{
-    BodyId, BodyKind, RigidBody,
-    wide_ratio::{mul_div_round_i128, mul_div_round_i128_wide_denominator},
-};
+use crate::{BodyId, BodyKind, RigidBody, wide_ratio::mul_div_round_i128_wide_denominator};
 
 /// Fixed-point quaternion scale. `1 << 30` represents one unit.
 pub const ORIENTATION_SCALE: i32 = 1_i32 << 30;
@@ -299,7 +296,7 @@ pub fn box_inertia(body: &RigidBody) -> Result<BoxInertia3d, AngularError3d> {
     }
     if body.kind() == BodyKind::Fixed {
         return Ok(BoxInertia3d {
-            principal_numerators: [0, 0, 0],
+            principal_numerators: [0; 3],
             denominator: 1,
         });
     }
@@ -551,7 +548,7 @@ mod tests {
         let body = RigidBody::fixed(BodyId(8), Vec3i::ZERO, Vec3i::new(2, 3, 4));
         let inertia = box_inertia(&body).expect("fixed inertia is valid");
 
-        assert_eq!(inertia.principal_numerators, [0, 0, 0]);
+        assert_eq!(inertia.principal_numerators, [0; 3]);
         assert_eq!(inertia.denominator, 1);
     }
 
