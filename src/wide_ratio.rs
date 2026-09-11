@@ -17,6 +17,21 @@ impl fmt::Display for WideRatioError {
 
 impl Error for WideRatioError {}
 
+/// Multiplies two `u128` values in 256-bit space, divides by a `u128`, and rounds upward.
+pub(crate) fn mul_div_ceil_u128(
+    left: u128,
+    right: u128,
+    denominator: u128,
+) -> Result<u128, WideRatioError> {
+    let (mut quotient, remainder) = div_wide_u128(mul_wide_u128(left, right), denominator)?;
+    if remainder != 0 {
+        quotient = quotient
+            .checked_add(1)
+            .ok_or(WideRatioError::QuotientOverflow)?;
+    }
+    Ok(quotient)
+}
+
 /// Multiplies two `u128` values in 256-bit space, divides by a `u128`, and rounds half up.
 pub(crate) fn mul_div_round_u128(
     left: u128,
@@ -246,13 +261,22 @@ fn is_zero_wide(value: [u64; 4]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{mul_div_round_i128, mul_div_round_i128_wide_denominator, mul_div_round_u128};
+    use super::{
+        mul_div_ceil_u128, mul_div_round_i128, mul_div_round_i128_wide_denominator,
+        mul_div_round_u128,
+    };
 
     #[test]
     fn multiplication_can_exceed_u128_before_division() {
         let left = u128::MAX / 3;
         let right = 9_u128;
         assert_eq!(mul_div_round_u128(left, right, 9), Ok(left));
+        assert_eq!(mul_div_ceil_u128(left, right, 9), Ok(left));
+    }
+
+    #[test]
+    fn wide_ceil_rounds_fraction_up() {
+        assert_eq!(mul_div_ceil_u128(2, 2, 3), Ok(2));
     }
 
     #[test]
