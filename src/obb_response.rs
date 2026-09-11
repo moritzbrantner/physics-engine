@@ -973,8 +973,8 @@ fn to_i32(value: i128) -> Result<i32, ObbContactResponseError3d> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d, RigidBody,
-        RigidBox3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
+        RigidBody, RigidBox3d, Vec3i,
     };
 
     use super::{ObbContactResponseError3d, resolve_obb_contact};
