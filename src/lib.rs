@@ -7,9 +7,10 @@
 //! quantized OBB SAT contact seeds, conservative rotational sweep bounds, canonical rotating-box
 //! free-flight sampling, deterministic rotational broad-phase pairing, explicit sampled rotating
 //! contact/re-contact search, shared first/re-contact frontiers, deterministic OBB/frontier response,
-//! and bounded repeated sampled-event advancement with an exact unconsumed tail. The current `World`
-//! solver remains translational and AABB-only. Rendering, ECS storage, game loops and scene ownership
-//! belong to consumers.
+//! bounded repeated sampled-event advancement, and a rotating-box world that consumes persistent
+//! contact tails deterministically. The original `World` solver remains translational and AABB-only;
+//! `RotatingWorld3d` is the engine-owned rotating-cuboid solver. Rendering, ECS storage, game loops and
+//! scene ownership belong to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -29,6 +30,7 @@ mod rotating_contact_frontier;
 mod rotating_contact_response;
 mod rotating_contact_search;
 mod rotating_recontact_search;
+mod rotating_world;
 mod rotational_sweep;
 mod wide_ratio;
 mod world;
@@ -75,6 +77,10 @@ pub use rotating_contact_search::{
     SampledContactTime3d, sampled_rotating_contact_search,
 };
 pub use rotating_recontact_search::sampled_rotating_recontact_search;
+pub use rotating_world::{
+    RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldStepStats3d,
+};
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
