@@ -27,19 +27,74 @@ impl Sandbox {
             ..WorldConfig::default()
         });
 
-        add_fixed(&mut world, 10, Vec3i::new(0, -16, 0), Vec3i::new(520, 16, 520))?;
-        add_fixed(&mut world, 11, Vec3i::new(0, 72, -520), Vec3i::new(520, 72, 8))?;
-        add_fixed(&mut world, 12, Vec3i::new(0, 72, 520), Vec3i::new(520, 72, 8))?;
-        add_fixed(&mut world, 13, Vec3i::new(-520, 72, 0), Vec3i::new(8, 72, 520))?;
-        add_fixed(&mut world, 14, Vec3i::new(520, 72, 0), Vec3i::new(8, 72, 520))?;
+        add_fixed(
+            &mut world,
+            10,
+            Vec3i::new(0, -16, 0),
+            Vec3i::new(520, 16, 520),
+        )?;
+        add_fixed(
+            &mut world,
+            11,
+            Vec3i::new(0, 72, -520),
+            Vec3i::new(520, 72, 8),
+        )?;
+        add_fixed(
+            &mut world,
+            12,
+            Vec3i::new(0, 72, 520),
+            Vec3i::new(520, 72, 8),
+        )?;
+        add_fixed(
+            &mut world,
+            13,
+            Vec3i::new(-520, 72, 0),
+            Vec3i::new(8, 72, 520),
+        )?;
+        add_fixed(
+            &mut world,
+            14,
+            Vec3i::new(520, 72, 0),
+            Vec3i::new(8, 72, 520),
+        )?;
 
         // A deliberately thin target makes fast projectile CCD observable in the live demo.
-        add_fixed(&mut world, 15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3))?;
-        add_fixed(&mut world, 20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70))?;
-        add_fixed(&mut world, 21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45))?;
-        add_fixed(&mut world, 22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45))?;
-        add_fixed(&mut world, 23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45))?;
-        add_fixed(&mut world, 24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45))?;
+        add_fixed(
+            &mut world,
+            15,
+            Vec3i::new(0, 72, -180),
+            Vec3i::new(120, 72, 3),
+        )?;
+        add_fixed(
+            &mut world,
+            20,
+            Vec3i::new(-190, 24, 40),
+            Vec3i::new(70, 24, 70),
+        )?;
+        add_fixed(
+            &mut world,
+            21,
+            Vec3i::new(185, 8, 75),
+            Vec3i::new(45, 8, 45),
+        )?;
+        add_fixed(
+            &mut world,
+            22,
+            Vec3i::new(185, 16, 20),
+            Vec3i::new(45, 16, 45),
+        )?;
+        add_fixed(
+            &mut world,
+            23,
+            Vec3i::new(185, 24, -35),
+            Vec3i::new(45, 24, 45),
+        )?;
+        add_fixed(
+            &mut world,
+            24,
+            Vec3i::new(185, 32, -90),
+            Vec3i::new(45, 32, 45),
+        )?;
 
         world.add_body(
             RigidBody::dynamic(
@@ -91,9 +146,9 @@ impl Sandbox {
             Vec3i::new(0, -2, 0),
             1,
         )?;
-        Ok(hits.into_iter().any(|hit| {
-            hit.body != PLAYER_ID && hit.normal.is_some_and(|normal| normal.y > 0)
-        }))
+        Ok(hits
+            .into_iter()
+            .any(|hit| hit.body != PLAYER_ID && hit.normal.is_some_and(|normal| normal.y > 0)))
     }
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
@@ -317,9 +372,7 @@ pub extern "C" fn sandbox_body_half_z(index: u32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_collision_events() -> u32 {
-    with_sandbox(|sandbox| {
-        u32::try_from(sandbox.last_stats.collision_events).unwrap_or(u32::MAX)
-    })
+    with_sandbox(|sandbox| u32::try_from(sandbox.last_stats.collision_events).unwrap_or(u32::MAX))
 }
 
 #[unsafe(no_mangle)]
