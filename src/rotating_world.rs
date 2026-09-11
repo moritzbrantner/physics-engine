@@ -207,10 +207,7 @@ impl RotatingWorld3d {
     }
 
     /// Returns stable `BodyId`-ordered OBB overlaps for an arbitrary oriented query box.
-    pub fn overlap_query(
-        &self,
-        query: OrientedBox3d,
-    ) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+    pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
         let mut hits = Vec::new();
         for (id, rigid_box) in &self.boxes {
             if obb_contact_seed(query, rigid_box.oriented_box())?.is_some() {
@@ -569,7 +566,11 @@ mod tests {
             .set_linear_velocity(BodyId(1), Vec3i::new(60, 0, 0))
             .expect("controlled velocity");
         assert_eq!(
-            world.box_by_id(BodyId(1)).expect("dynamic").body().velocity(),
+            world
+                .box_by_id(BodyId(1))
+                .expect("dynamic")
+                .body()
+                .velocity(),
             Vec3i::new(60, 0, 0)
         );
         assert_eq!(
