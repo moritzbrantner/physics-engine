@@ -486,15 +486,17 @@ fn tail_motion_within_extent(
         .checked_add(u128::from(half.y.unsigned_abs()))
         .and_then(|value| value.checked_add(u128::from(half.z.unsigned_abs())))
         .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-    let angular_denominator = denominator
-        .checked_mul(u128::from(ANGULAR_VELOCITY_SCALE.unsigned_abs()))
-        .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-    let angular_motion = ceil_mul_div(
+    let angular_numerator_motion = ceil_mul_div(
         radius_bound
             .checked_mul(angular_speed_l1)
             .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?,
         numerator,
-        angular_denominator,
+        denominator,
+        id,
+    )?;
+    let angular_motion = ceil_div(
+        angular_numerator_motion,
+        u128::from(ANGULAR_VELOCITY_SCALE.unsigned_abs()),
         id,
     )?;
 
@@ -510,16 +512,26 @@ fn ceil_mul_div(
     denominator: u128,
     id: BodyId,
 ) -> Result<u128, RotatingWorldError3d> {
+    crate::wide_ratio::mul_div_ceil_u128(value, numerator, denominator)
+        .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))
+}
+
+fn ceil_div(
+    value: u128,
+    denominator: u128,
+    id: BodyId,
+) -> Result<u128, RotatingWorldError3d> {
     if denominator == 0 {
         return Err(RotatingWorldError3d::PersistentTailArithmeticOverflow(id));
     }
-    let product = value
-        .checked_mul(numerator)
-        .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-    let adjusted = product
-        .checked_add(denominator - 1)
-        .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-    Ok(adjusted / denominator)
+    let quotient = value / denominator;
+    if value % denominator == 0 {
+        Ok(quotient)
+    } else {
+        quotient
+            .checked_add(1)
+            .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))
+    }
 }
 
 fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
@@ -561,11 +573,14 @@ fn contact_frontier(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody,
-        RigidBox3d, RigidBoxFreeFlightConfig3d, Vec3i,
+        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d,
+        OrientedBox3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, Vec3i,
     };
 
-    use super::{RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, tail_slice_config};
+    use super::{
+        RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, tail_motion_within_extent,
+        tail_slice_config,
+    };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -601,6 +616,33 @@ mod tests {
         assert_eq!(sliced.timestep_numerator, 17_791_044);
         assert_eq!(sliced.timestep_denominator, 2_147_483_647);
         assert!(sliced.timestep_denominator > i128::from(i32::MAX) - 1);
+    }
+
+    #[test]
+    fn widened_tail_motion_bound_avoids_intermediate_overflow() {
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(9),
+                Vec3i::ZERO,
+                Vec3i::new(10, 0, 0),
+                Vec3i::new(100, 100, 100),
+            ),
+            AngularState3d::new(
+                Orientation3d::IDENTITY,
+                AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE),
+            ),
+        )
+        .expect("valid rotating box");
+        let config = RigidBoxFreeFlightConfig3d::new_wide(
+            Vec3i::ZERO,
+            i128::MAX / 4,
+            i128::MAX / 2,
+        );
+
+        assert!(
+            tail_motion_within_extent(&rigid_box, config)
+                .expect("wide tail bound remains representable")
+        );
     }
 
     #[test]
