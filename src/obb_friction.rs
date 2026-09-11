@@ -210,19 +210,22 @@ fn apply_tangent_response(
     let opposing_velocity = tangent_velocity
         .checked_neg()
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
-    let desired_impulse_units =
-        mul_div_round_i128(opposing_velocity, RESPONSE_SCALE, effective_inverse_mass)?;
-    let tangent_impulse_units = coulomb_clamp(
-        desired_impulse_units,
-        tangent_length_squared,
+    let desired_impulse = scale_ratio_vector(
+        opposing_velocity,
+        effective_inverse_mass,
+        tangent,
+        RESPONSE_SCALE,
+    )?;
+    let impulse = coulomb_clamp_vector(
+        desired_impulse,
+        tangent,
         contact.normal_impulse,
         friction_milli,
     )?;
-    if tangent_impulse_units == 0 {
+    if impulse == [0; 3] {
         return Ok(());
     }
 
-    let impulse = scale_axis(tangent, tangent_impulse_units)?;
     apply_body_impulse(&mut response.left, left_offset, negate_axis(impulse)?)?;
     apply_body_impulse(&mut response.right, right_offset, impulse)?;
     Ok(())
@@ -326,29 +329,54 @@ fn vector_length_squared(vector: [i128; 3]) -> Result<u128, ObbContactResponseEr
     })
 }
 
-fn coulomb_clamp(
-    desired_impulse_units: i128,
-    tangent_length_squared: u128,
+fn scale_ratio_vector(
+    numerator: i128,
+    denominator: i128,
+    axis: [i128; 3],
+    axis_scale: i128,
+) -> Result<[i128; 3], ObbContactResponseError3d> {
+    if denominator <= 0 || axis_scale <= 0 {
+        return Err(ObbContactResponseError3d::ArithmeticOverflow);
+    }
+    let mut impulse = [0_i128; 3];
+    for (target, component) in impulse.iter_mut().zip(axis) {
+        let scaled_component = checked_mul(component, axis_scale)?;
+        *target = mul_div_round_i128(numerator, scaled_component, denominator)?;
+    }
+    Ok(impulse)
+}
+
+fn coulomb_clamp_vector(
+    desired_impulse: [i128; 3],
+    tangent: [i128; 3],
     normal_impulse: [i128; 3],
     friction_milli: u16,
-) -> Result<i128, ObbContactResponseError3d> {
-    if desired_impulse_units == 0 || normal_impulse == [0; 3] || friction_milli == 0 {
-        return Ok(0);
+) -> Result<[i128; 3], ObbContactResponseError3d> {
+    if desired_impulse == [0; 3] || normal_impulse == [0; 3] || friction_milli == 0 {
+        return Ok([0; 3]);
     }
-    let desired_magnitude = desired_impulse_units.unsigned_abs();
     let normal_length_squared = vector_length_squared(normal_impulse)?;
-
-    if within_coulomb_bound(
-        desired_magnitude,
-        tangent_length_squared,
-        normal_length_squared,
-        friction_milli,
-    )? {
-        return Ok(desired_impulse_units);
+    if within_coulomb_bound_vector(desired_impulse, normal_length_squared, friction_milli)? {
+        return Ok(desired_impulse);
     }
 
+    let pivot = dominant_vector_axis(tangent)?;
+    let oriented_tangent = if tangent[pivot] < 0 {
+        negate_axis(tangent)?
+    } else {
+        tangent
+    };
+    let pivot_denominator = oriented_tangent[pivot];
+    if pivot_denominator <= 0 {
+        return Err(ObbContactResponseError3d::ArithmeticOverflow);
+    }
+    let desired_pivot = desired_impulse[pivot];
+    if desired_pivot == 0 {
+        return Ok([0; 3]);
+    }
+    let negative = desired_pivot < 0;
     let mut low = 0_u128;
-    let mut high = desired_magnitude;
+    let mut high = desired_pivot.unsigned_abs();
     while low < high {
         let distance = high
             .checked_sub(low)
@@ -356,42 +384,86 @@ fn coulomb_clamp(
         let midpoint = low
             .checked_add(distance.div_ceil(2))
             .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
-        if within_coulomb_bound(
+        let candidate = tangent_impulse_from_pivot(
             midpoint,
-            tangent_length_squared,
-            normal_length_squared,
-            friction_milli,
-        )? {
+            negative,
+            oriented_tangent,
+            pivot,
+            pivot_denominator,
+        )?;
+        if within_coulomb_bound_vector(candidate, normal_length_squared, friction_milli)? {
             low = midpoint;
         } else {
             high = midpoint - 1;
         }
     }
 
-    let bounded = i128::try_from(low).map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
-    if desired_impulse_units < 0 {
-        bounded
-            .checked_neg()
-            .ok_or(ObbContactResponseError3d::ArithmeticOverflow)
-    } else {
-        Ok(bounded)
-    }
+    tangent_impulse_from_pivot(
+        low,
+        negative,
+        oriented_tangent,
+        pivot,
+        pivot_denominator,
+    )
 }
 
-fn within_coulomb_bound(
-    tangent_impulse_units: u128,
-    tangent_length_squared: u128,
+fn tangent_impulse_from_pivot(
+    pivot_magnitude: u128,
+    negative: bool,
+    oriented_tangent: [i128; 3],
+    pivot: usize,
+    pivot_denominator: i128,
+) -> Result<[i128; 3], ObbContactResponseError3d> {
+    let pivot_magnitude = i128::try_from(pivot_magnitude)
+        .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
+    let pivot_impulse = if negative {
+        pivot_magnitude
+            .checked_neg()
+            .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?
+    } else {
+        pivot_magnitude
+    };
+    let mut impulse = [0_i128; 3];
+    for index in 0..3 {
+        impulse[index] = if index == pivot {
+            pivot_impulse
+        } else {
+            mul_div_round_i128(
+                pivot_impulse,
+                oriented_tangent[index],
+                pivot_denominator,
+            )?
+        };
+    }
+    Ok(impulse)
+}
+
+fn dominant_vector_axis(vector: [i128; 3]) -> Result<usize, ObbContactResponseError3d> {
+    let mut best = 0_usize;
+    let mut magnitude = vector[0].unsigned_abs();
+    for (index, component) in vector.into_iter().enumerate().skip(1) {
+        let candidate = component.unsigned_abs();
+        if candidate > magnitude {
+            best = index;
+            magnitude = candidate;
+        }
+    }
+    if magnitude == 0 {
+        return Err(ObbContactResponseError3d::ArithmeticOverflow);
+    }
+    Ok(best)
+}
+
+fn within_coulomb_bound_vector(
+    tangent_impulse: [i128; 3],
     normal_length_squared: u128,
     friction_milli: u16,
 ) -> Result<bool, ObbContactResponseError3d> {
     let material_scale = u128::from(MATERIAL_SCALE);
     let friction = u128::from(friction_milli);
-    let tangent_square = tangent_impulse_units
-        .checked_mul(tangent_impulse_units)
-        .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
-    let left = tangent_square
-        .checked_mul(tangent_length_squared)
-        .and_then(|value| value.checked_mul(material_scale))
+    let tangent_length_squared = vector_length_squared(tangent_impulse)?;
+    let left = tangent_length_squared
+        .checked_mul(material_scale)
         .and_then(|value| value.checked_mul(material_scale))
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
     let right = normal_length_squared
@@ -621,14 +693,6 @@ fn checked_sub(left: i128, right: i128) -> Result<i128, ObbContactResponseError3
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)
 }
 
-fn scale_axis(axis: [i128; 3], scale: i128) -> Result<[i128; 3], ObbContactResponseError3d> {
-    Ok([
-        checked_mul(axis[0], scale)?,
-        checked_mul(axis[1], scale)?,
-        checked_mul(axis[2], scale)?,
-    ])
-}
-
 fn negate_axis(axis: [i128; 3]) -> Result<[i128; 3], ObbContactResponseError3d> {
     Ok([
         axis[0]
@@ -671,7 +735,10 @@ mod tests {
         ObbContactResponseError3d, Orientation3d, RigidBody, RigidBox3d, Vec3i,
     };
 
-    use super::{resolve_normal_obb_contact, resolve_obb_contact};
+    use super::{
+        RESPONSE_SCALE, mul_div_round_i128, resolve_normal_obb_contact, resolve_obb_contact,
+        scale_ratio_vector,
+    };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, friction_milli: u16) -> RigidBox3d {
         RigidBox3d::new(
@@ -753,6 +820,24 @@ mod tests {
         assert!(response.left.rotation_locked());
         assert!(response.left.angular.angular_velocity.is_zero());
         assert!(response.left.body.velocity.z.unsigned_abs() < 40);
+    }
+
+    #[test]
+    fn fractional_scalar_impulse_survives_rotated_tangent_scaling() {
+        let tangent = [-110, 167, 0];
+        let denominator = RESPONSE_SCALE
+            .checked_mul(3)
+            .expect("test denominator fits");
+        assert_eq!(
+            mul_div_round_i128(1, RESPONSE_SCALE, denominator)
+                .expect("legacy scalar calculation is representable"),
+            0
+        );
+        assert_eq!(
+            scale_ratio_vector(1, denominator, tangent, RESPONSE_SCALE)
+                .expect("vector ratio remains representable"),
+            [-37, 56, 0]
+        );
     }
 
     #[test]
