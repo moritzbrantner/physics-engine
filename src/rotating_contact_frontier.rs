@@ -338,12 +338,7 @@ mod tests {
     #[test]
     fn positive_frontier_skips_persistent_selector_but_retains_it_in_shared_state() {
         let boxes = [
-            dynamic(
-                1,
-                Vec3i::new(-2, 0, 0),
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            ),
+            dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
             fixed(2, Vec3i::ZERO),
             dynamic(
                 3,
@@ -377,17 +372,13 @@ mod tests {
     #[test]
     fn persistent_contact_alone_does_not_create_positive_frontier() {
         let boxes = [
-            dynamic(
-                1,
-                Vec3i::new(-2, 0, 0),
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            ),
+            dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
             fixed(2, Vec3i::ZERO),
         ];
 
         assert_eq!(
-            next_rotating_contact_frontier(&boxes, config()).expect("valid persistent frontier query"),
+            next_rotating_contact_frontier(&boxes, config())
+                .expect("valid persistent frontier query"),
             None
         );
     }
