@@ -251,13 +251,10 @@ impl Sandbox {
     }
 
     fn angular_at(&self, index: u32) -> AngularState3d {
-        self.world
-            .boxes()
-            .nth(index as usize)
-            .map_or(
-                AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
-                RigidBox3d::angular,
-            )
+        self.world.boxes().nth(index as usize).map_or(
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+            RigidBox3d::angular,
+        )
     }
 }
 
@@ -460,7 +457,10 @@ mod tests {
 
         assert_eq!(sandbox.step(0, 0, true), 0);
 
-        let player = sandbox.world.box_by_id(PLAYER_ID).expect("player after jump");
+        let player = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .expect("player after jump");
         assert!(
             player.body().position().y > before,
             "jump did not move upward"
@@ -481,17 +481,15 @@ mod tests {
         let crate_id = BodyId(900);
         sandbox
             .world
-            .add_box(
-                rotating_box(
-                    RigidBody::dynamic(
-                        crate_id,
-                        Vec3i::new(0, 18, 285),
-                        Vec3i::ZERO,
-                        Vec3i::new(18, 18, 18),
-                    )
-                    .with_mass(2),
-                ),
-            )
+            .add_box(rotating_box(
+                RigidBody::dynamic(
+                    crate_id,
+                    Vec3i::new(0, 18, 285),
+                    Vec3i::ZERO,
+                    Vec3i::new(18, 18, 18),
+                )
+                .with_mass(2),
+            ))
             .expect("test crate");
         let before = sandbox
             .world
@@ -512,11 +510,17 @@ mod tests {
             .body()
             .position()
             .z;
-        let player = sandbox.world.box_by_id(PLAYER_ID).expect("player after push");
+        let player = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .expect("player after push");
         assert!(crate_z < before, "player did not push the dynamic crate");
         assert!(player.rotation_locked());
         assert!(player.angular().angular_velocity.is_zero());
-        assert_eq!(player.angular().orientation, physics_engine::Orientation3d::IDENTITY);
+        assert_eq!(
+            player.angular().orientation,
+            physics_engine::Orientation3d::IDENTITY
+        );
     }
 
     #[test]
