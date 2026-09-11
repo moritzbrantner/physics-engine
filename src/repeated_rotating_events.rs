@@ -47,10 +47,16 @@ pub struct RepeatedRotatingEventAdvance3d {
     /// was admitted.
     pub boxes: Vec<RigidBox3d>,
     pub events: Vec<RotatingResolvedEvent3d>,
-    /// Exact requested time that remains deliberately unconsumed.
+    /// Requested time that remains deliberately unconsumed.
     ///
-    /// This is not automatically free-flown because the remaining segment may contain persistent/resting
-    /// contacts that the engine does not yet stabilize across a tail interval.
+    /// The value stays exact while its reduced ratio fits the public `i32` timestep contract. If repeated
+    /// event composition would exceed that representation, it is deterministically rounded downward to
+    /// the highest-precision representable ratio. This conservative truncation never advances beyond the
+    /// requested frame; at worst it leaves an unconsumed sub-quantum tail instead of failing on a purely
+    /// representational denominator growth.
+    ///
+    /// The remaining segment is not automatically free-flown because it may contain persistent/resting
+    /// contacts that the world-level tail solver must stabilize.
     pub remaining: RigidBoxFreeFlightConfig3d,
 }
 
@@ -92,7 +98,7 @@ impl fmt::Display for RepeatedRotatingEventError3d {
             ),
             Self::RatioTooLarge => write!(
                 formatter,
-                "repeated rotating event remaining-time ratio exceeds the supported i32 contract"
+                "repeated rotating event remaining-time arithmetic exceeded the supported bounded ratio"
             ),
             Self::Frontier(error) => write!(
                 formatter,
@@ -120,29 +126,34 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
     }
 }
 
-/// Advances through a bounded sequence of sampled rotating collision events while preserving an exact
-/// unconsumed tail.
+/// Advances through a bounded sequence of sampled rotating collision events while preserving the
+/// remaining requested interval without overflowing its stable public timestep representation.
 ///
-/// The first event is selected with [`earliest_rotating_contact_frontier`]. After response, the exact
-/// remaining rational timestep becomes the next segment. Later events are selected with
+/// The first event is selected with [`earliest_rotating_contact_frontier`]. After response, the remaining
+/// rational timestep becomes the next segment. Later events are selected with
 /// [`next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event discovery;
 /// if it is still touching when another pair selects a later event, shared frontier reconstruction brings
 /// it back into simultaneous response.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
-/// requested interval. Remaining time is reduced exactly with integer arithmetic after every response.
+/// requested interval. Remaining time is reduced exactly while representable. If repeated denominator
+/// composition exceeds the public `i32` ratio contract, the remaining duration is rounded downward to the
+/// most precise representable rational. This can only shorten the unresolved tail; it cannot advance a
+/// body beyond the requested frame or turn a missed collision into forward motion.
 ///
 /// This function is intentionally not yet a complete frame step. When no further positive sampled event
 /// is found, the final tail is returned in [`RepeatedRotatingEventAdvance3d::remaining`] rather than being
 /// free-flown through potentially persistent contacts. Persistent/resting-contact stabilization over that
-/// tail is the next solver layer. The search itself remains sampled rotational collision handling, not
-/// analytic rotational CCD, so an event island wholly between adjacent coarse samples can still be missed.
+/// tail belongs to the world-level solver. The search itself remains sampled rotational collision handling,
+/// not analytic rotational CCD, so an event island wholly between adjacent coarse samples can still be
+/// missed.
 ///
 /// # Errors
 ///
-/// Returns [`RepeatedRotatingEventError3d`] for invalid bounds/timestep configuration, exact-ratio overflow,
-/// frontier/response failures, or when an actual additional sampled event exists beyond `max_events`.
+/// Returns [`RepeatedRotatingEventError3d`] for invalid bounds/timestep configuration, bounded-ratio
+/// arithmetic overflow, frontier/response failures, or when an actual additional sampled event exists
+/// beyond `max_events`.
 pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
@@ -254,26 +265,64 @@ fn scale_remaining_time(
         return Ok(RigidBoxFreeFlightConfig3d::new(current.gravity, 0, 1));
     }
 
-    let numerator = u128::from(
-        u32::try_from(current.timestep_numerator)
-            .map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
-    )
-    .checked_mul(u128::from(remaining_numerator))
-    .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?;
-    let denominator = u128::from(
-        u32::try_from(current.timestep_denominator)
-            .map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
-    )
-    .checked_mul(u128::from(event_time.denominator))
-    .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?;
+    let numerator = u128::from(current.timestep_numerator.unsigned_abs())
+        .checked_mul(u128::from(remaining_numerator))
+        .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?;
+    let denominator = u128::from(current.timestep_denominator.unsigned_abs())
+        .checked_mul(u128::from(event_time.denominator))
+        .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?;
     let divisor = greatest_common_divisor(numerator, denominator);
-    let numerator = numerator / divisor;
-    let denominator = denominator / divisor;
+    bounded_ratio_floor(numerator / divisor, denominator / divisor).map(|(numerator, denominator)| {
+        RigidBoxFreeFlightConfig3d::new(current.gravity, numerator, denominator)
+    })
+}
 
-    Ok(RigidBoxFreeFlightConfig3d::new(
-        current.gravity,
-        i32::try_from(numerator).map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
-        i32::try_from(denominator).map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
+fn bounded_ratio_floor(
+    numerator: u128,
+    denominator: u128,
+) -> Result<(i32, i32), RepeatedRotatingEventError3d> {
+    if denominator == 0 {
+        return Err(RepeatedRotatingEventError3d::RatioTooLarge);
+    }
+    if numerator == 0 {
+        return Ok((0, 1));
+    }
+
+    let maximum = i32::MAX as u128;
+    if numerator <= maximum && denominator <= maximum {
+        return Ok((
+            i32::try_from(numerator).map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
+            i32::try_from(denominator).map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
+        ));
+    }
+
+    let whole = numerator / denominator;
+    if whole > maximum {
+        return Err(RepeatedRotatingEventError3d::RatioTooLarge);
+    }
+
+    let maximum_denominator_for_numerator = maximum
+        .checked_mul(denominator)
+        .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?
+        / numerator;
+    let target_denominator = maximum_denominator_for_numerator.clamp(1, maximum);
+    let target_numerator = numerator
+        .checked_mul(target_denominator)
+        .ok_or(RepeatedRotatingEventError3d::RatioTooLarge)?
+        / denominator;
+    if target_numerator == 0 {
+        return Ok((0, 1));
+    }
+    if target_numerator > maximum {
+        return Err(RepeatedRotatingEventError3d::RatioTooLarge);
+    }
+
+    let divisor = greatest_common_divisor(target_numerator, target_denominator);
+    Ok((
+        i32::try_from(target_numerator / divisor)
+            .map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
+        i32::try_from(target_denominator / divisor)
+            .map_err(|_| RepeatedRotatingEventError3d::RatioTooLarge)?,
     ))
 }
 
@@ -416,6 +465,31 @@ mod tests {
             .expect("zero remainder"),
             RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 0, 1)
         );
+    }
+
+    #[test]
+    fn denominator_growth_is_conservatively_bounded_instead_of_failing() {
+        let mut remaining = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
+        let event = crate::SampledContactTime3d {
+            numerator: 1,
+            denominator: 512,
+        };
+        for _ in 0..8 {
+            let previous = remaining;
+            remaining = scale_remaining_time(remaining, 511, event)
+                .expect("bounded denominator composition");
+            assert!(remaining.timestep_numerator > 0);
+            assert!(remaining.timestep_denominator > 0);
+            assert!(remaining.timestep_numerator <= i32::MAX);
+            assert!(remaining.timestep_denominator <= i32::MAX);
+            assert!(
+                i128::from(remaining.timestep_numerator)
+                    * i128::from(previous.timestep_denominator)
+                    <= i128::from(previous.timestep_numerator)
+                        * i128::from(remaining.timestep_denominator),
+                "bounded remainder advanced beyond the previous interval"
+            );
+        }
     }
 
     #[test]
