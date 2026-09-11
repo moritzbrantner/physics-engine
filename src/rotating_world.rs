@@ -139,11 +139,11 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// time is instead consumed through bounded deterministic slices. Bodies participating in the current
 /// persistent frontier are limited to less than their narrowest full thickness of conservative
 /// center-plus-rotational motion before the next OBB stabilization pass, so a time-zero contact cannot
-/// be free-flown completely through before the next constraint solve. Tail slicing cross-cancels the
-/// slice count against the widened exact numerator before extending the denominator, so repeated-event
-/// precision is preserved rather than forcing the tail back into the public `i32` time representation.
-/// If an impulse makes the selected resolution too coarse, the exact tail is replayed from its starting
-/// state with a finer representable resolution; exceeding the hard bound fails closed.
+/// be free-flown completely through before the next constraint solve. Tail slicing scales the canonical
+/// exact ratio directly, so repeated-event precision is preserved without forcing the tail back into a
+/// narrower integer pair. If an impulse makes the selected resolution too coarse, the exact tail is
+/// replayed from its starting state with a finer deterministic resolution; exceeding the hard bound fails
+/// closed.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
@@ -265,7 +265,7 @@ impl RotatingWorld3d {
         )?;
 
         let sampled_events = advance.events.len();
-        let (boxes, tail_contacts) = if advance.remaining.timestep_numerator == 0 {
+        let (boxes, tail_contacts) = if advance.remaining.timestep_is_zero() {
             (advance.boxes, 0)
         } else {
             consume_tail(advance.boxes, advance.remaining, self.config.solver_passes)?
@@ -397,25 +397,9 @@ fn tail_slice_config(
             MAX_PERSISTENT_TAIL_SLICES,
         ));
     }
-    let mut numerator = remaining.timestep_numerator;
-    let mut slice_factor = i128::from(slices);
-    let divisor = greatest_common_divisor(numerator.unsigned_abs(), u128::from(slices));
-    let divisor = i128::try_from(divisor).map_err(|_| {
+    remaining.scaled_fraction(1, slices).map_err(|_| {
         RotatingWorldError3d::PersistentTailResolutionLimit(MAX_PERSISTENT_TAIL_SLICES)
-    })?;
-    numerator /= divisor;
-    slice_factor /= divisor;
-    let denominator = remaining
-        .timestep_denominator
-        .checked_mul(slice_factor)
-        .ok_or(RotatingWorldError3d::PersistentTailResolutionLimit(
-            MAX_PERSISTENT_TAIL_SLICES,
-        ))?;
-    Ok(RigidBoxFreeFlightConfig3d::new_wide(
-        remaining.gravity,
-        numerator,
-        denominator,
-    ))
+    })
 }
 
 fn first_unsafe_tail_body(
@@ -442,13 +426,14 @@ fn tail_motion_within_extent(
     rigid_box: &RigidBox3d,
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<bool, RotatingWorldError3d> {
-    if rigid_box.body().kind() == BodyKind::Fixed || config.timestep_numerator == 0 {
+    if rigid_box.body().kind() == BodyKind::Fixed || config.timestep_is_zero() {
         return Ok(true);
     }
 
     let id = rigid_box.body().id();
-    let numerator = config.timestep_numerator.unsigned_abs();
-    let denominator = config.timestep_denominator.unsigned_abs();
+    let timestep = config
+        .exact_timestep()
+        .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
     let half = rigid_box.body().half_extents();
     let minimum_half = u128::from(half.x.min(half.y).min(half.z).unsigned_abs());
     let motion_budget = minimum_half
@@ -460,16 +445,15 @@ fn tail_motion_within_extent(
     let gravity_components = [config.gravity.x, config.gravity.y, config.gravity.z];
     let mut translation_bound = 0_u128;
     for axis in 0..3 {
-        let gravity_delta = ceil_mul_div(
-            u128::from(gravity_components[axis].unsigned_abs()),
-            numerator,
-            denominator,
-            id,
-        )?;
+        let gravity_delta = timestep
+            .mul_ceil_u128(u128::from(gravity_components[axis].unsigned_abs()))
+            .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
         let speed_bound = u128::from(velocity_components[axis].unsigned_abs())
             .checked_add(gravity_delta)
             .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-        let travel = ceil_mul_div(speed_bound, numerator, denominator, id)?;
+        let travel = timestep
+            .mul_ceil_u128(speed_bound)
+            .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
         translation_bound = translation_bound.max(travel);
     }
 
@@ -486,14 +470,13 @@ fn tail_motion_within_extent(
         .checked_add(u128::from(half.y.unsigned_abs()))
         .and_then(|value| value.checked_add(u128::from(half.z.unsigned_abs())))
         .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-    let angular_numerator_motion = ceil_mul_div(
-        radius_bound
-            .checked_mul(angular_speed_l1)
-            .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?,
-        numerator,
-        denominator,
-        id,
-    )?;
+    let angular_numerator_motion = timestep
+        .mul_ceil_u128(
+            radius_bound
+                .checked_mul(angular_speed_l1)
+                .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?,
+        )
+        .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
     let angular_motion = ceil_div(
         angular_numerator_motion,
         u128::from(ANGULAR_VELOCITY_SCALE.unsigned_abs()),
@@ -504,16 +487,6 @@ fn tail_motion_within_extent(
         .checked_add(angular_motion)
         .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
     Ok(total_motion <= motion_budget)
-}
-
-fn ceil_mul_div(
-    value: u128,
-    numerator: u128,
-    denominator: u128,
-    id: BodyId,
-) -> Result<u128, RotatingWorldError3d> {
-    crate::wide_ratio::mul_div_ceil_u128(value, numerator, denominator)
-        .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))
 }
 
 fn ceil_div(value: u128, denominator: u128, id: BodyId) -> Result<u128, RotatingWorldError3d> {
@@ -528,15 +501,6 @@ fn ceil_div(value: u128, denominator: u128, id: BodyId) -> Result<u128, Rotating
             .checked_add(1)
             .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))
     }
-}
-
-fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
-    while right != 0 {
-        let remainder = left % right;
-        left = right;
-        right = remainder;
-    }
-    left
 }
 
 fn contact_frontier(
@@ -609,9 +573,14 @@ mod tests {
         let remaining =
             RigidBoxFreeFlightConfig3d::new_wide(Vec3i::ZERO, 35_582_088, 2_147_483_647);
         let sliced = tail_slice_config(remaining, 2).expect("wide tail slice");
-        assert_eq!(sliced.timestep_numerator, 17_791_044);
-        assert_eq!(sliced.timestep_denominator, 2_147_483_647);
-        assert!(sliced.timestep_denominator > i128::from(i32::MAX) - 1);
+        assert_eq!(sliced.timestep_i128(), Some((17_791_044, 2_147_483_647)));
+        assert!(
+            sliced
+                .timestep_i128()
+                .expect("ratio remains narrow in this regression")
+                .1
+                > i128::from(i32::MAX) - 1
+        );
     }
 
     #[test]
@@ -625,12 +594,17 @@ mod tests {
             ),
             AngularState3d::new(
                 Orientation3d::IDENTITY,
-                AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE),
+                AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE / 10),
             ),
         )
         .expect("valid rotating box");
-        let config =
-            RigidBoxFreeFlightConfig3d::new_wide(Vec3i::ZERO, i128::MAX / 4, i128::MAX / 2);
+        let mut config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        for _ in 0..20 {
+            config = config
+                .scaled_fraction(511, 512)
+                .expect("bounded exact tail growth");
+        }
+        assert!(config.timestep_i128().is_none());
 
         assert!(
             tail_motion_within_extent(&rigid_box, config)

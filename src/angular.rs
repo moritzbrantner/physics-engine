@@ -1,6 +1,9 @@
 use std::{error::Error, fmt};
 
-use crate::{BodyId, BodyKind, RigidBody, wide_ratio::mul_div_round_i128_wide_denominator};
+use crate::{
+    BodyId, BodyKind, RigidBody,
+    wide_ratio::{ExactRatio, WideRatioError},
+};
 
 /// Fixed-point quaternion scale. `1 << 30` represents one unit.
 pub const ORIENTATION_SCALE: i32 = 1_i32 << 30;
@@ -196,64 +199,33 @@ pub fn integrate_orientation(
         ));
     }
 
-    integrate_orientation_ratio(
-        orientation,
-        angular_velocity,
+    let timestep = ExactRatio::new(
         u128::from(timestep_numerator.unsigned_abs()),
         u128::from(timestep_denominator.unsigned_abs()),
     )
+    .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
 }
 
-/// Internal wide-rational counterpart to [`integrate_orientation`].
-///
-/// Free-flight sampling can carry an exact repeated-event ratio whose denominator legitimately exceeds
-/// `i32`. The quaternion derivative also divides by the fixed angular-velocity scale. Those two
-/// denominator factors are kept separate and divided in 256-bit space, so multiplying them no longer
-/// creates an artificial `i128` overflow while the physical ratio itself remains representable.
+/// Internal exact-rational counterpart to [`integrate_orientation`].
 pub(crate) fn integrate_orientation_ratio(
     orientation: Orientation3d,
     angular_velocity: AngularVelocity3d,
     timestep_numerator: u128,
     timestep_denominator: u128,
 ) -> Result<Orientation3d, AngularError3d> {
-    let timestep_numerator =
-        i128::try_from(timestep_numerator).map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    let timestep_denominator =
-        i128::try_from(timestep_denominator).map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    integrate_orientation_ratio_factors(
-        orientation,
-        angular_velocity,
-        timestep_numerator,
-        timestep_denominator,
-        1,
-        1,
-    )
+    let timestep = ExactRatio::new(timestep_numerator, timestep_denominator)
+        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
 }
 
-/// Integrates orientation over an exact timestep ratio kept as two numerator/denominator factors.
-///
-/// Repeated-event time can already occupy most of the internal `i128` range. Sampled rotational CCD
-/// composes that interval with a bounded search fraction. Keeping the search fraction separate avoids
-/// manufacturing an overflow merely by flattening two individually representable factors while still
-/// evaluating the exact same rational timestep.
-pub(crate) fn integrate_orientation_ratio_factors(
+pub(crate) fn integrate_orientation_exact_ratio(
     orientation: Orientation3d,
     angular_velocity: AngularVelocity3d,
-    timestep_numerator: i128,
-    timestep_denominator: i128,
-    fraction_numerator: i128,
-    fraction_denominator: i128,
+    timestep: ExactRatio,
 ) -> Result<Orientation3d, AngularError3d> {
-    if timestep_numerator < 0
-        || fraction_numerator < 0
-        || timestep_denominator <= 0
-        || fraction_denominator <= 0
-    {
-        return Err(AngularError3d::ArithmeticOverflow);
-    }
-
     let orientation = orientation.normalized()?;
-    if timestep_numerator == 0 || fraction_numerator == 0 || angular_velocity.is_zero() {
+    if timestep.is_zero() || angular_velocity.is_zero() {
         return Ok(orientation);
     }
 
@@ -271,51 +243,21 @@ pub(crate) fn integrate_orientation_ratio_factors(
         checked_sum([wz * qw, wx * qy, -(wy * qx)])?,
         checked_sum([-(wx * qx), -(wy * qy), -(wz * qz)])?,
     ];
-    let derivative = derivative.map(|value| {
-        value
-            .checked_mul(fraction_numerator)
-            .ok_or(AngularError3d::ArithmeticOverflow)
-    });
-    let derivative = [
-        derivative[0]?,
-        derivative[1]?,
-        derivative[2]?,
-        derivative[3]?,
-    ];
-    let unit_denominator = i128::from(2_i32)
-        .checked_mul(i128::from(ANGULAR_VELOCITY_SCALE))
-        .and_then(|value| value.checked_mul(fraction_denominator))
-        .ok_or(AngularError3d::ArithmeticOverflow)?;
+    let unit_denominator = u32::try_from(
+        i64::from(2_i32)
+            .checked_mul(i64::from(ANGULAR_VELOCITY_SCALE))
+            .ok_or(AngularError3d::ArithmeticOverflow)?,
+    )
+    .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let derivative_time = timestep
+        .scaled_u32(1, unit_denominator)
+        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
 
     let next = Orientation3d::new(
-        integrated_component_wide(
-            qx,
-            derivative[0],
-            timestep_numerator,
-            unit_denominator,
-            timestep_denominator,
-        )?,
-        integrated_component_wide(
-            qy,
-            derivative[1],
-            timestep_numerator,
-            unit_denominator,
-            timestep_denominator,
-        )?,
-        integrated_component_wide(
-            qz,
-            derivative[2],
-            timestep_numerator,
-            unit_denominator,
-            timestep_denominator,
-        )?,
-        integrated_component_wide(
-            qw,
-            derivative[3],
-            timestep_numerator,
-            unit_denominator,
-            timestep_denominator,
-        )?,
+        integrated_component_exact(qx, derivative[0], derivative_time)?,
+        integrated_component_exact(qy, derivative[1], derivative_time)?,
+        integrated_component_exact(qz, derivative[2], derivative_time)?,
+        integrated_component_exact(qw, derivative[3], derivative_time)?,
     );
     next.normalized()
 }
@@ -397,24 +339,22 @@ pub fn contact_angular_impulse(
     ])
 }
 
-fn integrated_component_wide(
+fn integrated_component_exact(
     component: i128,
     derivative: i128,
-    numerator: i128,
-    unit_denominator: i128,
-    timestep_denominator: i128,
+    timestep: ExactRatio,
 ) -> Result<i32, AngularError3d> {
-    let delta = mul_div_round_i128_wide_denominator(
-        derivative,
-        numerator,
-        unit_denominator,
-        timestep_denominator,
-    )
-    .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let delta = timestep
+        .mul_round_i128(derivative)
+        .map_err(map_wide_ratio_error)?;
     let next = component
         .checked_add(delta)
         .ok_or(AngularError3d::ArithmeticOverflow)?;
     i32::try_from(next).map_err(|_| AngularError3d::ArithmeticOverflow)
+}
+
+fn map_wide_ratio_error(_: WideRatioError) -> AngularError3d {
+    AngularError3d::ArithmeticOverflow
 }
 
 fn normalized_component(component: i32, scale: i128, norm: i128) -> Result<i32, AngularError3d> {
@@ -492,8 +432,7 @@ mod tests {
     use super::{
         ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d,
         ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse,
-        integrate_orientation, integrate_orientation_ratio, integrate_orientation_ratio_factors,
-        orientation_norm_squared,
+        integrate_orientation, integrate_orientation_ratio, orientation_norm_squared,
     };
     use crate::{BodyId, RigidBody, Vec3i};
 
@@ -544,27 +483,8 @@ mod tests {
                 numerator,
                 denominator,
             )
-            .expect("wide denominator product remains representable"),
+            .expect("large exact ratio remains representable"),
             integrate_orientation(Orientation3d::IDENTITY, angular_velocity, 1, 60)
-                .expect("equivalent public ratio")
-        );
-    }
-
-    #[test]
-    fn factored_ratio_matches_equivalent_public_step_without_flattening() {
-        let angular_velocity = AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE);
-        let factor = i128::MAX / 4;
-        assert_eq!(
-            integrate_orientation_ratio_factors(
-                Orientation3d::IDENTITY,
-                angular_velocity,
-                factor,
-                factor.checked_mul(3).expect("test denominator"),
-                1,
-                2,
-            )
-            .expect("factored exact ratio"),
-            integrate_orientation(Orientation3d::IDENTITY, angular_velocity, 1, 6)
                 .expect("equivalent public ratio")
         );
     }
