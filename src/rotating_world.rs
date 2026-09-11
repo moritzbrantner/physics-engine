@@ -68,8 +68,12 @@ impl fmt::Display for RotatingWorldError3d {
                 "rotating world timestep denominator must be positive, got {value}"
             ),
             Self::Repeated(error) => write!(formatter, "rotating event advance failed: {error}"),
-            Self::FreeFlight(error) => write!(formatter, "rotating tail free flight failed: {error}"),
-            Self::Contact(error) => write!(formatter, "rotating tail contact query failed: {error}"),
+            Self::FreeFlight(error) => {
+                write!(formatter, "rotating tail free flight failed: {error}")
+            }
+            Self::Contact(error) => {
+                write!(formatter, "rotating tail contact query failed: {error}")
+            }
             Self::Response(error) => write!(formatter, "rotating tail response failed: {error}"),
         }
     }
@@ -308,7 +312,12 @@ mod tests {
             .add_box(fixed(1, Vec3i::new(0, -1, 0), Vec3i::new(20, 1, 20)))
             .expect("floor");
         world
-            .add_box(dynamic(2, Vec3i::new(0, 1, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)))
+            .add_box(dynamic(
+                2,
+                Vec3i::new(0, 1, 0),
+                Vec3i::ZERO,
+                Vec3i::new(1, 1, 1),
+            ))
             .expect("box");
 
         for _ in 0..8 {
@@ -316,20 +325,21 @@ mod tests {
         }
 
         let body = world.box_by_id(BodyId(2)).expect("box remains").body();
-        assert!(body.position().y >= 1, "box sank through the floor: {body:?}");
-        assert!(body.velocity().y >= 0, "resting box kept downward velocity: {body:?}");
+        assert!(
+            body.position().y >= 1,
+            "box sank through the floor: {body:?}"
+        );
+        assert!(
+            body.velocity().y >= 0,
+            "resting box kept downward velocity: {body:?}"
+        );
     }
 
     #[test]
     fn off_center_projectile_impact_generates_spin() {
         let mut world = world(Vec3i::ZERO);
         world
-            .add_box(dynamic(
-                10,
-                Vec3i::ZERO,
-                Vec3i::ZERO,
-                Vec3i::new(3, 3, 3),
-            ))
+            .add_box(dynamic(10, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(3, 3, 3)))
             .expect("target");
         world
             .add_box(dynamic(
