@@ -22,6 +22,7 @@ const FOV_RADIANS = (70 * Math.PI) / 180;
 const NEAR_PLANE = 0.8;
 const FAR_PLANE = 1400;
 const FLOATS_PER_VERTEX = 9;
+const ORIENTATION_SCALE = 1 << 30;
 const keys = new Set();
 
 let engine = null;
@@ -71,7 +72,7 @@ function reset() {
   jumpQueued = false;
   accumulator = 0;
   pauseButton.textContent = "Pause";
-  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots.";
+  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Off-center hits now spin crates.";
 }
 
 function movementVelocity() {
@@ -108,6 +109,13 @@ function shoot() {
   }
 }
 
+function normalizeQuaternion(raw) {
+  const quaternion = raw.map((value) => value / ORIENTATION_SCALE);
+  const length = Math.hypot(...quaternion);
+  if (!Number.isFinite(length) || length === 0) return [0, 0, 0, 1];
+  return quaternion.map((value) => value / length);
+}
+
 function readBodies() {
   const bodies = [];
   const count = engine.sandbox_body_count();
@@ -124,6 +132,12 @@ function readBodies() {
         engine.sandbox_body_half_y(index),
         engine.sandbox_body_half_z(index),
       ],
+      orientation: normalizeQuaternion([
+        engine.sandbox_body_orientation_x(index),
+        engine.sandbox_body_orientation_y(index),
+        engine.sandbox_body_orientation_z(index),
+        engine.sandbox_body_orientation_w(index),
+      ]),
     });
   }
   return bodies;
@@ -158,19 +172,36 @@ function cameraSpace(point, camera) {
   ];
 }
 
+function rotateVector(vector, quaternion) {
+  const [x, y, z] = vector;
+  const [qx, qy, qz, qw] = quaternion;
+  const tx = 2 * (qy * z - qz * y);
+  const ty = 2 * (qz * x - qx * z);
+  const tz = 2 * (qx * y - qy * x);
+  return [
+    x + qw * tx + (qy * tz - qz * ty),
+    y + qw * ty + (qz * tx - qx * tz),
+    z + qw * tz + (qx * ty - qy * tx),
+  ];
+}
+
 function boxVertices(body) {
   const [x, y, z] = body.position;
   const [hx, hy, hz] = body.half;
-  return [
-    [x - hx, y - hy, z - hz],
-    [x + hx, y - hy, z - hz],
-    [x - hx, y + hy, z - hz],
-    [x + hx, y + hy, z - hz],
-    [x - hx, y - hy, z + hz],
-    [x + hx, y - hy, z + hz],
-    [x - hx, y + hy, z + hz],
-    [x + hx, y + hy, z + hz],
+  const local = [
+    [-hx, -hy, -hz],
+    [hx, -hy, -hz],
+    [-hx, hy, -hz],
+    [hx, hy, -hz],
+    [-hx, -hy, hz],
+    [hx, -hy, hz],
+    [-hx, hy, hz],
+    [hx, hy, hz],
   ];
+  return local.map((point) => {
+    const rotated = rotateVector(point, body.orientation);
+    return [x + rotated[0], y + rotated[1], z + rotated[2]];
+  });
 }
 
 function materialFor(body) {
@@ -203,13 +234,14 @@ function faceCenter(vertices, indices) {
   return result.map((value) => value / indices.length);
 }
 
-function faceVisible(vertices, face, camera) {
+function faceVisible(vertices, face, body, camera) {
   const center = faceCenter(vertices, face.indices);
+  const normal = rotateVector(face.normal, body.orientation);
   const towardCamera = [camera[0] - center[0], camera[1] - center[1], camera[2] - center[2]];
   return (
-    towardCamera[0] * face.normal[0] +
-      towardCamera[1] * face.normal[1] +
-      towardCamera[2] * face.normal[2] >
+    towardCamera[0] * normal[0] +
+      towardCamera[1] * normal[1] +
+      towardCamera[2] * normal[2] >
     0
   );
 }
@@ -237,17 +269,18 @@ function buildSceneVertices(bodies, camera) {
     const vertices = boxVertices(body);
 
     for (const face of BOX_FACES) {
-      if (!faceVisible(vertices, face, camera)) continue;
+      if (!faceVisible(vertices, face, body, camera)) continue;
       const [scaleU, scaleV] = textureScale(material, body, face);
       const uv = FACE_UVS.map(([u, v]) => [u * scaleU, v * scaleV]);
       const corners = face.indices.map((index) => vertices[index]);
+      const normal = rotateVector(face.normal, body.orientation);
       const triangles = [
         [0, 1, 2],
         [0, 2, 3],
       ];
       for (const triangle of triangles) {
         for (const corner of triangle) {
-          appendVertex(data, corners[corner], face.normal, uv[corner], material, camera);
+          appendVertex(data, corners[corner], normal, uv[corner], material, camera);
         }
       }
     }
@@ -465,7 +498,7 @@ function render() {
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
-  debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_pair_checks()} pair checks · ${engine.sandbox_last_collision_events()} collision events this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_pair_checks()} player pair checks · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
 }
 
 function updateKeyboardLook(elapsedSeconds) {

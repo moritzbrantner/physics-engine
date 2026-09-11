@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    Aabb, BodyId, Material, QueryError, RigidBody, StepStats, Vec3i, World, WorldConfig,
+    Aabb, AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, QueryError,
+    RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, StepStats, Vec3i, World,
+    WorldConfig,
 };
 
 const PLAYER_ID: BodyId = BodyId(1);
@@ -10,93 +12,60 @@ const MAX_PROJECTILES: usize = 48;
 const MOVE_SPEED: i32 = 7;
 const JUMP_SPEED: i32 = 16;
 const PROJECTILE_SPEED_LIMIT: i32 = 120;
+const ROTATING_TICKS_PER_SECOND: i32 = 60;
 
 struct Sandbox {
-    world: World,
+    player_world: World,
+    box_world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
     last_stats: StepStats,
+    last_rotating_events: usize,
+    last_tail_contacts: usize,
     total_collisions: u32,
     error_code: i32,
 }
 
 impl Sandbox {
     fn new() -> Result<Self, physics_engine::PhysicsError> {
-        let mut world = World::new(WorldConfig {
+        let mut player_world = World::new(WorldConfig {
             gravity: Vec3i::new(0, -1, 0),
             ..WorldConfig::default()
         });
+        let mut box_world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::new(0, -3_600, 0),
+            sample_count: 32,
+            refinement_steps: 4,
+            solver_passes: 8,
+            max_events: 32,
+        });
 
-        add_fixed(
-            &mut world,
-            10,
-            Vec3i::new(0, -16, 0),
-            Vec3i::new(520, 16, 520),
-        )?;
-        add_fixed(
-            &mut world,
-            11,
-            Vec3i::new(0, 72, -520),
-            Vec3i::new(520, 72, 8),
-        )?;
-        add_fixed(
-            &mut world,
-            12,
-            Vec3i::new(0, 72, 520),
-            Vec3i::new(520, 72, 8),
-        )?;
-        add_fixed(
-            &mut world,
-            13,
-            Vec3i::new(-520, 72, 0),
-            Vec3i::new(8, 72, 520),
-        )?;
-        add_fixed(
-            &mut world,
-            14,
-            Vec3i::new(520, 72, 0),
-            Vec3i::new(8, 72, 520),
-        )?;
+        let fixed_bodies = [
+            (10, Vec3i::new(0, -16, 0), Vec3i::new(520, 16, 520)),
+            (11, Vec3i::new(0, 72, -520), Vec3i::new(520, 72, 8)),
+            (12, Vec3i::new(0, 72, 520), Vec3i::new(520, 72, 8)),
+            (13, Vec3i::new(-520, 72, 0), Vec3i::new(8, 72, 520)),
+            (14, Vec3i::new(520, 72, 0), Vec3i::new(8, 72, 520)),
+            // Deliberately thin target for sampled rotating CCD acceptance.
+            (15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3)),
+            (20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70)),
+            (21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45)),
+            (22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45)),
+            (23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45)),
+            (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
+        ];
+        for (id, position, half_extents) in fixed_bodies {
+            player_world.add_body(RigidBody::fixed(BodyId(id), position, half_extents))?;
+            box_world
+                .add_box(rotating_box(RigidBody::fixed(
+                    BodyId(id),
+                    position,
+                    half_extents,
+                )))
+                .expect("the built-in rotating fixture must be valid");
+        }
 
-        // A deliberately thin target makes fast projectile CCD observable in the live demo.
-        add_fixed(
-            &mut world,
-            15,
-            Vec3i::new(0, 72, -180),
-            Vec3i::new(120, 72, 3),
-        )?;
-        add_fixed(
-            &mut world,
-            20,
-            Vec3i::new(-190, 24, 40),
-            Vec3i::new(70, 24, 70),
-        )?;
-        add_fixed(
-            &mut world,
-            21,
-            Vec3i::new(185, 8, 75),
-            Vec3i::new(45, 8, 45),
-        )?;
-        add_fixed(
-            &mut world,
-            22,
-            Vec3i::new(185, 16, 20),
-            Vec3i::new(45, 16, 45),
-        )?;
-        add_fixed(
-            &mut world,
-            23,
-            Vec3i::new(185, 24, -35),
-            Vec3i::new(45, 24, 45),
-        )?;
-        add_fixed(
-            &mut world,
-            24,
-            Vec3i::new(185, 32, -90),
-            Vec3i::new(45, 32, 45),
-        )?;
-
-        world.add_body(
+        player_world.add_body(
             RigidBody::dynamic(
                 PLAYER_ID,
                 Vec3i::new(0, 38, 320),
@@ -115,30 +84,35 @@ impl Sandbox {
             Vec3i::new(0, 18, -70),
         ];
         for (offset, position) in crate_positions.into_iter().enumerate() {
-            world.add_body(
-                RigidBody::dynamic(
-                    BodyId(100 + offset as u64),
-                    position,
-                    Vec3i::ZERO,
-                    Vec3i::new(18, 18, 18),
-                )
-                .with_mass(2)
-                .with_material(Material::new(100)),
-            )?;
+            box_world
+                .add_box(rotating_box(
+                    RigidBody::dynamic(
+                        BodyId(100 + offset as u64),
+                        position,
+                        Vec3i::ZERO,
+                        Vec3i::new(18, 18, 18),
+                    )
+                    .with_mass(2)
+                    .with_material(Material::new(100)),
+                ))
+                .expect("the built-in rotating crate must be valid");
         }
 
         Ok(Self {
-            world,
+            player_world,
+            box_world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
             last_stats: StepStats::default(),
+            last_rotating_events: 0,
+            last_tail_contacts: 0,
             total_collisions: 0,
             error_code: 0,
         })
     }
 
     fn grounded(&self) -> Result<bool, QueryError> {
-        let Some(player) = self.world.body(PLAYER_ID) else {
+        let Some(player) = self.player_world.body(PLAYER_ID) else {
             return Ok(false);
         };
         let position = player.position();
@@ -152,7 +126,7 @@ impl Sandbox {
             ),
         );
         Ok(self
-            .world
+            .player_world
             .overlap_query(probe)?
             .into_iter()
             .any(|id| id != PLAYER_ID))
@@ -160,7 +134,7 @@ impl Sandbox {
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
-        let Some(player) = self.world.body(PLAYER_ID) else {
+        let Some(player) = self.player_world.body(PLAYER_ID) else {
             self.error_code = 1;
             return self.error_code;
         };
@@ -182,53 +156,73 @@ impl Sandbox {
             next_y,
             move_z.clamp(-MOVE_SPEED, MOVE_SPEED),
         );
-        if self.world.set_velocity(PLAYER_ID, velocity).is_err() {
+        if self.player_world.set_velocity(PLAYER_ID, velocity).is_err() {
             self.error_code = 3;
             return self.error_code;
         }
 
-        let report = match self.world.step(1) {
+        let player_report = match self.player_world.step(1) {
             Ok(report) => report,
             Err(_) => {
                 self.error_code = 4;
                 return self.error_code;
             }
         };
+        let rotating_report = match self.box_world.step(1, ROTATING_TICKS_PER_SECOND) {
+            Ok(report) => report,
+            Err(_) => {
+                self.error_code = 6;
+                return self.error_code;
+            }
+        };
+
+        self.last_stats = player_report.stats;
+        self.last_rotating_events = rotating_report.stats.sampled_events;
+        self.last_tail_contacts = rotating_report.stats.tail_contacts;
+        let collisions = player_report
+            .events
+            .len()
+            .saturating_add(self.last_rotating_events)
+            .saturating_add(self.last_tail_contacts);
         self.total_collisions = self
             .total_collisions
-            .saturating_add(u32::try_from(report.events.len()).unwrap_or(u32::MAX));
-        self.last_stats = report.stats;
+            .saturating_add(u32::try_from(collisions).unwrap_or(u32::MAX));
         self.cleanup_projectiles();
         0
     }
 
     fn shoot(&mut self, velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
-        let velocity = Vec3i::new(
+        let input_velocity = Vec3i::new(
             velocity_x.clamp(-PROJECTILE_SPEED_LIMIT, PROJECTILE_SPEED_LIMIT),
             velocity_y.clamp(-PROJECTILE_SPEED_LIMIT, PROJECTILE_SPEED_LIMIT),
             velocity_z.clamp(-PROJECTILE_SPEED_LIMIT, PROJECTILE_SPEED_LIMIT),
         );
-        if velocity == Vec3i::ZERO {
+        if input_velocity == Vec3i::ZERO {
             return -1;
         }
-        let Some(player) = self.world.body(PLAYER_ID) else {
+        let Some(player) = self.player_world.body(PLAYER_ID) else {
             return -1;
         };
         let player_position = player.position();
         let spawn = Vec3i::new(
-            player_position.x + velocity.x / 3,
-            player_position.y + 12 + velocity.y / 3,
-            player_position.z + velocity.z / 3,
+            player_position.x + input_velocity.x / 3,
+            player_position.y + 12 + input_velocity.y / 3,
+            player_position.z + input_velocity.z / 3,
+        );
+        let velocity = Vec3i::new(
+            input_velocity.x.saturating_mul(ROTATING_TICKS_PER_SECOND),
+            input_velocity.y.saturating_mul(ROTATING_TICKS_PER_SECOND),
+            input_velocity.z.saturating_mul(ROTATING_TICKS_PER_SECOND),
         );
         let id = BodyId(self.next_projectile_id);
         self.next_projectile_id = self.next_projectile_id.saturating_add(1);
 
         if self
-            .world
-            .add_body(
+            .box_world
+            .add_box(rotating_box(
                 RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
                     .with_material(Material::new(350)),
-            )
+            ))
             .is_err()
         {
             self.error_code = 5;
@@ -237,7 +231,7 @@ impl Sandbox {
         self.projectile_ids.push(id);
         if self.projectile_ids.len() > MAX_PROJECTILES {
             let oldest = self.projectile_ids.remove(0);
-            self.world.remove_body(oldest);
+            self.box_world.remove_box(oldest);
         }
         i32::try_from(id.0).unwrap_or(i32::MAX)
     }
@@ -248,8 +242,8 @@ impl Sandbox {
             .iter()
             .copied()
             .filter(|id| {
-                self.world.body(*id).is_none_or(|body| {
-                    let position = body.position();
+                self.box_world.box_by_id(*id).is_none_or(|rigid_box| {
+                    let position = rigid_box.body().position();
                     position.x.abs() > 1_200
                         || position.y < -300
                         || position.y > 900
@@ -258,23 +252,46 @@ impl Sandbox {
             })
             .collect::<Vec<_>>();
         for id in stale {
-            self.world.remove_body(id);
+            self.box_world.remove_box(id);
             self.projectile_ids.retain(|candidate| *candidate != id);
         }
     }
 
+    fn body_count(&self) -> usize {
+        1 + self.box_world.boxes().count()
+    }
+
     fn body_at(&self, index: u32) -> Option<&RigidBody> {
-        self.world.bodies().nth(index as usize)
+        if index == 0 {
+            self.player_world.body(PLAYER_ID)
+        } else {
+            self.box_world
+                .boxes()
+                .nth(index.saturating_sub(1) as usize)
+                .map(RigidBox3d::body)
+        }
+    }
+
+    fn angular_at(&self, index: u32) -> AngularState3d {
+        if index == 0 {
+            return AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default());
+        }
+        self.box_world
+            .boxes()
+            .nth(index.saturating_sub(1) as usize)
+            .map_or(
+                AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+                RigidBox3d::angular,
+            )
     }
 }
 
-fn add_fixed(
-    world: &mut World,
-    id: u64,
-    position: Vec3i,
-    half_extents: Vec3i,
-) -> Result<(), physics_engine::PhysicsError> {
-    world.add_body(RigidBody::fixed(BodyId(id), position, half_extents))
+fn rotating_box(body: RigidBody) -> RigidBox3d {
+    RigidBox3d::new(
+        body,
+        AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+    )
+    .expect("sandbox rotating body must be valid")
 }
 
 fn role_for(id: BodyId) -> i32 {
@@ -322,7 +339,7 @@ pub extern "C" fn sandbox_shoot(velocity_x: i32, velocity_y: i32, velocity_z: i3
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_body_count() -> u32 {
-    with_sandbox(|sandbox| u32::try_from(sandbox.world.bodies().count()).unwrap_or(u32::MAX))
+    with_sandbox(|sandbox| u32::try_from(sandbox.body_count()).unwrap_or(u32::MAX))
 }
 
 #[unsafe(no_mangle)]
@@ -378,8 +395,37 @@ pub extern "C" fn sandbox_body_half_z(index: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_orientation_x(index: u32) -> i32 {
+    with_sandbox(|sandbox| sandbox.angular_at(index).orientation.x)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_orientation_y(index: u32) -> i32 {
+    with_sandbox(|sandbox| sandbox.angular_at(index).orientation.y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_orientation_z(index: u32) -> i32 {
+    with_sandbox(|sandbox| sandbox.angular_at(index).orientation.z)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_orientation_w(index: u32) -> i32 {
+    with_sandbox(|sandbox| sandbox.angular_at(index).orientation.w)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_collision_events() -> u32 {
-    with_sandbox(|sandbox| u32::try_from(sandbox.last_stats.collision_events).unwrap_or(u32::MAX))
+    with_sandbox(|sandbox| {
+        u32::try_from(
+            sandbox
+                .last_stats
+                .collision_events
+                .saturating_add(sandbox.last_rotating_events)
+                .saturating_add(sandbox.last_tail_contacts),
+        )
+        .unwrap_or(u32::MAX)
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -416,10 +462,10 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_contains_authoritative_player_and_test_world() {
+    fn sandbox_contains_authoritative_player_and_rotating_world() {
         let sandbox = Sandbox::new().expect("valid sandbox");
-        assert!(sandbox.world.body(PLAYER_ID).is_some());
-        assert!(sandbox.world.bodies().count() >= 10);
+        assert!(sandbox.player_world.body(PLAYER_ID).is_some());
+        assert!(sandbox.box_world.boxes().count() >= 10);
     }
 
     #[test]
@@ -427,11 +473,19 @@ mod tests {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
         assert!(sandbox.grounded().expect("valid foot probe"));
-        let before = sandbox.world.body(PLAYER_ID).expect("player").position().y;
+        let before = sandbox
+            .player_world
+            .body(PLAYER_ID)
+            .expect("player")
+            .position()
+            .y;
 
         assert_eq!(sandbox.step(0, 0, true), 0);
 
-        let player = sandbox.world.body(PLAYER_ID).expect("player after jump");
+        let player = sandbox
+            .player_world
+            .body(PLAYER_ID)
+            .expect("player after jump");
         assert!(player.position().y > before, "jump did not move upward");
         assert!(
             player.velocity().y > 0,
@@ -451,13 +505,13 @@ mod tests {
         }
 
         let projectile = sandbox
-            .world
-            .body(physics_engine::BodyId(projectile as u64))
+            .box_world
+            .box_by_id(physics_engine::BodyId(projectile as u64))
             .expect("projectile remains in the bounded test world");
         assert!(
-            projectile.position().z > -190,
-            "projectile tunneled through the thin CCD target: {:?}",
-            projectile.position()
+            projectile.body().position().z > -190,
+            "projectile tunneled through the thin sampled-CCD target: {:?}",
+            projectile.body().position()
         );
     }
 }
