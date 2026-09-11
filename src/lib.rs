@@ -6,9 +6,10 @@
 //! geometry, fixed-point orientation/angular velocity, box inertia, angular impulse evidence, exact
 //! quantized OBB SAT contact seeds, conservative rotational sweep bounds, canonical rotating-box
 //! free-flight sampling, deterministic rotational broad-phase pairing, explicit sampled rotating
-//! contact/re-contact search, shared first/re-contact frontiers, and deterministic OBB/frontier response.
-//! The current `World` solver remains translational and AABB-only. Rendering, ECS storage, game loops and
-//! scene ownership belong to consumers.
+//! contact/re-contact search, shared first/re-contact frontiers, deterministic OBB/frontier response,
+//! and bounded repeated sampled-event advancement with an exact unconsumed tail. The current `World`
+//! solver remains translational and AABB-only. Rendering, ECS storage, game loops and scene ownership
+//! belong to consumers.
 
 #![forbid(unsafe_code)]
 
@@ -20,6 +21,7 @@ mod math;
 mod obb_response;
 mod oriented_box;
 mod query;
+mod repeated_rotating_events;
 mod rigid_box;
 mod rigid_box_free_flight;
 mod rotating_broad_phase;
@@ -49,6 +51,10 @@ pub use oriented_box::{
     oriented_box_vertices,
 };
 pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use repeated_rotating_events::{
+    MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
+    RepeatedRotatingEventError3d, RotatingResolvedEvent3d, advance_repeated_rotating_events,
+};
 pub use rigid_box::{RigidBox3d, RigidBoxError3d};
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, rigid_box_free_flight_sweep_bounds,
