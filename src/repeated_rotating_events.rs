@@ -94,8 +94,14 @@ impl fmt::Display for RepeatedRotatingEventError3d {
                 formatter,
                 "repeated rotating event remaining-time ratio exceeds the supported i32 contract"
             ),
-            Self::Frontier(error) => write!(formatter, "repeated rotating event frontier failed: {error}"),
-            Self::Response(error) => write!(formatter, "repeated rotating event response failed: {error}"),
+            Self::Frontier(error) => write!(
+                formatter,
+                "repeated rotating event frontier failed: {error}"
+            ),
+            Self::Response(error) => write!(
+                formatter,
+                "repeated rotating event response failed: {error}"
+            ),
         }
     }
 }
@@ -145,7 +151,7 @@ pub fn advance_repeated_rotating_events(
 
     let mut remaining = config.search.free_flight;
     let first_search = search_with_free_flight(config.search, remaining);
-    let Some(frontier) = earliest_rotating_contact_frontier(boxes, first_search)? else {
+    let Some(first_frontier) = earliest_rotating_contact_frontier(boxes, first_search)? else {
         return Ok(RepeatedRotatingEventAdvance3d {
             boxes: boxes.to_vec(),
             events: Vec::new(),
@@ -155,16 +161,11 @@ pub fn advance_repeated_rotating_events(
 
     let mut state = boxes.to_vec();
     let mut events = Vec::new();
-    let mut pending = Some(frontier);
+    let mut frontier = first_frontier;
 
     loop {
-        let frontier = pending
-            .take()
-            .expect("repeated rotating event loop always has a pending frontier");
         if events.len() >= usize::from(config.max_events) {
-            return Err(RepeatedRotatingEventError3d::EventLimit(
-                config.max_events,
-            ));
+            return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
         let response = resolve_rotating_contact_frontier(frontier, config.solver_passes)?;
@@ -183,12 +184,7 @@ pub fn advance_repeated_rotating_events(
         let Some(next) = next_rotating_contact_frontier(&state, next_search)? else {
             break;
         };
-        if events.len() >= usize::from(config.max_events) {
-            return Err(RepeatedRotatingEventError3d::EventLimit(
-                config.max_events,
-            ));
-        }
-        pending = Some(next);
+        frontier = next;
     }
 
     Ok(RepeatedRotatingEventAdvance3d {
@@ -215,9 +211,11 @@ fn validate_config(
         ));
     }
     if config.search.free_flight.timestep_denominator <= 0 {
-        return Err(RepeatedRotatingEventError3d::NonPositiveTimestepDenominator(
-            config.search.free_flight.timestep_denominator,
-        ));
+        return Err(
+            RepeatedRotatingEventError3d::NonPositiveTimestepDenominator(
+                config.search.free_flight.timestep_denominator,
+            ),
+        );
     }
     Ok(())
 }
@@ -238,9 +236,7 @@ fn scale_remaining_time(
     event_time: SampledContactTime3d,
 ) -> Result<RigidBoxFreeFlightConfig3d, RepeatedRotatingEventError3d> {
     if event_time.denominator == 0 || remaining_numerator > event_time.denominator {
-        return Err(RepeatedRotatingEventError3d::InvalidRemainder(
-            event_time,
-        ));
+        return Err(RepeatedRotatingEventError3d::InvalidRemainder(event_time));
     }
     if current.timestep_numerator < 0 {
         return Err(RepeatedRotatingEventError3d::NegativeTimestepNumerator(
@@ -248,9 +244,11 @@ fn scale_remaining_time(
         ));
     }
     if current.timestep_denominator <= 0 {
-        return Err(RepeatedRotatingEventError3d::NonPositiveTimestepDenominator(
-            current.timestep_denominator,
-        ));
+        return Err(
+            RepeatedRotatingEventError3d::NonPositiveTimestepDenominator(
+                current.timestep_denominator,
+            ),
+        );
     }
     if remaining_numerator == 0 || current.timestep_numerator == 0 {
         return Ok(RigidBoxFreeFlightConfig3d::new(current.gravity, 0, 1));
@@ -300,12 +298,7 @@ mod tests {
         advance_repeated_rotating_events, scale_remaining_time,
     };
 
-    fn dynamic(
-        id: u64,
-        position: Vec3i,
-        velocity: Vec3i,
-        material: Material,
-    ) -> RigidBox3d {
+    fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
         RigidBox3d::new(
             RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(1, 1, 1))
                 .with_material(material),
@@ -316,8 +309,7 @@ mod tests {
 
     fn fixed(id: u64, position: Vec3i, material: Material) -> RigidBox3d {
         RigidBox3d::new(
-            RigidBody::fixed(BodyId(id), position, Vec3i::new(1, 1, 1))
-                .with_material(material),
+            RigidBody::fixed(BodyId(id), position, Vec3i::new(1, 1, 1)).with_material(material),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid fixed box")
@@ -338,11 +330,16 @@ mod tests {
     #[test]
     fn no_event_leaves_the_full_tail_unconsumed() {
         let boxes = [
-            dynamic(1, Vec3i::new(-100, 0, 0), Vec3i::ZERO, Material::new(0)),
+            dynamic(
+                1,
+                Vec3i::new(-100, 0, 0),
+                Vec3i::ZERO,
+                Material::new(0),
+            ),
             fixed(2, Vec3i::new(100, 0, 0), Material::new(0)),
         ];
-        let advance = advance_repeated_rotating_events(&boxes, config(8))
-            .expect("valid no-event advance");
+        let advance =
+            advance_repeated_rotating_events(&boxes, config(8)).expect("valid no-event advance");
 
         assert_eq!(advance.boxes, boxes);
         assert!(advance.events.is_empty());
@@ -352,7 +349,12 @@ mod tests {
     #[test]
     fn time_zero_event_is_resolved_without_consuming_the_tail() {
         let boxes = [
-            dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0), Material::new(0)),
+            dynamic(
+                1,
+                Vec3i::ZERO,
+                Vec3i::new(60, 0, 0),
+                Material::new(0),
+            ),
             fixed(2, Vec3i::new(2, 0, 0), Material::new(0)),
         ];
         let advance = advance_repeated_rotating_events(&boxes, config(8))
