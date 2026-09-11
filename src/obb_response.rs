@@ -89,7 +89,9 @@ impl From<WideRatioError> for ObbContactResponseError3d {
 /// Pair order is part of the deterministic contract. The function consumes exact SAT contact evidence,
 /// reduces the stable support sets to one contact point, evaluates relative velocity including rotational
 /// motion at that point, and applies one equal-and-opposite normal impulse. Penetration is then projected
-/// out along the SAT minimum-translation axis with deterministic mass weighting.
+/// out along the SAT minimum-translation axis with deterministic mass weighting. Rotation-locked bodies
+/// remain translationally dynamic but contribute no rotational velocity/inverse inertia and receive no
+/// angular impulse.
 ///
 /// `allow_restitution` exists for iterative island/frontier solvers: the first physical impact pass may
 /// use material restitution, while later numerical passes can restore non-approaching constraints without
@@ -498,7 +500,11 @@ fn contact_velocity(
     rigid_box: &RigidBox3d,
     offset: [i64; 3],
 ) -> Result<[i64; 3], ObbContactResponseError3d> {
-    let omega = rigid_box.angular.angular_velocity;
+    let omega = if rigid_box.rotation_locked {
+        AngularVelocity3d::default()
+    } else {
+        rigid_box.angular.angular_velocity
+    };
     let rotation_x = checked_sub(
         checked_mul(i128::from(omega.y), i128::from(offset[2]))?,
         checked_mul(i128::from(omega.z), i128::from(offset[1]))?,
@@ -613,7 +619,7 @@ fn body_effective_inverse_mass_scaled(
         u128::from(rigid_box.body.mass_units),
     )?)
     .map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
-    if !include_angular {
+    if !include_angular || rigid_box.rotation_locked {
         return Ok(translational);
     }
 
@@ -652,7 +658,7 @@ fn apply_body_impulse(
         add_linear_impulse_axis(rigid_box.body.velocity.y, impulse[1], mass_units)?,
         add_linear_impulse_axis(rigid_box.body.velocity.z, impulse[2], mass_units)?,
     );
-    if !include_angular {
+    if !include_angular || rigid_box.rotation_locked {
         return Ok(());
     }
 
@@ -1059,6 +1065,20 @@ mod tests {
         let response = resolve_obb_contact(left, right, true).expect("valid response");
 
         assert_ne!(response.left.angular.angular_velocity.z, 0);
+        assert_ne!(response.right.angular.angular_velocity.z, 0);
+    }
+
+    #[test]
+    fn rotation_locked_body_stays_upright_but_transmits_linear_impulse() {
+        let left = dynamic(1, Vec3i::new(0, 6, 0), Vec3i::new(90, 0, 0)).with_rotation_locked();
+        let right = dynamic(2, Vec3i::new(19, 0, 0), Vec3i::ZERO);
+        let response = resolve_obb_contact(left, right, true).expect("valid locked response");
+
+        assert!(response.left.rotation_locked());
+        assert!(response.left.angular.angular_velocity.is_zero());
+        assert_eq!(response.left.angular.orientation, Orientation3d::IDENTITY);
+        assert_ne!(response.left.body.velocity.x, 90);
+        assert_ne!(response.right.body.velocity.x, 0);
         assert_ne!(response.right.angular.angular_velocity.z, 0);
     }
 

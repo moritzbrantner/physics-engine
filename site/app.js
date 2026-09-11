@@ -498,7 +498,7 @@ function render() {
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
-  debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_pair_checks()} player pair checks · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
 }
 
 function updateKeyboardLook(elapsedSeconds) {
