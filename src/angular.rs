@@ -207,7 +207,9 @@ pub fn integrate_orientation(
     integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
 }
 
-/// Internal exact-rational counterpart to [`integrate_orientation`].
+/// Internal exact-rational counterpart to [`integrate_orientation`], retained for direct compatibility
+/// coverage of large but reducible ratios.
+#[cfg(test)]
 pub(crate) fn integrate_orientation_ratio(
     orientation: Orientation3d,
     angular_velocity: AngularVelocity3d,
