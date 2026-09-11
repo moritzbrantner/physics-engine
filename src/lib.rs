@@ -27,6 +27,7 @@ mod rotating_contact_frontier;
 mod rotating_contact_response;
 mod rotating_contact_search;
 mod rotational_sweep;
+mod wide_ratio;
 mod world;
 
 pub use angular::{
