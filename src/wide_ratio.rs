@@ -23,6 +23,35 @@ impl fmt::Display for WideRatioError {
 
 impl Error for WideRatioError {}
 
+/// Multiplies two `u128` values without narrowing the intermediate product, divides by a `u128`, and
+/// rounds half up.
+pub(crate) fn mul_div_round_u128(
+    left: u128,
+    right: u128,
+    denominator: u128,
+) -> Result<u128, WideRatioError> {
+    ExactRatio::new(right, denominator)?.mul_round_u128(left)
+}
+
+/// Signed counterpart to [`mul_div_round_u128`]. Rounding is symmetric around zero.
+pub(crate) fn mul_div_round_i128(
+    left: i128,
+    right: i128,
+    denominator: i128,
+) -> Result<i128, WideRatioError> {
+    if denominator <= 0 {
+        return Err(if denominator == 0 {
+            WideRatioError::ZeroDenominator
+        } else {
+            WideRatioError::QuotientOverflow
+        });
+    }
+    let negative = (left < 0) ^ (right < 0);
+    let magnitude = ExactRatio::new(right.unsigned_abs(), denominator as u128)?
+        .mul_round_u128(left.unsigned_abs())?;
+    signed_magnitude(negative, magnitude)
+}
+
 /// Exact positive rational storage for engine-internal timestep composition.
 ///
 /// Forty 64-bit limbs provide 2,560 bits per side. The repeated-event contract admits at most 64
@@ -101,6 +130,23 @@ impl ExactRatio {
         scaled.numerator.mul_small(fraction_numerator)?;
         scaled.denominator.mul_small(fraction_denominator)?;
         Ok(scaled)
+    }
+
+    /// Rounds `value * self` to nearest, with half values upward.
+    pub(crate) fn mul_round_u128(self, value: u128) -> Result<u128, WideRatioError> {
+        if value == 0 || self.numerator.is_zero() {
+            return Ok(0);
+        }
+        let numerator = self.numerator.multiplied_u128(value)?;
+        let (mut quotient, remainder) = div_natural_to_u128(numerator, self.denominator)?;
+        if !remainder.is_zero()
+            && remainder.multiplied_u128(2)?.cmp_natural(self.denominator) != Ordering::Less
+        {
+            quotient = quotient
+                .checked_add(1)
+                .ok_or(WideRatioError::QuotientOverflow)?;
+        }
+        Ok(quotient)
     }
 
     /// Rounds `value * self` to nearest, with half values away from zero.
@@ -361,7 +407,26 @@ fn greatest_common_divisor_u128(mut left: u128, mut right: u128) -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::ExactRatio;
+    use super::{ExactRatio, mul_div_round_i128, mul_div_round_u128};
+
+    #[test]
+    fn multiplication_can_exceed_u128_before_division() {
+        let left = u128::MAX / 3;
+        let right = 9_u128;
+        assert_eq!(mul_div_round_u128(left, right, 9), Ok(left));
+    }
+
+    #[test]
+    fn signed_rounding_is_symmetric() {
+        assert_eq!(mul_div_round_i128(2, 2, 5), Ok(1));
+        assert_eq!(mul_div_round_i128(-2, 2, 5), Ok(-1));
+    }
+
+    #[test]
+    fn half_values_round_away_from_zero() {
+        assert_eq!(mul_div_round_i128(1, 1, 2), Ok(1));
+        assert_eq!(mul_div_round_i128(-1, 1, 2), Ok(-1));
+    }
 
     #[test]
     fn exact_ratio_rounding_is_symmetric() {
