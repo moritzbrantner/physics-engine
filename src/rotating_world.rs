@@ -516,11 +516,7 @@ fn ceil_mul_div(
         .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))
 }
 
-fn ceil_div(
-    value: u128,
-    denominator: u128,
-    id: BodyId,
-) -> Result<u128, RotatingWorldError3d> {
+fn ceil_div(value: u128, denominator: u128, id: BodyId) -> Result<u128, RotatingWorldError3d> {
     if denominator == 0 {
         return Err(RotatingWorldError3d::PersistentTailArithmeticOverflow(id));
     }
@@ -633,11 +629,8 @@ mod tests {
             ),
         )
         .expect("valid rotating box");
-        let config = RigidBoxFreeFlightConfig3d::new_wide(
-            Vec3i::ZERO,
-            i128::MAX / 4,
-            i128::MAX / 2,
-        );
+        let config =
+            RigidBoxFreeFlightConfig3d::new_wide(Vec3i::ZERO, i128::MAX / 4, i128::MAX / 2);
 
         assert!(
             tail_motion_within_extent(&rigid_box, config)
