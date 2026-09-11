@@ -82,10 +82,8 @@ impl ExactRatio {
             return Self::new(0, 1);
         }
 
-        let fraction_divisor = greatest_common_divisor_u128(
-            u128::from(numerator),
-            u128::from(denominator),
-        );
+        let fraction_divisor =
+            greatest_common_divisor_u128(u128::from(numerator), u128::from(denominator));
         let mut fraction_numerator =
             numerator / u32::try_from(fraction_divisor).expect("u32 gcd fits u32");
         let mut fraction_denominator =

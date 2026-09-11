@@ -2,10 +2,9 @@ use std::{error::Error, fmt};
 
 use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
-    RotatingContactFrontierError3d, RotatingContactResponseError3d,
-    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
-    earliest_rotating_contact_frontier, next_rotating_contact_frontier,
-    resolve_rotating_contact_frontier,
+    RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
+    RotatingContactSearchHit3d, SampledContactTime3d, earliest_rotating_contact_frontier,
+    next_rotating_contact_frontier, resolve_rotating_contact_frontier,
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
@@ -220,9 +219,9 @@ fn validate_config(
         Err(RigidBoxFreeFlightError3d::NegativeTimestepNumerator(value)) => Err(
             RepeatedRotatingEventError3d::NegativeTimestepNumerator(value),
         ),
-        Err(RigidBoxFreeFlightError3d::NonPositiveTimestepDenominator(value)) => Err(
-            RepeatedRotatingEventError3d::NonPositiveTimestepDenominator(value),
-        ),
+        Err(RigidBoxFreeFlightError3d::NonPositiveTimestepDenominator(value)) => {
+            Err(RepeatedRotatingEventError3d::NonPositiveTimestepDenominator(value))
+        }
         Err(_) => Err(RepeatedRotatingEventError3d::RatioTooLarge),
     }
 }
@@ -429,13 +428,7 @@ mod tests {
             assert_eq!(numerator as u128, expected_numerator);
             assert_eq!(denominator as u128, expected_denominator);
         }
-        assert!(
-            remaining
-                .timestep_i128()
-                .expect("eight factors fit i128")
-                .1
-                > i128::from(i32::MAX)
-        );
+        assert!(remaining.timestep_i128().expect("eight factors fit i128").1 > i128::from(i32::MAX));
     }
 
     #[test]

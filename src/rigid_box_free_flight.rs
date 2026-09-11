@@ -469,8 +469,8 @@ mod tests {
 
         let first = sample_rigid_box_free_flight(&rigid_box, config, 1, 512)
             .expect("sampled exact timestep remains representable");
-        let second = sample_rigid_box_free_flight(&rigid_box, config, 1, 512)
-            .expect("same exact sample");
+        let second =
+            sample_rigid_box_free_flight(&rigid_box, config, 1, 512).expect("same exact sample");
         assert_eq!(first, second);
         assert_ne!(first.angular().orientation, Orientation3d::IDENTITY);
     }
