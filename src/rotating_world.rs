@@ -139,9 +139,11 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// time is instead consumed through bounded deterministic slices. Bodies participating in the current
 /// persistent frontier are limited to less than their narrowest full thickness of conservative
 /// center-plus-rotational motion before the next OBB stabilization pass, so a time-zero contact cannot
-/// be free-flown completely through before the next constraint solve. If an impulse makes the selected
-/// resolution too coarse, the exact tail is replayed from its starting state with a finer deterministic
-/// resolution; exceeding the hard bound fails closed.
+/// be free-flown completely through before the next constraint solve. Tail slicing cross-cancels the
+/// slice count against the widened exact numerator before extending the denominator, so repeated-event
+/// precision is preserved rather than forcing the tail back into the public `i32` time representation.
+/// If an impulse makes the selected resolution too coarse, the exact tail is replayed from its starting
+/// state with a finer representable resolution; exceeding the hard bound fails closed.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
@@ -314,14 +316,15 @@ fn consume_tail(
         if unsafe_body.is_none() {
             return Ok((current, contact_count));
         }
-        if slice_count == MAX_PERSISTENT_TAIL_SLICES {
+        let target = slice_count
+            .saturating_mul(2)
+            .min(MAX_PERSISTENT_TAIL_SLICES);
+        if target <= slice_count {
             return Err(RotatingWorldError3d::PersistentTailMotionUnsafe(
                 unsafe_body.expect("unsafe tail body was observed"),
             ));
         }
-        slice_count = slice_count
-            .saturating_mul(2)
-            .min(MAX_PERSISTENT_TAIL_SLICES);
+        slice_count = next_representable_tail_slice_count(remaining, target)?;
     }
 }
 
@@ -358,7 +361,9 @@ fn persistent_tail_slice_count(
     contacts: &[RotatingContactSearchHit3d],
 ) -> Result<u32, RotatingWorldError3d> {
     for slices in 1..=MAX_PERSISTENT_TAIL_SLICES {
-        let config = tail_slice_config(remaining, slices)?;
+        let Ok(config) = tail_slice_config(remaining, slices) else {
+            continue;
+        };
         if first_unsafe_tail_body(boxes, config, contacts)?.is_none() {
             return Ok(slices);
         }
@@ -369,22 +374,46 @@ fn persistent_tail_slice_count(
     ))
 }
 
+fn next_representable_tail_slice_count(
+    remaining: RigidBoxFreeFlightConfig3d,
+    minimum: u32,
+) -> Result<u32, RotatingWorldError3d> {
+    for slices in minimum..=MAX_PERSISTENT_TAIL_SLICES {
+        if tail_slice_config(remaining, slices).is_ok() {
+            return Ok(slices);
+        }
+    }
+    Err(RotatingWorldError3d::PersistentTailResolutionLimit(
+        MAX_PERSISTENT_TAIL_SLICES,
+    ))
+}
+
 fn tail_slice_config(
     remaining: RigidBoxFreeFlightConfig3d,
     slices: u32,
 ) -> Result<RigidBoxFreeFlightConfig3d, RotatingWorldError3d> {
-    let slices_i32 = i32::try_from(slices).map_err(|_| {
+    if slices == 0 {
+        return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
+            MAX_PERSISTENT_TAIL_SLICES,
+        ));
+    }
+    let mut numerator = remaining.timestep_numerator;
+    let mut slice_factor = i128::from(slices);
+    let divisor = greatest_common_divisor(numerator.unsigned_abs(), u128::from(slices));
+    let divisor = i128::try_from(divisor).map_err(|_| {
         RotatingWorldError3d::PersistentTailResolutionLimit(MAX_PERSISTENT_TAIL_SLICES)
     })?;
+    numerator /= divisor;
+    slice_factor /= divisor;
     let denominator = remaining
         .timestep_denominator
-        .checked_mul(slices_i32)
+        .checked_mul(slice_factor)
         .ok_or(RotatingWorldError3d::PersistentTailResolutionLimit(
             MAX_PERSISTENT_TAIL_SLICES,
         ))?;
-    Ok(RigidBoxFreeFlightConfig3d::new(
+    Ok(RigidBoxFreeFlightConfig3d::new_wide(
         remaining.gravity,
-        remaining.timestep_numerator,
+        numerator,
         denominator,
     ))
 }
@@ -418,8 +447,8 @@ fn tail_motion_within_extent(
     }
 
     let id = rigid_box.body().id();
-    let numerator = u128::from(config.timestep_numerator.unsigned_abs());
-    let denominator = u128::from(config.timestep_denominator.unsigned_abs());
+    let numerator = config.timestep_numerator.unsigned_abs();
+    let denominator = config.timestep_denominator.unsigned_abs();
     let half = rigid_box.body().half_extents();
     let minimum_half = u128::from(half.x.min(half.y).min(half.z).unsigned_abs());
     let motion_budget = minimum_half
@@ -493,6 +522,15 @@ fn ceil_mul_div(
     Ok(adjusted / denominator)
 }
 
+fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
+}
+
 fn contact_frontier(
     boxes: &[RigidBox3d],
 ) -> Result<Vec<RotatingContactSearchHit3d>, OrientedBoxError3d> {
@@ -524,10 +562,12 @@ fn contact_frontier(
 mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody,
-        RigidBox3d, Vec3i,
+        RigidBox3d, RigidBoxFreeFlightConfig3d, Vec3i,
     };
 
-    use super::{RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d};
+    use super::{
+        RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, tail_slice_config,
+    };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -553,6 +593,19 @@ mod tests {
             solver_passes: 8,
             max_events: 16,
         })
+    }
+
+    #[test]
+    fn widened_tail_denominator_can_be_sliced_exactly() {
+        let remaining = RigidBoxFreeFlightConfig3d::new_wide(
+            Vec3i::ZERO,
+            35_582_088,
+            2_147_483_647,
+        );
+        let sliced = tail_slice_config(remaining, 2).expect("wide tail slice");
+        assert_eq!(sliced.timestep_numerator, 17_791_044);
+        assert_eq!(sliced.timestep_denominator, 2_147_483_647);
+        assert!(sliced.timestep_denominator > i128::from(i32::MAX) - 1);
     }
 
     #[test]
