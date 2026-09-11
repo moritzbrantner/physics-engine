@@ -2,8 +2,9 @@ use std::{error::Error, fmt};
 
 use crate::{
     AngularError3d, AngularState3d, BodyId, BodyKind, RigidBox3d, RotationalSweepBounds3d,
-    RotationalSweepError3d, Vec3i, integrate_orientation,
+    RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
     rotational_sweep::rotational_sweep_bounds_for_center_interval,
+    wide_ratio::mul_div_round_i128,
 };
 
 /// Explicit rational timestep and acceleration for collision-free rotating-box sampling.
@@ -61,7 +62,7 @@ impl fmt::Display for RigidBoxFreeFlightError3d {
             ),
             Self::RatioTooLarge => write!(
                 formatter,
-                "rigid-box free-flight reduced timestep ratio exceeds the supported i32 contract"
+                "rigid-box free-flight rational calculation exceeded the supported internal range"
             ),
             Self::ArithmeticOverflow(body) => write!(
                 formatter,
@@ -98,12 +99,16 @@ impl From<RotationalSweepError3d> for RigidBoxFreeFlightError3d {
 /// to velocity, then advance position with the resulting velocity. Orientation uses the engine's
 /// deterministic fixed-point quaternion integrator.
 ///
+/// The public segment timestep remains an `i32` ratio, but composing it with the `u32` sample fraction
+/// stays wide internally. Repeated-event refinement can therefore use large reduced denominators without
+/// introducing a narrower representational boundary than the public segment itself.
+///
 /// `fraction_numerator / fraction_denominator` must be within `0..=1`.
 ///
 /// # Errors
 ///
-/// Returns [`RigidBoxFreeFlightError3d`] for malformed time/fraction inputs, unsupported reduced ratios,
-/// or checked linear/angular arithmetic overflow.
+/// Returns [`RigidBoxFreeFlightError3d`] for malformed time/fraction inputs or checked linear/angular
+/// arithmetic overflow.
 pub fn sample_rigid_box_free_flight(
     rigid_box: &RigidBox3d,
     config: RigidBoxFreeFlightConfig3d,
@@ -146,7 +151,7 @@ pub fn sample_rigid_box_free_flight(
     body.position = position;
 
     let angular = AngularState3d::new(
-        integrate_orientation(
+        integrate_orientation_ratio(
             rigid_box.angular.orientation,
             rigid_box.angular.angular_velocity,
             step_numerator,
@@ -212,7 +217,7 @@ fn sample_step_ratio(
     config: RigidBoxFreeFlightConfig3d,
     fraction_numerator: u32,
     fraction_denominator: u32,
-) -> Result<(i32, i32), RigidBoxFreeFlightError3d> {
+) -> Result<(u128, u128), RigidBoxFreeFlightError3d> {
     if config.timestep_numerator < 0 {
         return Err(RigidBoxFreeFlightError3d::NegativeTimestepNumerator(
             config.timestep_numerator,
@@ -233,57 +238,35 @@ fn sample_step_ratio(
         });
     }
 
-    let numerator = u128::from(
-        u32::try_from(config.timestep_numerator)
-            .map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
-    )
-    .checked_mul(u128::from(fraction_numerator))
-    .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let denominator = u128::from(
-        u32::try_from(config.timestep_denominator)
-            .map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
-    )
-    .checked_mul(u128::from(fraction_denominator))
-    .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
+    let numerator = u128::from(config.timestep_numerator.unsigned_abs())
+        .checked_mul(u128::from(fraction_numerator))
+        .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
+    let denominator = u128::from(config.timestep_denominator.unsigned_abs())
+        .checked_mul(u128::from(fraction_denominator))
+        .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
     let divisor = greatest_common_divisor(numerator, denominator);
-    let numerator = numerator / divisor;
-    let denominator = denominator / divisor;
-    Ok((
-        i32::try_from(numerator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
-        i32::try_from(denominator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
-    ))
+    Ok((numerator / divisor, denominator / divisor))
 }
 
 fn rounded_ratio(
     value: i128,
-    numerator: i32,
-    denominator: i32,
+    numerator: u128,
+    denominator: u128,
 ) -> Result<i128, RigidBoxFreeFlightError3d> {
-    let numerator = value
-        .checked_mul(i128::from(numerator))
-        .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let denominator = i128::from(denominator);
-    let half = denominator / 2;
-    let adjusted = if numerator >= 0 {
-        numerator.checked_add(half)
-    } else {
-        numerator.checked_sub(half)
-    }
-    .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    Ok(adjusted / denominator)
+    let numerator =
+        i128::try_from(numerator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?;
+    let denominator =
+        i128::try_from(denominator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?;
+    mul_div_round_i128(value, numerator, denominator)
+        .map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)
 }
 
 fn conservative_axis_displacement(
     velocity: i32,
     acceleration: i32,
-    numerator: i32,
-    denominator: i32,
+    numerator: u128,
+    denominator: u128,
 ) -> Result<u128, RigidBoxFreeFlightError3d> {
-    let numerator =
-        u128::from(u32::try_from(numerator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?);
-    let denominator = u128::from(
-        u32::try_from(denominator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?,
-    );
     let acceleration_delta = ceil_ratio(
         u128::from(acceleration.unsigned_abs())
             .checked_mul(numerator)
@@ -327,8 +310,8 @@ fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d, Vec3i,
-        World, WorldConfig, oriented_box_vertices, rotational_sweep_bounds,
+        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody,
+        RigidBox3d, Vec3i, World, WorldConfig, oriented_box_vertices, rotational_sweep_bounds,
     };
 
     use super::{
@@ -391,6 +374,25 @@ mod tests {
         let second = sample_rigid_box_free_flight(&rigid_box, config, 7, 16)
             .expect("same valid fractional sample");
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn composed_sample_ratio_can_exceed_i32_without_failing() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(6),
+                Vec3i::ZERO,
+                Vec3i::new(1, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE),
+        );
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1_000_000_007, 1_500_000_000);
+
+        let sampled = sample_rigid_box_free_flight(&rigid_box, config, 1, 512)
+            .expect("wide composed sample ratio should remain representable internally");
+
+        assert_ne!(sampled.angular().orientation, Orientation3d::IDENTITY);
     }
 
     #[test]
