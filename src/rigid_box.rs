@@ -91,10 +91,7 @@ impl RigidBox3d {
     #[must_use]
     pub fn with_rotation_locked(mut self) -> Self {
         self.rotation_locked = true;
-        self.angular = AngularState3d::new(
-            self.angular.orientation,
-            AngularVelocity3d::default(),
-        );
+        self.angular = AngularState3d::new(self.angular.orientation, AngularVelocity3d::default());
         self
     }
 
