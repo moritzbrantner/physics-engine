@@ -1070,8 +1070,7 @@ mod tests {
 
     #[test]
     fn rotation_locked_body_stays_upright_but_transmits_linear_impulse() {
-        let left = dynamic(1, Vec3i::new(0, 6, 0), Vec3i::new(90, 0, 0))
-            .with_rotation_locked();
+        let left = dynamic(1, Vec3i::new(0, 6, 0), Vec3i::new(90, 0, 0)).with_rotation_locked();
         let right = dynamic(2, Vec3i::new(19, 0, 0), Vec3i::ZERO);
         let response = resolve_obb_contact(left, right, true).expect("valid locked response");
 
