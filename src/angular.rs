@@ -1,6 +1,9 @@
 use std::{error::Error, fmt};
 
-use crate::{BodyId, BodyKind, RigidBody, wide_ratio::mul_div_round_i128};
+use crate::{
+    BodyId, BodyKind, RigidBody,
+    wide_ratio::{ExactRatio, WideRatioError},
+};
 
 /// Fixed-point quaternion scale. `1 << 30` represents one unit.
 pub const ORIENTATION_SCALE: i32 = 1_i32 << 30;
@@ -196,32 +199,35 @@ pub fn integrate_orientation(
         ));
     }
 
-    integrate_orientation_ratio(
-        orientation,
-        angular_velocity,
+    let timestep = ExactRatio::new(
         u128::from(timestep_numerator.unsigned_abs()),
         u128::from(timestep_denominator.unsigned_abs()),
     )
+    .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
 }
 
-/// Internal wide-rational counterpart to [`integrate_orientation`].
-///
-/// Free-flight sampling composes a public segment ratio with a `u32` search fraction. The reduced
-/// composed ratio can legitimately exceed `i32` even though the public segment itself remains within
-/// the stable API. Keeping the composed ratio wide prevents repeated-event stepping from failing on a
-/// representational boundary unrelated to the physical timestep.
+/// Internal exact-rational counterpart to [`integrate_orientation`], retained for direct compatibility
+/// coverage of large but reducible ratios.
+#[cfg(test)]
 pub(crate) fn integrate_orientation_ratio(
     orientation: Orientation3d,
     angular_velocity: AngularVelocity3d,
     timestep_numerator: u128,
     timestep_denominator: u128,
 ) -> Result<Orientation3d, AngularError3d> {
-    if timestep_denominator == 0 {
-        return Err(AngularError3d::ArithmeticOverflow);
-    }
+    let timestep = ExactRatio::new(timestep_numerator, timestep_denominator)
+        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
+}
 
+pub(crate) fn integrate_orientation_exact_ratio(
+    orientation: Orientation3d,
+    angular_velocity: AngularVelocity3d,
+    timestep: ExactRatio,
+) -> Result<Orientation3d, AngularError3d> {
     let orientation = orientation.normalized()?;
-    if timestep_numerator == 0 || angular_velocity.is_zero() {
+    if timestep.is_zero() || angular_velocity.is_zero() {
         return Ok(orientation);
     }
 
@@ -239,20 +245,21 @@ pub(crate) fn integrate_orientation_ratio(
         checked_sum([wz * qw, wx * qy, -(wy * qx)])?,
         checked_sum([-(wx * qx), -(wy * qy), -(wz * qz)])?,
     ];
-    let numerator =
-        i128::try_from(timestep_numerator).map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    let timestep_denominator =
-        i128::try_from(timestep_denominator).map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    let denominator = i128::from(2_i32)
-        .checked_mul(i128::from(ANGULAR_VELOCITY_SCALE))
-        .and_then(|value| value.checked_mul(timestep_denominator))
-        .ok_or(AngularError3d::ArithmeticOverflow)?;
+    let unit_denominator = u32::try_from(
+        i64::from(2_i32)
+            .checked_mul(i64::from(ANGULAR_VELOCITY_SCALE))
+            .ok_or(AngularError3d::ArithmeticOverflow)?,
+    )
+    .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let derivative_time = timestep
+        .scaled_u32(1, unit_denominator)
+        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
 
     let next = Orientation3d::new(
-        integrated_component_wide(qx, derivative[0], numerator, denominator)?,
-        integrated_component_wide(qy, derivative[1], numerator, denominator)?,
-        integrated_component_wide(qz, derivative[2], numerator, denominator)?,
-        integrated_component_wide(qw, derivative[3], numerator, denominator)?,
+        integrated_component_exact(qx, derivative[0], derivative_time)?,
+        integrated_component_exact(qy, derivative[1], derivative_time)?,
+        integrated_component_exact(qz, derivative[2], derivative_time)?,
+        integrated_component_exact(qw, derivative[3], derivative_time)?,
     );
     next.normalized()
 }
@@ -273,7 +280,7 @@ pub fn box_inertia(body: &RigidBody) -> Result<BoxInertia3d, AngularError3d> {
     }
     if body.kind() == BodyKind::Fixed {
         return Ok(BoxInertia3d {
-            principal_numerators: [0, 0, 0],
+            principal_numerators: [0; 3],
             denominator: 1,
         });
     }
@@ -334,18 +341,22 @@ pub fn contact_angular_impulse(
     ])
 }
 
-fn integrated_component_wide(
+fn integrated_component_exact(
     component: i128,
     derivative: i128,
-    numerator: i128,
-    denominator: i128,
+    timestep: ExactRatio,
 ) -> Result<i32, AngularError3d> {
-    let delta = mul_div_round_i128(derivative, numerator, denominator)
-        .map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let delta = timestep
+        .mul_round_i128(derivative)
+        .map_err(map_wide_ratio_error)?;
     let next = component
         .checked_add(delta)
         .ok_or(AngularError3d::ArithmeticOverflow)?;
     i32::try_from(next).map_err(|_| AngularError3d::ArithmeticOverflow)
+}
+
+fn map_wide_ratio_error(_: WideRatioError) -> AngularError3d {
+    AngularError3d::ArithmeticOverflow
 }
 
 fn normalized_component(component: i32, scale: i128, norm: i128) -> Result<i32, AngularError3d> {
@@ -463,6 +474,24 @@ mod tests {
     }
 
     #[test]
+    fn exact_large_denominator_ratio_matches_equivalent_public_step() {
+        let angular_velocity = AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE);
+        let numerator = 100_000_000_000_000_000_000_000_000_000_000_u128;
+        let denominator = numerator.checked_mul(60).expect("test denominator");
+        assert_eq!(
+            integrate_orientation_ratio(
+                Orientation3d::IDENTITY,
+                angular_velocity,
+                numerator,
+                denominator,
+            )
+            .expect("large exact ratio remains representable"),
+            integrate_orientation(Orientation3d::IDENTITY, angular_velocity, 1, 60)
+                .expect("equivalent public ratio")
+        );
+    }
+
+    #[test]
     fn malformed_timesteps_fail_closed() {
         assert_eq!(
             integrate_orientation(
@@ -501,7 +530,7 @@ mod tests {
         let body = RigidBody::fixed(BodyId(8), Vec3i::ZERO, Vec3i::new(2, 3, 4));
         let inertia = box_inertia(&body).expect("fixed inertia is valid");
 
-        assert_eq!(inertia.principal_numerators, [0, 0, 0]);
+        assert_eq!(inertia.principal_numerators, [0; 3]);
         assert_eq!(inertia.denominator, 1);
     }
 

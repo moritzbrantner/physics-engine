@@ -2,33 +2,125 @@ use std::{error::Error, fmt};
 
 use crate::{
     AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, RigidBox3d,
-    RotationalSweepBounds3d, RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
-    rotational_sweep::rotational_sweep_bounds_for_center_interval, wide_ratio::mul_div_round_i128,
+    RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
+    angular::integrate_orientation_exact_ratio,
+    rotational_sweep::rotational_sweep_bounds_for_center_interval,
+    wide_ratio::{ExactRatio, WideRatioError},
 };
 
-/// Explicit rational timestep and acceleration for collision-free rotating-box sampling.
+/// Explicit exact timestep and acceleration for collision-free rotating-box sampling.
+///
+/// The public constructor still accepts the ordinary signed `i32` timestep contract. Valid timesteps are
+/// canonicalized into deterministic fixed-capacity limb storage so repeated sampled-event composition can
+/// remain exact beyond one `i128/i128` pair without allocation or floating point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RigidBoxFreeFlightConfig3d {
     pub gravity: Vec3i,
-    pub timestep_numerator: i32,
-    pub timestep_denominator: i32,
+    timestep: ExactRatio,
+    invalid_numerator: Option<i128>,
+    invalid_denominator: Option<i128>,
 }
 
 impl RigidBoxFreeFlightConfig3d {
     #[must_use]
-    pub const fn new(gravity: Vec3i, timestep_numerator: i32, timestep_denominator: i32) -> Self {
+    pub fn new(gravity: Vec3i, timestep_numerator: i32, timestep_denominator: i32) -> Self {
+        Self::new_wide(
+            gravity,
+            i128::from(timestep_numerator),
+            i128::from(timestep_denominator),
+        )
+    }
+
+    #[must_use]
+    pub(crate) fn new_wide(
+        gravity: Vec3i,
+        timestep_numerator: i128,
+        timestep_denominator: i128,
+    ) -> Self {
+        let invalid_numerator = (timestep_numerator < 0).then_some(timestep_numerator);
+        let invalid_denominator = (timestep_denominator <= 0).then_some(timestep_denominator);
+        let timestep = if invalid_numerator.is_none() && invalid_denominator.is_none() {
+            ExactRatio::new(
+                timestep_numerator.unsigned_abs(),
+                timestep_denominator.unsigned_abs(),
+            )
+            .expect("an i128 timestep fits the deterministic exact-ratio capacity")
+        } else {
+            ExactRatio::new(0, 1).expect("zero exact timestep is valid")
+        };
         Self {
             gravity,
-            timestep_numerator,
-            timestep_denominator,
+            timestep,
+            invalid_numerator,
+            invalid_denominator,
         }
+    }
+
+    fn from_exact(gravity: Vec3i, timestep: ExactRatio) -> Self {
+        Self {
+            gravity,
+            timestep,
+            invalid_numerator: None,
+            invalid_denominator: None,
+        }
+    }
+
+    pub(crate) fn exact_timestep(self) -> Result<ExactRatio, RigidBoxFreeFlightError3d> {
+        if let Some(value) = self.invalid_numerator {
+            return Err(RigidBoxFreeFlightError3d::NegativeTimestepNumerator(value));
+        }
+        if let Some(value) = self.invalid_denominator {
+            return Err(RigidBoxFreeFlightError3d::NonPositiveTimestepDenominator(
+                value,
+            ));
+        }
+        Ok(self.timestep)
+    }
+
+    pub(crate) fn scaled_fraction(
+        self,
+        fraction_numerator: u32,
+        fraction_denominator: u32,
+    ) -> Result<Self, RigidBoxFreeFlightError3d> {
+        let timestep = self.exact_timestep()?;
+        if fraction_denominator == 0 {
+            return Err(RigidBoxFreeFlightError3d::ZeroFractionDenominator);
+        }
+        if fraction_numerator > fraction_denominator {
+            return Err(RigidBoxFreeFlightError3d::FractionOutOfRange {
+                numerator: fraction_numerator,
+                denominator: fraction_denominator,
+            });
+        }
+        Ok(Self::from_exact(
+            self.gravity,
+            timestep
+                .scaled_u32(fraction_numerator, fraction_denominator)
+                .map_err(map_ratio_error)?,
+        ))
+    }
+
+    #[must_use]
+    pub(crate) fn timestep_is_zero(self) -> bool {
+        self.invalid_numerator.is_none()
+            && self.invalid_denominator.is_none()
+            && self.timestep.is_zero()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn timestep_i128(self) -> Option<(i128, i128)> {
+        if self.invalid_numerator.is_some() || self.invalid_denominator.is_some() {
+            return None;
+        }
+        self.timestep.as_i128_pair()
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RigidBoxFreeFlightError3d {
-    NegativeTimestepNumerator(i32),
-    NonPositiveTimestepDenominator(i32),
+    NegativeTimestepNumerator(i128),
+    NonPositiveTimestepDenominator(i128),
     ZeroFractionDenominator,
     FractionOutOfRange { numerator: u32, denominator: u32 },
     RatioTooLarge,
@@ -61,7 +153,7 @@ impl fmt::Display for RigidBoxFreeFlightError3d {
             ),
             Self::RatioTooLarge => write!(
                 formatter,
-                "rigid-box free-flight rational calculation exceeded the supported internal range"
+                "rigid-box free-flight rational calculation exceeded deterministic exact-ratio capacity"
             ),
             Self::ArithmeticOverflow(body) => write!(
                 formatter,
@@ -98,9 +190,8 @@ impl From<RotationalSweepError3d> for RigidBoxFreeFlightError3d {
 /// to velocity, then advance position with the resulting velocity. Orientation uses the engine's
 /// deterministic fixed-point quaternion integrator unless the box has an explicit rotation lock.
 ///
-/// The public segment timestep remains an `i32` ratio, but composing it with the `u32` sample fraction
-/// stays wide internally. Repeated-event refinement can therefore use large reduced denominators without
-/// introducing a narrower representational boundary than the public segment itself.
+/// Repeated-event time and the sampled search fraction remain one exact canonical ratio internally, even
+/// when the reduced numerator or denominator exceeds `i128`.
 ///
 /// `fraction_numerator / fraction_denominator` must be within `0..=1`.
 ///
@@ -114,9 +205,10 @@ pub fn sample_rigid_box_free_flight(
     fraction_numerator: u32,
     fraction_denominator: u32,
 ) -> Result<RigidBox3d, RigidBoxFreeFlightError3d> {
-    let (step_numerator, step_denominator) =
-        sample_step_ratio(config, fraction_numerator, fraction_denominator)?;
-    if step_numerator == 0 || rigid_box.body.kind() == BodyKind::Fixed {
+    let sample_time = config
+        .scaled_fraction(fraction_numerator, fraction_denominator)?
+        .exact_timestep()?;
+    if sample_time.is_zero() || rigid_box.body.kind() == BodyKind::Fixed {
         return Ok(rigid_box.clone());
     }
 
@@ -125,11 +217,9 @@ pub fn sample_rigid_box_free_flight(
     let mut velocity = body.velocity();
     let mut position = body.position();
     for axis in 0..3 {
-        let velocity_delta = rounded_ratio(
-            i128::from(config.gravity.component(axis)),
-            step_numerator,
-            step_denominator,
-        )?;
+        let velocity_delta = sample_time
+            .mul_round_i128(i128::from(config.gravity.component(axis)))
+            .map_err(map_ratio_error)?;
         let next_velocity = i128::from(velocity.component(axis))
             .checked_add(velocity_delta)
             .ok_or(RigidBoxFreeFlightError3d::ArithmeticOverflow(id))?;
@@ -137,8 +227,9 @@ pub fn sample_rigid_box_free_flight(
             .map_err(|_| RigidBoxFreeFlightError3d::ArithmeticOverflow(id))?;
         velocity.set_component(axis, next_velocity);
 
-        let position_delta =
-            rounded_ratio(i128::from(next_velocity), step_numerator, step_denominator)?;
+        let position_delta = sample_time
+            .mul_round_i128(i128::from(next_velocity))
+            .map_err(map_ratio_error)?;
         let next_position = i128::from(position.component(axis))
             .checked_add(position_delta)
             .ok_or(RigidBoxFreeFlightError3d::ArithmeticOverflow(id))?;
@@ -153,11 +244,10 @@ pub fn sample_rigid_box_free_flight(
         AngularState3d::new(rigid_box.angular.orientation, AngularVelocity3d::default())
     } else {
         AngularState3d::new(
-            integrate_orientation_ratio(
+            integrate_orientation_exact_ratio(
                 rigid_box.angular.orientation,
                 rigid_box.angular.angular_velocity,
-                step_numerator,
-                step_denominator,
+                sample_time,
             )?,
             rigid_box.angular.angular_velocity,
         )
@@ -172,9 +262,11 @@ pub fn sample_rigid_box_free_flight(
 /// Conservatively bounds every direct free-flight sample over the configured interval.
 ///
 /// Per axis, the center interval uses an absolute upper bound on speed after acceleration and then on
-/// displacement. This may overproduce broad-phase candidates, but it cannot lose a sampled contact when
-/// velocity reverses and the center reaches an interior extremum outside the start/end interval.
-/// Arbitrary orientation is enclosed by the same circumscribed-box radius as [`crate::rotational_sweep_bounds`].
+/// displacement. Exact limb arithmetic performs multiply/divide before the final upward rounding, so a
+/// large repeated-event denominator cannot manufacture an overflow. This may overproduce broad-phase
+/// candidates, but it cannot lose a sampled contact when velocity reverses and the center reaches an
+/// interior extremum outside the start/end interval. Arbitrary orientation is enclosed by the same
+/// circumscribed-box radius as [`crate::rotational_sweep_bounds`].
 ///
 /// # Errors
 ///
@@ -184,7 +276,7 @@ pub fn rigid_box_free_flight_sweep_bounds(
     rigid_box: &RigidBox3d,
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
-    let (step_numerator, step_denominator) = sample_step_ratio(config, 1, 1)?;
+    let timestep = config.exact_timestep()?;
     let center = rigid_box.body.position();
     let center = [
         i64::from(center.x),
@@ -194,13 +286,12 @@ pub fn rigid_box_free_flight_sweep_bounds(
     let mut center_minimum = center;
     let mut center_maximum = center;
 
-    if rigid_box.body.kind() == BodyKind::Dynamic && step_numerator != 0 {
+    if rigid_box.body.kind() == BodyKind::Dynamic && !timestep.is_zero() {
         for axis in 0..3 {
             let displacement = conservative_axis_displacement(
                 rigid_box.body.velocity().component(axis),
                 config.gravity.component(axis),
-                step_numerator,
-                step_denominator,
+                timestep,
             )?;
             let displacement = i64::try_from(displacement)
                 .map_err(|_| RigidBoxFreeFlightError3d::ArithmeticOverflow(rigid_box.body.id()))?;
@@ -220,98 +311,24 @@ pub fn rigid_box_free_flight_sweep_bounds(
     )?)
 }
 
-fn sample_step_ratio(
-    config: RigidBoxFreeFlightConfig3d,
-    fraction_numerator: u32,
-    fraction_denominator: u32,
-) -> Result<(u128, u128), RigidBoxFreeFlightError3d> {
-    if config.timestep_numerator < 0 {
-        return Err(RigidBoxFreeFlightError3d::NegativeTimestepNumerator(
-            config.timestep_numerator,
-        ));
-    }
-    if config.timestep_denominator <= 0 {
-        return Err(RigidBoxFreeFlightError3d::NonPositiveTimestepDenominator(
-            config.timestep_denominator,
-        ));
-    }
-    if fraction_denominator == 0 {
-        return Err(RigidBoxFreeFlightError3d::ZeroFractionDenominator);
-    }
-    if fraction_numerator > fraction_denominator {
-        return Err(RigidBoxFreeFlightError3d::FractionOutOfRange {
-            numerator: fraction_numerator,
-            denominator: fraction_denominator,
-        });
-    }
-
-    let numerator = u128::from(config.timestep_numerator.unsigned_abs())
-        .checked_mul(u128::from(fraction_numerator))
-        .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let denominator = u128::from(config.timestep_denominator.unsigned_abs())
-        .checked_mul(u128::from(fraction_denominator))
-        .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let divisor = greatest_common_divisor(numerator, denominator);
-    Ok((numerator / divisor, denominator / divisor))
-}
-
-fn rounded_ratio(
-    value: i128,
-    numerator: u128,
-    denominator: u128,
-) -> Result<i128, RigidBoxFreeFlightError3d> {
-    let numerator =
-        i128::try_from(numerator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    let denominator =
-        i128::try_from(denominator).map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    mul_div_round_i128(value, numerator, denominator)
-        .map_err(|_| RigidBoxFreeFlightError3d::RatioTooLarge)
-}
-
 fn conservative_axis_displacement(
     velocity: i32,
     acceleration: i32,
-    numerator: u128,
-    denominator: u128,
+    timestep: ExactRatio,
 ) -> Result<u128, RigidBoxFreeFlightError3d> {
-    let acceleration_delta = ceil_ratio(
-        u128::from(acceleration.unsigned_abs())
-            .checked_mul(numerator)
-            .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?,
-        denominator,
-    )?;
+    let acceleration_delta = timestep
+        .mul_ceil_u128(u128::from(acceleration.unsigned_abs()))
+        .map_err(map_ratio_error)?;
     let maximum_speed = u128::from(velocity.unsigned_abs())
         .checked_add(acceleration_delta)
         .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?;
-    ceil_ratio(
-        maximum_speed
-            .checked_mul(numerator)
-            .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)?,
-        denominator,
-    )
+    timestep
+        .mul_ceil_u128(maximum_speed)
+        .map_err(map_ratio_error)
 }
 
-fn ceil_ratio(numerator: u128, denominator: u128) -> Result<u128, RigidBoxFreeFlightError3d> {
-    if denominator == 0 {
-        return Err(RigidBoxFreeFlightError3d::RatioTooLarge);
-    }
-    let quotient = numerator / denominator;
-    if numerator.is_multiple_of(denominator) {
-        Ok(quotient)
-    } else {
-        quotient
-            .checked_add(1)
-            .ok_or(RigidBoxFreeFlightError3d::RatioTooLarge)
-    }
-}
-
-fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
-    while right != 0 {
-        let remainder = left % right;
-        left = right;
-        right = remainder;
-    }
-    left
+fn map_ratio_error(_: WideRatioError) -> RigidBoxFreeFlightError3d {
+    RigidBoxFreeFlightError3d::RatioTooLarge
 }
 
 #[cfg(test)]
@@ -430,6 +447,58 @@ mod tests {
             .expect("wide composed sample ratio should remain representable internally");
 
         assert_ne!(sampled.angular().orientation, Orientation3d::IDENTITY);
+    }
+
+    #[test]
+    fn exact_timestep_can_exceed_i128_without_flattening_sample_time() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(9),
+                Vec3i::new(10, 20, -30),
+                Vec3i::new(120, -45, 11),
+                Vec3i::new(2, 3, 4),
+            ),
+            AngularVelocity3d::new(0, 0, ANGULAR_VELOCITY_SCALE),
+        );
+        let mut config = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -60, 0), 1, 1);
+        for _ in 0..20 {
+            config = config
+                .scaled_fraction(511, 512)
+                .expect("bounded exact timestep growth");
+        }
+        assert!(config.timestep_i128().is_none());
+
+        let first = sample_rigid_box_free_flight(&rigid_box, config, 1, 512)
+            .expect("sampled exact timestep remains representable");
+        let second =
+            sample_rigid_box_free_flight(&rigid_box, config, 1, 512).expect("same exact sample");
+        assert_eq!(first, second);
+        assert_ne!(first.angular().orientation, Orientation3d::IDENTITY);
+    }
+
+    #[test]
+    fn wide_conservative_sweep_avoids_intermediate_overflow() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(8),
+                Vec3i::ZERO,
+                Vec3i::new(1, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularVelocity3d::default(),
+        );
+        let mut config = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -3_600, 0), 1, 1);
+        for _ in 0..20 {
+            config = config
+                .scaled_fraction(511, 512)
+                .expect("bounded exact timestep growth");
+        }
+        assert!(config.timestep_i128().is_none());
+
+        let bounds = rigid_box_free_flight_sweep_bounds(&rigid_box, config)
+            .expect("wide conservative bound remains exact");
+        assert!(bounds.minimum[1] < 0);
+        assert!(bounds.maximum[1] > 0);
     }
 
     #[test]
