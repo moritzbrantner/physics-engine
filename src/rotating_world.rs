@@ -78,7 +78,7 @@ impl fmt::Display for RotatingWorldError3d {
             ),
             Self::PersistentTailMotionUnsafe(id) => write!(
                 formatter,
-                "persistent rotating contact motion became unsafe for body {} at the selected tail resolution",
+                "persistent rotating contact motion became unsafe for body {} at the maximum tail resolution",
                 id.0
             ),
             Self::PersistentTailArithmeticOverflow(id) => write!(
@@ -132,7 +132,8 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// time is instead consumed through bounded deterministic slices. Each slice conservatively limits
 /// center-plus-rotational motion relative to the thinnest dynamic extent and re-stabilizes OBB contacts,
 /// so a time-zero contact cannot be free-flown completely through before the next constraint solve.
-/// If the configured bound cannot make that progress safe, the world fails closed.
+/// If an impulse makes the selected resolution too coarse, the exact tail is replayed from its starting
+/// state with a finer deterministic resolution; exceeding the hard bound fails closed.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
@@ -248,24 +249,36 @@ fn consume_tail(
         return free_flight_and_stabilize(boxes, remaining, solver_passes);
     }
 
-    let (slice_count, slice_config) = persistent_tail_slice_config(&boxes, remaining)?;
-    let mut current = boxes;
-    let mut contact_count = 0_usize;
+    let mut slice_count = persistent_tail_slice_count(&boxes, remaining)?;
+    loop {
+        let slice_config = tail_slice_config(remaining, slice_count)?;
+        let mut current = boxes.clone();
+        let mut contact_count = 0_usize;
+        let mut unsafe_body = None;
 
-    for _ in 0..slice_count {
-        for rigid_box in &current {
-            if !tail_motion_within_extent(rigid_box, slice_config)? {
-                return Err(RotatingWorldError3d::PersistentTailMotionUnsafe(
-                    rigid_box.body().id(),
-                ));
+        for _ in 0..slice_count {
+            if let Some(id) = first_unsafe_tail_body(&current, slice_config)? {
+                unsafe_body = Some(id);
+                break;
             }
+            let (next, contacts) =
+                free_flight_and_stabilize(current, slice_config, solver_passes)?;
+            current = next;
+            contact_count = contact_count.saturating_add(contacts);
         }
-        let (next, contacts) = free_flight_and_stabilize(current, slice_config, solver_passes)?;
-        current = next;
-        contact_count = contact_count.saturating_add(contacts);
-    }
 
-    Ok((current, contact_count))
+        if unsafe_body.is_none() {
+            return Ok((current, contact_count));
+        }
+        if slice_count == MAX_PERSISTENT_TAIL_SLICES {
+            return Err(RotatingWorldError3d::PersistentTailMotionUnsafe(
+                unsafe_body.expect("unsafe tail body was observed"),
+            ));
+        }
+        slice_count = slice_count
+            .saturating_mul(2)
+            .min(MAX_PERSISTENT_TAIL_SLICES);
+    }
 }
 
 fn free_flight_and_stabilize(
@@ -295,40 +308,52 @@ fn free_flight_and_stabilize(
     Ok((response.boxes, contact_count))
 }
 
-fn persistent_tail_slice_config(
+fn persistent_tail_slice_count(
     boxes: &[RigidBox3d],
     remaining: RigidBoxFreeFlightConfig3d,
-) -> Result<(u32, RigidBoxFreeFlightConfig3d), RotatingWorldError3d> {
+) -> Result<u32, RotatingWorldError3d> {
     for slices in 1..=MAX_PERSISTENT_TAIL_SLICES {
-        let slices_i32 = i32::try_from(slices).map_err(|_| {
-            RotatingWorldError3d::PersistentTailResolutionLimit(MAX_PERSISTENT_TAIL_SLICES)
-        })?;
-        let denominator = remaining
-            .timestep_denominator
-            .checked_mul(slices_i32)
-            .ok_or(RotatingWorldError3d::PersistentTailResolutionLimit(
-                MAX_PERSISTENT_TAIL_SLICES,
-            ))?;
-        let config = RigidBoxFreeFlightConfig3d::new(
-            remaining.gravity,
-            remaining.timestep_numerator,
-            denominator,
-        );
-        let mut safe = true;
-        for rigid_box in boxes {
-            if !tail_motion_within_extent(rigid_box, config)? {
-                safe = false;
-                break;
-            }
-        }
-        if safe {
-            return Ok((slices, config));
+        let config = tail_slice_config(remaining, slices)?;
+        if first_unsafe_tail_body(boxes, config)?.is_none() {
+            return Ok(slices);
         }
     }
 
     Err(RotatingWorldError3d::PersistentTailResolutionLimit(
         MAX_PERSISTENT_TAIL_SLICES,
     ))
+}
+
+fn tail_slice_config(
+    remaining: RigidBoxFreeFlightConfig3d,
+    slices: u32,
+) -> Result<RigidBoxFreeFlightConfig3d, RotatingWorldError3d> {
+    let slices_i32 = i32::try_from(slices).map_err(|_| {
+        RotatingWorldError3d::PersistentTailResolutionLimit(MAX_PERSISTENT_TAIL_SLICES)
+    })?;
+    let denominator = remaining
+        .timestep_denominator
+        .checked_mul(slices_i32)
+        .ok_or(RotatingWorldError3d::PersistentTailResolutionLimit(
+            MAX_PERSISTENT_TAIL_SLICES,
+        ))?;
+    Ok(RigidBoxFreeFlightConfig3d::new(
+        remaining.gravity,
+        remaining.timestep_numerator,
+        denominator,
+    ))
+}
+
+fn first_unsafe_tail_body(
+    boxes: &[RigidBox3d],
+    config: RigidBoxFreeFlightConfig3d,
+) -> Result<Option<BodyId>, RotatingWorldError3d> {
+    for rigid_box in boxes {
+        if !tail_motion_within_extent(rigid_box, config)? {
+            return Ok(Some(rigid_box.body().id()));
+        }
+    }
+    Ok(None)
 }
 
 fn tail_motion_within_extent(
