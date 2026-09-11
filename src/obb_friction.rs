@@ -143,10 +143,7 @@ fn face_tangents(
     }
 }
 
-fn indexed_edge(
-    edges: [[i128; 3]; 3],
-    axis: u8,
-) -> Result<[i128; 3], ObbContactResponseError3d> {
+fn indexed_edge(edges: [[i128; 3]; 3], axis: u8) -> Result<[i128; 3], ObbContactResponseError3d> {
     edges
         .get(usize::from(axis))
         .copied()
@@ -157,7 +154,8 @@ fn dominant_slip_tangent(
     relative_velocity: [i128; 3],
     tangents: [[i128; 3]; 2],
 ) -> Result<Option<[i128; 3]>, ObbContactResponseError3d> {
-    let first = primitive_vector(tangents[0])?.ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
+    let first =
+        primitive_vector(tangents[0])?.ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
     let second =
         primitive_vector(tangents[1])?.ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
     let first_slip = checked_dot(relative_velocity, first)?;
@@ -184,12 +182,8 @@ fn apply_tangent_response(
         friction_milli,
     } = tangent_response;
     let tangent_length_squared = vector_length_squared(tangent)?;
-    let relative_velocity = relative_contact_velocity(
-        &response.left,
-        left_offset,
-        &response.right,
-        right_offset,
-    )?;
+    let relative_velocity =
+        relative_contact_velocity(&response.left, left_offset, &response.right, right_offset)?;
     let tangent_velocity = checked_dot(relative_velocity, tangent)?;
     if tangent_velocity == 0 {
         return Ok(());
@@ -216,11 +210,8 @@ fn apply_tangent_response(
     let opposing_velocity = tangent_velocity
         .checked_neg()
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;
-    let desired_impulse_units = mul_div_round_i128(
-        opposing_velocity,
-        RESPONSE_SCALE,
-        effective_inverse_mass,
-    )?;
+    let desired_impulse_units =
+        mul_div_round_i128(opposing_velocity, RESPONSE_SCALE, effective_inverse_mass)?;
     let tangent_impulse_units = coulomb_clamp(
         desired_impulse_units,
         tangent_length_squared,
@@ -377,8 +368,7 @@ fn coulomb_clamp(
         }
     }
 
-    let bounded =
-        i128::try_from(low).map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
+    let bounded = i128::try_from(low).map_err(|_| ObbContactResponseError3d::ArithmeticOverflow)?;
     if desired_impulse_units < 0 {
         bounded
             .checked_neg()
@@ -631,10 +621,7 @@ fn checked_sub(left: i128, right: i128) -> Result<i128, ObbContactResponseError3
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)
 }
 
-fn scale_axis(
-    axis: [i128; 3],
-    scale: i128,
-) -> Result<[i128; 3], ObbContactResponseError3d> {
+fn scale_axis(axis: [i128; 3], scale: i128) -> Result<[i128; 3], ObbContactResponseError3d> {
     Ok([
         checked_mul(axis[0], scale)?,
         checked_mul(axis[1], scale)?,
@@ -680,26 +667,16 @@ fn to_i32(value: i128) -> Result<i32, ObbContactResponseError3d> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, ObbContactResponseError3d,
-        Orientation3d, RigidBody, RigidBox3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material,
+        ObbContactResponseError3d, Orientation3d, RigidBody, RigidBox3d, Vec3i,
     };
 
     use super::{resolve_normal_obb_contact, resolve_obb_contact};
 
-    fn dynamic(
-        id: u64,
-        position: Vec3i,
-        velocity: Vec3i,
-        friction_milli: u16,
-    ) -> RigidBox3d {
+    fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, friction_milli: u16) -> RigidBox3d {
         RigidBox3d::new(
-            RigidBody::dynamic(
-                BodyId(id),
-                position,
-                velocity,
-                Vec3i::new(10, 10, 10),
-            )
-            .with_material(Material::new(0).with_friction(friction_milli)),
+            RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(10, 10, 10))
+                .with_material(Material::new(0).with_friction(friction_milli)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid dynamic box")
@@ -718,12 +695,7 @@ mod tests {
 
     #[test]
     fn sliding_face_impact_reduces_slip_and_generates_spin() {
-        let left_start = dynamic(
-            1,
-            Vec3i::ZERO,
-            Vec3i::new(60, 0, 40),
-            MATERIAL_SCALE,
-        );
+        let left_start = dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 40), MATERIAL_SCALE);
         let right_start = dynamic(2, Vec3i::new(19, 0, 0), Vec3i::ZERO, 0);
         let response = resolve_obb_contact(left_start.clone(), right_start.clone(), true)
             .expect("valid frictional response");
@@ -748,12 +720,7 @@ mod tests {
 
     #[test]
     fn separating_overlap_does_not_inject_friction() {
-        let left = dynamic(
-            1,
-            Vec3i::ZERO,
-            Vec3i::new(-20, 0, 40),
-            MATERIAL_SCALE,
-        );
+        let left = dynamic(1, Vec3i::ZERO, Vec3i::new(-20, 0, 40), MATERIAL_SCALE);
         let right = dynamic(
             2,
             Vec3i::new(19, 0, 0),
@@ -773,23 +740,15 @@ mod tests {
 
     #[test]
     fn rotation_lock_blocks_friction_spin_but_not_linear_friction() {
-        let left = dynamic(
-            1,
-            Vec3i::ZERO,
-            Vec3i::new(60, 0, 40),
-            MATERIAL_SCALE,
-        )
-        .with_rotation_locked();
+        let left =
+            dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 40), MATERIAL_SCALE).with_rotation_locked();
         let right = RigidBox3d::new(
-            RigidBody::fixed(
-                BodyId(2),
-                Vec3i::new(19, 0, 0),
-                Vec3i::new(10, 10, 10),
-            ),
+            RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), Vec3i::new(10, 10, 10)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid fixed wall");
-        let response = resolve_obb_contact(left, right, true).expect("valid locked friction response");
+        let response =
+            resolve_obb_contact(left, right, true).expect("valid locked friction response");
 
         assert!(response.left.rotation_locked());
         assert!(response.left.angular.angular_velocity.is_zero());
@@ -798,15 +757,10 @@ mod tests {
 
     #[test]
     fn invalid_friction_fails_closed() {
-        let left = dynamic(
-            1,
-            Vec3i::ZERO,
-            Vec3i::new(60, 0, 0),
-            MATERIAL_SCALE + 1,
-        );
+        let left = dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0), MATERIAL_SCALE + 1);
         let right = dynamic(2, Vec3i::new(19, 0, 0), Vec3i::ZERO, 0);
-        let error = resolve_obb_contact(left, right, true)
-            .expect_err("invalid friction must fail closed");
+        let error =
+            resolve_obb_contact(left, right, true).expect_err("invalid friction must fail closed");
 
         assert_eq!(error, ObbContactResponseError3d::ArithmeticOverflow);
     }
