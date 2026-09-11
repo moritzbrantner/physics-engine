@@ -399,11 +399,6 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn sandbox_last_pair_checks() -> u32 {
-    0
-}
-
-#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_total_collisions() -> u32 {
     with_sandbox(|sandbox| sandbox.total_collisions)
 }
