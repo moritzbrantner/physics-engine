@@ -1,10 +1,11 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightError3d,
-    RotatingBroadPhaseError3d, RotatingContactSearchConfig3d, RotatingContactSearchError3d,
-    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
-    rotational_sweep_candidate_pairs, sample_rigid_box_free_flight, sampled_rotating_contact_search,
+    BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
+    RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
+    rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
+    sampled_rotating_contact_search,
 };
 
 /// One shared pre-response world reconstructed at the globally earliest sampled rotating contact time.
@@ -55,15 +56,27 @@ impl fmt::Display for RotatingContactFrontierError3d {
                 "rotating contact frontier pair {}-{} no longer matches the search contact evidence",
                 pair.left.0, pair.right.0
             ),
-            Self::Search(error) => write!(formatter, "rotating contact frontier search failed: {error}"),
+            Self::Search(error) => write!(
+                formatter,
+                "rotating contact frontier search failed: {error}"
+            ),
             Self::BroadPhase(error) => {
-                write!(formatter, "rotating contact frontier broad phase failed: {error}")
+                write!(
+                    formatter,
+                    "rotating contact frontier broad phase failed: {error}"
+                )
             }
             Self::FreeFlight(error) => {
-                write!(formatter, "rotating contact frontier free flight failed: {error}")
+                write!(
+                    formatter,
+                    "rotating contact frontier free flight failed: {error}"
+                )
             }
             Self::Geometry(error) => {
-                write!(formatter, "rotating contact frontier OBB query failed: {error}")
+                write!(
+                    formatter,
+                    "rotating contact frontier OBB query failed: {error}"
+                )
             }
         }
     }
@@ -153,7 +166,8 @@ pub fn earliest_rotating_contact_frontier(
         let Some(contact) = obb_contact_seed(
             sampled[left_index].oriented_box(),
             sampled[right_index].oriented_box(),
-        )? else {
+        )?
+        else {
             continue;
         };
         contacts.push(RotatingContactSearchHit3d {
@@ -218,11 +232,7 @@ mod tests {
     }
 
     fn config() -> RotatingContactSearchConfig3d {
-        RotatingContactSearchConfig3d::new(
-            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
-            4,
-            3,
-        )
+        RotatingContactSearchConfig3d::new(RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1), 4, 3)
     }
 
     #[test]
