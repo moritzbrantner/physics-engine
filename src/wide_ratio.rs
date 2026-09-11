@@ -111,10 +111,7 @@ impl ExactRatio {
         let numerator = self.numerator.multiplied_u128(value.unsigned_abs())?;
         let (mut quotient, remainder) = div_natural_to_u128(numerator, self.denominator)?;
         if !remainder.is_zero()
-            && remainder
-                .multiplied_u128(2)?
-                .cmp_natural(self.denominator)
-                != Ordering::Less
+            && remainder.multiplied_u128(2)?.cmp_natural(self.denominator) != Ordering::Less
         {
             quotient = quotient
                 .checked_add(1)

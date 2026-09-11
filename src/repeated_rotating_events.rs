@@ -428,7 +428,9 @@ mod tests {
             assert_eq!(numerator as u128, expected_numerator);
             assert_eq!(denominator as u128, expected_denominator);
         }
-        assert!(remaining.timestep_i128().expect("eight factors fit i128").1 > i128::from(i32::MAX));
+        assert!(
+            remaining.timestep_i128().expect("eight factors fit i128").1 > i128::from(i32::MAX)
+        );
     }
 
     #[test]
