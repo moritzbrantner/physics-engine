@@ -246,9 +246,7 @@ fn is_zero_wide(value: [u64; 4]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        mul_div_round_i128, mul_div_round_i128_wide_denominator, mul_div_round_u128,
-    };
+    use super::{mul_div_round_i128, mul_div_round_i128_wide_denominator, mul_div_round_u128};
 
     #[test]
     fn multiplication_can_exceed_u128_before_division() {
@@ -272,10 +270,7 @@ mod tests {
     #[test]
     fn denominator_product_can_exceed_i128_without_losing_exact_quotient() {
         let huge = i128::MAX / 2 + 1;
-        assert_eq!(
-            mul_div_round_i128_wide_denominator(6, huge, 2, huge),
-            Ok(3)
-        );
+        assert_eq!(mul_div_round_i128_wide_denominator(6, huge, 2, huge), Ok(3));
         assert_eq!(
             mul_div_round_i128_wide_denominator(-6, huge, 2, huge),
             Ok(-3)
