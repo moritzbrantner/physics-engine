@@ -129,11 +129,12 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// Collision discovery remains explicitly sampled rotational handling rather than analytic rotational
 /// CCD. The event pipeline resolves every admitted impact first. A contact-free exact tail still uses
 /// one direct free-flight sample. When the tail begins with persistent contact, the remaining rational
-/// time is instead consumed through bounded deterministic slices. Each slice conservatively limits
-/// center-plus-rotational motion relative to the thinnest dynamic extent and re-stabilizes OBB contacts,
-/// so a time-zero contact cannot be free-flown completely through before the next constraint solve.
-/// If an impulse makes the selected resolution too coarse, the exact tail is replayed from its starting
-/// state with a finer deterministic resolution; exceeding the hard bound fails closed.
+/// time is instead consumed through bounded deterministic slices. Bodies participating in the current
+/// persistent frontier are limited to less than their narrowest full thickness of conservative
+/// center-plus-rotational motion before the next OBB stabilization pass, so a time-zero contact cannot
+/// be free-flown completely through before the next constraint solve. If an impulse makes the selected
+/// resolution too coarse, the exact tail is replayed from its starting state with a finer deterministic
+/// resolution; exceeding the hard bound fails closed.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
@@ -245,11 +246,12 @@ fn consume_tail(
     remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
 ) -> Result<(Vec<RigidBox3d>, usize), RotatingWorldError3d> {
-    if contact_frontier(&boxes)?.is_empty() {
+    let initial_contacts = contact_frontier(&boxes)?;
+    if initial_contacts.is_empty() {
         return free_flight_and_stabilize(boxes, remaining, solver_passes);
     }
 
-    let mut slice_count = persistent_tail_slice_count(&boxes, remaining)?;
+    let mut slice_count = persistent_tail_slice_count(&boxes, remaining, &initial_contacts)?;
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
         let mut current = boxes.clone();
@@ -257,7 +259,8 @@ fn consume_tail(
         let mut unsafe_body = None;
 
         for _ in 0..slice_count {
-            if let Some(id) = first_unsafe_tail_body(&current, slice_config)? {
+            let current_contacts = contact_frontier(&current)?;
+            if let Some(id) = first_unsafe_tail_body(&current, slice_config, &current_contacts)? {
                 unsafe_body = Some(id);
                 break;
             }
@@ -310,10 +313,11 @@ fn free_flight_and_stabilize(
 fn persistent_tail_slice_count(
     boxes: &[RigidBox3d],
     remaining: RigidBoxFreeFlightConfig3d,
+    contacts: &[RotatingContactSearchHit3d],
 ) -> Result<u32, RotatingWorldError3d> {
     for slices in 1..=MAX_PERSISTENT_TAIL_SLICES {
         let config = tail_slice_config(remaining, slices)?;
-        if first_unsafe_tail_body(boxes, config)?.is_none() {
+        if first_unsafe_tail_body(boxes, config, contacts)?.is_none() {
             return Ok(slices);
         }
     }
@@ -346,10 +350,18 @@ fn tail_slice_config(
 fn first_unsafe_tail_body(
     boxes: &[RigidBox3d],
     config: RigidBoxFreeFlightConfig3d,
+    contacts: &[RotatingContactSearchHit3d],
 ) -> Result<Option<BodyId>, RotatingWorldError3d> {
     for rigid_box in boxes {
+        let id = rigid_box.body().id();
+        if !contacts
+            .iter()
+            .any(|contact| contact.pair.left == id || contact.pair.right == id)
+        {
+            continue;
+        }
         if !tail_motion_within_extent(rigid_box, config)? {
-            return Ok(Some(rigid_box.body().id()));
+            return Ok(Some(id));
         }
     }
     Ok(None)
@@ -368,6 +380,9 @@ fn tail_motion_within_extent(
     let denominator = u128::from(config.timestep_denominator.unsigned_abs());
     let half = rigid_box.body().half_extents();
     let minimum_half = u128::from(half.x.min(half.y).min(half.z).unsigned_abs());
+    let motion_budget = minimum_half
+        .checked_mul(2)
+        .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
 
     let velocity = rigid_box.body().velocity();
     let velocity_components = [velocity.x, velocity.y, velocity.z];
@@ -411,7 +426,7 @@ fn tail_motion_within_extent(
     let total_motion = translation_bound
         .checked_add(angular_motion)
         .ok_or(RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
-    Ok(total_motion <= minimum_half)
+    Ok(total_motion <= motion_budget)
 }
 
 fn ceil_mul_div(
