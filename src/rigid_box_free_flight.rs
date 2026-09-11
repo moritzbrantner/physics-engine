@@ -2,7 +2,8 @@ use std::{error::Error, fmt};
 
 use crate::{
     AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, RigidBox3d,
-    RotationalSweepBounds3d, RotationalSweepError3d, Vec3i, angular::integrate_orientation_ratio,
+    RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
+    angular::integrate_orientation_ratio,
     rotational_sweep::rotational_sweep_bounds_for_center_interval,
     wide_ratio::{mul_div_ceil_u128, mul_div_round_i128},
 };
