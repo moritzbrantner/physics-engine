@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    Aabb, AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, QueryError,
-    RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, StepStats, Vec3i, World,
-    WorldConfig,
+    AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, OrientedBox3d, RigidBody,
+    RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, Vec3i,
 };
 
 const PLAYER_ID: BodyId = BodyId(1);
@@ -15,11 +14,9 @@ const PROJECTILE_SPEED_LIMIT: i32 = 120;
 const ROTATING_TICKS_PER_SECOND: i32 = 60;
 
 struct Sandbox {
-    player_world: World,
-    box_world: RotatingWorld3d,
+    world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
-    last_stats: StepStats,
     last_rotating_events: usize,
     last_tail_contacts: usize,
     total_collisions: u32,
@@ -27,12 +24,8 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    fn new() -> Result<Self, physics_engine::PhysicsError> {
-        let mut player_world = World::new(WorldConfig {
-            gravity: Vec3i::new(0, -1, 0),
-            ..WorldConfig::default()
-        });
-        let mut box_world = RotatingWorld3d::new(RotatingWorldConfig3d {
+    fn new() -> Result<Self, RotatingWorldError3d> {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
             sample_count: 32,
             refinement_steps: 4,
@@ -55,24 +48,24 @@ impl Sandbox {
             (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
         ];
         for (id, position, half_extents) in fixed_bodies {
-            player_world.add_body(RigidBody::fixed(BodyId(id), position, half_extents))?;
-            box_world
-                .add_box(rotating_box(RigidBody::fixed(
-                    BodyId(id),
-                    position,
-                    half_extents,
-                )))
-                .expect("the built-in rotating fixture must be valid");
+            world.add_box(rotating_box(RigidBody::fixed(
+                BodyId(id),
+                position,
+                half_extents,
+            )))?;
         }
 
-        player_world.add_body(
-            RigidBody::dynamic(
-                PLAYER_ID,
-                Vec3i::new(0, 38, 320),
-                Vec3i::ZERO,
-                Vec3i::new(12, 20, 12),
+        world.add_box(
+            rotating_box(
+                RigidBody::dynamic(
+                    PLAYER_ID,
+                    Vec3i::new(0, 38, 320),
+                    Vec3i::ZERO,
+                    Vec3i::new(12, 20, 12),
+                )
+                .with_mass(4),
             )
-            .with_mass(4),
+            .with_rotation_locked(),
         )?;
 
         let crate_positions = [
@@ -84,26 +77,22 @@ impl Sandbox {
             Vec3i::new(0, 18, -70),
         ];
         for (offset, position) in crate_positions.into_iter().enumerate() {
-            box_world
-                .add_box(rotating_box(
-                    RigidBody::dynamic(
-                        BodyId(100 + offset as u64),
-                        position,
-                        Vec3i::ZERO,
-                        Vec3i::new(18, 18, 18),
-                    )
-                    .with_mass(2)
-                    .with_material(Material::new(100)),
-                ))
-                .expect("the built-in rotating crate must be valid");
+            world.add_box(rotating_box(
+                RigidBody::dynamic(
+                    BodyId(100 + offset as u64),
+                    position,
+                    Vec3i::ZERO,
+                    Vec3i::new(18, 18, 18),
+                )
+                .with_mass(2)
+                .with_material(Material::new(100)),
+            ))?;
         }
 
         Ok(Self {
-            player_world,
-            box_world,
+            world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
-            last_stats: StepStats::default(),
             last_rotating_events: 0,
             last_tail_contacts: 0,
             total_collisions: 0,
@@ -111,22 +100,24 @@ impl Sandbox {
         })
     }
 
-    fn grounded(&self) -> Result<bool, QueryError> {
-        let Some(player) = self.player_world.body(PLAYER_ID) else {
-            return Ok(false);
-        };
-        let position = player.position();
-        let half = player.half_extents();
-        let probe = Aabb::new(
+    fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
+        let player = self
+            .world
+            .box_by_id(PLAYER_ID)
+            .ok_or(RotatingWorldError3d::MissingBody(PLAYER_ID))?;
+        let position = player.body().position();
+        let half = player.body().half_extents();
+        let probe = OrientedBox3d::new(
             Vec3i::new(position.x, position.y - half.y - 1, position.z),
             Vec3i::new(
-                half.x.saturating_sub(1).max(0),
+                half.x.saturating_sub(1).max(1),
                 1,
-                half.z.saturating_sub(1).max(0),
+                half.z.saturating_sub(1).max(1),
             ),
+            Orientation3d::IDENTITY,
         );
         Ok(self
-            .player_world
+            .world
             .overlap_query(probe)?
             .into_iter()
             .any(|id| id != PLAYER_ID))
@@ -134,11 +125,11 @@ impl Sandbox {
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
-        let Some(player) = self.player_world.body(PLAYER_ID) else {
+        let Some(player) = self.world.box_by_id(PLAYER_ID) else {
             self.error_code = 1;
             return self.error_code;
         };
-        let current_y = player.velocity().y;
+        let current_y = player.body().velocity().y;
         let grounded = match self.grounded() {
             Ok(value) => value,
             Err(_) => {
@@ -147,28 +138,25 @@ impl Sandbox {
             }
         };
         let next_y = if jump && grounded {
-            JUMP_SPEED
+            JUMP_SPEED.saturating_mul(ROTATING_TICKS_PER_SECOND)
         } else {
             current_y
         };
         let velocity = Vec3i::new(
-            move_x.clamp(-MOVE_SPEED, MOVE_SPEED),
+            move_x
+                .clamp(-MOVE_SPEED, MOVE_SPEED)
+                .saturating_mul(ROTATING_TICKS_PER_SECOND),
             next_y,
-            move_z.clamp(-MOVE_SPEED, MOVE_SPEED),
+            move_z
+                .clamp(-MOVE_SPEED, MOVE_SPEED)
+                .saturating_mul(ROTATING_TICKS_PER_SECOND),
         );
-        if self.player_world.set_velocity(PLAYER_ID, velocity).is_err() {
+        if self.world.set_linear_velocity(PLAYER_ID, velocity).is_err() {
             self.error_code = 3;
             return self.error_code;
         }
 
-        let player_report = match self.player_world.step(1) {
-            Ok(report) => report,
-            Err(_) => {
-                self.error_code = 4;
-                return self.error_code;
-            }
-        };
-        let rotating_report = match self.box_world.step(1, ROTATING_TICKS_PER_SECOND) {
+        let report = match self.world.step(1, ROTATING_TICKS_PER_SECOND) {
             Ok(report) => report,
             Err(_) => {
                 self.error_code = 6;
@@ -176,13 +164,10 @@ impl Sandbox {
             }
         };
 
-        self.last_stats = player_report.stats;
-        self.last_rotating_events = rotating_report.stats.sampled_events;
-        self.last_tail_contacts = rotating_report.stats.tail_contacts;
-        let collisions = player_report
-            .events
-            .len()
-            .saturating_add(self.last_rotating_events)
+        self.last_rotating_events = report.stats.sampled_events;
+        self.last_tail_contacts = report.stats.tail_contacts;
+        let collisions = self
+            .last_rotating_events
             .saturating_add(self.last_tail_contacts);
         self.total_collisions = self
             .total_collisions
@@ -200,10 +185,10 @@ impl Sandbox {
         if input_velocity == Vec3i::ZERO {
             return -1;
         }
-        let Some(player) = self.player_world.body(PLAYER_ID) else {
+        let Some(player) = self.world.box_by_id(PLAYER_ID) else {
             return -1;
         };
-        let player_position = player.position();
+        let player_position = player.body().position();
         let spawn = Vec3i::new(
             player_position.x + input_velocity.x / 3,
             player_position.y + 12 + input_velocity.y / 3,
@@ -218,7 +203,7 @@ impl Sandbox {
         self.next_projectile_id = self.next_projectile_id.saturating_add(1);
 
         if self
-            .box_world
+            .world
             .add_box(rotating_box(
                 RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
                     .with_material(Material::new(350)),
@@ -231,7 +216,7 @@ impl Sandbox {
         self.projectile_ids.push(id);
         if self.projectile_ids.len() > MAX_PROJECTILES {
             let oldest = self.projectile_ids.remove(0);
-            self.box_world.remove_box(oldest);
+            self.world.remove_box(oldest);
         }
         i32::try_from(id.0).unwrap_or(i32::MAX)
     }
@@ -242,7 +227,7 @@ impl Sandbox {
             .iter()
             .copied()
             .filter(|id| {
-                self.box_world.box_by_id(*id).is_none_or(|rigid_box| {
+                self.world.box_by_id(*id).is_none_or(|rigid_box| {
                     let position = rigid_box.body().position();
                     position.x.abs() > 1_200
                         || position.y < -300
@@ -252,33 +237,23 @@ impl Sandbox {
             })
             .collect::<Vec<_>>();
         for id in stale {
-            self.box_world.remove_box(id);
+            self.world.remove_box(id);
             self.projectile_ids.retain(|candidate| *candidate != id);
         }
     }
 
     fn body_count(&self) -> usize {
-        1 + self.box_world.boxes().count()
+        self.world.boxes().count()
     }
 
     fn body_at(&self, index: u32) -> Option<&RigidBody> {
-        if index == 0 {
-            self.player_world.body(PLAYER_ID)
-        } else {
-            self.box_world
-                .boxes()
-                .nth(index.saturating_sub(1) as usize)
-                .map(RigidBox3d::body)
-        }
+        self.world.boxes().nth(index as usize).map(RigidBox3d::body)
     }
 
     fn angular_at(&self, index: u32) -> AngularState3d {
-        if index == 0 {
-            return AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default());
-        }
-        self.box_world
+        self.world
             .boxes()
-            .nth(index.saturating_sub(1) as usize)
+            .nth(index as usize)
             .map_or(
                 AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
                 RigidBox3d::angular,
@@ -419,9 +394,7 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
     with_sandbox(|sandbox| {
         u32::try_from(
             sandbox
-                .last_stats
-                .collision_events
-                .saturating_add(sandbox.last_rotating_events)
+                .last_rotating_events
                 .saturating_add(sandbox.last_tail_contacts),
         )
         .unwrap_or(u32::MAX)
@@ -430,7 +403,7 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_pair_checks() -> u32 {
-    with_sandbox(|sandbox| u32::try_from(sandbox.last_stats.pair_checks).unwrap_or(u32::MAX))
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -453,7 +426,9 @@ pub extern "C" fn sandbox_error_code() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PLAYER_ID, Sandbox};
+    use physics_engine::{BodyId, RigidBody, Vec3i};
+
+    use super::{PLAYER_ID, Sandbox, rotating_box};
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..16 {
@@ -462,10 +437,12 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_contains_authoritative_player_and_rotating_world() {
+    fn sandbox_contains_rotation_locked_player_in_unified_world() {
         let sandbox = Sandbox::new().expect("valid sandbox");
-        assert!(sandbox.player_world.body(PLAYER_ID).is_some());
-        assert!(sandbox.box_world.boxes().count() >= 10);
+        let player = sandbox.world.box_by_id(PLAYER_ID).expect("player");
+        assert!(player.rotation_locked());
+        assert!(player.angular().angular_velocity.is_zero());
+        assert!(sandbox.world.boxes().count() >= 10);
     }
 
     #[test]
@@ -474,24 +451,72 @@ mod tests {
         settle_player(&mut sandbox);
         assert!(sandbox.grounded().expect("valid foot probe"));
         let before = sandbox
-            .player_world
-            .body(PLAYER_ID)
+            .world
+            .box_by_id(PLAYER_ID)
             .expect("player")
+            .body()
             .position()
             .y;
 
         assert_eq!(sandbox.step(0, 0, true), 0);
 
-        let player = sandbox
-            .player_world
-            .body(PLAYER_ID)
-            .expect("player after jump");
-        assert!(player.position().y > before, "jump did not move upward");
+        let player = sandbox.world.box_by_id(PLAYER_ID).expect("player after jump");
         assert!(
-            player.velocity().y > 0,
+            player.body().position().y > before,
+            "jump did not move upward"
+        );
+        assert!(
+            player.body().velocity().y > 0,
             "jump did not preserve upward velocity"
         );
         assert!(!sandbox.grounded().expect("valid airborne foot probe"));
+        assert!(player.rotation_locked());
+        assert!(player.angular().angular_velocity.is_zero());
+    }
+
+    #[test]
+    fn player_pushes_dynamic_box_without_tumbling() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        let crate_id = BodyId(900);
+        sandbox
+            .world
+            .add_box(
+                rotating_box(
+                    RigidBody::dynamic(
+                        crate_id,
+                        Vec3i::new(0, 18, 285),
+                        Vec3i::ZERO,
+                        Vec3i::new(18, 18, 18),
+                    )
+                    .with_mass(2),
+                ),
+            )
+            .expect("test crate");
+        let before = sandbox
+            .world
+            .box_by_id(crate_id)
+            .expect("test crate")
+            .body()
+            .position()
+            .z;
+
+        for _ in 0..8 {
+            assert_eq!(sandbox.step(0, -7, false), 0);
+        }
+
+        let crate_z = sandbox
+            .world
+            .box_by_id(crate_id)
+            .expect("test crate after push")
+            .body()
+            .position()
+            .z;
+        let player = sandbox.world.box_by_id(PLAYER_ID).expect("player after push");
+        assert!(crate_z < before, "player did not push the dynamic crate");
+        assert!(player.rotation_locked());
+        assert!(player.angular().angular_velocity.is_zero());
+        assert_eq!(player.angular().orientation, physics_engine::Orientation3d::IDENTITY);
     }
 
     #[test]
@@ -505,7 +530,7 @@ mod tests {
         }
 
         let projectile = sandbox
-            .box_world
+            .world
             .box_by_id(physics_engine::BodyId(projectile as u64))
             .expect("projectile remains in the bounded test world");
         assert!(
