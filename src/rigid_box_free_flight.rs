@@ -154,10 +154,8 @@ pub fn sample_rigid_box_free_flight(
     let mut velocity = body.velocity();
     let mut position = body.position();
     for axis in 0..3 {
-        let velocity_delta = rounded_ratio_factors(
-            i128::from(config.gravity.component(axis)),
-            step,
-        )?;
+        let velocity_delta =
+            rounded_ratio_factors(i128::from(config.gravity.component(axis)), step)?;
         let next_velocity = i128::from(velocity.component(axis))
             .checked_add(velocity_delta)
             .ok_or(RigidBoxFreeFlightError3d::ArithmeticOverflow(id))?;
