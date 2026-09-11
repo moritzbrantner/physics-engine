@@ -28,14 +28,16 @@ The engine now has a deliberately narrow but real reusable core:
 - direct deterministic rotating-box free-flight sampling with acceleration-aware conservative sweep bounds;
 - deterministic rotational broad-phase candidate pairs;
 - sampled rotating OBB contact search with explicit coarse-grid and refinement semantics;
+- positive-progress sampled search that ignores persistent start contacts while retaining observed clear-then-recontact events;
 - reconstruction of one shared equal-time rotating-contact frontier for downstream response;
+- deterministic OBB and shared-frontier contact response;
 - integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
 
 This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
 
-The current `World` simulation deliberately remains AABB-only and translational. Sphere support, OBB SAT, rotational sweep bounds, angular state, rotating-box free flight, rotational broad phase, sampled rotating contact search, and shared sampled contact frontiers are independent foundations. None of these imply mixed-shape or rotational collision response until those semantics are migrated and validated explicitly. Endpoint-only sweep bounds retain their stated trajectory precondition; the rotating-box free-flight envelope widens them conservatively so acceleration and velocity reversals cannot hide sampled contacts.
+The current `World` simulation deliberately remains AABB-only and translational. Sphere support, OBB SAT, rotational sweep bounds, angular state, rotating-box free flight, rotational broad phase, sampled rotating contact search, positive-progress recontact search, shared sampled contact frontiers, and rotational contact response are independent foundations. None of these imply a complete repeated-event rotational world step until remaining-time continuation is migrated and validated explicitly. Endpoint-only sweep bounds retain their stated trajectory precondition; the rotating-box free-flight envelope widens them conservatively so acceleration and velocity reversals cannot hide sampled contacts.
 
-The rotational contact search is deliberately sampled. It can detect and refine a contact that appears at one of its coarse samples, but a contact island that begins and ends entirely between adjacent coarse samples can still be missed. Refinement improves the reported upper contact bound after a coarse contact has been observed; it does not convert the algorithm into analytic rotational CCD. The frontier preserves that exact boundary: it reconstructs all bodies from the common interval start at the admitted sampled time and gathers the contacts present in that shared state, but it does not claim the sampled time is the analytic first time of impact.
+The rotational contact search is deliberately sampled. It can detect and refine a contact that appears at one of its coarse samples, but a contact island that begins and ends entirely between adjacent coarse samples can still be missed. Refinement improves the reported upper contact bound after a coarse contact has been observed; it does not convert the algorithm into analytic rotational CCD. After a zero-time contact has been resolved, the positive-progress search treats a pair that remains touching as an existing constraint until a coarse sample observes separation; only a later observed clear-to-contact transition can become a new collision event. The frontier preserves the same boundary: it reconstructs all bodies from the common interval start at the admitted sampled time and gathers the contacts present in that shared state, but it does not claim the sampled time is the analytic first time of impact.
 
 ## Example
 
@@ -82,7 +84,9 @@ ECS / game / simulation consumer
           +-- rotational/free-flight sweep bounds
           +-- direct rotating-box free flight
           +-- sampled rotating contact search
+          +-- positive-progress clear/recontact search
           +-- shared rotating-contact frontier
+          +-- rotational contact response
           +-- spatial queries
           +-- constraints and solvers (next)
 ```
@@ -93,8 +97,8 @@ ECS / game / simulation consumer
 
 The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
 
-1. friction and persistent/resting contact constraints;
-2. rotational contact response over the shared frontier, then repeated-event stepping while preserving the explicit sampled-versus-analytic CCD boundary;
+1. repeated rotating collision-event stepping with bounded remaining-time continuation while preserving the explicit sampled-versus-analytic CCD boundary;
+2. friction and persistent/resting contact constraints;
 3. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
 4. joints/constraints and sleeping/islands;
 5. a thin ECS adapter that maps entity IDs/components to engine bodies;
