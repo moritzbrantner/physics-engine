@@ -135,9 +135,10 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
-/// requested interval. Remaining-time composition cross-cancels before multiplication and stores the exact
-/// reduced value in the engine's widened `i128` ratio. No positive suffix is silently discarded merely
-/// because its denominator no longer fits the public `i32` step input.
+/// requested interval. Remaining-time composition reduces each exact ratio, cross-cancels between them
+/// before multiplication, and stores the exact reduced value in the engine's widened `i128` ratio. No
+/// positive suffix is silently discarded merely because its denominator no longer fits the public `i32`
+/// step input.
 ///
 /// This function is intentionally not yet a complete frame step. When no further positive sampled event
 /// is found, the final tail is returned in [`RepeatedRotatingEventAdvance3d::remaining`] rather than being
@@ -266,6 +267,13 @@ fn scale_remaining_time(
     let mut denominator = current.timestep_denominator.unsigned_abs();
     let mut remaining_numerator = u128::from(remaining_numerator);
     let mut event_denominator = u128::from(event_time.denominator);
+
+    let current_divisor = greatest_common_divisor(numerator, denominator);
+    numerator /= current_divisor;
+    denominator /= current_divisor;
+    let event_divisor = greatest_common_divisor(remaining_numerator, event_denominator);
+    remaining_numerator /= event_divisor;
+    event_denominator /= event_divisor;
 
     let numerator_cross = greatest_common_divisor(numerator, event_denominator);
     numerator /= numerator_cross;
@@ -430,6 +438,23 @@ mod tests {
             .expect("zero remainder"),
             RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 0, 1)
         );
+    }
+
+    #[test]
+    fn reducible_remainder_is_normalized_before_widened_composition() {
+        let current = RigidBoxFreeFlightConfig3d::new_wide(Vec3i::ZERO, i128::MAX, 1);
+        let scaled = scale_remaining_time(
+            current,
+            256,
+            crate::SampledContactTime3d {
+                numerator: 256,
+                denominator: 512,
+            },
+        )
+        .expect("reducible sampled remainder must not manufacture overflow");
+
+        assert_eq!(scaled.timestep_numerator, i128::MAX);
+        assert_eq!(scaled.timestep_denominator, 2);
     }
 
     #[test]
