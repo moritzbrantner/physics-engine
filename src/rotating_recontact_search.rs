@@ -91,7 +91,8 @@ fn search_pair(
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
-    let initially_contacting = obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
+    let initially_contacting =
+        obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
 
@@ -147,13 +148,8 @@ fn refine_contact_bracket(
             .checked_mul(2)
             .ok_or(resolution_too_fine(config))?;
 
-        let (sampled_left, sampled_right) = sample_pair(
-            left,
-            right,
-            config,
-            midpoint_numerator,
-            bracket.denominator,
-        )?;
+        let (sampled_left, sampled_right) =
+            sample_pair(left, right, config, midpoint_numerator, bracket.denominator)?;
         if let Some(contact) =
             obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
         {
@@ -259,7 +255,10 @@ mod tests {
 
     #[test]
     fn persistent_time_zero_contact_is_not_rediscovered() {
-        let boxes = [dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO), fixed(2, Vec3i::ZERO)];
+        let boxes = [
+            dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO),
+            fixed(2, Vec3i::ZERO),
+        ];
 
         assert_eq!(
             sampled_rotating_recontact_search(&boxes, config(Vec3i::ZERO, 8, 3))
@@ -296,12 +295,9 @@ mod tests {
     fn pair_that_starts_clear_keeps_first_contact_behavior() {
         let moving = dynamic(1, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
         let obstacle = fixed(2, Vec3i::ZERO);
-        let hit = sampled_rotating_recontact_search(
-            &[moving, obstacle],
-            config(Vec3i::ZERO, 4, 3),
-        )
-        .expect("valid initial-clear search")
-        .expect("first contact should be found");
+        let hit = sampled_rotating_recontact_search(&[moving, obstacle], config(Vec3i::ZERO, 4, 3))
+            .expect("valid initial-clear search")
+            .expect("first contact should be found");
 
         assert!(hit.time.numerator > 0);
     }
@@ -311,8 +307,9 @@ mod tests {
         let moving = dynamic(11, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
         let obstacle = fixed(3, Vec3i::ZERO);
         let search = config(Vec3i::ZERO, 8, 2);
-        let forward = sampled_rotating_recontact_search(&[moving.clone(), obstacle.clone()], search)
-            .expect("valid forward search");
+        let forward =
+            sampled_rotating_recontact_search(&[moving.clone(), obstacle.clone()], search)
+                .expect("valid forward search");
         let reverse = sampled_rotating_recontact_search(&[obstacle, moving], search)
             .expect("valid reverse search");
 
@@ -333,7 +330,10 @@ mod tests {
 
     #[test]
     fn invalid_resolution_matches_the_existing_search_contract() {
-        let boxes = [dynamic(1, Vec3i::ZERO, Vec3i::ZERO), fixed(2, Vec3i::new(2, 0, 0))];
+        let boxes = [
+            dynamic(1, Vec3i::ZERO, Vec3i::ZERO),
+            fixed(2, Vec3i::new(2, 0, 0)),
+        ];
         assert_eq!(
             sampled_rotating_recontact_search(&boxes, config(Vec3i::ZERO, 0, 0)),
             Err(RotatingContactSearchError3d::ZeroSampleCount)
