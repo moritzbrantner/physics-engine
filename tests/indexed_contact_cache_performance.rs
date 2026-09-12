@@ -1,11 +1,10 @@
 use std::{cmp::Ordering, collections::BTreeMap, error::Error, hint::black_box, time::Instant};
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody,
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, Vec3i,
-    obb_contact_seed, rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
-    sampled_rotating_contact_search,
+    AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
+    RotationalSweepPair3d, SampledContactTime3d, Vec3i, obb_contact_seed,
+    rotational_sweep_candidate_pairs, sample_rigid_box_free_flight, sampled_rotating_contact_search,
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
