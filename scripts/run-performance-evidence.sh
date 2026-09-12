@@ -53,6 +53,10 @@ if grep -Eq '(^|/)(obb_response\.rs|rotating_contact_response\.rs|contact_solver
   run_integration contact_solver_scratch_performance
 fi
 
+if grep -Eq '(^|/)(rotating_contact_response\.rs|compact_solver_accumulator_performance\.rs)$' <<<"$changed"; then
+  run_integration compact_solver_accumulator_performance
+fi
+
 if [[ "$ran" -eq 0 ]]; then
   echo "No changed file maps to release performance evidence."
 fi
