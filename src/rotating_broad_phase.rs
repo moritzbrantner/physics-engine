@@ -766,8 +766,8 @@ mod tests {
         let snapshots = (0..100_i32)
             .map(|iteration| {
                 let mut boxes = base.clone();
-                for index in 0..16_usize {
-                    boxes[index] = dynamic(
+                for (index, rigid_box) in boxes.iter_mut().enumerate().take(16) {
+                    *rigid_box = dynamic(
                         u64::try_from(index).expect("small id") + 1,
                         Vec3i::new(
                             10_000
