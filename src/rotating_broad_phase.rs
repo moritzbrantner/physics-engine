@@ -308,6 +308,15 @@ fn build_bvh_node(bodies: &mut [BoundedBody3d]) -> BroadPhaseBvhNode3d {
     BroadPhaseBvhNode3d::branch(build_bvh_node(left_bodies), build_bvh_node(right_bodies))
 }
 
+fn contains_leaf_id(node: &BroadPhaseBvhNode3d, id: BodyId) -> bool {
+    match &node.kind {
+        BroadPhaseBvhNodeKind3d::Leaf(body) => body.id == id,
+        BroadPhaseBvhNodeKind3d::Branch { left, right } => {
+            contains_leaf_id(left, id) || contains_leaf_id(right, id)
+        }
+    }
+}
+
 fn remove_leaf(
     node: BroadPhaseBvhNode3d,
     id: BodyId,
@@ -322,27 +331,27 @@ fn remove_leaf(
             }
         }
         BroadPhaseBvhNodeKind3d::Branch { left, right } => {
-            let (new_left, removed_left) = remove_leaf(*left, id, rotations);
-            if removed_left {
+            if contains_leaf_id(&left, id) {
+                let (new_left, removed) = remove_leaf(*left, id, rotations);
                 let rebuilt = match new_left {
-                    Some(left) => rebalance_node(BroadPhaseBvhNode3d::branch(left, *right), rotations),
+                    Some(left) => {
+                        rebalance_node(BroadPhaseBvhNode3d::branch(left, *right), rotations)
+                    }
                     None => *right,
                 };
-                return (Some(rebuilt), true);
+                return (Some(rebuilt), removed);
             }
-
-            let left = new_left.expect("unmatched subtree remains present");
-            let (new_right, removed_right) = remove_leaf(*right, id, rotations);
-            if removed_right {
+            if contains_leaf_id(&right, id) {
+                let (new_right, removed) = remove_leaf(*right, id, rotations);
                 let rebuilt = match new_right {
-                    Some(right) => rebalance_node(BroadPhaseBvhNode3d::branch(left, right), rotations),
-                    None => left,
+                    Some(right) => {
+                        rebalance_node(BroadPhaseBvhNode3d::branch(*left, right), rotations)
+                    }
+                    None => *left,
                 };
-                (Some(rebuilt), true)
-            } else {
-                let right = new_right.expect("unmatched subtree remains present");
-                (Some(BroadPhaseBvhNode3d::branch(left, right)), false)
+                return (Some(rebuilt), removed);
             }
+            (Some(BroadPhaseBvhNode3d::branch(*left, *right)), false)
         }
     }
 }
@@ -384,11 +393,10 @@ fn insertion_score(
 }
 
 fn rebalance_node(node: BroadPhaseBvhNode3d, rotations: &mut u64) -> BroadPhaseBvhNode3d {
-    let BroadPhaseBvhNodeKind3d::Branch { left, right } = node.kind else {
-        return node;
+    let (left, right) = match node.kind {
+        BroadPhaseBvhNodeKind3d::Leaf(body) => return BroadPhaseBvhNode3d::leaf(body),
+        BroadPhaseBvhNodeKind3d::Branch { left, right } => (*left, *right),
     };
-    let left = *left;
-    let right = *right;
 
     if left.height > right.height.saturating_add(1) {
         return match left.kind {
@@ -654,7 +662,8 @@ mod tests {
 
     use super::{
         BoundedBody3d, BroadPhaseBvhNode3d, RotatingBroadPhase3d, RotatingBroadPhaseError3d,
-        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh, rotational_sweep_candidate_pairs,
+        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh,
+        rotational_sweep_candidate_pairs,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
@@ -920,8 +929,15 @@ mod tests {
                 .candidate_pairs(&boxes, config)
                 .expect("incremental churn query");
             assert_eq!(actual, brute_force_candidate_pairs(&boxes, config));
-            let tree = broad_phase.tree.as_ref().expect("non-empty persistent tree");
-            assert!(bvh_height(tree) <= 12, "tree height grew to {}", bvh_height(tree));
+            let tree = broad_phase
+                .tree
+                .as_ref()
+                .expect("non-empty persistent tree");
+            assert!(
+                bvh_height(tree) <= 12,
+                "tree height grew to {}",
+                bvh_height(tree)
+            );
         }
 
         assert_eq!(broad_phase.stats().rebuilds, 1);
@@ -1016,11 +1032,7 @@ mod tests {
         let snapshots = (0..100_i32)
             .map(|iteration| {
                 let mut boxes = base.clone();
-                boxes[0] = dynamic(
-                    1,
-                    Vec3i::new(10_000 + iteration * 100, 0, 0),
-                    Vec3i::ZERO,
-                );
+                boxes[0] = dynamic(1, Vec3i::new(10_000 + iteration * 100, 0, 0), Vec3i::ZERO);
                 boxes
             })
             .collect::<Vec<_>>();
