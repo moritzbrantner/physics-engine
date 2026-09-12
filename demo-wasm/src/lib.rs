@@ -133,7 +133,7 @@ impl Sandbox {
             self.error_code = 1;
             return self.error_code;
         };
-        let current_y = player.body().velocity().y;
+        let current_velocity = player.body().velocity();
         let grounded = match self.grounded() {
             Ok(value) => value,
             Err(_) => {
@@ -144,7 +144,7 @@ impl Sandbox {
         let next_y = if jump && grounded {
             JUMP_SPEED.saturating_mul(ROTATING_TICKS_PER_SECOND)
         } else {
-            current_y
+            current_velocity.y
         };
         let velocity = Vec3i::new(
             move_x
@@ -155,7 +155,9 @@ impl Sandbox {
                 .clamp(-MOVE_SPEED, MOVE_SPEED)
                 .saturating_mul(ROTATING_TICKS_PER_SECOND),
         );
-        if self.world.set_linear_velocity(PLAYER_ID, velocity).is_err() {
+        if velocity != current_velocity
+            && self.world.set_linear_velocity(PLAYER_ID, velocity).is_err()
+        {
             self.error_code = 3;
             return self.error_code;
         }
