@@ -85,14 +85,12 @@ impl RotatingWorld3d {
             let mut changed = false;
             for left_index in 0..boxes.len() {
                 for right_index in (left_index + 1)..boxes.len() {
-                    let dynamic_index = match (
-                        boxes[left_index].body.kind,
-                        boxes[right_index].body.kind,
-                    ) {
-                        (BodyKind::Fixed, BodyKind::Dynamic) => Some(right_index),
-                        (BodyKind::Dynamic, BodyKind::Fixed) => Some(left_index),
-                        _ => None,
-                    };
+                    let dynamic_index =
+                        match (boxes[left_index].body.kind, boxes[right_index].body.kind) {
+                            (BodyKind::Fixed, BodyKind::Dynamic) => Some(right_index),
+                            (BodyKind::Dynamic, BodyKind::Fixed) => Some(left_index),
+                            _ => None,
+                        };
                     let Some(dynamic_index) = dynamic_index else {
                         continue;
                     };
