@@ -548,7 +548,11 @@ mod tests {
         for (index, rigid_box) in escaped.iter_mut().take(16).enumerate() {
             *rigid_box = dynamic(
                 u64::try_from(index).expect("small id") + 1,
-                Vec3i::new(20_000 + i32::try_from(index).expect("small position") * 16, 0, 0),
+                Vec3i::new(
+                    20_000 + i32::try_from(index).expect("small position") * 16,
+                    0,
+                    0,
+                ),
                 Vec3i::ZERO,
             );
         }
@@ -586,7 +590,11 @@ mod tests {
         for (index, rigid_box) in escaped.iter_mut().take(40).enumerate() {
             *rigid_box = dynamic(
                 u64::try_from(index).expect("small id") + 1,
-                Vec3i::new(50_000 + i32::try_from(index).expect("small position") * 16, 0, 0),
+                Vec3i::new(
+                    50_000 + i32::try_from(index).expect("small position") * 16,
+                    0,
+                    0,
+                ),
                 Vec3i::ZERO,
             );
         }
@@ -688,7 +696,8 @@ mod tests {
         tree.rebuild(&mut bodies);
 
         assert!(tree.height() <= 8);
-        tree.validate_structure().expect("valid balanced indexed tree");
+        tree.validate_structure()
+            .expect("valid balanced indexed tree");
     }
 
     #[test]
@@ -761,7 +770,9 @@ mod tests {
                     boxes[index] = dynamic(
                         u64::try_from(index).expect("small id") + 1,
                         Vec3i::new(
-                            10_000 + iteration * 100 + i32::try_from(index).expect("small index") * 8,
+                            10_000
+                                + iteration * 100
+                                + i32::try_from(index).expect("small index") * 8,
                             0,
                             0,
                         ),
