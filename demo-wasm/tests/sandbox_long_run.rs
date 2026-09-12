@@ -198,12 +198,6 @@ fn mixed_movement_jump_and_projectile_survives_reported_path() {
         if tick == 125 {
             shoot(&mut world, BodyId(1_000), Vec3i::new(84, -3, -36));
         }
-        controlled_step_with_jump(
-            &mut world,
-            movement.0,
-            movement.1,
-            tick == 71,
-            tick,
-        );
+        controlled_step_with_jump(&mut world, movement.0, movement.1, tick == 71, tick);
     }
 }
