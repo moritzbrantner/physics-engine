@@ -1,9 +1,10 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, RigidBox3d,
-    RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
+    AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, OrientedBoxError3d,
+    RigidBox3d, RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
     angular::integrate_orientation_exact_ratio,
+    oriented_box_vertices,
     rotational_sweep::rotational_sweep_bounds_for_center_interval,
     wide_ratio::{ExactRatio, WideRatioError},
 };
@@ -126,6 +127,7 @@ pub enum RigidBoxFreeFlightError3d {
     RatioTooLarge,
     ArithmeticOverflow(BodyId),
     Angular(AngularError3d),
+    Geometry(OrientedBoxError3d),
     Sweep(RotationalSweepError3d),
 }
 
@@ -163,6 +165,12 @@ impl fmt::Display for RigidBoxFreeFlightError3d {
             Self::Angular(error) => {
                 write!(formatter, "rigid-box free-flight rotation failed: {error}")
             }
+            Self::Geometry(error) => {
+                write!(
+                    formatter,
+                    "rigid-box free-flight current geometry failed: {error}"
+                )
+            }
             Self::Sweep(error) => write!(formatter, "rigid-box free-flight sweep failed: {error}"),
         }
     }
@@ -173,6 +181,12 @@ impl Error for RigidBoxFreeFlightError3d {}
 impl From<AngularError3d> for RigidBoxFreeFlightError3d {
     fn from(value: AngularError3d) -> Self {
         Self::Angular(value)
+    }
+}
+
+impl From<OrientedBoxError3d> for RigidBoxFreeFlightError3d {
+    fn from(value: OrientedBoxError3d) -> Self {
+        Self::Geometry(value)
     }
 }
 
@@ -261,22 +275,28 @@ pub fn sample_rigid_box_free_flight(
 
 /// Conservatively bounds every direct free-flight sample over the configured interval.
 ///
-/// Per axis, the center interval uses an absolute upper bound on speed after acceleration and then on
-/// displacement. Exact limb arithmetic performs multiply/divide before the final upward rounding, so a
-/// large repeated-event denominator cannot manufacture an overflow. This may overproduce broad-phase
-/// candidates, but it cannot lose a sampled contact when velocity reverses and the center reaches an
-/// interior extremum outside the start/end interval. Arbitrary orientation is enclosed by the same
+/// A zero-duration query returns the exact axis-aligned envelope of the current quantized OBB vertices,
+/// so broad-phase current-contact pruning uses the same integer geometry as SAT. For a nonzero interval,
+/// each center axis uses an absolute upper bound on speed after acceleration and then on displacement.
+/// Exact limb arithmetic performs multiply/divide before the final upward rounding, so a large
+/// repeated-event denominator cannot manufacture an overflow. This may overproduce broad-phase candidates,
+/// but it cannot lose a sampled contact when velocity reverses and the center reaches an interior extremum
+/// outside the start/end interval. Nonzero arbitrary orientation remains enclosed by the same
 /// circumscribed-box radius as [`crate::rotational_sweep_bounds`].
 ///
 /// # Errors
 ///
-/// Returns [`RigidBoxFreeFlightError3d`] for malformed time configuration or checked bound arithmetic
-/// overflow.
+/// Returns [`RigidBoxFreeFlightError3d`] for malformed time configuration, invalid current OBB geometry,
+/// or checked bound arithmetic overflow.
 pub fn rigid_box_free_flight_sweep_bounds(
     rigid_box: &RigidBox3d,
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
     let timestep = config.exact_timestep()?;
+    if timestep.is_zero() {
+        return current_quantized_obb_bounds(rigid_box);
+    }
+
     let center = rigid_box.body.position();
     let center = [
         i64::from(center.x),
@@ -286,7 +306,7 @@ pub fn rigid_box_free_flight_sweep_bounds(
     let mut center_minimum = center;
     let mut center_maximum = center;
 
-    if rigid_box.body.kind() == BodyKind::Dynamic && !timestep.is_zero() {
+    if rigid_box.body.kind() == BodyKind::Dynamic {
         for axis in 0..3 {
             let displacement = conservative_axis_displacement(
                 rigid_box.body.velocity().component(axis),
@@ -309,6 +329,27 @@ pub fn rigid_box_free_flight_sweep_bounds(
         center_minimum,
         center_maximum,
     )?)
+}
+
+fn current_quantized_obb_bounds(
+    rigid_box: &RigidBox3d,
+) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
+    let vertices = oriented_box_vertices(rigid_box.oriented_box())?;
+    let first = vertices[0];
+    let mut minimum = [i64::from(first.x), i64::from(first.y), i64::from(first.z)];
+    let mut maximum = minimum;
+    for vertex in vertices.into_iter().skip(1) {
+        let components = [
+            i64::from(vertex.x),
+            i64::from(vertex.y),
+            i64::from(vertex.z),
+        ];
+        for axis in 0..3 {
+            minimum[axis] = minimum[axis].min(components[axis]);
+            maximum[axis] = maximum[axis].max(components[axis]);
+        }
+    }
+    Ok(RotationalSweepBounds3d { minimum, maximum })
 }
 
 fn conservative_axis_displacement(
@@ -499,6 +540,52 @@ mod tests {
             .expect("wide conservative bound remains exact");
         assert!(bounds.minimum[1] < 0);
         assert!(bounds.maximum[1] > 0);
+    }
+
+    #[test]
+    fn zero_time_sweep_is_exact_current_quantized_obb_aabb() {
+        let orientation =
+            Orientation3d::new(-1_875_283_248, 1_103_306_364, -807_599_983, -607_366_902)
+                .normalized()
+                .expect("valid quantized orientation");
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(10),
+                Vec3i::ZERO,
+                Vec3i::new(123, -456, 789),
+                Vec3i::new(426, 340, 538),
+            ),
+            AngularState3d::new(orientation, AngularVelocity3d::new(1, 2, 3)),
+        )
+        .expect("valid review counterexample box");
+        let vertices = oriented_box_vertices(rigid_box.oriented_box()).expect("valid OBB vertices");
+        let bounds = rigid_box_free_flight_sweep_bounds(
+            &rigid_box,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::new(99, -100, 101), 0, 1),
+        )
+        .expect("zero-time bound");
+
+        for vertex in vertices {
+            assert!(bounds.contains([
+                i64::from(vertex.x),
+                i64::from(vertex.y),
+                i64::from(vertex.z),
+            ]));
+        }
+        for axis in 0..3 {
+            let vertex_minimum = vertices
+                .iter()
+                .map(|vertex| i64::from(vertex.component(axis)))
+                .min()
+                .expect("eight vertices");
+            let vertex_maximum = vertices
+                .iter()
+                .map(|vertex| i64::from(vertex.component(axis)))
+                .max()
+                .expect("eight vertices");
+            assert_eq!(bounds.minimum[axis], vertex_minimum);
+            assert_eq!(bounds.maximum[axis], vertex_maximum);
+        }
     }
 
     #[test]

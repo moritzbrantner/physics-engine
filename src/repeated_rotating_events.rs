@@ -1,10 +1,10 @@
-use std::{error::Error, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
-    RotatingContactFrontier3d, RotatingContactFrontierError3d, RotatingContactResponseError3d,
-    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
-    SampledContactTime3d, obb_contact_seed, resolve_rotating_contact_frontier,
+    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
+    RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
+    RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
+    resolve_rotating_contact_frontier,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
@@ -139,10 +139,11 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
 /// the current zero-time contact set and applies one simultaneous response pass. This keeps resting and
 /// newly-created support constraints in the authoritative solver without demanding exact global
-/// idempotence from quantized contact projection. Current-frontier discovery is a direct OBB query; it
-/// deliberately does not re-enter the sampled temporal search. Later positive events are then selected
-/// with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event
-/// discovery.
+/// idempotence from quantized contact projection. Current-frontier discovery reuses the persistent
+/// conservative broad phase at a zero timestep, then exact-filters every candidate with the current OBB
+/// geometry; it deliberately does not re-enter the sampled temporal search. Later positive events are then
+/// selected with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize
+/// event discovery.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -205,7 +206,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        state = stabilize_current_contacts(response.boxes, config.solver_passes)?;
+        state = stabilize_current_contacts(response.boxes, config.solver_passes, broad_phase)?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -234,9 +235,10 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 fn stabilize_current_contacts(
     mut boxes: Vec<RigidBox3d>,
     solver_passes: u8,
+    broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
     for _ in 0..solver_passes {
-        let Some(frontier) = current_contact_frontier(&boxes)? else {
+        let Some(frontier) = current_contact_frontier_with_broad_phase(&boxes, broad_phase)? else {
             break;
         };
         let response = resolve_rotating_contact_frontier(frontier, 1)?;
@@ -248,29 +250,41 @@ fn stabilize_current_contacts(
     Ok(boxes)
 }
 
-fn current_contact_frontier(
+fn current_contact_frontier_with_broad_phase(
     boxes: &[RigidBox3d],
+    broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let zero_time = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+    let candidates = broad_phase.candidate_pairs(boxes, zero_time)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    let indices = boxes
+        .iter()
+        .enumerate()
+        .map(|(index, rigid_box)| (rigid_box.body().id(), index))
+        .collect::<BTreeMap<_, _>>();
     let mut contacts = Vec::new();
-    for left_index in 0..boxes.len() {
-        for right_index in (left_index + 1)..boxes.len() {
-            let left = &boxes[left_index];
-            let right = &boxes[right_index];
-            if left.body().kind() == BodyKind::Fixed && right.body().kind() == BodyKind::Fixed {
-                continue;
-            }
-            let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
-                continue;
-            };
-            contacts.push(RotatingContactSearchHit3d {
-                time: SampledContactTime3d::ZERO,
-                pair: RotationalSweepPair3d {
-                    left: left.body().id(),
-                    right: right.body().id(),
-                },
-                contact,
-            });
-        }
+    for pair in candidates {
+        let left_index = *indices
+            .get(&pair.left)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
+        let right_index = *indices
+            .get(&pair.right)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
+        let Some(contact) = obb_contact_seed(
+            boxes[left_index].oriented_box(),
+            boxes[right_index].oriented_box(),
+        )?
+        else {
+            continue;
+        };
+        contacts.push(RotatingContactSearchHit3d {
+            time: SampledContactTime3d::ZERO,
+            pair,
+            contact,
+        });
     }
 
     if contacts.is_empty() {
@@ -283,6 +297,14 @@ fn current_contact_frontier(
         contacts,
         remaining_numerator: 1,
     }))
+}
+
+#[cfg(test)]
+fn current_contact_frontier(
+    boxes: &[RigidBox3d],
+) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    current_contact_frontier_with_broad_phase(boxes, &mut broad_phase)
 }
 
 fn validate_config(

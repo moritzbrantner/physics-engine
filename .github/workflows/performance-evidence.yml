@@ -4,7 +4,16 @@ on:
   pull_request:
     paths:
       - "src/query.rs"
+      - "src/rigid_box_free_flight.rs"
+      - "src/repeated_rotating_events.rs"
+      - "src/rotating_broad_phase.rs"
+      - "src/rotating_broad_phase_tree.rs"
+      - "src/rotating_contact_search.rs"
+      - "src/obb_response.rs"
+      - "src/rotating_contact_response.rs"
       - "tests/*performance*.rs"
+      - "tests/current_contact_broadphase.rs"
+      - "scripts/run-performance-evidence.sh"
       - ".github/workflows/performance-evidence.yml"
   workflow_dispatch:
 
@@ -14,12 +23,24 @@ permissions:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
 
       - name: Prepare Rust toolchain
         run: rustc --version && cargo --version
 
-      - name: Ray first-hit scan versus prior full sort
-        run: cargo test --release --locked ray_cast_first_scan_benchmark -- --ignored --nocapture
+      - name: Resolve changed files
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" > /tmp/performance-evidence-files.txt
+          else
+            git show --pretty='' --name-only HEAD > /tmp/performance-evidence-files.txt
+          fi
+          cat /tmp/performance-evidence-files.txt
+
+      - name: Run release performance evidence
+        run: bash scripts/run-performance-evidence.sh /tmp/performance-evidence-files.txt
