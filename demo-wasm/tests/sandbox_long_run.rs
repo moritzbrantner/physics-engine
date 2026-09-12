@@ -227,3 +227,30 @@ fn rough_crate_push_and_turn_survives_long_play() {
         controlled_step_with_jump(&mut world, movement.0, movement.1, jump, tick);
     }
 }
+
+#[test]
+fn rough_crate_scrubbing_contacts_survive_direction_churn() {
+    let mut world = sandbox_world();
+
+    for tick in 0..=360 {
+        let (move_x, move_z) = match tick {
+            0..=72 => (0, -7),
+            73..=210 => {
+                let x = if (tick / 4) % 2 == 0 { -7 } else { 7 };
+                (x, -7)
+            }
+            211..=300 => {
+                let phase = (tick / 6) % 4;
+                match phase {
+                    0 => (7, 0),
+                    1 => (0, 7),
+                    2 => (-7, 0),
+                    _ => (0, -7),
+                }
+            }
+            _ => (0, 0),
+        };
+        let jump = matches!(tick, 96 | 144 | 192 | 240);
+        controlled_step_with_jump(&mut world, move_x, move_z, jump, tick);
+    }
+}
