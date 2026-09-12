@@ -3,9 +3,8 @@ use std::{error::Error, fmt};
 use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, Vec3i,
-    earliest_rotating_contact_frontier, next_rotating_contact_frontier,
-    resolve_rotating_contact_frontier,
+    RotatingContactSearchHit3d, SampledContactTime3d, Vec3i, earliest_rotating_contact_frontier,
+    next_rotating_contact_frontier, resolve_rotating_contact_frontier,
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
@@ -220,10 +219,8 @@ fn stabilize_current_contacts(
     search: RotatingContactSearchConfig3d,
     solver_passes: u8,
 ) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
-    let zero_time_search = search_with_free_flight(
-        search,
-        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
-    );
+    let zero_time_search =
+        search_with_free_flight(search, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1));
 
     for _ in 0..MAX_EVENT_STABILIZATION_ROUNDS {
         let Some(frontier) = earliest_rotating_contact_frontier(&boxes, zero_time_search)? else {
