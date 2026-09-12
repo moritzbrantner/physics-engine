@@ -1,10 +1,11 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
-    RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, Vec3i, earliest_rotating_contact_frontier,
-    next_rotating_contact_frontier, resolve_rotating_contact_frontier,
+    BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
+    RotatingContactFrontier3d, RotatingContactFrontierError3d, RotatingContactResponseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
+    SampledContactTime3d, earliest_rotating_contact_frontier, next_rotating_contact_frontier,
+    obb_contact_seed, resolve_rotating_contact_frontier,
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
@@ -137,7 +138,8 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// rational timestep becomes the next segment. Before that next segment is searched, the current contact
 /// frontier is stabilized through bounded zero-time simultaneous response rounds. This keeps resting and
 /// newly-created support constraints in the authoritative solver instead of allowing integer residuals to
-/// manufacture clear/re-contact churn. Later positive events are then selected with
+/// manufacture clear/re-contact churn. Current-frontier discovery is a direct OBB query; it deliberately
+/// does not re-enter the sampled temporal search. Later positive events are then selected with
 /// [`next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event discovery.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
@@ -190,7 +192,7 @@ pub fn advance_repeated_rotating_events(
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        state = stabilize_current_contacts(response.boxes, config.search, config.solver_passes)?;
+        state = stabilize_current_contacts(response.boxes, config.solver_passes)?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -216,14 +218,10 @@ pub fn advance_repeated_rotating_events(
 
 fn stabilize_current_contacts(
     mut boxes: Vec<RigidBox3d>,
-    search: RotatingContactSearchConfig3d,
     solver_passes: u8,
 ) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
-    let zero_time_search =
-        search_with_free_flight(search, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1));
-
     for _ in 0..MAX_EVENT_STABILIZATION_ROUNDS {
-        let Some(frontier) = earliest_rotating_contact_frontier(&boxes, zero_time_search)? else {
+        let Some(frontier) = current_contact_frontier(&boxes)? else {
             return Ok(boxes);
         };
         let response = resolve_rotating_contact_frontier(frontier, solver_passes)?;
@@ -236,6 +234,43 @@ fn stabilize_current_contacts(
     Err(RepeatedRotatingEventError3d::StabilizationLimit(
         MAX_EVENT_STABILIZATION_ROUNDS,
     ))
+}
+
+fn current_contact_frontier(
+    boxes: &[RigidBox3d],
+) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let mut contacts = Vec::new();
+    for left_index in 0..boxes.len() {
+        for right_index in (left_index + 1)..boxes.len() {
+            let left = &boxes[left_index];
+            let right = &boxes[right_index];
+            if left.body().kind() == BodyKind::Fixed && right.body().kind() == BodyKind::Fixed {
+                continue;
+            }
+            let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
+                continue;
+            };
+            contacts.push(RotatingContactSearchHit3d {
+                time: SampledContactTime3d::ZERO,
+                pair: RotationalSweepPair3d {
+                    left: left.body().id(),
+                    right: right.body().id(),
+                },
+                contact,
+            });
+        }
+    }
+
+    if contacts.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(RotatingContactFrontier3d {
+        boxes: boxes.to_vec(),
+        time: SampledContactTime3d::ZERO,
+        contacts,
+        remaining_numerator: 1,
+    }))
 }
 
 fn validate_config(
@@ -302,7 +337,7 @@ mod tests {
 
     use super::{
         RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-        advance_repeated_rotating_events, scale_remaining_time,
+        advance_repeated_rotating_events, current_contact_frontier, scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -346,6 +381,20 @@ mod tests {
         assert_eq!(advance.boxes, boxes);
         assert!(advance.events.is_empty());
         assert_eq!(advance.remaining, config(8).search.free_flight);
+    }
+
+    #[test]
+    fn current_frontier_does_not_look_ahead_into_future_motion() {
+        let boxes = [
+            dynamic(1, Vec3i::ZERO, Vec3i::new(100, 0, 0), Material::new(0)),
+            fixed(2, Vec3i::new(20, 0, 0), Material::new(0)),
+        ];
+
+        assert!(
+            current_contact_frontier(&boxes)
+                .expect("current contact query")
+                .is_none()
+        );
     }
 
     #[test]
