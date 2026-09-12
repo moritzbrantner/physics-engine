@@ -105,9 +105,12 @@ impl World {
         self.cast_aabb(Aabb::new(ray.origin, Vec3i::ZERO), ray.direction, ticks)
     }
 
-    /// Returns only the first deterministic ray hit.
+    /// Returns only the first deterministic ray hit without allocating or sorting the complete hit set.
     pub fn ray_cast_first(&self, ray: Ray, ticks: i32) -> Result<Option<QueryHit>, QueryError> {
-        Ok(self.ray_cast(ray, ticks)?.into_iter().next())
+        let query = Aabb::new(ray.origin, Vec3i::ZERO);
+        validate_query(query)?;
+        validate_ticks(ticks)?;
+        Ok(first_snapshot_hit(self, query, ray.direction, ticks))
     }
 }
 
@@ -115,26 +118,40 @@ fn cast_snapshot(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Vec
     let probe = query_body(query, velocity);
     let mut hits = world
         .bodies()
-        .filter_map(|body| {
-            let snapshot = snapshot_body(body);
-            if overlap_aabb(&probe, &snapshot) {
-                return Some(QueryHit {
-                    body: body.id(),
-                    time: TimeOfImpact::from_subticks(0),
-                    normal: None,
-                });
-            }
-
-            swept_aabb(&probe, &snapshot, ticks).map(|hit| QueryHit {
-                body: body.id(),
-                time: hit.time,
-                normal: Some(hit.normal),
-            })
-        })
+        .filter_map(|body| snapshot_hit(&probe, body, ticks))
         .collect::<Vec<_>>();
 
-    hits.sort_by_key(|hit| (hit.time.subticks(), hit.body));
+    hits.sort_unstable_by_key(hit_order_key);
     hits
+}
+
+fn first_snapshot_hit(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Option<QueryHit> {
+    let probe = query_body(query, velocity);
+    world
+        .bodies()
+        .filter_map(|body| snapshot_hit(&probe, body, ticks))
+        .min_by_key(hit_order_key)
+}
+
+fn snapshot_hit(probe: &RigidBody, body: &RigidBody, ticks: i32) -> Option<QueryHit> {
+    let snapshot = snapshot_body(body);
+    if overlap_aabb(probe, &snapshot) {
+        return Some(QueryHit {
+            body: body.id(),
+            time: TimeOfImpact::from_subticks(0),
+            normal: None,
+        });
+    }
+
+    swept_aabb(probe, &snapshot, ticks).map(|hit| QueryHit {
+        body: body.id(),
+        time: hit.time,
+        normal: Some(hit.normal),
+    })
+}
+
+fn hit_order_key(hit: &QueryHit) -> (u64, BodyId) {
+    (hit.time.subticks(), hit.body)
 }
 
 fn validate_query(query: Aabb) -> Result<(), QueryError> {

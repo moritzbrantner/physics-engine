@@ -48,6 +48,27 @@ fn ray_cast_returns_nearest_hit_first() {
 }
 
 #[test]
+fn ray_cast_first_matches_full_order_for_time_and_body_id_ties() {
+    let mut world = World::default();
+    world
+        .add_body(fixed(9, Vec3i::new(8, 0, 0), Vec3i::new(1, 2, 2)))
+        .unwrap();
+    world
+        .add_body(fixed(3, Vec3i::new(8, 0, 0), Vec3i::new(1, 2, 2)))
+        .unwrap();
+    world
+        .add_body(fixed(1, Vec3i::new(18, 0, 0), Vec3i::new(1, 2, 2)))
+        .unwrap();
+
+    let ray = Ray::new(Vec3i::ZERO, Vec3i::new(10, 0, 0));
+    let first = world.ray_cast_first(ray, 2).unwrap();
+    let full = world.ray_cast(ray, 2).unwrap();
+
+    assert_eq!(first, full.first().copied());
+    assert_eq!(first.unwrap().body, BodyId(3));
+}
+
+#[test]
 fn ray_cast_first_reports_initial_overlap_without_inventing_a_normal() {
     let mut world = World::default();
     world
