@@ -155,16 +155,10 @@ fn build_bvh_node(bodies: &mut [BoundedBody3d]) -> BroadPhaseBvhNode3d {
 
     let middle = bodies.len() / 2;
     let (left_bodies, right_bodies) = bodies.split_at_mut(middle);
-    BroadPhaseBvhNode3d::branch(
-        build_bvh_node(left_bodies),
-        build_bvh_node(right_bodies),
-    )
+    BroadPhaseBvhNode3d::branch(build_bvh_node(left_bodies), build_bvh_node(right_bodies))
 }
 
-fn collect_pairs_within(
-    node: &BroadPhaseBvhNode3d,
-    pairs: &mut Vec<RotationalSweepPair3d>,
-) {
+fn collect_pairs_within(node: &BroadPhaseBvhNode3d, pairs: &mut Vec<RotationalSweepPair3d>) {
     let BroadPhaseBvhNodeKind3d::Branch { left, right } = &node.kind else {
         return;
     };
@@ -295,7 +289,8 @@ mod tests {
 
     use super::{
         BoundedBody3d, BroadPhaseBvhNode3d, BroadPhaseBvhNodeKind3d, RotatingBroadPhaseError3d,
-        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh, rotational_sweep_candidate_pairs,
+        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh,
+        rotational_sweep_candidate_pairs,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
@@ -438,7 +433,11 @@ mod tests {
                     dynamic(
                         id + 1,
                         position,
-                        Vec3i::new(x_velocity, i32::try_from(id % 3).expect("small velocity") - 1, 0),
+                        Vec3i::new(
+                            x_velocity,
+                            i32::try_from(id % 3).expect("small velocity") - 1,
+                            0,
+                        ),
                     )
                 }
             })
@@ -452,7 +451,8 @@ mod tests {
         );
         boxes.reverse();
         assert_eq!(
-            rotational_sweep_candidate_pairs(&boxes, config).expect("valid permuted BVH candidates"),
+            rotational_sweep_candidate_pairs(&boxes, config)
+                .expect("valid permuted BVH candidates"),
             expected
         );
     }
