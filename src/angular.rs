@@ -380,11 +380,7 @@ fn wide_orientation_norm_squared(components: [i128; 4]) -> Result<u128, AngularE
     })
 }
 
-fn normalized_component(
-    component: i128,
-    scale: i128,
-    norm: i128,
-) -> Result<i32, AngularError3d> {
+fn normalized_component(component: i128, scale: i128, norm: i128) -> Result<i32, AngularError3d> {
     let numerator = component
         .checked_mul(scale)
         .ok_or(AngularError3d::ArithmeticOverflow)?;
@@ -570,7 +566,7 @@ mod tests {
 
     #[test]
     fn fixed_body_has_zero_inverse_inertia_semantics() {
-        let body = RigidBody::fixed(BodyId(8), Vec3i::ZERO, Vec3i::new(2, 3, 4));
+        let body = RigidBody::fixed(BodyId(8), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(2, 3, 4));
         let inertia = box_inertia(&body).expect("fixed inertia is valid");
 
         assert_eq!(inertia.principal_numerators, [0; 3]);
