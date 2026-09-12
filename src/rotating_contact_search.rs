@@ -3,8 +3,9 @@ use std::{cmp::Ordering, collections::BTreeMap, error::Error, fmt};
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotationalSweepPair3d, obb_contact_seed,
-    rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
+    sample_rigid_box_free_flight,
 };
+use crate::rotating_broad_phase::RotatingBroadPhase3d;
 
 /// Rational upper-bound time returned by deterministic sampled rotating-contact search.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,8 +147,8 @@ struct ContactBracket3d {
 /// Searches candidate rotating-box pairs on a deterministic fixed sample grid and refines the first
 /// observed contact bracket.
 ///
-/// Broad phase comes from [`rotational_sweep_candidate_pairs`]. Every narrow-phase sample is rebuilt
-/// directly from the interval start through [`sample_rigid_box_free_flight`], then evaluated with
+/// Broad phase comes from the engine's conservative rotating broad phase. Every narrow-phase sample is
+/// rebuilt directly from the interval start through [`sample_rigid_box_free_flight`], then evaluated with
 /// [`obb_contact_seed`]. For each candidate pair, the first coarse sample with contact brackets the
 /// transition against the previous coarse sample; binary refinement returns the earliest known contact
 /// side of that bracket. Pair ties are resolved by stable [`BodyId`] ordering.
@@ -166,8 +167,17 @@ pub fn sampled_rotating_contact_search(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    sampled_rotating_contact_search_with_broad_phase(boxes, config, &mut broad_phase)
+}
+
+pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     validate_resolution(config)?;
-    let pairs = rotational_sweep_candidate_pairs(boxes, config.free_flight)?;
+    let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     if pairs.is_empty() {
         return Ok(None);
     }
