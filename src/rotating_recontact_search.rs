@@ -1,11 +1,11 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
+use crate::rotating_broad_phase::RotatingBroadPhase3d;
 use crate::{
     BodyId, ObbContactSeed3d, RigidBox3d, RotatingContactSearchConfig3d,
     RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
     SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
 };
-use crate::rotating_broad_phase::RotatingBroadPhase3d;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ContactBracket3d {
