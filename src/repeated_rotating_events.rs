@@ -7,7 +7,7 @@ use crate::{
     next_rotating_contact_frontier, resolve_rotating_contact_frontier,
 };
 
-pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
+pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 256;
 
 /// Bounded policy for advancing through sampled rotating collision events.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
