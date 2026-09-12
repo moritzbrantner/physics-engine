@@ -16,11 +16,7 @@ fn zero_timestep_does_not_project_existing_fixed_dynamic_overlap() {
     world
         .add_box(
             RigidBox3d::new(
-                RigidBody::fixed(
-                    BodyId(1),
-                    Vec3i::ZERO,
-                    Vec3i::new(10, 10, 10),
-                ),
+                RigidBody::fixed(BodyId(1), Vec3i::ZERO, Vec3i::new(10, 10, 10)),
                 angular(),
             )
             .expect("fixed box"),
