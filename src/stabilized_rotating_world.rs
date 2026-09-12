@@ -1,8 +1,7 @@
 use crate::{
     BodyId, BodyKind, OrientedBox3d, RigidBox3d, RotatingContactResponseError3d,
     RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
-    obb_response::resolve_obb_contact,
-    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    obb_response::resolve_obb_contact, rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
 const MAX_POSITION_STABILIZATION_PASSES: u8 = 64;
@@ -117,9 +116,9 @@ impl RotatingWorld3d {
         }
 
         if !converged {
-            return Err(RotatingWorldError3d::PersistentTailResolutionLimit(u32::from(
-                MAX_POSITION_STABILIZATION_PASSES,
-            )));
+            return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
+                u32::from(MAX_POSITION_STABILIZATION_PASSES),
+            ));
         }
 
         let ids = boxes
