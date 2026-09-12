@@ -16,8 +16,11 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 ///
 /// The inner rotating solver remains the sole authority for impulses, dynamic/dynamic response,
 /// restitution, friction, and angular response. After one requested non-zero world step, this facade only
-/// removes residual integer penetration between fixed and dynamic bodies. Only the dynamic body's projected
-/// position is committed; every velocity and orientation result from the simultaneous solver is preserved.
+/// removes residual integer penetration between fixed and dynamic bodies. The fixed-boundary pass evaluates
+/// every constraint from one shared snapshot and commits at most one combined positional correction per
+/// dynamic body per pass, so adjacent or duplicated fixed surfaces cannot sequentially move the same body
+/// several times inside one stabilization pass. Every velocity and orientation result from the simultaneous
+/// solver is preserved.
 ///
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
 /// bounded number of consecutive steps are put to sleep with zero residual velocity. Sleeping bodies are
@@ -290,14 +293,20 @@ impl RotatingWorld3d {
             return Ok(());
         }
 
+        let mut corrections = vec![PositionCorrectionAccumulator::default(); boxes.len()];
         let mut converged = false;
         let mut any_changed = false;
         for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
-            let mut changed = false;
+            let snapshot = boxes.clone();
+            for correction in &mut corrections {
+                correction.clear();
+            }
+
+            let mut had_projection = false;
             for &(left_index, right_index, dynamic_index) in &candidate_pairs {
                 let response = resolve_obb_contact(
-                    boxes[left_index].clone(),
-                    boxes[right_index].clone(),
+                    snapshot[left_index].clone(),
+                    snapshot[right_index].clone(),
                     false,
                 )
                 .map_err(|error| {
@@ -308,14 +317,37 @@ impl RotatingWorld3d {
                 } else {
                     response.right.body.position
                 };
-                if projected != boxes[dynamic_index].body.position {
-                    boxes[dynamic_index].body.position = projected;
+                let before = snapshot[dynamic_index].body.position;
+                if projected != before {
+                    corrections[dynamic_index].accumulate(
+                        snapshot[dynamic_index].body.id,
+                        before,
+                        projected,
+                    )?;
+                    had_projection = true;
+                }
+            }
+
+            if !had_projection {
+                converged = true;
+                break;
+            }
+
+            let mut changed = false;
+            for (index, correction) in corrections.iter().enumerate() {
+                if correction.is_empty() {
+                    continue;
+                }
+                let id = snapshot[index].body.id;
+                let projected = correction.target_position(id, snapshot[index].body.position)?;
+                if projected != snapshot[index].body.position {
+                    boxes[index].body.position = projected;
                     changed = true;
                     any_changed = true;
                 }
             }
+
             if !changed {
-                converged = true;
                 break;
             }
         }
@@ -345,6 +377,121 @@ impl RotatingWorld3d {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PositionCorrectionGroup {
+    delta: [i64; 3],
+    strength: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct PositionCorrectionAccumulator {
+    groups: BTreeMap<[i64; 3], PositionCorrectionGroup>,
+}
+
+impl PositionCorrectionAccumulator {
+    fn accumulate(
+        &mut self,
+        id: BodyId,
+        before: Vec3i,
+        projected: Vec3i,
+    ) -> Result<(), RotatingWorldError3d> {
+        let delta = [
+            i64::from(projected.x) - i64::from(before.x),
+            i64::from(projected.y) - i64::from(before.y),
+            i64::from(projected.z) - i64::from(before.z),
+        ];
+        if delta == [0; 3] {
+            return Ok(());
+        }
+        let direction = primitive_position_direction(delta, id)?;
+        let strength = delta
+            .into_iter()
+            .map(i64::unsigned_abs)
+            .max()
+            .unwrap_or_default();
+        let candidate = PositionCorrectionGroup { delta, strength };
+        match self.groups.get_mut(&direction) {
+            Some(existing) if existing.strength < strength => *existing = candidate,
+            Some(_) => {}
+            None => {
+                self.groups.insert(direction, candidate);
+            }
+        }
+        Ok(())
+    }
+
+    fn target_position(
+        &self,
+        id: BodyId,
+        before: Vec3i,
+    ) -> Result<Vec3i, RotatingWorldError3d> {
+        let mut combined = [0_i64; 3];
+        for group in self.groups.values() {
+            for axis in 0..3 {
+                combined[axis] = combined[axis]
+                    .checked_add(group.delta[axis])
+                    .ok_or_else(|| position_correction_overflow(id))?;
+            }
+        }
+        Ok(Vec3i::new(
+            checked_position_component(before.x, combined[0], id)?,
+            checked_position_component(before.y, combined[1], id)?,
+            checked_position_component(before.z, combined[2], id)?,
+        ))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.groups.clear();
+    }
+}
+
+fn primitive_position_direction(
+    delta: [i64; 3],
+    id: BodyId,
+) -> Result<[i64; 3], RotatingWorldError3d> {
+    let divisor = delta
+        .into_iter()
+        .map(i64::unsigned_abs)
+        .fold(0_u64, gcd_u64);
+    if divisor == 0 {
+        return Err(position_correction_overflow(id));
+    }
+    let divisor = i64::try_from(divisor).map_err(|_| position_correction_overflow(id))?;
+    Ok([
+        delta[0] / divisor,
+        delta[1] / divisor,
+        delta[2] / divisor,
+    ])
+}
+
+fn checked_position_component(
+    value: i32,
+    delta: i64,
+    id: BodyId,
+) -> Result<i32, RotatingWorldError3d> {
+    let value = i64::from(value)
+        .checked_add(delta)
+        .ok_or_else(|| position_correction_overflow(id))?;
+    i32::try_from(value).map_err(|_| position_correction_overflow(id))
+}
+
+fn position_correction_overflow(id: BodyId) -> RotatingWorldError3d {
+    RotatingWorldError3d::Response(RotatingContactResponseError3d::ArithmeticOverflow(id))
+}
+
+fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
 }
 
 fn low_motion(rigid_box: &RigidBox3d) -> bool {
@@ -393,7 +540,7 @@ mod tests {
         RotatingWorldConfig3d, Vec3i,
     };
 
-    use super::{RotatingWorld3d, SLEEP_STABLE_STEPS};
+    use super::{PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -411,6 +558,44 @@ mod tests {
             solver_passes: 4,
             max_events: 8,
         })
+    }
+
+    #[test]
+    fn parallel_position_corrections_do_not_stack() {
+        let id = BodyId(9);
+        let mut corrections = PositionCorrectionAccumulator::default();
+        corrections
+            .accumulate(id, Vec3i::ZERO, Vec3i::new(2, 0, 0))
+            .expect("first correction");
+        corrections
+            .accumulate(id, Vec3i::ZERO, Vec3i::new(3, 0, 0))
+            .expect("stronger parallel correction");
+
+        assert_eq!(
+            corrections
+                .target_position(id, Vec3i::ZERO)
+                .expect("combined correction"),
+            Vec3i::new(3, 0, 0)
+        );
+    }
+
+    #[test]
+    fn independent_position_corrections_commit_once_together() {
+        let id = BodyId(10);
+        let mut corrections = PositionCorrectionAccumulator::default();
+        corrections
+            .accumulate(id, Vec3i::ZERO, Vec3i::new(2, 0, 0))
+            .expect("horizontal correction");
+        corrections
+            .accumulate(id, Vec3i::ZERO, Vec3i::new(0, 3, 0))
+            .expect("vertical correction");
+
+        assert_eq!(
+            corrections
+                .target_position(id, Vec3i::ZERO)
+                .expect("combined correction"),
+            Vec3i::new(2, 3, 0)
+        );
     }
 
     #[test]
