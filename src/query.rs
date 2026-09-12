@@ -155,7 +155,7 @@ fn snapshot_hit(probe: &RigidBody, body: &RigidBody, ticks: i32) -> Option<Query
     })
 }
 
-fn hit_order_key(hit: &QueryHit) -> (i64, BodyId) {
+fn hit_order_key(hit: &QueryHit) -> (u64, BodyId) {
     (hit.time.subticks(), hit.body)
 }
 
