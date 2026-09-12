@@ -4,7 +4,6 @@ use crate::{
     BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d,
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
     RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
-    sampled_rotating_contact_search, sampled_rotating_recontact_search,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
@@ -114,11 +113,11 @@ impl From<OrientedBoxError3d> for RotatingContactFrontierError3d {
 
 /// Reconstructs the globally earliest sampled rotating-contact frontier from one common interval start.
 ///
-/// [`sampled_rotating_contact_search`] supplies the earliest admitted sampled contact fraction. Every body
-/// is then sampled directly from the original state at exactly that rational fraction. The frontier
-/// re-evaluates every conservative rotational broad-phase candidate in that shared state and retains all
-/// equal-time OBB contacts, so response consumes one deterministic contact set rather than independently
-/// sampled pairs in discovery order.
+/// [`crate::sampled_rotating_contact_search`] supplies the earliest admitted sampled contact fraction.
+/// Every body is then sampled directly from the original state at exactly that rational fraction. The
+/// frontier re-evaluates every conservative rotational broad-phase candidate in that shared state and
+/// retains all equal-time OBB contacts, so response consumes one deterministic contact set rather than
+/// independently sampled pairs in discovery order.
 ///
 /// The original earliest hit must still exist with identical contact evidence in the reconstructed state;
 /// drift fails closed. This remains **sampled rotational collision handling, not analytic rotational CCD**:
@@ -156,11 +155,11 @@ pub(crate) fn earliest_rotating_contact_frontier_with_broad_phase(
 
 /// Reconstructs the earliest strictly-positive sampled re-contact frontier from one common interval start.
 ///
-/// [`sampled_rotating_recontact_search`] ignores a pair already touching at time zero until the coarse grid
-/// observes a clear sample and a later contact. Once that positive hit is selected, this function uses the
-/// same reconstruction authority as [`earliest_rotating_contact_frontier`]: all bodies are sampled from the
-/// same interval start and **all** contacts present at that shared state are retained, including persistent
-/// contacts that were intentionally not eligible to select the next event.
+/// [`crate::sampled_rotating_recontact_search`] ignores a pair already touching at time zero until the
+/// coarse grid observes a clear sample and a later contact. Once that positive hit is selected, this
+/// function uses the same reconstruction authority as [`earliest_rotating_contact_frontier`]: all bodies
+/// are sampled from the same interval start and **all** contacts present at that shared state are retained,
+/// including persistent contacts that were intentionally not eligible to select the next event.
 ///
 /// This split is important for repeated-event stepping. Persistent contacts cannot monopolize event
 /// discovery, but they re-enter the shared frontier when a genuine later sampled event occurs and therefore
