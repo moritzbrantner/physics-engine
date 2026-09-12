@@ -6,6 +6,8 @@ use physics_engine::{
 const PLAYER_ID: BodyId = BodyId(1);
 const TICKS_PER_SECOND: i32 = 60;
 const STABILITY_TICKS: usize = 120;
+const CRATE_RESTITUTION_MILLI: u16 = 0;
+const CRATE_FRICTION_MILLI: u16 = 1_000;
 
 fn rotating_box(body: RigidBody) -> RigidBox3d {
     RigidBox3d::new(
@@ -80,7 +82,9 @@ fn sandbox_world() -> RotatingWorld3d {
                     Vec3i::new(18, 18, 18),
                 )
                 .with_mass(2)
-                .with_material(Material::new(100)),
+                .with_material(
+                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
+                ),
             ))
             .expect("crate");
     }
@@ -99,27 +103,26 @@ fn controlled_step_with_jump(
     jump: bool,
     tick: usize,
 ) {
-    let current_y = world
+    let current_velocity = world
         .box_by_id(PLAYER_ID)
         .expect("player")
         .body()
-        .velocity()
-        .y;
+        .velocity();
     let next_y = if jump {
         16_i32.saturating_mul(TICKS_PER_SECOND)
     } else {
-        current_y
+        current_velocity.y
     };
-    world
-        .set_linear_velocity(
-            PLAYER_ID,
-            Vec3i::new(
-                move_x.saturating_mul(TICKS_PER_SECOND),
-                next_y,
-                move_z.saturating_mul(TICKS_PER_SECOND),
-            ),
-        )
-        .expect("controlled player velocity");
+    let velocity = Vec3i::new(
+        move_x.saturating_mul(TICKS_PER_SECOND),
+        next_y,
+        move_z.saturating_mul(TICKS_PER_SECOND),
+    );
+    if velocity != current_velocity {
+        world
+            .set_linear_velocity(PLAYER_ID, velocity)
+            .expect("controlled player velocity");
+    }
     world
         .step(1, TICKS_PER_SECOND)
         .unwrap_or_else(|error| panic!("sandbox failed at tick {tick}: {error:?}"));
@@ -199,5 +202,28 @@ fn mixed_movement_jump_and_projectile_survives_reported_path() {
             shoot(&mut world, BodyId(1_000), Vec3i::new(84, -3, -36));
         }
         controlled_step_with_jump(&mut world, movement.0, movement.1, tick == 71, tick);
+    }
+}
+
+#[test]
+fn rough_crate_push_and_turn_survives_long_play() {
+    let mut world = sandbox_world();
+    let phases = [
+        (0, (0, -7)),
+        (90, (5, -6)),
+        (130, (-6, -3)),
+        (170, (7, 2)),
+        (210, (0, -7)),
+        (270, (-5, 5)),
+        (320, (0, 0)),
+    ];
+    let mut movement = (0, 0);
+
+    for tick in 0..=360 {
+        if let Some((_, next)) = phases.iter().find(|(at, _)| *at == tick) {
+            movement = *next;
+        }
+        let jump = matches!(tick, 104 | 188 | 286);
+        controlled_step_with_jump(&mut world, movement.0, movement.1, jump, tick);
     }
 }
