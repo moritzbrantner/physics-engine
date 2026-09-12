@@ -9,8 +9,11 @@
 //! sampled rotating contact/re-contact search, shared first/re-contact frontiers, deterministic
 //! OBB/frontier response, Coulomb-limited OBB friction, bounded repeated sampled-event advancement,
 //! and a rotating-box world that consumes persistent contact tails deterministically. The original
-//! `World` solver remains translational and AABB-only; `RotatingWorld3d` is the engine-owned
-//! rotating-cuboid solver. Rendering, ECS storage, game loops and scene ownership belong to consumers.
+//! `World` solver remains translational and AABB-only. The public `RotatingWorld3d` defaults to an
+//! ECS-backed entity/component world that runs the stabilized rotating solver as a physics system; the raw
+//! solver resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//!
+//! Rendering, game loops and non-physics components remain consumer-owned.
 
 #![forbid(unsafe_code)]
 
@@ -18,6 +21,7 @@ mod angular;
 mod body;
 mod collider;
 mod collision;
+mod ecs_world;
 mod math;
 mod obb_friction;
 mod obb_response;
@@ -46,6 +50,7 @@ pub use collider::{Collider, ColliderContact, ColliderError, ColliderShape, coll
 pub use collision::{
     ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,
 };
+pub use ecs_world::EcsRotatingWorld3d as RotatingWorld3d;
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
 pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
@@ -85,5 +90,5 @@ pub use rotating_world::{
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
-pub use stabilized_rotating_world::RotatingWorld3d;
+pub use stabilized_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
