@@ -9,6 +9,7 @@ on:
       - "src/rotating_broad_phase.rs"
       - "src/rotating_broad_phase_tree.rs"
       - "src/rotating_contact_search.rs"
+      - "src/rotating_recontact_search.rs"
       - "src/obb_response.rs"
       - "src/rotating_contact_response.rs"
       - "tests/*performance*.rs"
