@@ -101,7 +101,6 @@ impl IndexedBvh3d {
         };
         let mut pairs = Vec::new();
         self.collect_pairs_within(root, &mut pairs);
-        pairs.sort_unstable();
         pairs
     }
 
