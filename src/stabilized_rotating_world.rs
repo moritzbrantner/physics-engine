@@ -422,11 +422,7 @@ impl PositionCorrectionAccumulator {
         Ok(())
     }
 
-    fn target_position(
-        &self,
-        id: BodyId,
-        before: Vec3i,
-    ) -> Result<Vec3i, RotatingWorldError3d> {
+    fn target_position(&self, id: BodyId, before: Vec3i) -> Result<Vec3i, RotatingWorldError3d> {
         let mut combined = [0_i64; 3];
         for group in self.groups.values() {
             for axis in 0..3 {
@@ -463,11 +459,7 @@ fn primitive_position_direction(
         return Err(position_correction_overflow(id));
     }
     let divisor = i64::try_from(divisor).map_err(|_| position_correction_overflow(id))?;
-    Ok([
-        delta[0] / divisor,
-        delta[1] / divisor,
-        delta[2] / divisor,
-    ])
+    Ok([delta[0] / divisor, delta[1] / divisor, delta[2] / divisor])
 }
 
 fn checked_position_component(
