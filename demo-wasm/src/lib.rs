@@ -12,6 +12,8 @@ const MOVE_SPEED: i32 = 7;
 const JUMP_SPEED: i32 = 16;
 const PROJECTILE_SPEED_LIMIT: i32 = 120;
 const ROTATING_TICKS_PER_SECOND: i32 = 60;
+const CRATE_RESTITUTION_MILLI: u16 = 50;
+const CRATE_FRICTION_MILLI: u16 = 850;
 
 struct Sandbox {
     world: RotatingWorld3d,
@@ -85,7 +87,9 @@ impl Sandbox {
                     Vec3i::new(18, 18, 18),
                 )
                 .with_mass(2)
-                .with_material(Material::new(100)),
+                .with_material(
+                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
+                ),
             ))?;
         }
 
