@@ -90,38 +90,33 @@ impl RotatingWorld3d {
             return Ok(());
         }
 
+        let candidate_pairs = fixed_dynamic_pairs(&boxes);
+        if candidate_pairs.is_empty() {
+            return Ok(());
+        }
+
         let mut converged = false;
+        let mut any_changed = false;
         for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
             let mut changed = false;
-            for left_index in 0..boxes.len() {
-                for right_index in (left_index + 1)..boxes.len() {
-                    let dynamic_index =
-                        match (boxes[left_index].body.kind, boxes[right_index].body.kind) {
-                            (BodyKind::Fixed, BodyKind::Dynamic) => Some(right_index),
-                            (BodyKind::Dynamic, BodyKind::Fixed) => Some(left_index),
-                            _ => None,
-                        };
-                    let Some(dynamic_index) = dynamic_index else {
-                        continue;
-                    };
-
-                    let response = resolve_obb_contact(
-                        boxes[left_index].clone(),
-                        boxes[right_index].clone(),
-                        false,
-                    )
-                    .map_err(|error| {
-                        RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))
-                    })?;
-                    let projected = if dynamic_index == left_index {
-                        response.left.body.position
-                    } else {
-                        response.right.body.position
-                    };
-                    if projected != boxes[dynamic_index].body.position {
-                        boxes[dynamic_index].body.position = projected;
-                        changed = true;
-                    }
+            for &(left_index, right_index, dynamic_index) in &candidate_pairs {
+                let response = resolve_obb_contact(
+                    boxes[left_index].clone(),
+                    boxes[right_index].clone(),
+                    false,
+                )
+                .map_err(|error| {
+                    RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))
+                })?;
+                let projected = if dynamic_index == left_index {
+                    response.left.body.position
+                } else {
+                    response.right.body.position
+                };
+                if projected != boxes[dynamic_index].body.position {
+                    boxes[dynamic_index].body.position = projected;
+                    changed = true;
+                    any_changed = true;
                 }
             }
             if !changed {
@@ -134,6 +129,9 @@ impl RotatingWorld3d {
             return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
                 u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),
             ));
+        }
+        if !any_changed {
+            return Ok(());
         }
 
         let ids = boxes
@@ -152,4 +150,21 @@ impl RotatingWorld3d {
         }
         Ok(())
     }
+}
+
+fn fixed_dynamic_pairs(boxes: &[RigidBox3d]) -> Vec<(usize, usize, usize)> {
+    let mut pairs = Vec::new();
+    for left_index in 0..boxes.len() {
+        for right_index in (left_index + 1)..boxes.len() {
+            let dynamic_index = match (boxes[left_index].body.kind, boxes[right_index].body.kind) {
+                (BodyKind::Fixed, BodyKind::Dynamic) => Some(right_index),
+                (BodyKind::Dynamic, BodyKind::Fixed) => Some(left_index),
+                _ => None,
+            };
+            if let Some(dynamic_index) = dynamic_index {
+                pairs.push((left_index, right_index, dynamic_index));
+            }
+        }
+    }
+    pairs
 }
