@@ -147,12 +147,16 @@ impl BodyDeltaAccumulator3d {
         Ok(())
     }
 
-    fn combined(self, id: BodyId) -> Result<BodyDelta3d, RotatingContactResponseError3d> {
+    fn combined(&self, id: BodyId) -> Result<BodyDelta3d, RotatingContactResponseError3d> {
         let mut combined = BodyDelta3d::default();
-        for group in self.groups.into_values() {
+        for group in self.groups.values().copied() {
             combined.checked_add(group.sum.divided(group.count, id)?, id)?;
         }
         Ok(combined)
+    }
+
+    fn clear(&mut self) {
+        self.groups.clear();
     }
 }
 
@@ -190,18 +194,34 @@ pub fn resolve_rotating_contact_frontier(
         .collect::<BTreeMap<_, _>>();
     let mut boxes = frontier.boxes;
     let mut passes_used = 0_u8;
+    let mut resolved_indices = vec![None; frontier.contacts.len()];
+    let mut snapshot = boxes.clone();
+    let mut deltas = vec![BodyDeltaAccumulator3d::default(); boxes.len()];
+    let mut combined = Vec::with_capacity(boxes.len());
 
     for pass in 0..solver_passes {
-        let snapshot = boxes.clone();
-        let mut deltas = vec![BodyDeltaAccumulator3d::default(); snapshot.len()];
+        if pass > 0 {
+            snapshot.clone_from(&boxes);
+        }
+        for accumulator in &mut deltas {
+            accumulator.clear();
+        }
 
-        for contact in &frontier.contacts {
-            let left_index = *indices.get(&contact.pair.left).ok_or(
-                RotatingContactResponseError3d::MissingBody(contact.pair.left),
-            )?;
-            let right_index = *indices.get(&contact.pair.right).ok_or(
-                RotatingContactResponseError3d::MissingBody(contact.pair.right),
-            )?;
+        for (contact_index, contact) in frontier.contacts.iter().enumerate() {
+            let (left_index, right_index) = match resolved_indices[contact_index] {
+                Some(indices) => indices,
+                None => {
+                    let left_index = *indices.get(&contact.pair.left).ok_or(
+                        RotatingContactResponseError3d::MissingBody(contact.pair.left),
+                    )?;
+                    let right_index = *indices.get(&contact.pair.right).ok_or(
+                        RotatingContactResponseError3d::MissingBody(contact.pair.right),
+                    )?;
+                    let resolved = (left_index, right_index);
+                    resolved_indices[contact_index] = Some(resolved);
+                    resolved
+                }
+            };
             let response = resolve_obb_contact(
                 snapshot[left_index].clone(),
                 snapshot[right_index].clone(),
@@ -222,14 +242,14 @@ pub fn resolve_rotating_contact_frontier(
             )?;
         }
 
-        let mut combined = Vec::with_capacity(boxes.len());
-        for (rigid_box, accumulator) in snapshot.iter().zip(deltas) {
+        combined.clear();
+        for (rigid_box, accumulator) in snapshot.iter().zip(&deltas) {
             combined.push(accumulator.combined(rigid_box.body.id)?);
         }
         if combined.iter().copied().all(BodyDelta3d::is_zero) {
             break;
         }
-        for (rigid_box, delta) in boxes.iter_mut().zip(combined) {
+        for (rigid_box, delta) in boxes.iter_mut().zip(combined.iter().copied()) {
             apply_delta(rigid_box, delta)?;
         }
         passes_used = passes_used.checked_add(1).ok_or(
