@@ -94,14 +94,11 @@ impl IndexedBvh3d {
         true
     }
 
-    #[must_use]
-    pub(super) fn candidate_pairs(&self) -> Vec<(BodyId, BodyId)> {
+    pub(super) fn for_each_candidate_pair(&self, mut visit: impl FnMut(BodyId, BodyId)) {
         let Some(root) = self.root else {
-            return Vec::new();
+            return;
         };
-        let mut pairs = Vec::new();
-        self.collect_pairs_within(root, &mut pairs);
-        pairs
+        self.visit_pairs_within(root, &mut visit);
     }
 
     fn node(&self, index: NodeIndex) -> &ArenaNode3d {
@@ -402,20 +399,20 @@ impl IndexedBvh3d {
         pivot
     }
 
-    fn collect_pairs_within(&self, index: NodeIndex, pairs: &mut Vec<(BodyId, BodyId)>) {
+    fn visit_pairs_within(&self, index: NodeIndex, visit: &mut impl FnMut(BodyId, BodyId)) {
         let ArenaNodeKind3d::Branch { left, right } = self.node(index).kind else {
             return;
         };
-        self.collect_pairs_within(left, pairs);
-        self.collect_pairs_within(right, pairs);
-        self.collect_pairs_between(left, right, pairs);
+        self.visit_pairs_within(left, visit);
+        self.visit_pairs_within(right, visit);
+        self.visit_pairs_between(left, right, visit);
     }
 
-    fn collect_pairs_between(
+    fn visit_pairs_between(
         &self,
         left: NodeIndex,
         right: NodeIndex,
-        pairs: &mut Vec<(BodyId, BodyId)>,
+        visit: &mut impl FnMut(BodyId, BodyId),
     ) {
         let left_node = *self.node(left);
         let right_node = *self.node(right);
@@ -430,47 +427,47 @@ impl IndexedBvh3d {
                 if left_body.kind == BodyKind::Fixed && right_body.kind == BodyKind::Fixed {
                     return;
                 }
-                let pair = if left_body.id < right_body.id {
+                let (pair_left, pair_right) = if left_body.id < right_body.id {
                     (left_body.id, right_body.id)
                 } else {
                     (right_body.id, left_body.id)
                 };
-                pairs.push(pair);
+                visit(pair_left, pair_right);
             }
             (
                 ArenaNodeKind3d::Branch {
-                    left: ll,
-                    right: lr,
+                    left: left_left,
+                    right: left_right,
                 },
                 ArenaNodeKind3d::Leaf(_),
             ) => {
-                self.collect_pairs_between(ll, right, pairs);
-                self.collect_pairs_between(lr, right, pairs);
+                self.visit_pairs_between(left_left, right, visit);
+                self.visit_pairs_between(left_right, right, visit);
             }
             (
                 ArenaNodeKind3d::Leaf(_),
                 ArenaNodeKind3d::Branch {
-                    left: rl,
-                    right: rr,
+                    left: right_left,
+                    right: right_right,
                 },
             ) => {
-                self.collect_pairs_between(left, rl, pairs);
-                self.collect_pairs_between(left, rr, pairs);
+                self.visit_pairs_between(left, right_left, visit);
+                self.visit_pairs_between(left, right_right, visit);
             }
             (
                 ArenaNodeKind3d::Branch {
-                    left: ll,
-                    right: lr,
+                    left: left_left,
+                    right: left_right,
                 },
                 ArenaNodeKind3d::Branch {
-                    left: rl,
-                    right: rr,
+                    left: right_left,
+                    right: right_right,
                 },
             ) => {
-                self.collect_pairs_between(ll, rl, pairs);
-                self.collect_pairs_between(ll, rr, pairs);
-                self.collect_pairs_between(lr, rl, pairs);
-                self.collect_pairs_between(lr, rr, pairs);
+                self.visit_pairs_between(left_left, right_left, visit);
+                self.visit_pairs_between(left_left, right_right, visit);
+                self.visit_pairs_between(left_right, right_left, visit);
+                self.visit_pairs_between(left_right, right_right, visit);
             }
         }
     }
