@@ -72,8 +72,9 @@ struct BoundedBody3d {
 /// Exact sweep bounds can therefore escape and reinsert without scanning unrelated subtrees. Small and
 /// medium escape batches are updated incrementally; when more than half of the tree escapes in one query,
 /// a balanced rebuild is cheaper and is selected deterministically. Membership or body-kind changes also
-/// rebuild. Candidate output is always filtered against the exact current sweep bounds, so tree
-/// persistence and balancing affect pruning cost only and cannot change collision truth.
+/// rebuild. Fat candidates are streamed directly through exact-bound filtering so only surviving pairs
+/// are materialized. Tree persistence and balancing therefore affect pruning cost only and cannot change
+/// collision truth.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RotatingBroadPhase3d {
     tree: IndexedBvh3d,
@@ -133,21 +134,19 @@ impl RotatingBroadPhase3d {
             }
         }
 
+        let exact = &self.exact;
         let mut pairs = Vec::new();
-        for (left, right) in self.tree.candidate_pairs() {
-            let left_body = self
-                .exact
+        self.tree.for_each_candidate_pair(|left, right| {
+            let left_body = exact
                 .get(&left)
                 .expect("indexed broad phase keeps every leaf exact bound");
-            let right_body = self
-                .exact
+            let right_body = exact
                 .get(&right)
                 .expect("indexed broad phase keeps every leaf exact bound");
-            if !bounds_overlap(left_body.bounds, right_body.bounds) {
-                continue;
+            if bounds_overlap(left_body.bounds, right_body.bounds) {
+                pairs.push(RotationalSweepPair3d { left, right });
             }
-            pairs.push(RotationalSweepPair3d { left, right });
-        }
+        });
         pairs.sort_unstable();
         Ok(pairs)
     }
