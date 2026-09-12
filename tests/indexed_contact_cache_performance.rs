@@ -123,8 +123,10 @@ fn prior_search_pair(
 
     let denominator = u32::from(config.sample_count);
     for numerator in 1..=denominator {
-        let sampled_left = coarse_samples.sample(left, config.free_flight, numerator, denominator)?;
-        let sampled_right = coarse_samples.sample(right, config.free_flight, numerator, denominator)?;
+        let sampled_left =
+            coarse_samples.sample(left, config.free_flight, numerator, denominator)?;
+        let sampled_right =
+            coarse_samples.sample(right, config.free_flight, numerator, denominator)?;
         let Some(contact) = obb_contact_seed(sampled_left, sampled_right)? else {
             continue;
         };
@@ -219,9 +221,7 @@ fn indexed_contact_cache_benchmark() {
     );
 
     black_box(prior_cached_search(black_box(&boxes), search).expect("prior cached warmup"));
-    black_box(
-        sampled_rotating_contact_search(black_box(&boxes), search).expect("indexed warmup"),
-    );
+    black_box(sampled_rotating_contact_search(black_box(&boxes), search).expect("indexed warmup"));
 
     let prior_start = Instant::now();
     for _ in 0..iterations {
@@ -232,8 +232,7 @@ fn indexed_contact_cache_benchmark() {
     let indexed_start = Instant::now();
     for _ in 0..iterations {
         black_box(
-            sampled_rotating_contact_search(black_box(&boxes), search)
-                .expect("indexed benchmark"),
+            sampled_rotating_contact_search(black_box(&boxes), search).expect("indexed benchmark"),
         );
     }
     let indexed_elapsed = indexed_start.elapsed();
