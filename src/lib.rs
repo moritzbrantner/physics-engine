@@ -16,6 +16,8 @@
 
 mod angular;
 mod body;
+#[cfg(test)]
+mod broad_phase_performance;
 mod collider;
 mod collision;
 mod math;

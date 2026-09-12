@@ -8,6 +8,7 @@ on:
       - "src/repeated_rotating_events.rs"
       - "src/rotating_broad_phase.rs"
       - "src/rotating_broad_phase_tree.rs"
+      - "src/broad_phase_performance.rs"
       - "src/rotating_contact_search.rs"
       - "src/obb_response.rs"
       - "src/rotating_contact_response.rs"

@@ -29,6 +29,15 @@ run_library_module() {
   ran=1
 }
 
+run_library_test() {
+  local filter="$1"
+  echo "::group::release performance evidence: library test ${filter}"
+  /usr/bin/time -v cargo test --release --locked --lib "$filter" -- \
+    --ignored --nocapture --test-threads=1
+  echo "::endgroup::"
+  ran=1
+}
+
 if grep -Eq '(^|/)(query\.rs|ray_query_performance\.rs)$' <<<"$changed"; then
   run_integration ray_query_performance
 fi
@@ -39,6 +48,10 @@ fi
 
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
   run_library_module rotating_broad_phase
+fi
+
+if grep -Eq '(^|/)broad_phase_performance\.rs$' <<<"$changed"; then
+  run_library_test broad_phase_performance::broad_phase_workload_matrix
 fi
 
 if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_cache_performance\.rs)$' <<<"$changed"; then
