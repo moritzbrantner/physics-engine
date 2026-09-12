@@ -1,11 +1,11 @@
 use std::{cmp::Ordering, collections::BTreeMap, error::Error, fmt};
 
+use crate::rotating_broad_phase::RotatingBroadPhase3d;
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotationalSweepPair3d, obb_contact_seed,
     sample_rigid_box_free_flight,
 };
-use crate::rotating_broad_phase::RotatingBroadPhase3d;
 
 /// Rational upper-bound time returned by deterministic sampled rotating-contact search.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
