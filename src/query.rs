@@ -125,12 +125,7 @@ fn cast_snapshot(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Vec
     hits
 }
 
-fn first_snapshot_hit(
-    world: &World,
-    query: Aabb,
-    velocity: Vec3i,
-    ticks: i32,
-) -> Option<QueryHit> {
+fn first_snapshot_hit(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Option<QueryHit> {
     let probe = query_body(query, velocity);
     world
         .bodies()
