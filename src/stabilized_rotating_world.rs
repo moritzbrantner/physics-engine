@@ -108,7 +108,7 @@ impl RotatingWorld3d {
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
-        if timestep_numerator == 0 || timestep_numerator < 0 || timestep_denominator <= 0 {
+        if timestep_numerator <= 0 || timestep_denominator <= 0 {
             return self.inner.step(timestep_numerator, timestep_denominator);
         }
 
