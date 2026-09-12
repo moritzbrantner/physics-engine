@@ -3,9 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
-    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
-    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i, obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds, rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
@@ -169,9 +168,9 @@ impl RotatingWorld3d {
                 .copied()
                 .filter(|id| {
                     sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {
-                        awake_bounds.iter().any(|(_, bounds)| {
-                            sweep_bounds_overlap(*bounds, *sleeping_bounds)
-                        })
+                        awake_bounds
+                            .iter()
+                            .any(|(_, bounds)| sweep_bounds_overlap(*bounds, *sleeping_bounds))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -211,11 +210,7 @@ impl RotatingWorld3d {
         Ok(())
     }
 
-    fn set_sleep_proxy(
-        &mut self,
-        id: BodyId,
-        sleeping: bool,
-    ) -> Result<(), RotatingWorldError3d> {
+    fn set_sleep_proxy(&mut self, id: BodyId, sleeping: bool) -> Result<(), RotatingWorldError3d> {
         let mut rigid_box = self
             .inner
             .remove_box(id)
