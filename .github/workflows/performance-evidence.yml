@@ -1,0 +1,24 @@
+name: Performance Evidence
+
+on:
+  pull_request:
+    paths:
+      - "tests/*performance*.rs"
+      - ".github/workflows/performance-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Prepare Rust toolchain
+        run: rustc --version && cargo --version
+
+      - name: Ray first-hit scan versus prior full sort
+        run: cargo test --release --locked ray_cast_first_scan_benchmark -- --ignored --nocapture
