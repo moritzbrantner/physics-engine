@@ -6,9 +6,17 @@ use crate::{
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct ComponentStore<T> {
     values: BTreeMap<BodyId, T>,
+}
+
+impl<T> Default for ComponentStore<T> {
+    fn default() -> Self {
+        Self {
+            values: BTreeMap::new(),
+        }
+    }
 }
 
 impl<T> ComponentStore<T> {
@@ -18,6 +26,10 @@ impl<T> ComponentStore<T> {
 
     fn get(&self, entity: BodyId) -> Option<&T> {
         self.values.get(&entity)
+    }
+
+    fn get_mut(&mut self, entity: BodyId) -> Option<&mut T> {
+        self.values.get_mut(&entity)
     }
 
     fn remove(&mut self, entity: BodyId) -> Option<T> {
@@ -39,6 +51,8 @@ impl<T> ComponentStore<T> {
 /// The existing stabilized rotating solver is retained as a system-owned resource so broad-phase caches,
 /// sleeping state, exact collision discovery, and response authority stay inside the physics engine. After
 /// every successful system step, authoritative solver state is written back into the ECS component store.
+/// Component slots are reused in place during stepping, so the ECS boundary does not rebuild its storage
+/// every frame.
 ///
 /// This is the default public `RotatingWorld3d` integration. Consumers that deliberately need the raw
 /// solver resource can use `PhysicsWorld3dKernel` instead.
@@ -145,21 +159,25 @@ impl EcsRotatingWorld3d {
     }
 
     fn sync_entity_from_physics(&mut self, entity: BodyId) {
-        let Some(rigid_box) = self.physics.box_by_id(entity).cloned() else {
+        let Some(rigid_box) = self.physics.box_by_id(entity) else {
             return;
         };
-        let previous = self.rigid_boxes.insert(entity, rigid_box);
-        debug_assert!(previous.is_some());
+        let component = self
+            .rigid_boxes
+            .get_mut(entity)
+            .expect("live physics entity must retain its ECS component");
+        component.clone_from(rigid_box);
     }
 
     fn sync_all_from_physics(&mut self) {
-        let next = self
-            .physics
-            .boxes()
-            .map(|rigid_box| (rigid_box.body().id(), rigid_box.clone()))
-            .collect::<BTreeMap<_, _>>();
-        debug_assert_eq!(next.len(), self.entities.len());
-        self.rigid_boxes.values = next;
+        for rigid_box in self.physics.boxes() {
+            let entity = rigid_box.body().id();
+            let component = self
+                .rigid_boxes
+                .get_mut(entity)
+                .expect("physics system body must have an ECS component");
+            component.clone_from(rigid_box);
+        }
         debug_assert_eq!(self.rigid_boxes.len(), self.entities.len());
     }
 }
