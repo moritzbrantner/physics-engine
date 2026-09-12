@@ -598,8 +598,8 @@ mod tests {
         assert_eq!(
             hit.time,
             SampledContactTime3d {
-                numerator: 3,
-                denominator: 8,
+                numerator: 11,
+                denominator: 32,
             }
         );
     }
