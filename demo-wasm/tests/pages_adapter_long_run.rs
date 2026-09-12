@@ -9,7 +9,7 @@ fn step(tick: usize, move_x: i32, move_z: i32, jump: bool) {
 }
 
 #[test]
-#[ignore = "known adapter failure while the direct-world regression exposes its engine error"]
+#[ignore = "run explicitly by the dedicated Pages adapter gate"]
 fn pages_adapter_replays_reported_mixed_input_path() {
     sandbox_reset();
     let changes = [
