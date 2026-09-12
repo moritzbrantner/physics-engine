@@ -9,6 +9,8 @@ use crate::{
     RotationalSweepBounds3d, rigid_box_free_flight_sweep_bounds,
 };
 
+const MAX_INCREMENTAL_REINSERTS_PER_QUERY: usize = 8;
+
 /// Canonically ordered broad-phase candidate pair for rotating rigid boxes.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RotationalSweepPair3d {
@@ -110,11 +112,12 @@ impl BroadPhaseBvhNode3d {
 /// Persistent deterministic broad phase for rotating rigid boxes.
 ///
 /// The tree stores fat conservative envelopes so repeated queries can retain topology while exact sweep
-/// bounds move within those envelopes. A leaf that escapes its fat envelope is removed and reinserted
-/// independently; only membership or body-kind changes require a full balanced rebuild. Ancestors are
-/// refitted after each edit and locally height-balanced with deterministic rotations. Candidate output is
-/// still filtered against the exact current sweep bounds, so persistence changes pruning cost only; it
-/// cannot add or remove a pair relative to a fresh conservative broad-phase build.
+/// bounds move within those envelopes. A small bounded set of leaves that escape their fat envelopes are
+/// removed and reinserted independently; membership/body-kind changes or a bulk escape use a full balanced
+/// rebuild instead. Ancestors are refitted after each edit and locally height-balanced with deterministic
+/// rotations. Candidate output is still filtered against the exact current sweep bounds, so persistence
+/// changes pruning cost only; it cannot add or remove a pair relative to a fresh conservative broad-phase
+/// build.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RotatingBroadPhase3d {
     tree: Option<BroadPhaseBvhNode3d>,
@@ -151,6 +154,9 @@ impl RotatingBroadPhase3d {
 
             if escaped.is_empty() {
                 self.stats.reuses = self.stats.reuses.saturating_add(1);
+            } else if escaped.len() > MAX_INCREMENTAL_REINSERTS_PER_QUERY {
+                self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
+                self.rebuild(self.exact.values().copied().collect());
             } else {
                 self.stats.incremental_updates = self.stats.incremental_updates.saturating_add(1);
                 let mut rotations = 0_u64;
@@ -912,6 +918,46 @@ mod tests {
             .candidate_pairs(&added, config)
             .expect("membership-changing query");
 
+        assert_eq!(broad_phase.stats().rebuilds, 2);
+        assert_eq!(broad_phase.stats().incremental_updates, 0);
+        assert_eq!(broad_phase.stats().reinserts, 0);
+    }
+
+    #[test]
+    fn bulk_escape_falls_back_to_balanced_rebuild() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let initial = (0..16_u64)
+            .map(|id| {
+                dynamic(
+                    id + 1,
+                    Vec3i::new(i32::try_from(id).expect("small position") * 8, 0, 0),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let escaped = (0..16_u64)
+            .map(|id| {
+                dynamic(
+                    id + 1,
+                    Vec3i::new(
+                        10_000 + i32::try_from(id).expect("small position") * 8,
+                        0,
+                        0,
+                    ),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut broad_phase = RotatingBroadPhase3d::default();
+
+        broad_phase
+            .candidate_pairs(&initial, config)
+            .expect("initial bulk query");
+        let actual = broad_phase
+            .candidate_pairs(&escaped, config)
+            .expect("bulk escape query");
+
+        assert_eq!(actual, brute_force_candidate_pairs(&escaped, config));
         assert_eq!(broad_phase.stats().rebuilds, 2);
         assert_eq!(broad_phase.stats().incremental_updates, 0);
         assert_eq!(broad_phase.stats().reinserts, 0);
