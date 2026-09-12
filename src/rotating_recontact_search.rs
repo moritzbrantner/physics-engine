@@ -1,6 +1,9 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use crate::rotating_broad_phase::RotatingBroadPhase3d;
+use crate::{
+    rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_contact_search::coarse_numerator_limit,
+};
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBox3d, RigidBox3d, RotatingContactSearchConfig3d,
     RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
@@ -52,7 +55,9 @@ impl CoarseSampleCache3d {
 /// Such a pair becomes eligible only after the configured coarse grid observes it clear and then later
 /// observes contact again. Pairs that start clear retain the ordinary clear-to-contact search behavior.
 /// Coarse free-flight samples are cached by body and exact grid fraction, so pairs that share a body reuse
-/// identical sampling work; the cache is bounded and pair-local refinement remains unchanged.
+/// identical sampling work; the cache is bounded and pair-local refinement remains unchanged. Once a
+/// best hit exists, later pairs inspect only coarse samples that can still match or precede its exact
+/// rational time, including the containing known-contact sample.
 ///
 /// This explicit state transition is required by repeated-event stepping: a resolved/resting time-zero
 /// contact must not hide a later impact or be rediscovered forever as the next event. As with the existing
@@ -89,6 +94,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
         .collect::<BTreeMap<BodyId, &RigidBox3d>>();
     let mut coarse_samples = CoarseSampleCache3d::default();
     let mut best = None;
+    let denominator = u32::from(config.sample_count);
     for pair in pairs {
         let left = by_id.get(&pair.left).copied().ok_or(
             RotatingContactSearchError3d::MissingCandidateBody(pair.left),
@@ -96,7 +102,18 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
         let right = by_id.get(&pair.right).copied().ok_or(
             RotatingContactSearchError3d::MissingCandidateBody(pair.right),
         )?;
-        let Some(hit) = search_pair(left, right, pair, config, &mut coarse_samples)? else {
+        let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
+            coarse_numerator_limit(hit.time, denominator)
+        });
+        let Some(hit) = search_pair(
+            left,
+            right,
+            pair,
+            config,
+            coarse_limit,
+            &mut coarse_samples,
+        )?
+        else {
             continue;
         };
         if best.is_none_or(|current| compare_hits(hit, current) == Ordering::Less) {
@@ -132,6 +149,7 @@ fn search_pair(
     right: &RigidBox3d,
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
+    coarse_numerator_limit: u32,
     coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     let initially_contacting =
@@ -139,7 +157,7 @@ fn search_pair(
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
 
-    for numerator in 1..=denominator {
+    for numerator in 1..=coarse_numerator_limit {
         let sampled_left =
             coarse_samples.sample_oriented_box(left, config, numerator, denominator)?;
         let sampled_right =
