@@ -5,7 +5,12 @@ use physics_engine::{BodyId, Ray, RigidBody, Vec3i, World};
 fn populated_world(body_count: u64) -> World {
     let mut world = World::default();
     for id in 0..body_count {
-        let x = 8_i32 + i32::try_from(id).expect("benchmark body id fits i32") * 4;
+        // Body iteration is BodyId ordered, while this odd multiplier deterministically permutes
+        // spatial/time order for power-of-two scene sizes. The prior implementation therefore has
+        // genuine ordering work to do instead of receiving an already sorted hit vector.
+        let spatial_rank = id.wrapping_mul(7_919) % body_count;
+        let x = 8_i32
+            + i32::try_from(spatial_rank).expect("benchmark spatial rank fits i32") * 4;
         world
             .add_body(RigidBody::fixed(
                 BodyId(id),
@@ -115,6 +120,6 @@ fn ray_cast_first_scan_benchmark() {
 
     let speedup = legacy_elapsed.as_secs_f64() / optimized_elapsed.as_secs_f64();
     eprintln!(
-        "ray_cast_first 4096 hits × {iterations}: prior_full_sort={legacy_elapsed:?}, single_scan={optimized_elapsed:?}, speedup={speedup:.2}x"
+        "ray_cast_first 4096 permuted hits × {iterations}: prior_full_sort={legacy_elapsed:?}, single_scan={optimized_elapsed:?}, speedup={speedup:.2}x"
     );
 }
