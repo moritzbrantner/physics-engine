@@ -121,7 +121,7 @@ fn cast_snapshot(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Vec
         .filter_map(|body| snapshot_hit(&probe, body, ticks))
         .collect::<Vec<_>>();
 
-    hits.sort_by_key(hit_order_key);
+    hits.sort_unstable_by_key(hit_order_key);
     hits
 }
 
