@@ -38,7 +38,7 @@ const BOX_FACES = [
   { indices: [0, 4, 6, 2], normal: [-1, 0, 0], axes: [2, 1] },
   { indices: [1, 3, 7, 5], normal: [1, 0, 0], axes: [2, 1] },
   { indices: [0, 1, 5, 4], normal: [0, -1, 0], axes: [0, 2] },
-  { indices: [2, 6, 7, 3], normal: [0, 1, 0], axes: [0, 1] },
+  { indices: [2, 6, 7, 3], normal: [0, 1, 0], axes: [0, 2] },
 ];
 
 const FACE_UVS = [
