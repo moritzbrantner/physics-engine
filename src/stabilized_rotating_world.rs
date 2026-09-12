@@ -425,8 +425,8 @@ impl PositionCorrectionAccumulator {
     fn target_position(&self, id: BodyId, before: Vec3i) -> Result<Vec3i, RotatingWorldError3d> {
         let mut combined = [0_i64; 3];
         for group in self.groups.values() {
-            for axis in 0..3 {
-                combined[axis] = combined[axis]
+            for (axis, combined_axis) in combined.iter_mut().enumerate() {
+                *combined_axis = (*combined_axis)
                     .checked_add(group.delta[axis])
                     .ok_or_else(|| position_correction_overflow(id))?;
             }
