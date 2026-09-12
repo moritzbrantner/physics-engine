@@ -9,7 +9,6 @@ use crate::{
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
-const MAX_EVENT_STABILIZATION_ROUNDS: u8 = 16;
 
 /// Bounded policy for advancing through sampled rotating collision events.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,7 +63,6 @@ pub struct RepeatedRotatingEventAdvance3d {
 pub enum RepeatedRotatingEventError3d {
     ZeroEventLimit,
     EventLimit(u16),
-    StabilizationLimit(u8),
     NegativeTimestepNumerator(i128),
     NonPositiveTimestepDenominator(i128),
     InvalidRemainder(SampledContactTime3d),
@@ -83,10 +81,6 @@ impl fmt::Display for RepeatedRotatingEventError3d {
             Self::EventLimit(limit) => write!(
                 formatter,
                 "repeated rotating event advance reached its {limit}-event limit while another sampled event remained"
-            ),
-            Self::StabilizationLimit(limit) => write!(
-                formatter,
-                "repeated rotating event frontier did not stabilize within {limit} zero-time rounds"
             ),
             Self::NegativeTimestepNumerator(value) => write!(
                 formatter,
@@ -136,15 +130,16 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 ///
 /// The first event is selected with [`earliest_rotating_contact_frontier`]. After response, the remaining
 /// rational timestep becomes the next segment. Before that next segment is searched, the current contact
-/// frontier is stabilized through bounded zero-time simultaneous response rounds. This keeps resting and
-/// newly-created support constraints in the authoritative solver instead of allowing integer residuals to
-/// manufacture clear/re-contact churn. Current-frontier discovery is a direct OBB query; it deliberately
-/// does not re-enter the sampled temporal search. Later positive events are then selected with
-/// [`next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event discovery.
+/// frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes the
+/// current zero-time contact set and applies one simultaneous response pass. This keeps resting and
+/// newly-created support constraints in the authoritative solver without demanding exact global
+/// idempotence from quantized contact projection. Current-frontier discovery is a direct OBB query; it
+/// deliberately does not re-enter the sampled temporal search. Later positive events are then selected
+/// with [`next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event discovery.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
-/// requested interval. Zero-time stabilization rounds consume no requested time and are not counted as
+/// requested interval. Zero-time stabilization passes consume no requested time and are not counted as
 /// sampled events. Remaining-time composition canonicalizes each sampled remainder, cross-cancels it
 /// against the current exact ratio, and stores the reduced result in deterministic limb storage. No
 /// positive suffix is silently discarded merely because its reduced numerator or denominator exceeds
@@ -160,8 +155,8 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// # Errors
 ///
 /// Returns [`RepeatedRotatingEventError3d`] for invalid bounds/timestep configuration, deterministic
-/// exact-ratio capacity exhaustion, frontier/response failures, bounded zero-time stabilization failure,
-/// or when an actual additional sampled event exists beyond `max_events`.
+/// exact-ratio capacity exhaustion, frontier/response failures, or when an actual additional sampled
+/// event exists beyond `max_events`.
 pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
@@ -220,20 +215,17 @@ fn stabilize_current_contacts(
     mut boxes: Vec<RigidBox3d>,
     solver_passes: u8,
 ) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
-    for _ in 0..MAX_EVENT_STABILIZATION_ROUNDS {
+    for _ in 0..solver_passes {
         let Some(frontier) = current_contact_frontier(&boxes)? else {
-            return Ok(boxes);
+            break;
         };
-        let response = resolve_rotating_contact_frontier(frontier, solver_passes)?;
+        let response = resolve_rotating_contact_frontier(frontier, 1)?;
         if response.boxes == boxes {
-            return Ok(boxes);
+            break;
         }
         boxes = response.boxes;
     }
-
-    Err(RepeatedRotatingEventError3d::StabilizationLimit(
-        MAX_EVENT_STABILIZATION_ROUNDS,
-    ))
+    Ok(boxes)
 }
 
 fn current_contact_frontier(
