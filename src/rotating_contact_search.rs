@@ -2,10 +2,12 @@ use std::{cmp::Ordering, collections::BTreeMap, error::Error, fmt};
 
 use crate::rotating_broad_phase::RotatingBroadPhase3d;
 use crate::{
-    BodyId, ObbContactSeed3d, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotationalSweepPair3d, obb_contact_seed,
-    sample_rigid_box_free_flight,
+    BodyId, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d,
+    RotationalSweepPair3d, obb_contact_seed, sample_rigid_box_free_flight,
 };
+
+const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
 
 /// Rational upper-bound time returned by deterministic sampled rotating-contact search.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -144,14 +146,43 @@ struct ContactBracket3d {
     upper_contact: ObbContactSeed3d,
 }
 
+#[derive(Debug, Default)]
+struct CoarseSampleCache3d {
+    samples: BTreeMap<(BodyId, u32, u32), OrientedBox3d>,
+}
+
+impl CoarseSampleCache3d {
+    fn sample_oriented_box(
+        &mut self,
+        rigid_box: &RigidBox3d,
+        config: RigidBoxFreeFlightConfig3d,
+        numerator: u32,
+        denominator: u32,
+    ) -> Result<OrientedBox3d, RotatingContactSearchError3d> {
+        let key = (rigid_box.body().id(), numerator, denominator);
+        if let Some(sampled) = self.samples.get(&key).copied() {
+            return Ok(sampled);
+        }
+
+        let sampled =
+            sample_rigid_box_free_flight(rigid_box, config, numerator, denominator)?.oriented_box();
+        if self.samples.len() < MAX_CACHED_COARSE_SAMPLES {
+            self.samples.insert(key, sampled);
+        }
+        Ok(sampled)
+    }
+}
+
 /// Searches candidate rotating-box pairs on a deterministic fixed sample grid and refines the first
 /// observed contact bracket.
 ///
 /// Broad phase comes from the engine's conservative rotating broad phase. Every narrow-phase sample is
 /// rebuilt directly from the interval start through [`sample_rigid_box_free_flight`], then evaluated with
-/// [`obb_contact_seed`]. For each candidate pair, the first coarse sample with contact brackets the
-/// transition against the previous coarse sample; binary refinement returns the earliest known contact
-/// side of that bracket. Pair ties are resolved by stable [`BodyId`] ordering.
+/// [`obb_contact_seed`]. Coarse samples are cached by body and exact grid fraction so candidate pairs that
+/// share a body reuse identical free-flight work; the cache is bounded and refinement remains pair-local.
+/// For each candidate pair, the first coarse sample with contact brackets the transition against the
+/// previous coarse sample; binary refinement returns the earliest known contact side of that bracket. Pair
+/// ties are resolved by stable [`BodyId`] ordering.
 ///
 /// This is deliberately a **sampled approximation**, not analytic rotational CCD. A contact island that
 /// begins and ends entirely between adjacent coarse samples can be missed. Increasing `sample_count`
@@ -186,6 +217,7 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
         .iter()
         .map(|rigid_box| (rigid_box.body().id(), rigid_box))
         .collect();
+    let mut coarse_samples = CoarseSampleCache3d::default();
     let mut best: Option<RotatingContactSearchHit3d> = None;
     for pair in pairs {
         let left = by_id.get(&pair.left).copied().ok_or(
@@ -194,7 +226,7 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
         let right = by_id.get(&pair.right).copied().ok_or(
             RotatingContactSearchError3d::MissingCandidateBody(pair.right),
         )?;
-        let Some(hit) = search_pair(left, right, pair, config)? else {
+        let Some(hit) = search_pair(left, right, pair, config, &mut coarse_samples)? else {
             continue;
         };
 
@@ -231,6 +263,7 @@ fn search_pair(
     right: &RigidBox3d,
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
+    coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     if let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? {
         return Ok(Some(RotatingContactSearchHit3d {
@@ -242,11 +275,15 @@ fn search_pair(
 
     let denominator = u32::from(config.sample_count);
     for numerator in 1..=denominator {
-        let (sampled_left, sampled_right) =
-            sample_pair(left, right, config.free_flight, numerator, denominator)?;
-        let Some(contact) =
-            obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
-        else {
+        let sampled_left =
+            coarse_samples.sample_oriented_box(left, config.free_flight, numerator, denominator)?;
+        let sampled_right = coarse_samples.sample_oriented_box(
+            right,
+            config.free_flight,
+            numerator,
+            denominator,
+        )?;
+        let Some(contact) = obb_contact_seed(sampled_left, sampled_right)? else {
             continue;
         };
 
@@ -362,8 +399,8 @@ mod tests {
     };
 
     use super::{
-        RotatingContactSearchConfig3d, RotatingContactSearchError3d, SampledContactTime3d,
-        sampled_rotating_contact_search,
+        CoarseSampleCache3d, MAX_CACHED_COARSE_SAMPLES, RotatingContactSearchConfig3d,
+        RotatingContactSearchError3d, SampledContactTime3d, sampled_rotating_contact_search,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
@@ -440,6 +477,48 @@ mod tests {
                 .expect("valid returned OBBs")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn shared_body_pair_ties_keep_stable_pair_order() {
+        let moving = dynamic(11, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
+        let first = fixed(3, Vec3i::ZERO);
+        let second = fixed(8, Vec3i::ZERO);
+        let hit = sampled_rotating_contact_search(&[second, moving, first], config(8, 2))
+            .expect("valid shared-body search")
+            .expect("shared body should contact both obstacles");
+
+        assert_eq!(
+            hit.pair,
+            RotationalSweepPair3d {
+                left: BodyId(3),
+                right: BodyId(11),
+            }
+        );
+    }
+
+    #[test]
+    fn coarse_sample_cache_is_bounded_and_reuses_geometry() {
+        let rigid_box = fixed(1, Vec3i::ZERO);
+        let free_flight = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let mut cache = CoarseSampleCache3d::default();
+
+        let first = cache
+            .sample_oriented_box(&rigid_box, free_flight, 1, 32)
+            .expect("first coarse sample");
+        let repeated = cache
+            .sample_oriented_box(&rigid_box, free_flight, 1, 32)
+            .expect("repeated coarse sample");
+        assert_eq!(first, repeated);
+        assert_eq!(cache.samples.len(), 1);
+
+        let denominator = u32::try_from(MAX_CACHED_COARSE_SAMPLES + 2).expect("small cache bound");
+        for numerator in 1..=denominator {
+            cache
+                .sample_oriented_box(&rigid_box, free_flight, numerator, denominator)
+                .expect("bounded coarse sample");
+        }
+        assert_eq!(cache.samples.len(), MAX_CACHED_COARSE_SAMPLES);
     }
 
     #[test]
