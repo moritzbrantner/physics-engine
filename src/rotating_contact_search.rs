@@ -275,12 +275,8 @@ fn search_pair(
 
     let denominator = u32::from(config.sample_count);
     for numerator in 1..=denominator {
-        let sampled_left = coarse_samples.sample_oriented_box(
-            left,
-            config.free_flight,
-            numerator,
-            denominator,
-        )?;
+        let sampled_left =
+            coarse_samples.sample_oriented_box(left, config.free_flight, numerator, denominator)?;
         let sampled_right = coarse_samples.sample_oriented_box(
             right,
             config.free_flight,
