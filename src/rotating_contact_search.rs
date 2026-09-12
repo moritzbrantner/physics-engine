@@ -260,9 +260,8 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
             coarse_sample_limit(current.time, config.sample_count)
         });
         let Some(hit) = search_pair(
-            left_index,
+            (left_index, right_index),
             left,
-            right_index,
             right,
             pair,
             config,
@@ -310,15 +309,15 @@ pub(crate) fn coarse_sample_limit(time: SampledContactTime3d, sample_count: u16)
 }
 
 fn search_pair(
-    left_index: usize,
+    body_indices: (usize, usize),
     left: &RigidBox3d,
-    right_index: usize,
     right: &RigidBox3d,
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
     coarse_limit: u32,
     coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+    let (left_index, right_index) = body_indices;
     if let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? {
         return Ok(Some(RotatingContactSearchHit3d {
             time: SampledContactTime3d::ZERO,
