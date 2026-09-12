@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
-    rotating_contact_search::coarse_numerator_limit,
+    rotating_contact_search::coarse_sample_limit,
 };
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBox3d, RigidBox3d, RotatingContactSearchConfig3d,
@@ -103,7 +103,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
             RotatingContactSearchError3d::MissingCandidateBody(pair.right),
         )?;
         let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
-            coarse_numerator_limit(hit.time, denominator)
+            coarse_sample_limit(hit.time, config.sample_count)
         });
         let Some(hit) = search_pair(
             left,
