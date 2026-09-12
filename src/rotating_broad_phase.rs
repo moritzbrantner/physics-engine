@@ -662,7 +662,7 @@ mod tests {
 
     use super::{
         BoundedBody3d, BroadPhaseBvhNode3d, RotatingBroadPhase3d, RotatingBroadPhaseError3d,
-        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh,
+        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh, rebalance_node,
         rotational_sweep_candidate_pairs,
     };
 
@@ -680,6 +680,17 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid fixed box")
+    }
+
+    fn bounded_leaf(id: u64, coordinate: i64) -> BroadPhaseBvhNode3d {
+        BroadPhaseBvhNode3d::leaf(BoundedBody3d {
+            id: BodyId(id),
+            kind: BodyKind::Dynamic,
+            bounds: RotationalSweepBounds3d {
+                minimum: [coordinate, 0, 0],
+                maximum: [coordinate + 2, 2, 2],
+            },
+        })
     }
 
     fn brute_force_candidate_pairs(
@@ -907,6 +918,23 @@ mod tests {
     }
 
     #[test]
+    fn forced_skew_executes_a_rotation_and_reduces_height() {
+        let deep_left = BroadPhaseBvhNode3d::branch(
+            BroadPhaseBvhNode3d::branch(bounded_leaf(1, 0), bounded_leaf(2, 4)),
+            bounded_leaf(3, 8),
+        );
+        let root = BroadPhaseBvhNode3d::branch(deep_left, bounded_leaf(4, 12));
+        assert_eq!(root.height, 4);
+
+        let mut rotations = 0_u64;
+        let balanced = rebalance_node(root, &mut rotations);
+
+        assert!(rotations > 0);
+        assert!(balanced.height < 4);
+        assert_eq!(balanced.minimum_id, BodyId(1));
+    }
+
+    #[test]
     fn repeated_leaf_churn_stays_balanced_and_matches_brute_force() {
         let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
         let mut boxes = (0..127_u64)
@@ -943,7 +971,6 @@ mod tests {
         assert_eq!(broad_phase.stats().rebuilds, 1);
         assert!(broad_phase.stats().incremental_updates > 0);
         assert!(broad_phase.stats().reinserts > 0);
-        assert!(broad_phase.stats().rotations > 0);
     }
 
     #[test]
