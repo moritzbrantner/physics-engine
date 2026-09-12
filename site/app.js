@@ -1,3 +1,6 @@
+import { createWebGlRenderer } from "./webgl-renderer.js";
+import { createWebGpuRenderer } from "./webgpu-renderer.js";
+
 const canvas = document.querySelector("#scene");
 const status = document.querySelector("#status");
 const debug = document.querySelector("#debug");
@@ -5,13 +8,6 @@ const resetButton = document.querySelector("#reset");
 const pauseButton = document.querySelector("#pause");
 const stepButton = document.querySelector("#single-step");
 const viewportShell = document.querySelector(".viewport-shell");
-
-const gl = canvas.getContext("webgl2", {
-  antialias: true,
-  alpha: false,
-  depth: true,
-  premultipliedAlpha: false,
-});
 
 const FIXED_STEP_MS = 1000 / 60;
 const MOVE_SPEED = 7;
@@ -21,7 +17,6 @@ const KEYBOARD_LOOK_SPEED = 1.8;
 const FOV_RADIANS = (70 * Math.PI) / 180;
 const NEAR_PLANE = 0.8;
 const FAR_PLANE = 1400;
-const FLOATS_PER_VERTEX = 9;
 const ORIENTATION_SCALE = 1 << 30;
 const keys = new Set();
 
@@ -43,7 +38,7 @@ const BOX_FACES = [
   { indices: [0, 4, 6, 2], normal: [-1, 0, 0], axes: [2, 1] },
   { indices: [1, 3, 7, 5], normal: [1, 0, 0], axes: [2, 1] },
   { indices: [0, 1, 5, 4], normal: [0, -1, 0], axes: [0, 2] },
-  { indices: [2, 6, 7, 3], normal: [0, 1, 0], axes: [0, 2] },
+  { indices: [2, 6, 7, 3], normal: [0, 1, 0], axes: [0, 1] },
 ];
 
 const FACE_UVS = [
@@ -64,6 +59,27 @@ async function loadEngine() {
   }
 }
 
+async function createRenderer() {
+  const options = {
+    fovRadians: FOV_RADIANS,
+    nearPlane: NEAR_PLANE,
+    farPlane: FAR_PLANE,
+  };
+
+  if (navigator.gpu) {
+    try {
+      const webGpu = await createWebGpuRenderer(canvas, options);
+      if (webGpu) return webGpu;
+    } catch (error) {
+      console.warn("WebGPU renderer initialization failed; trying WebGL2 fallback", error);
+    }
+  }
+
+  const webGl = createWebGlRenderer(canvas, options);
+  if (webGl) return webGl;
+  throw new Error("Neither WebGPU nor WebGL2 is available in this browser");
+}
+
 function reset() {
   engine.sandbox_reset();
   yaw = 0;
@@ -72,7 +88,7 @@ function reset() {
   jumpQueued = false;
   accumulator = 0;
   pauseButton.textContent = "Pause";
-  status.textContent = "Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Off-center hits now spin crates.";
+  status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
 function movementVelocity() {
@@ -152,7 +168,7 @@ function resizeCanvas() {
     canvas.width = width;
     canvas.height = height;
   }
-  gl.viewport(0, 0, canvas.width, canvas.height);
+  renderer.resize(canvas.width, canvas.height);
 }
 
 function cameraSpace(point, camera) {
@@ -288,195 +304,6 @@ function buildSceneVertices(bodies, camera) {
   return new Float32Array(data);
 }
 
-function compileShader(type, source) {
-  const shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    const message = gl.getShaderInfoLog(shader);
-    gl.deleteShader(shader);
-    throw new Error(`WebGL shader compile failed: ${message}`);
-  }
-  return shader;
-}
-
-function createRenderer() {
-  if (!gl) throw new Error("WebGL2 is unavailable in this browser");
-
-  const vertexShader = compileShader(
-    gl.VERTEX_SHADER,
-    `#version 300 es
-    precision highp float;
-    layout(location = 0) in vec3 aPosition;
-    layout(location = 1) in vec3 aNormal;
-    layout(location = 2) in vec2 aUv;
-    layout(location = 3) in float aMaterial;
-
-    uniform float uAspect;
-    uniform float uTanHalfFov;
-    uniform float uNear;
-    uniform float uFar;
-
-    out vec3 vNormal;
-    out vec2 vUv;
-    flat out float vMaterial;
-    out float vDepth;
-
-    void main() {
-      float yScale = 1.0 / uTanHalfFov;
-      float xScale = yScale / uAspect;
-      float zScale = (uFar + uNear) / (uFar - uNear);
-      float zOffset = (2.0 * uFar * uNear) / (uFar - uNear);
-      gl_Position = vec4(
-        aPosition.x * xScale,
-        aPosition.y * yScale,
-        zScale * aPosition.z - zOffset,
-        aPosition.z
-      );
-      vNormal = aNormal;
-      vUv = aUv;
-      vMaterial = aMaterial;
-      vDepth = aPosition.z;
-    }`,
-  );
-
-  const fragmentShader = compileShader(
-    gl.FRAGMENT_SHADER,
-    `#version 300 es
-    precision highp float;
-
-    in vec3 vNormal;
-    in vec2 vUv;
-    flat in float vMaterial;
-    in float vDepth;
-    out vec4 outColor;
-
-    float gridLine(vec2 uv) {
-      vec2 cell = fract(uv);
-      vec2 edge = min(cell, 1.0 - cell);
-      vec2 aa = max(fwidth(uv) * 1.35, vec2(0.002));
-      float xLine = 1.0 - smoothstep(0.0, aa.x, edge.x);
-      float yLine = 1.0 - smoothstep(0.0, aa.y, edge.y);
-      return max(xLine, yLine);
-    }
-
-    float boxBorder(vec2 uv) {
-      vec2 edge = min(uv, 1.0 - uv);
-      float border = 1.0 - smoothstep(0.035, 0.07, min(edge.x, edge.y));
-      float diagonalA = 1.0 - smoothstep(0.025, 0.055, abs(uv.x - uv.y));
-      float diagonalB = 1.0 - smoothstep(0.025, 0.055, abs((1.0 - uv.x) - uv.y));
-      return max(border, max(diagonalA, diagonalB) * 0.55);
-    }
-
-    float hash(vec2 p) {
-      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-    }
-
-    void main() {
-      vec3 base;
-      vec3 detail;
-      float pattern = 0.0;
-
-      if (vMaterial < 0.5) {
-        base = vec3(0.105, 0.13, 0.16);
-        detail = vec3(0.22, 0.27, 0.33);
-        pattern = gridLine(vUv) * 0.34;
-      } else if (vMaterial < 1.5) {
-        base = vec3(0.24, 0.28, 0.33);
-        detail = vec3(0.43, 0.49, 0.56);
-        vec2 brickUv = vUv;
-        brickUv.x += mod(floor(brickUv.y), 2.0) * 0.5;
-        pattern = gridLine(brickUv) * 0.48;
-      } else if (vMaterial < 2.5) {
-        base = vec3(0.34, 0.38, 0.43);
-        detail = vec3(0.46, 0.51, 0.57);
-        float speckle = step(0.91, hash(floor(vUv * 5.0)));
-        pattern = speckle * 0.18;
-      } else if (vMaterial < 3.5) {
-        base = vec3(0.42, 0.25, 0.09);
-        detail = vec3(0.88, 0.58, 0.17);
-        pattern = boxBorder(fract(vUv));
-      } else {
-        base = vec3(0.86, 0.19, 0.17);
-        detail = vec3(1.0, 0.52, 0.34);
-        pattern = 0.28;
-      }
-
-      vec3 lightDirection = normalize(vec3(-0.35, 0.82, 0.26));
-      float diffuse = 0.62 + 0.38 * max(dot(normalize(vNormal), lightDirection), 0.0);
-      vec3 color = mix(base, detail, clamp(pattern, 0.0, 1.0)) * diffuse;
-
-      vec3 fogColor = vec3(0.055, 0.085, 0.115);
-      float fog = smoothstep(540.0, 1100.0, vDepth);
-      color = mix(color, fogColor, fog * 0.72);
-
-      outColor = vec4(color, 1.0);
-    }`,
-  );
-
-  const program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    const message = gl.getProgramInfoLog(program);
-    gl.deleteProgram(program);
-    throw new Error(`WebGL program link failed: ${message}`);
-  }
-
-  gl.deleteShader(vertexShader);
-  gl.deleteShader(fragmentShader);
-
-  const buffer = gl.createBuffer();
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-
-  const stride = FLOATS_PER_VERTEX * Float32Array.BYTES_PER_ELEMENT;
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, stride, 0);
-  gl.enableVertexAttribArray(1);
-  gl.vertexAttribPointer(1, 3, gl.FLOAT, false, stride, 3 * Float32Array.BYTES_PER_ELEMENT);
-  gl.enableVertexAttribArray(2);
-  gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, 6 * Float32Array.BYTES_PER_ELEMENT);
-  gl.enableVertexAttribArray(3);
-  gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 8 * Float32Array.BYTES_PER_ELEMENT);
-
-  gl.enable(gl.DEPTH_TEST);
-  gl.depthFunc(gl.LEQUAL);
-  gl.disable(gl.BLEND);
-  gl.disable(gl.CULL_FACE);
-
-  const uniforms = {
-    aspect: gl.getUniformLocation(program, "uAspect"),
-    tanHalfFov: gl.getUniformLocation(program, "uTanHalfFov"),
-    near: gl.getUniformLocation(program, "uNear"),
-    far: gl.getUniformLocation(program, "uFar"),
-  };
-
-  return { program, buffer, vao, uniforms };
-}
-
-function renderWebGl(bodies, camera) {
-  const vertices = buildSceneVertices(bodies, camera);
-
-  gl.clearColor(0.055, 0.085, 0.115, 1);
-  gl.clearDepth(1);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-  gl.useProgram(renderer.program);
-  gl.bindVertexArray(renderer.vao);
-  gl.bindBuffer(gl.ARRAY_BUFFER, renderer.buffer);
-  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
-
-  gl.uniform1f(renderer.uniforms.aspect, canvas.width / canvas.height);
-  gl.uniform1f(renderer.uniforms.tanHalfFov, Math.tan(FOV_RADIANS / 2));
-  gl.uniform1f(renderer.uniforms.near, NEAR_PLANE);
-  gl.uniform1f(renderer.uniforms.far, FAR_PLANE);
-
-  gl.drawArrays(gl.TRIANGLES, 0, vertices.length / FLOATS_PER_VERTEX);
-}
-
 function ensureCrosshair() {
   if (viewportShell.querySelector(".crosshair")) return;
   const crosshair = document.createElement("div");
@@ -491,14 +318,13 @@ function render() {
   const player = bodies.find((body) => body.role === 1);
   if (!player) return;
   const camera = [player.position[0], player.position[1] + 13, player.position[2]];
-
-  renderWebGl(bodies, camera);
+  renderer.render(buildSceneVertices(bodies, camera));
 
   const grounded = engine.sandbox_grounded() === 1 ? "grounded" : "airborne";
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
-  debug.textContent = `${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
 }
 
 function updateKeyboardLook(elapsedSeconds) {
@@ -576,8 +402,8 @@ document.addEventListener("mousemove", (event) => {
 
 document.addEventListener("pointerlockchange", () => {
   status.textContent = document.pointerLockElement === canvas
-    ? "Mouse captured. Press Esc to release it."
-    : "Mouse free. Click the world to capture it, or drag / use arrow keys to look.";
+    ? `Mouse captured. Press Esc to release it. Rendering with ${renderer.backend}.`
+    : `Mouse free. Click the world to capture it, or drag / use arrow keys to look. Rendering with ${renderer.backend}.`;
 });
 
 document.addEventListener("keydown", (event) => {
@@ -612,8 +438,7 @@ stepButton.addEventListener("click", () => {
 });
 
 try {
-  if (!gl) throw new Error("WebGL2 is unavailable in this browser");
-  renderer = createRenderer();
+  renderer = await createRenderer();
   engine = await loadEngine();
   ensureCrosshair();
   reset();
