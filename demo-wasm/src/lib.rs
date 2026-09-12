@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, OrientedBox3d, RigidBody,
-    RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, Vec3i,
+    AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, OrientedBox3d,
+    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, Vec3i,
 };
 
 const PLAYER_ID: BodyId = BodyId(1);
@@ -23,6 +24,7 @@ struct Sandbox {
     last_tail_contacts: usize,
     total_collisions: u32,
     error_code: i32,
+    error_detail: i32,
 }
 
 impl Sandbox {
@@ -101,6 +103,7 @@ impl Sandbox {
             last_tail_contacts: 0,
             total_collisions: 0,
             error_code: 0,
+            error_detail: 0,
         })
     }
 
@@ -129,6 +132,7 @@ impl Sandbox {
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
+        self.error_detail = 0;
         let Some(player) = self.world.box_by_id(PLAYER_ID) else {
             self.error_code = 1;
             return self.error_code;
@@ -164,8 +168,9 @@ impl Sandbox {
 
         let report = match self.world.step(1, ROTATING_TICKS_PER_SECOND) {
             Ok(report) => report,
-            Err(_) => {
+            Err(error) => {
                 self.error_code = 6;
+                self.error_detail = world_error_detail(error);
                 return self.error_code;
             }
         };
@@ -261,6 +266,24 @@ impl Sandbox {
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
             RigidBox3d::angular,
         )
+    }
+}
+
+fn world_error_detail(error: RotatingWorldError3d) -> i32 {
+    match error {
+        RotatingWorldError3d::PersistentTailResolutionLimit(_) => 601,
+        RotatingWorldError3d::PersistentTailMotionUnsafe(_) => 602,
+        RotatingWorldError3d::PersistentTailArithmeticOverflow(_) => 603,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::EventLimit(_)) => 611,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::RatioTooLarge) => 612,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::InvalidRemainder(_)) => 613,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Frontier(_)) => 614,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Response(_)) => 615,
+        RotatingWorldError3d::Repeated(_) => 610,
+        RotatingWorldError3d::FreeFlight(_) => 620,
+        RotatingWorldError3d::Contact(_) => 630,
+        RotatingWorldError3d::Response(_) => 640,
+        _ => 699,
     }
 }
 
@@ -422,16 +445,31 @@ pub extern "C" fn sandbox_error_code() -> i32 {
     with_sandbox(|sandbox| sandbox.error_code)
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_error_detail() -> i32 {
+    with_sandbox(|sandbox| sandbox.error_detail)
+}
+
 #[cfg(test)]
 mod tests {
-    use physics_engine::{BodyId, RigidBody, Vec3i};
+    use physics_engine::{BodyId, RepeatedRotatingEventError3d, RigidBody, RotatingWorldError3d, Vec3i};
 
-    use super::{PLAYER_ID, Sandbox, rotating_box};
+    use super::{PLAYER_ID, Sandbox, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..16 {
             assert_eq!(sandbox.step(0, 0, false), 0);
         }
+    }
+
+    #[test]
+    fn world_error_detail_keeps_event_limit_actionable() {
+        assert_eq!(
+            world_error_detail(RotatingWorldError3d::Repeated(
+                RepeatedRotatingEventError3d::EventLimit(32)
+            )),
+            611
+        );
     }
 
     #[test]
