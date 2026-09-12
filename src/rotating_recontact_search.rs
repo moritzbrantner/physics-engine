@@ -1,13 +1,12 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use crate::{
-    rotating_broad_phase::RotatingBroadPhase3d,
-    rotating_contact_search::coarse_sample_limit,
-};
-use crate::{
     BodyId, ObbContactSeed3d, OrientedBox3d, RigidBox3d, RotatingContactSearchConfig3d,
     RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
     SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
+};
+use crate::{
+    rotating_broad_phase::RotatingBroadPhase3d, rotating_contact_search::coarse_sample_limit,
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
@@ -105,14 +104,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
         let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
             coarse_sample_limit(hit.time, config.sample_count)
         });
-        let Some(hit) = search_pair(
-            left,
-            right,
-            pair,
-            config,
-            coarse_limit,
-            &mut coarse_samples,
-        )?
+        let Some(hit) = search_pair(left, right, pair, config, coarse_limit, &mut coarse_samples)?
         else {
             continue;
         };
