@@ -12,9 +12,9 @@
         <p class="eyebrow">physics-engine</p>
         <h1>Walk through the physics.</h1>
         <p class="lede">
-          This acceptance sandbox runs the repository's Rust <code>World</code> in WebAssembly. The
-          browser owns input and drawing; body state, gravity, collision detection, continuous time of
-          impact and response stay authoritative in the physics engine.
+          This acceptance sandbox runs the repository's ECS-backed Rust <code>RotatingWorld3d</code> in
+          WebAssembly. The browser owns input and presentation; body state, gravity, collision detection,
+          continuous time of impact, friction, sleeping and response stay authoritative in the physics engine.
         </p>
       </header>
 
@@ -44,32 +44,36 @@
         <h2 id="fixture-title">A deliberately small but real integration surface</h2>
         <p>
           The world contains a grounded player body, stacked dynamic boxes, platforms and steps, plus
-          a thin wall placed in the projectile path. Fast shots therefore exercise swept AABB CCD
-          instead of relying on frame-end overlap. Pause and single-step make failures easier to inspect.
+          a thin wall placed in the projectile path. Fast shots therefore exercise rotating continuous
+          collision handling instead of relying on frame-end overlap. Pause and single-step make failures
+          easier to inspect.
         </p>
         <p>
-          Basic procedural floor, wall, concrete and crate textures make the fixture readable without
-          introducing an asset dependency. The renderer clips geometry at the camera near plane so
-          looking around close to large walls does not make whole faces disappear.
+          The graphics path prefers browser WebGPU and falls back to WebGL2 when WebGPU is unavailable.
+          Both backends consume the same authoritative Rust/Wasm body positions and orientations; neither
+          renderer is allowed to own or approximate physics state.
         </p>
         <p>
-          The current production <code>World</code> is still translational and AABB-only, so the player
-          is box-shaped and the staircase is built from boxes. Capsules, slopes, friction and richer
-          character-controller behavior belong in later engine slices rather than being faked here.
+          Procedural floor, wall, concrete and crate materials keep the fixture readable without an asset
+          dependency. Dynamic crates use engine-owned contact friction and deterministic sleeping so they can
+          settle instead of drifting forever.
         </p>
       </section>
 
       <section class="architecture" aria-labelledby="boundary-title">
         <p class="eyebrow">Boundary</p>
         <h2 id="boundary-title">The demo consumes the engine; it does not become the engine</h2>
-        <pre>browser input + rendering
+        <pre>browser input + WebGPU/WebGL presentation
           |
           v
  demo-wasm acceptance adapter
           |
           v
-    physics-engine
- bodies · queries · CCD · TOI · response</pre>
+ ECS-backed physics world
+          |
+          v
+ deterministic physics kernel
+ CCD · contacts · friction · inertia · sleeping</pre>
       </section>
     </main>
     <script type="module" src="app.js"></script>
