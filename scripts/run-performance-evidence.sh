@@ -45,6 +45,10 @@ if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_cache_performanc
   run_integration rotating_contact_cache_performance
 fi
 
+if grep -Eq '(^|/)(rotating_recontact_search\.rs|rotating_recontact_cache_performance\.rs)$' <<<"$changed"; then
+  run_integration rotating_recontact_cache_performance
+fi
+
 if grep -Eq '(^|/)(obb_response\.rs|rotating_contact_response\.rs|contact_solver_scratch_performance\.rs)$' <<<"$changed"; then
   run_integration contact_solver_scratch_performance
 fi
