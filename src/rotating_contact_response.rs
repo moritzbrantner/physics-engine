@@ -122,7 +122,7 @@ struct BodyDeltaAccumulator3d {
     /// Parallel constraints that push the same body in the same direction share one response budget.
     /// This makes a wall split into two coplanar bodies equivalent to one wall rather than doubling
     /// the stopping impulse. Opposing or genuinely different normals remain separate constraints.
-    groups: BTreeMap<[i128; 3], DeltaGroup3d>,
+    groups: Vec<([i128; 3], DeltaGroup3d)>,
 }
 
 impl BodyDeltaAccumulator3d {
@@ -138,7 +138,16 @@ impl BodyDeltaAccumulator3d {
             return Ok(());
         }
         let key = primitive_axis(relative_axis, id)?;
-        let group = self.groups.entry(key).or_default();
+        let group = match self
+            .groups
+            .binary_search_by_key(&key, |(axis, _)| *axis)
+        {
+            Ok(index) => &mut self.groups[index].1,
+            Err(index) => {
+                self.groups.insert(index, (key, DeltaGroup3d::default()));
+                &mut self.groups[index].1
+            }
+        };
         group.sum.checked_add(delta, id)?;
         group.count = group
             .count
@@ -149,7 +158,7 @@ impl BodyDeltaAccumulator3d {
 
     fn combined(&self, id: BodyId) -> Result<BodyDelta3d, RotatingContactResponseError3d> {
         let mut combined = BodyDelta3d::default();
-        for group in self.groups.values().copied() {
+        for (_, group) in self.groups.iter().copied() {
             combined.checked_add(group.sum.divided(group.count, id)?, id)?;
         }
         Ok(combined)
