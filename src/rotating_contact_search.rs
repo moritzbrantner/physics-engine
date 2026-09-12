@@ -256,8 +256,8 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
                 ))?;
         let left = &boxes[left_index];
         let right = &boxes[right_index];
-        let coarse_limit = best.map_or(denominator, |hit| {
-            coarse_numerator_limit(hit.time, denominator)
+        let coarse_limit = best.map_or(denominator, |current| {
+            coarse_sample_limit(current.time, config.sample_count)
         });
         let Some(hit) = search_pair(
             left_index,
@@ -278,14 +278,6 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
         }
     }
     Ok(best)
-}
-
-pub(crate) fn coarse_numerator_limit(best: SampledContactTime3d, denominator: u32) -> u32 {
-    let scaled = u64::from(best.numerator) * u64::from(denominator);
-    let divisor = u64::from(best.denominator);
-    u32::try_from(scaled.div_ceil(divisor))
-        .expect("a sampled time within the interval has a coarse numerator within the grid")
-        .min(denominator)
 }
 
 fn validate_resolution(
@@ -309,6 +301,14 @@ fn validate_resolution(
     Ok(())
 }
 
+pub(crate) fn coarse_sample_limit(time: SampledContactTime3d, sample_count: u16) -> u32 {
+    let scaled_numerator = u64::from(time.numerator) * u64::from(sample_count);
+    let limit = scaled_numerator.div_ceil(u64::from(time.denominator));
+    u32::try_from(limit)
+        .expect("coarse sample limit fits u32")
+        .min(u32::from(sample_count))
+}
+
 fn search_pair(
     left_index: usize,
     left: &RigidBox3d,
@@ -316,7 +316,7 @@ fn search_pair(
     right: &RigidBox3d,
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
-    coarse_numerator_limit: u32,
+    coarse_limit: u32,
     coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     if let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? {
@@ -328,7 +328,7 @@ fn search_pair(
     }
 
     let denominator = u32::from(config.sample_count);
-    for numerator in 1..=coarse_numerator_limit {
+    for numerator in 1..=coarse_limit.min(denominator) {
         let sampled_left =
             coarse_samples.sample_oriented_box(left_index, left, config.free_flight, numerator)?;
         let sampled_right = coarse_samples.sample_oriented_box(
@@ -446,18 +446,16 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, hint::black_box, time::Instant};
-
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RigidBoxFreeFlightConfig3d, RotatingBroadPhase3d, RotationalSweepPair3d, Vec3i,
-        obb_contact_seed, sample_rigid_box_free_flight,
+        RigidBoxFreeFlightConfig3d, RotationalSweepPair3d, Vec3i, obb_contact_seed,
+        sample_rigid_box_free_flight,
     };
 
     use super::{
         CoarseSampleCache3d, MAX_CACHED_COARSE_SAMPLES, RotatingContactSearchConfig3d,
-        RotatingContactSearchError3d, RotatingContactSearchHit3d, SampledContactTime3d,
-        coarse_numerator_limit, compare_hits, search_pair, sampled_rotating_contact_search,
+        RotatingContactSearchError3d, SampledContactTime3d, coarse_sample_limit,
+        sampled_rotating_contact_search,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
@@ -482,63 +480,6 @@ mod tests {
             sample_count,
             refinement_steps,
         )
-    }
-
-    fn unbounded_search(
-        boxes: &[RigidBox3d],
-        config: RotatingContactSearchConfig3d,
-    ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
-        let mut broad_phase = RotatingBroadPhase3d::default();
-        let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
-        let by_id = boxes
-            .iter()
-            .enumerate()
-            .map(|(index, rigid_box)| (rigid_box.body().id(), index))
-            .collect::<BTreeMap<_, _>>();
-        let denominator = u32::from(config.sample_count);
-        let mut coarse_samples = CoarseSampleCache3d::new(boxes.len(), denominator);
-        let mut best: Option<RotatingContactSearchHit3d> = None;
-
-        for pair in pairs {
-            let left_index = *by_id
-                .get(&pair.left)
-                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
-            let right_index = *by_id
-                .get(&pair.right)
-                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
-            let Some(hit) = search_pair(
-                left_index,
-                &boxes[left_index],
-                right_index,
-                &boxes[right_index],
-                pair,
-                config,
-                denominator,
-                &mut coarse_samples,
-            )?
-            else {
-                continue;
-            };
-            if best.is_none_or(|current| compare_hits(hit, current).is_lt()) {
-                best = Some(hit);
-            }
-        }
-        Ok(best)
-    }
-
-    fn ordered_sweep_scene(obstacle_count: u64) -> Vec<RigidBox3d> {
-        let mut boxes = (0..obstacle_count)
-            .map(|index| {
-                let offset = i32::try_from(index).expect("small benchmark obstacle count");
-                fixed(index + 1, Vec3i::new(-92 + offset * 3, 0, 0))
-            })
-            .collect::<Vec<_>>();
-        boxes.push(dynamic(
-            obstacle_count + 1,
-            Vec3i::new(-100, 0, 0),
-            Vec3i::new(220, 0, 0),
-        ));
-        boxes
     }
 
     #[test]
@@ -612,60 +553,55 @@ mod tests {
     }
 
     #[test]
-    fn best_hit_bound_matches_unbounded_search_for_ordered_sweep() {
-        let boxes = ordered_sweep_scene(64);
-        let search = config(64, 4);
+    fn coarse_limit_keeps_boundary_sample() {
+        assert_eq!(coarse_sample_limit(SampledContactTime3d::ZERO, 64), 0);
         assert_eq!(
-            sampled_rotating_contact_search(&boxes, search).expect("bounded search"),
-            unbounded_search(&boxes, search).expect("unbounded search")
-        );
-    }
-
-    #[test]
-    fn best_hit_time_keeps_its_containing_coarse_sample() {
-        assert_eq!(
-            coarse_numerator_limit(
+            coarse_sample_limit(
                 SampledContactTime3d {
                     numerator: 3,
                     denominator: 8,
                 },
-                4,
+                64,
             ),
-            2
+            24
         );
-        assert_eq!(coarse_numerator_limit(SampledContactTime3d::ZERO, 32), 0);
+        assert_eq!(
+            coarse_sample_limit(
+                SampledContactTime3d {
+                    numerator: 7,
+                    denominator: 20,
+                },
+                64,
+            ),
+            23
+        );
     }
 
     #[test]
-    #[ignore = "release-mode performance evidence; run through Performance Evidence"]
-    fn best_hit_bounded_search_benchmark() {
-        let boxes = ordered_sweep_scene(64);
-        let search = config(64, 4);
-        let iterations = 100;
+    fn later_pair_can_refine_before_current_best() {
+        let moving = dynamic(10, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
+        let later_hit_first_pair = fixed(1, Vec3i::ZERO);
+        let earlier_hit_later_pair = fixed(2, Vec3i::new(-1, 0, 0));
+        let hit = sampled_rotating_contact_search(
+            &[moving, later_hit_first_pair, earlier_hit_later_pair],
+            config(4, 3),
+        )
+        .expect("valid bounded search")
+        .expect("both fixed candidates should be contacted");
 
-        let expected = unbounded_search(&boxes, search).expect("unbounded correctness search");
-        let actual = sampled_rotating_contact_search(&boxes, search)
-            .expect("best-hit-bounded correctness search");
-        assert_eq!(actual, expected);
-
-        let unbounded_start = Instant::now();
-        for _ in 0..iterations {
-            black_box(unbounded_search(black_box(&boxes), search).expect("unbounded benchmark"));
-        }
-        let unbounded_elapsed = unbounded_start.elapsed();
-
-        let bounded_start = Instant::now();
-        for _ in 0..iterations {
-            black_box(
-                sampled_rotating_contact_search(black_box(&boxes), search)
-                    .expect("best-hit-bounded benchmark"),
-            );
-        }
-        let bounded_elapsed = bounded_start.elapsed();
-        let speedup = unbounded_elapsed.as_secs_f64() / bounded_elapsed.as_secs_f64();
-
-        eprintln!(
-            "best-hit bounded contact search 64 obstacles × {iterations}: unbounded={unbounded_elapsed:?}, bounded={bounded_elapsed:?}, speedup={speedup:.2}x"
+        assert_eq!(
+            hit.pair,
+            RotationalSweepPair3d {
+                left: BodyId(2),
+                right: BodyId(10),
+            }
+        );
+        assert_eq!(
+            hit.time,
+            SampledContactTime3d {
+                numerator: 3,
+                denominator: 8,
+            }
         );
     }
 
