@@ -42,19 +42,12 @@ impl Orientation3d {
     /// Returns [`AngularError3d::ZeroOrientation`] when every component is zero, or
     /// [`AngularError3d::ArithmeticOverflow`] when the normalized result cannot be represented.
     pub fn normalized(self) -> Result<Self, AngularError3d> {
-        let norm_squared = orientation_norm_squared(self);
-        if norm_squared == 0 {
-            return Err(AngularError3d::ZeroOrientation);
-        }
-        let norm = integer_sqrt(norm_squared);
-        let denominator = i128::try_from(norm).map_err(|_| AngularError3d::ArithmeticOverflow)?;
-        let scale = i128::from(ORIENTATION_SCALE);
-        Ok(Self {
-            x: normalized_component(self.x, scale, denominator)?,
-            y: normalized_component(self.y, scale, denominator)?,
-            z: normalized_component(self.z, scale, denominator)?,
-            w: normalized_component(self.w, scale, denominator)?,
-        })
+        normalize_orientation_components([
+            i128::from(self.x),
+            i128::from(self.y),
+            i128::from(self.z),
+            i128::from(self.w),
+        ])
     }
 }
 
@@ -255,13 +248,13 @@ pub(crate) fn integrate_orientation_exact_ratio(
         .scaled_u32(1, unit_denominator)
         .map_err(|_| AngularError3d::ArithmeticOverflow)?;
 
-    let next = Orientation3d::new(
+    let next = [
         integrated_component_exact(qx, derivative[0], derivative_time)?,
         integrated_component_exact(qy, derivative[1], derivative_time)?,
         integrated_component_exact(qz, derivative[2], derivative_time)?,
         integrated_component_exact(qw, derivative[3], derivative_time)?,
-    );
-    next.normalized()
+    ];
+    normalize_orientation_components(next)
 }
 
 /// Computes the exact principal-axis inertia ratio for an axis-aligned box in its local frame.
@@ -345,22 +338,50 @@ fn integrated_component_exact(
     component: i128,
     derivative: i128,
     timestep: ExactRatio,
-) -> Result<i32, AngularError3d> {
+) -> Result<i128, AngularError3d> {
     let delta = timestep
         .mul_round_i128(derivative)
         .map_err(map_wide_ratio_error)?;
-    let next = component
+    component
         .checked_add(delta)
-        .ok_or(AngularError3d::ArithmeticOverflow)?;
-    i32::try_from(next).map_err(|_| AngularError3d::ArithmeticOverflow)
+        .ok_or(AngularError3d::ArithmeticOverflow)
 }
 
 fn map_wide_ratio_error(_: WideRatioError) -> AngularError3d {
     AngularError3d::ArithmeticOverflow
 }
 
-fn normalized_component(component: i32, scale: i128, norm: i128) -> Result<i32, AngularError3d> {
-    let numerator = i128::from(component)
+fn normalize_orientation_components(
+    components: [i128; 4],
+) -> Result<Orientation3d, AngularError3d> {
+    let norm_squared = wide_orientation_norm_squared(components)?;
+    if norm_squared == 0 {
+        return Err(AngularError3d::ZeroOrientation);
+    }
+    let norm = integer_sqrt(norm_squared);
+    let denominator = i128::try_from(norm).map_err(|_| AngularError3d::ArithmeticOverflow)?;
+    let scale = i128::from(ORIENTATION_SCALE);
+    Ok(Orientation3d::new(
+        normalized_component(components[0], scale, denominator)?,
+        normalized_component(components[1], scale, denominator)?,
+        normalized_component(components[2], scale, denominator)?,
+        normalized_component(components[3], scale, denominator)?,
+    ))
+}
+
+fn wide_orientation_norm_squared(components: [i128; 4]) -> Result<u128, AngularError3d> {
+    components.into_iter().try_fold(0_u128, |sum, component| {
+        let magnitude = component.unsigned_abs();
+        let squared = magnitude
+            .checked_mul(magnitude)
+            .ok_or(AngularError3d::ArithmeticOverflow)?;
+        sum.checked_add(squared)
+            .ok_or(AngularError3d::ArithmeticOverflow)
+    })
+}
+
+fn normalized_component(component: i128, scale: i128, norm: i128) -> Result<i32, AngularError3d> {
+    let numerator = component
         .checked_mul(scale)
         .ok_or(AngularError3d::ArithmeticOverflow)?;
     let normalized = div_round_nearest(numerator, norm)?;
@@ -404,6 +425,7 @@ fn checked_cross_component(
         .ok_or(AngularError3d::ArithmeticOverflow)
 }
 
+#[cfg(test)]
 fn orientation_norm_squared(orientation: Orientation3d) -> u128 {
     [orientation.x, orientation.y, orientation.z, orientation.w]
         .into_iter()
@@ -453,6 +475,24 @@ mod tests {
             60,
         )
         .expect("valid angular integration");
+        assert!(next.z > 0);
+        assert!(next.w > 0);
+
+        let expected = u128::from(u32::try_from(ORIENTATION_SCALE).expect("positive scale"));
+        let expected_squared = expected * expected;
+        let error = orientation_norm_squared(next).abs_diff(expected_squared);
+        assert!(error <= expected * 4, "normalization drift was {error}");
+    }
+
+    #[test]
+    fn high_spin_is_normalized_before_orientation_components_are_narrowed() {
+        let next = integrate_orientation(
+            Orientation3d::IDENTITY,
+            AngularVelocity3d::new(0, 0, i32::MAX),
+            1,
+            60,
+        )
+        .expect("large intermediate quaternion remains normalizable");
         assert!(next.z > 0);
         assert!(next.w > 0);
 
