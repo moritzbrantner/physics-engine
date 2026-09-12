@@ -79,7 +79,8 @@ pub use rotating_contact_search::{
 };
 pub use rotating_recontact_search::sampled_rotating_recontact_search;
 pub use rotating_world::{
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldStepStats3d,
 };
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
