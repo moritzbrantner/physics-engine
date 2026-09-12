@@ -12,8 +12,8 @@ const MOVE_SPEED: i32 = 7;
 const JUMP_SPEED: i32 = 16;
 const PROJECTILE_SPEED_LIMIT: i32 = 120;
 const ROTATING_TICKS_PER_SECOND: i32 = 60;
-const CRATE_RESTITUTION_MILLI: u16 = 50;
-const CRATE_FRICTION_MILLI: u16 = 850;
+const CRATE_RESTITUTION_MILLI: u16 = 0;
+const CRATE_FRICTION_MILLI: u16 = 1_000;
 
 struct Sandbox {
     world: RotatingWorld3d,
