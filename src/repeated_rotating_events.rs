@@ -7,6 +7,13 @@ use crate::{
     SampledContactTime3d, earliest_rotating_contact_frontier, next_rotating_contact_frontier,
     obb_contact_seed, resolve_rotating_contact_frontier,
 };
+use crate::{
+    rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_contact_frontier::{
+        earliest_rotating_contact_frontier_with_broad_phase,
+        next_rotating_contact_frontier_with_broad_phase,
+    },
+};
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
 
@@ -161,11 +168,22 @@ pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
 ) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    advance_repeated_rotating_events_with_broad_phase(boxes, config, &mut broad_phase)
+}
+
+pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RepeatedRotatingEventConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
     let mut remaining = config.search.free_flight;
     let first_search = search_with_free_flight(config.search, remaining);
-    let Some(first_frontier) = earliest_rotating_contact_frontier(boxes, first_search)? else {
+    let Some(first_frontier) =
+        earliest_rotating_contact_frontier_with_broad_phase(boxes, first_search, broad_phase)?
+    else {
         return Ok(RepeatedRotatingEventAdvance3d {
             boxes: boxes.to_vec(),
             events: Vec::new(),
@@ -198,7 +216,9 @@ pub fn advance_repeated_rotating_events(
             break;
         }
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next) = next_rotating_contact_frontier(&state, next_search)? else {
+        let Some(next) =
+            next_rotating_contact_frontier_with_broad_phase(&state, next_search, broad_phase)?
+        else {
             break;
         };
         frontier = next;
