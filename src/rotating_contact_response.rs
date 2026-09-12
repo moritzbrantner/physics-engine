@@ -138,10 +138,7 @@ impl BodyDeltaAccumulator3d {
             return Ok(());
         }
         let key = primitive_axis(relative_axis, id)?;
-        let group = match self
-            .groups
-            .binary_search_by_key(&key, |(axis, _)| *axis)
-        {
+        let group = match self.groups.binary_search_by_key(&key, |(axis, _)| *axis) {
             Ok(index) => &mut self.groups[index].1,
             Err(index) => {
                 self.groups.insert(index, (key, DeltaGroup3d::default()));
