@@ -3,6 +3,7 @@ name: Performance Evidence
 on:
   pull_request:
     paths:
+      - "src/query.rs"
       - "tests/*performance*.rs"
       - ".github/workflows/performance-evidence.yml"
   workflow_dispatch:
