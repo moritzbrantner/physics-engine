@@ -9,8 +9,7 @@ fn populated_world(body_count: u64) -> World {
         // spatial/time order for power-of-two scene sizes. The prior implementation therefore has
         // genuine ordering work to do instead of receiving an already sorted hit vector.
         let spatial_rank = id.wrapping_mul(7_919) % body_count;
-        let x = 8_i32
-            + i32::try_from(spatial_rank).expect("benchmark spatial rank fits i32") * 4;
+        let x = 8_i32 + i32::try_from(spatial_rank).expect("benchmark spatial rank fits i32") * 4;
         world
             .add_body(RigidBody::fixed(
                 BodyId(id),
