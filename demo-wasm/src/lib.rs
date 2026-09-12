@@ -452,7 +452,9 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use physics_engine::{BodyId, RepeatedRotatingEventError3d, RigidBody, RotatingWorldError3d, Vec3i};
+    use physics_engine::{
+        BodyId, RepeatedRotatingEventError3d, RigidBody, RotatingWorldError3d, Vec3i,
+    };
 
     use super::{PLAYER_ID, Sandbox, rotating_box, world_error_detail};
 
