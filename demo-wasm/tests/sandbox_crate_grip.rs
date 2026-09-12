@@ -27,7 +27,9 @@ fn pushed_crates_come_to_a_visible_rest() {
     }
     let before_push = crate_positions();
 
-    for _ in 0..40 {
+    // The center-line crate starts at z=-70 while the player starts at z=320.
+    // Sixty-four forward ticks deliberately reach and push that crate.
+    for _ in 0..64 {
         assert_eq!(sandbox_step(0, -7, 0), 0);
     }
     let after_push = crate_positions();
