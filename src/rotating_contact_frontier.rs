@@ -3,9 +3,13 @@ use std::{collections::BTreeMap, error::Error, fmt};
 use crate::{
     BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d,
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
-    RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
-    rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
+    RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
     sampled_rotating_contact_search, sampled_rotating_recontact_search,
+};
+use crate::{
+    rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_contact_search::sampled_rotating_contact_search_with_broad_phase,
+    rotating_recontact_search::sampled_rotating_recontact_search_with_broad_phase,
 };
 
 /// One shared pre-response world reconstructed at an admitted sampled rotating contact time.
@@ -128,10 +132,26 @@ pub fn earliest_rotating_contact_frontier(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
-    let Some(earliest) = sampled_rotating_contact_search(boxes, config)? else {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    earliest_rotating_contact_frontier_with_broad_phase(boxes, config, &mut broad_phase)
+}
+
+pub(crate) fn earliest_rotating_contact_frontier_with_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let Some(earliest) =
+        sampled_rotating_contact_search_with_broad_phase(boxes, config, broad_phase)?
+    else {
         return Ok(None);
     };
-    Ok(Some(reconstruct_frontier(boxes, config, earliest)?))
+    Ok(Some(reconstruct_frontier(
+        boxes,
+        config,
+        earliest,
+        broad_phase,
+    )?))
 }
 
 /// Reconstructs the earliest strictly-positive sampled re-contact frontier from one common interval start.
@@ -154,7 +174,18 @@ pub fn next_rotating_contact_frontier(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
-    let Some(earliest) = sampled_rotating_recontact_search(boxes, config)? else {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    next_rotating_contact_frontier_with_broad_phase(boxes, config, &mut broad_phase)
+}
+
+pub(crate) fn next_rotating_contact_frontier_with_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let Some(earliest) =
+        sampled_rotating_recontact_search_with_broad_phase(boxes, config, broad_phase)?
+    else {
         return Ok(None);
     };
     if earliest.time.numerator == 0 {
@@ -162,13 +193,19 @@ pub fn next_rotating_contact_frontier(
             earliest.time,
         ));
     }
-    Ok(Some(reconstruct_frontier(boxes, config, earliest)?))
+    Ok(Some(reconstruct_frontier(
+        boxes,
+        config,
+        earliest,
+        broad_phase,
+    )?))
 }
 
 fn reconstruct_frontier(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
     earliest: RotatingContactSearchHit3d,
+    broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<RotatingContactFrontier3d, RotatingContactFrontierError3d> {
     if earliest.time.denominator == 0 || earliest.time.numerator > earliest.time.denominator {
         return Err(RotatingContactFrontierError3d::InvalidSearchTime(
@@ -192,7 +229,7 @@ fn reconstruct_frontier(
         .enumerate()
         .map(|(index, rigid_box)| (rigid_box.body().id(), index))
         .collect::<BTreeMap<_, _>>();
-    let candidates = rotational_sweep_candidate_pairs(boxes, config.free_flight)?;
+    let candidates = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     let mut contacts = Vec::new();
 
     for pair in candidates {
