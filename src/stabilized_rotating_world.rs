@@ -136,14 +136,12 @@ fn stabilize_pair_positions(
 ) -> Result<bool, RotatingWorldError3d> {
     let before_left = boxes[left_index].body.position;
     let before_right = boxes[right_index].body.position;
-    let response = resolve_obb_contact(
-        boxes[left_index].clone(),
-        boxes[right_index].clone(),
-        false,
-    )
-    .map_err(|error| RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error)))?;
-    let pair_changed = response.left.body.position != before_left
-        || response.right.body.position != before_right;
+    let response =
+        resolve_obb_contact(boxes[left_index].clone(), boxes[right_index].clone(), false).map_err(
+            |error| RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error)),
+        )?;
+    let pair_changed =
+        response.left.body.position != before_left || response.right.body.position != before_right;
     if !pair_changed {
         return Ok(false);
     }
