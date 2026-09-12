@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 
 use crate::{BodyId, BodyKind, RotationalSweepBounds3d};
 
@@ -65,6 +67,7 @@ impl IndexedBvh3d {
         Some(self.node(index).bounds)
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(super) fn height(&self) -> usize {
         self.root
