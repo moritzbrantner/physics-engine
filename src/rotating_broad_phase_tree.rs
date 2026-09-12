@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{BodyId, BodyKind, RotationalSweepBounds3d};
 
-use super::{
-    BoundedBody3d, bounds_overlap, center_twice, union_bounds, widest_axis,
-};
+use super::{BoundedBody3d, bounds_overlap, center_twice, union_bounds, widest_axis};
 
 type NodeIndex = usize;
 
@@ -235,7 +233,11 @@ impl IndexedBvh3d {
                 ArenaNodeKind3d::Branch { left, right } => {
                     let left_score = self.insertion_score(left, leaf_bounds);
                     let right_score = self.insertion_score(right, leaf_bounds);
-                    sibling = if left_score <= right_score { left } else { right };
+                    sibling = if left_score <= right_score {
+                        left
+                    } else {
+                        right
+                    };
                 }
             }
         }
@@ -433,17 +435,35 @@ impl IndexedBvh3d {
                 };
                 pairs.push(pair);
             }
-            (ArenaNodeKind3d::Branch { left: ll, right: lr }, ArenaNodeKind3d::Leaf(_)) => {
+            (
+                ArenaNodeKind3d::Branch {
+                    left: ll,
+                    right: lr,
+                },
+                ArenaNodeKind3d::Leaf(_),
+            ) => {
                 self.collect_pairs_between(ll, right, pairs);
                 self.collect_pairs_between(lr, right, pairs);
             }
-            (ArenaNodeKind3d::Leaf(_), ArenaNodeKind3d::Branch { left: rl, right: rr }) => {
+            (
+                ArenaNodeKind3d::Leaf(_),
+                ArenaNodeKind3d::Branch {
+                    left: rl,
+                    right: rr,
+                },
+            ) => {
                 self.collect_pairs_between(left, rl, pairs);
                 self.collect_pairs_between(left, rr, pairs);
             }
             (
-                ArenaNodeKind3d::Branch { left: ll, right: lr },
-                ArenaNodeKind3d::Branch { left: rl, right: rr },
+                ArenaNodeKind3d::Branch {
+                    left: ll,
+                    right: lr,
+                },
+                ArenaNodeKind3d::Branch {
+                    left: rl,
+                    right: rr,
+                },
             ) => {
                 self.collect_pairs_between(ll, rl, pairs);
                 self.collect_pairs_between(ll, rr, pairs);
@@ -601,7 +621,8 @@ mod tests {
         for step in 0..128_i64 {
             let moved = body(1, 10_000 + step * 16);
             assert!(tree.reinsert(moved, &mut rotations));
-            tree.validate_structure().expect("valid indexed tree after churn");
+            tree.validate_structure()
+                .expect("valid indexed tree after churn");
         }
 
         assert_eq!(tree.nodes.len(), initial_slots);
