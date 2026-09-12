@@ -5,9 +5,12 @@ use crate::{
     RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    RotationalSweepPair3d, SampledContactTime3d, Vec3i, advance_repeated_rotating_events,
-    obb_contact_seed, oriented_box_vertices, resolve_rotating_contact_frontier,
-    sample_rigid_box_free_flight,
+    RotationalSweepPair3d, SampledContactTime3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
+};
+use crate::{
+    repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
+    rotating_broad_phase::RotatingBroadPhase3d,
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -38,6 +41,12 @@ pub struct RotatingWorldStepStats3d {
     pub body_count: usize,
     pub sampled_events: usize,
     pub tail_contacts: usize,
+    /// Conservative broad-phase queries issued during this step.
+    pub broad_phase_queries: u64,
+    /// Queries that had to rebuild the balanced fat-AABB topology.
+    pub broad_phase_rebuilds: u64,
+    /// Queries that reused the existing fat-AABB topology and exact-filtered its candidate leaves.
+    pub broad_phase_reuses: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -144,10 +153,15 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// narrower integer pair. If an impulse makes the selected resolution too coarse, the exact tail is
 /// replayed from its starting state with a finer deterministic resolution; exceeding the hard bound fails
 /// closed.
+///
+/// The world retains a fat-AABB broad-phase tree across steps. Exact conservative sweep bounds are still
+/// recomputed for every query and remain the candidate truth; the retained tree only avoids rebuilding
+/// balanced topology while those exact bounds remain inside their deterministic fat envelopes.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
     boxes: BTreeMap<BodyId, RigidBox3d>,
+    broad_phase: RotatingBroadPhase3d,
 }
 
 impl RotatingWorld3d {
@@ -156,6 +170,7 @@ impl RotatingWorld3d {
         Self {
             config,
             boxes: BTreeMap::new(),
+            broad_phase: RotatingBroadPhase3d::default(),
         }
     }
 
@@ -245,13 +260,14 @@ impl RotatingWorld3d {
             });
         }
 
+        let broad_phase_before = self.broad_phase.stats();
         let boxes = self.boxes.values().cloned().collect::<Vec<_>>();
         let free_flight = RigidBoxFreeFlightConfig3d::new(
             self.config.gravity,
             timestep_numerator,
             timestep_denominator,
         );
-        let advance = advance_repeated_rotating_events(
+        let advance = advance_repeated_rotating_events_with_broad_phase(
             &boxes,
             RepeatedRotatingEventConfig3d::new(
                 RotatingContactSearchConfig3d::new(
@@ -262,7 +278,9 @@ impl RotatingWorld3d {
                 self.config.solver_passes,
                 self.config.max_events,
             ),
+            &mut self.broad_phase,
         )?;
+        let broad_phase_after = self.broad_phase.stats();
 
         let sampled_events = advance.events.len();
         let (boxes, tail_contacts) = if advance.remaining.timestep_is_zero() {
@@ -280,6 +298,15 @@ impl RotatingWorld3d {
                 body_count: self.boxes.len(),
                 sampled_events,
                 tail_contacts,
+                broad_phase_queries: broad_phase_after
+                    .queries
+                    .saturating_sub(broad_phase_before.queries),
+                broad_phase_rebuilds: broad_phase_after
+                    .rebuilds
+                    .saturating_sub(broad_phase_before.rebuilds),
+                broad_phase_reuses: broad_phase_after
+                    .reuses
+                    .saturating_sub(broad_phase_before.reuses),
             },
         })
     }
@@ -657,6 +684,27 @@ mod tests {
             ))
             .expect("valid overlap query");
         assert_eq!(hits, vec![BodyId(1), BodyId(2)]);
+    }
+
+    #[test]
+    fn persistent_broad_phase_reuses_topology_across_unchanged_steps() {
+        let mut world = world(Vec3i::ZERO);
+        world
+            .add_box(dynamic(1, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1)))
+            .expect("dynamic");
+        world
+            .add_box(fixed(2, Vec3i::new(100, 0, 0), Vec3i::new(1, 1, 1)))
+            .expect("fixed");
+
+        let first = world.step(1, 60).expect("first static frame");
+        let second = world.step(1, 60).expect("second static frame");
+
+        assert_eq!(first.stats.broad_phase_queries, 1);
+        assert_eq!(first.stats.broad_phase_rebuilds, 1);
+        assert_eq!(first.stats.broad_phase_reuses, 0);
+        assert_eq!(second.stats.broad_phase_queries, 1);
+        assert_eq!(second.stats.broad_phase_rebuilds, 0);
+        assert_eq!(second.stats.broad_phase_reuses, 1);
     }
 
     #[test]

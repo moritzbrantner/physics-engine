@@ -1,10 +1,10 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
+use crate::rotating_broad_phase::RotatingBroadPhase3d;
 use crate::{
     BodyId, ObbContactSeed3d, RigidBox3d, RotatingContactSearchConfig3d,
     RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
-    SampledContactTime3d, obb_contact_seed, rotational_sweep_candidate_pairs,
-    sample_rigid_box_free_flight,
+    SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,8 +36,17 @@ pub fn sampled_rotating_recontact_search(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    sampled_rotating_recontact_search_with_broad_phase(boxes, config, &mut broad_phase)
+}
+
+pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     validate_resolution(config)?;
-    let pairs = rotational_sweep_candidate_pairs(boxes, config.free_flight)?;
+    let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     if pairs.is_empty() {
         return Ok(None);
     }

@@ -4,8 +4,14 @@ use crate::{
     BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
     RotatingContactFrontier3d, RotatingContactFrontierError3d, RotatingContactResponseError3d,
     RotatingContactSearchConfig3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
-    SampledContactTime3d, earliest_rotating_contact_frontier, next_rotating_contact_frontier,
-    obb_contact_seed, resolve_rotating_contact_frontier,
+    SampledContactTime3d, obb_contact_seed, resolve_rotating_contact_frontier,
+};
+use crate::{
+    rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_contact_frontier::{
+        earliest_rotating_contact_frontier_with_broad_phase,
+        next_rotating_contact_frontier_with_broad_phase,
+    },
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
@@ -128,14 +134,15 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// Advances through a bounded sequence of sampled rotating collision events while preserving the exact
 /// remaining requested interval.
 ///
-/// The first event is selected with [`earliest_rotating_contact_frontier`]. After response, the remaining
-/// rational timestep becomes the next segment. Before that next segment is searched, the current contact
-/// frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes the
-/// current zero-time contact set and applies one simultaneous response pass. This keeps resting and
+/// The first event is selected with [`crate::earliest_rotating_contact_frontier`]. After response, the
+/// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
+/// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
+/// the current zero-time contact set and applies one simultaneous response pass. This keeps resting and
 /// newly-created support constraints in the authoritative solver without demanding exact global
 /// idempotence from quantized contact projection. Current-frontier discovery is a direct OBB query; it
 /// deliberately does not re-enter the sampled temporal search. Later positive events are then selected
-/// with [`next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event discovery.
+/// with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize event
+/// discovery.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -161,11 +168,22 @@ pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
 ) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    advance_repeated_rotating_events_with_broad_phase(boxes, config, &mut broad_phase)
+}
+
+pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RepeatedRotatingEventConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
     let mut remaining = config.search.free_flight;
     let first_search = search_with_free_flight(config.search, remaining);
-    let Some(first_frontier) = earliest_rotating_contact_frontier(boxes, first_search)? else {
+    let Some(first_frontier) =
+        earliest_rotating_contact_frontier_with_broad_phase(boxes, first_search, broad_phase)?
+    else {
         return Ok(RepeatedRotatingEventAdvance3d {
             boxes: boxes.to_vec(),
             events: Vec::new(),
@@ -198,7 +216,9 @@ pub fn advance_repeated_rotating_events(
             break;
         }
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next) = next_rotating_contact_frontier(&state, next_search)? else {
+        let Some(next) =
+            next_rotating_contact_frontier_with_broad_phase(&state, next_search, broad_phase)?
+        else {
             break;
         };
         frontier = next;
