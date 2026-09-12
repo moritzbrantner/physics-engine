@@ -176,7 +176,7 @@ impl CoarseSampleCache3d {
 
         let sampled = sample_rigid_box_free_flight(rigid_box, config, numerator, self.denominator)?
             .oriented_box();
-        if self.cached_entries < MAX_CACHED_COARSE_SAMPLES
+        if self.len() < MAX_CACHED_COARSE_SAMPLES
             && sample_index == self.samples_by_body[body_index].len()
         {
             self.samples_by_body[body_index].push(sampled);
