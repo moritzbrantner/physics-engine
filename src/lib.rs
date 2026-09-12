@@ -33,6 +33,7 @@ mod rotating_contact_search;
 mod rotating_recontact_search;
 mod rotating_world;
 mod rotational_sweep;
+mod stabilized_rotating_world;
 mod wide_ratio;
 mod world;
 
@@ -78,10 +79,11 @@ pub use rotating_contact_search::{
 };
 pub use rotating_recontact_search::sampled_rotating_recontact_search;
 pub use rotating_world::{
-    RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
     RotatingWorldStepStats3d,
 };
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
+pub use stabilized_rotating_world::RotatingWorld3d;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
