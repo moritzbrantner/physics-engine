@@ -35,13 +35,9 @@ impl CoarseSampleCache3d {
             return Ok(sampled);
         }
 
-        let sampled = sample_rigid_box_free_flight(
-            rigid_box,
-            config.free_flight,
-            numerator,
-            denominator,
-        )?
-        .oriented_box();
+        let sampled =
+            sample_rigid_box_free_flight(rigid_box, config.free_flight, numerator, denominator)?
+                .oriented_box();
         if self.samples.len() < MAX_CACHED_COARSE_SAMPLES {
             self.samples.insert(key, sampled);
         }
@@ -144,7 +140,8 @@ fn search_pair(
     let mut last_clear = if initially_contacting { None } else { Some(0) };
 
     for numerator in 1..=denominator {
-        let sampled_left = coarse_samples.sample_oriented_box(left, config, numerator, denominator)?;
+        let sampled_left =
+            coarse_samples.sample_oriented_box(left, config, numerator, denominator)?;
         let sampled_right =
             coarse_samples.sample_oriented_box(right, config, numerator, denominator)?;
         match obb_contact_seed(sampled_left, sampled_right)? {
@@ -357,12 +354,10 @@ mod tests {
         let moving = dynamic(11, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
         let first = fixed(3, Vec3i::ZERO);
         let second = fixed(8, Vec3i::ZERO);
-        let hit = sampled_rotating_recontact_search(
-            &[second, moving, first],
-            config(Vec3i::ZERO, 8, 2),
-        )
-        .expect("valid shared-body recontact search")
-        .expect("shared body should contact both obstacles");
+        let hit =
+            sampled_rotating_recontact_search(&[second, moving, first], config(Vec3i::ZERO, 8, 2))
+                .expect("valid shared-body recontact search")
+                .expect("shared body should contact both obstacles");
 
         assert_eq!(hit.pair.left, BodyId(3));
         assert_eq!(hit.pair.right, BodyId(11));
