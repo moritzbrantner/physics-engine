@@ -9,6 +9,8 @@ use crate::{
     RotationalSweepBounds3d, rigid_box_free_flight_sweep_bounds,
 };
 
+const MAX_INCREMENTAL_REINSERTS_PER_QUERY: usize = 8;
+
 /// Canonically ordered broad-phase candidate pair for rotating rigid boxes.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RotationalSweepPair3d {
@@ -21,6 +23,9 @@ pub(crate) struct RotatingBroadPhaseStats3d {
     pub queries: u64,
     pub rebuilds: u64,
     pub reuses: u64,
+    pub incremental_updates: u64,
+    pub reinserts: u64,
+    pub rotations: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,6 +70,8 @@ struct BoundedBody3d {
 struct BroadPhaseBvhNode3d {
     bounds: RotationalSweepBounds3d,
     has_dynamic: bool,
+    height: u16,
+    minimum_id: BodyId,
     kind: BroadPhaseBvhNodeKind3d,
 }
 
@@ -82,6 +89,8 @@ impl BroadPhaseBvhNode3d {
         Self {
             bounds: body.bounds,
             has_dynamic: body.kind == BodyKind::Dynamic,
+            height: 1,
+            minimum_id: body.id,
             kind: BroadPhaseBvhNodeKind3d::Leaf(body),
         }
     }
@@ -90,6 +99,8 @@ impl BroadPhaseBvhNode3d {
         Self {
             bounds: union_bounds(left.bounds, right.bounds),
             has_dynamic: left.has_dynamic || right.has_dynamic,
+            height: left.height.max(right.height).saturating_add(1),
+            minimum_id: left.minimum_id.min(right.minimum_id),
             kind: BroadPhaseBvhNodeKind3d::Branch {
                 left: Box::new(left),
                 right: Box::new(right),
@@ -100,10 +111,13 @@ impl BroadPhaseBvhNode3d {
 
 /// Persistent deterministic broad phase for rotating rigid boxes.
 ///
-/// The tree stores fat conservative envelopes so repeated queries can retain the same balanced topology
-/// while exact sweep bounds move within those envelopes. Candidate output is still filtered against the
-/// exact current sweep bounds, so persistence changes pruning cost only; it cannot add or remove a pair
-/// relative to a fresh conservative broad-phase build.
+/// The tree stores fat conservative envelopes so repeated queries can retain topology while exact sweep
+/// bounds move within those envelopes. A small bounded set of leaves that escape their fat envelopes are
+/// removed and reinserted independently; membership/body-kind changes or a bulk escape use a full balanced
+/// rebuild instead. Ancestors are refitted after each edit and locally height-balanced with deterministic
+/// rotations. Candidate output is still filtered against the exact current sweep bounds, so persistence
+/// changes pruning cost only; it cannot add or remove a pair relative to a fresh conservative broad-phase
+/// build.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RotatingBroadPhase3d {
     tree: Option<BroadPhaseBvhNode3d>,
@@ -121,12 +135,44 @@ impl RotatingBroadPhase3d {
         self.stats.queries = self.stats.queries.saturating_add(1);
         let exact = bounded_bodies(boxes, config)?;
 
-        if self.can_reuse(&exact) {
-            self.stats.reuses = self.stats.reuses.saturating_add(1);
-            self.exact = exact.into_iter().map(|body| (body.id, body)).collect();
-        } else {
+        if !self.membership_matches(&exact) {
             self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
             self.rebuild(exact);
+        } else {
+            let mut escaped = exact
+                .iter()
+                .copied()
+                .filter(|body| {
+                    !self
+                        .fat_bounds
+                        .get(&body.id)
+                        .is_some_and(|fat| contains_bounds(*fat, body.bounds))
+                })
+                .collect::<Vec<_>>();
+            escaped.sort_by_key(|body| body.id);
+            self.exact = exact.into_iter().map(|body| (body.id, body)).collect();
+
+            if escaped.is_empty() {
+                self.stats.reuses = self.stats.reuses.saturating_add(1);
+            } else if escaped.len() > MAX_INCREMENTAL_REINSERTS_PER_QUERY {
+                self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
+                self.rebuild(self.exact.values().copied().collect());
+            } else {
+                self.stats.incremental_updates = self.stats.incremental_updates.saturating_add(1);
+                let mut rotations = 0_u64;
+                let mut incremental_ok = true;
+                for body in escaped {
+                    if !self.reinsert(body, &mut rotations) {
+                        incremental_ok = false;
+                        break;
+                    }
+                }
+                self.stats.rotations = self.stats.rotations.saturating_add(rotations);
+                if !incremental_ok {
+                    self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
+                    self.rebuild(self.exact.values().copied().collect());
+                }
+            }
         }
 
         let Some(tree) = &self.tree else {
@@ -143,7 +189,7 @@ impl RotatingBroadPhase3d {
         self.stats
     }
 
-    fn can_reuse(&self, exact: &[BoundedBody3d]) -> bool {
+    fn membership_matches(&self, exact: &[BoundedBody3d]) -> bool {
         if self.tree.is_none()
             || exact.len() != self.exact.len()
             || exact.len() != self.fat_bounds.len()
@@ -155,11 +201,32 @@ impl RotatingBroadPhase3d {
             self.exact
                 .get(&body.id)
                 .is_some_and(|previous| previous.kind == body.kind)
-                && self
-                    .fat_bounds
-                    .get(&body.id)
-                    .is_some_and(|fat| contains_bounds(*fat, body.bounds))
+                && self.fat_bounds.contains_key(&body.id)
         })
+    }
+
+    fn reinsert(&mut self, body: BoundedBody3d, rotations: &mut u64) -> bool {
+        let Some(tree) = self.tree.take() else {
+            return false;
+        };
+        let (remaining, removed) = remove_leaf(tree, body.id, rotations);
+        if !removed {
+            self.tree = remaining;
+            return false;
+        }
+
+        let fat_bounds = fatten_bounds(body.bounds);
+        self.fat_bounds.insert(body.id, fat_bounds);
+        let leaf = BroadPhaseBvhNode3d::leaf(BoundedBody3d {
+            bounds: fat_bounds,
+            ..body
+        });
+        self.tree = Some(match remaining {
+            Some(root) => insert_leaf(root, leaf, rotations),
+            None => leaf,
+        });
+        self.stats.reinserts = self.stats.reinserts.saturating_add(1);
+        true
     }
 
     fn rebuild(&mut self, exact: Vec<BoundedBody3d>) {
@@ -182,7 +249,8 @@ impl RotatingBroadPhase3d {
 /// Every body is first enclosed by [`rigid_box_free_flight_sweep_bounds`], so acceleration, velocity
 /// reversal, and arbitrary orientation change are preserved as broad-phase possibilities. A one-shot
 /// call uses the same balanced AABB BVH implementation as [`RotatingBroadPhase3d`], while world stepping
-/// keeps a persistent instance so repeated search/frontier queries can reuse fat-tree topology.
+/// keeps a persistent instance so repeated search/frontier queries can reuse or incrementally update the
+/// fat-tree topology.
 ///
 /// Fixed/fixed pairs are omitted because neither body can respond. Input ordering does not affect output.
 /// This function proves only that emitted pairs *may* contact and that pairs whose conservative envelopes
@@ -244,6 +312,189 @@ fn build_bvh_node(bodies: &mut [BoundedBody3d]) -> BroadPhaseBvhNode3d {
     let middle = bodies.len() / 2;
     let (left_bodies, right_bodies) = bodies.split_at_mut(middle);
     BroadPhaseBvhNode3d::branch(build_bvh_node(left_bodies), build_bvh_node(right_bodies))
+}
+
+fn contains_leaf_id(node: &BroadPhaseBvhNode3d, id: BodyId) -> bool {
+    match &node.kind {
+        BroadPhaseBvhNodeKind3d::Leaf(body) => body.id == id,
+        BroadPhaseBvhNodeKind3d::Branch { left, right } => {
+            contains_leaf_id(left, id) || contains_leaf_id(right, id)
+        }
+    }
+}
+
+fn remove_leaf(
+    node: BroadPhaseBvhNode3d,
+    id: BodyId,
+    rotations: &mut u64,
+) -> (Option<BroadPhaseBvhNode3d>, bool) {
+    match node.kind {
+        BroadPhaseBvhNodeKind3d::Leaf(body) => {
+            if body.id == id {
+                (None, true)
+            } else {
+                (Some(BroadPhaseBvhNode3d::leaf(body)), false)
+            }
+        }
+        BroadPhaseBvhNodeKind3d::Branch { left, right } => {
+            if contains_leaf_id(&left, id) {
+                let (new_left, removed) = remove_leaf(*left, id, rotations);
+                let rebuilt = match new_left {
+                    Some(left) => {
+                        rebalance_node(BroadPhaseBvhNode3d::branch(left, *right), rotations)
+                    }
+                    None => *right,
+                };
+                return (Some(rebuilt), removed);
+            }
+            if contains_leaf_id(&right, id) {
+                let (new_right, removed) = remove_leaf(*right, id, rotations);
+                let rebuilt = match new_right {
+                    Some(right) => {
+                        rebalance_node(BroadPhaseBvhNode3d::branch(*left, right), rotations)
+                    }
+                    None => *left,
+                };
+                return (Some(rebuilt), removed);
+            }
+            (Some(BroadPhaseBvhNode3d::branch(*left, *right)), false)
+        }
+    }
+}
+
+fn insert_leaf(
+    node: BroadPhaseBvhNode3d,
+    leaf: BroadPhaseBvhNode3d,
+    rotations: &mut u64,
+) -> BroadPhaseBvhNode3d {
+    match node.kind {
+        BroadPhaseBvhNodeKind3d::Leaf(body) => {
+            BroadPhaseBvhNode3d::branch(BroadPhaseBvhNode3d::leaf(body), leaf)
+        }
+        BroadPhaseBvhNodeKind3d::Branch { left, right } => {
+            let left = *left;
+            let right = *right;
+            let left_score = insertion_score(&left, leaf.bounds);
+            let right_score = insertion_score(&right, leaf.bounds);
+            let rebuilt = if left_score <= right_score {
+                BroadPhaseBvhNode3d::branch(insert_leaf(left, leaf, rotations), right)
+            } else {
+                BroadPhaseBvhNode3d::branch(left, insert_leaf(right, leaf, rotations))
+            };
+            rebalance_node(rebuilt, rotations)
+        }
+    }
+}
+
+fn insertion_score(
+    node: &BroadPhaseBvhNode3d,
+    leaf_bounds: RotationalSweepBounds3d,
+) -> (i128, u16, BodyId) {
+    let expanded = union_bounds(node.bounds, leaf_bounds);
+    (
+        bounds_measure(expanded) - bounds_measure(node.bounds),
+        node.height,
+        node.minimum_id,
+    )
+}
+
+fn rebalance_node(node: BroadPhaseBvhNode3d, rotations: &mut u64) -> BroadPhaseBvhNode3d {
+    let (left, right) = match node.kind {
+        BroadPhaseBvhNodeKind3d::Leaf(body) => return BroadPhaseBvhNode3d::leaf(body),
+        BroadPhaseBvhNodeKind3d::Branch { left, right } => (*left, *right),
+    };
+
+    if left.height > right.height.saturating_add(1) {
+        return match left.kind {
+            BroadPhaseBvhNodeKind3d::Leaf(body) => {
+                BroadPhaseBvhNode3d::branch(BroadPhaseBvhNode3d::leaf(body), right)
+            }
+            BroadPhaseBvhNodeKind3d::Branch {
+                left: left_left,
+                right: left_right,
+            } => {
+                let left_left = *left_left;
+                let left_right = *left_right;
+                if left_right.height > left_left.height {
+                    match left_right.kind {
+                        BroadPhaseBvhNodeKind3d::Leaf(body) => {
+                            *rotations = rotations.saturating_add(1);
+                            BroadPhaseBvhNode3d::branch(
+                                left_left,
+                                BroadPhaseBvhNode3d::branch(BroadPhaseBvhNode3d::leaf(body), right),
+                            )
+                        }
+                        BroadPhaseBvhNodeKind3d::Branch {
+                            left: middle_left,
+                            right: middle_right,
+                        } => {
+                            *rotations = rotations.saturating_add(2);
+                            BroadPhaseBvhNode3d::branch(
+                                BroadPhaseBvhNode3d::branch(left_left, *middle_left),
+                                BroadPhaseBvhNode3d::branch(*middle_right, right),
+                            )
+                        }
+                    }
+                } else {
+                    *rotations = rotations.saturating_add(1);
+                    BroadPhaseBvhNode3d::branch(
+                        left_left,
+                        BroadPhaseBvhNode3d::branch(left_right, right),
+                    )
+                }
+            }
+        };
+    }
+
+    if right.height > left.height.saturating_add(1) {
+        return match right.kind {
+            BroadPhaseBvhNodeKind3d::Leaf(body) => {
+                BroadPhaseBvhNode3d::branch(left, BroadPhaseBvhNode3d::leaf(body))
+            }
+            BroadPhaseBvhNodeKind3d::Branch {
+                left: right_left,
+                right: right_right,
+            } => {
+                let right_left = *right_left;
+                let right_right = *right_right;
+                if right_left.height > right_right.height {
+                    match right_left.kind {
+                        BroadPhaseBvhNodeKind3d::Leaf(body) => {
+                            *rotations = rotations.saturating_add(1);
+                            BroadPhaseBvhNode3d::branch(
+                                BroadPhaseBvhNode3d::branch(left, BroadPhaseBvhNode3d::leaf(body)),
+                                right_right,
+                            )
+                        }
+                        BroadPhaseBvhNodeKind3d::Branch {
+                            left: middle_left,
+                            right: middle_right,
+                        } => {
+                            *rotations = rotations.saturating_add(2);
+                            BroadPhaseBvhNode3d::branch(
+                                BroadPhaseBvhNode3d::branch(left, *middle_left),
+                                BroadPhaseBvhNode3d::branch(*middle_right, right_right),
+                            )
+                        }
+                    }
+                } else {
+                    *rotations = rotations.saturating_add(1);
+                    BroadPhaseBvhNode3d::branch(
+                        BroadPhaseBvhNode3d::branch(left, right_left),
+                        right_right,
+                    )
+                }
+            }
+        };
+    }
+
+    BroadPhaseBvhNode3d::branch(left, right)
+}
+
+fn bounds_measure(bounds: RotationalSweepBounds3d) -> i128 {
+    (0..3)
+        .map(|axis| i128::from(bounds.maximum[axis]) - i128::from(bounds.minimum[axis]))
+        .sum()
 }
 
 fn collect_exact_pairs_within(
@@ -416,8 +667,8 @@ mod tests {
     };
 
     use super::{
-        BoundedBody3d, BroadPhaseBvhNode3d, BroadPhaseBvhNodeKind3d, RotatingBroadPhase3d,
-        RotatingBroadPhaseError3d, RotationalSweepPair3d, bounds_overlap, build_balanced_bvh,
+        BoundedBody3d, BroadPhaseBvhNode3d, RotatingBroadPhase3d, RotatingBroadPhaseError3d,
+        RotationalSweepPair3d, bounds_overlap, build_balanced_bvh, rebalance_node,
         rotational_sweep_candidate_pairs,
     };
 
@@ -435,6 +686,17 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid fixed box")
+    }
+
+    fn bounded_leaf(id: u64, coordinate: i64) -> BroadPhaseBvhNode3d {
+        BroadPhaseBvhNode3d::leaf(BoundedBody3d {
+            id: BodyId(id),
+            kind: BodyKind::Dynamic,
+            bounds: RotationalSweepBounds3d {
+                minimum: [coordinate, 0, 0],
+                maximum: [coordinate + 2, 2, 2],
+            },
+        })
     }
 
     fn brute_force_candidate_pairs(
@@ -476,12 +738,7 @@ mod tests {
     }
 
     fn bvh_height(node: &BroadPhaseBvhNode3d) -> usize {
-        match &node.kind {
-            BroadPhaseBvhNodeKind3d::Leaf(_) => 1,
-            BroadPhaseBvhNodeKind3d::Branch { left, right } => {
-                1 + bvh_height(left).max(bvh_height(right))
-            }
-        }
+        usize::from(node.height)
     }
 
     #[test]
@@ -611,17 +868,45 @@ mod tests {
         assert_eq!(broad_phase.stats().queries, 2);
         assert_eq!(broad_phase.stats().rebuilds, 1);
         assert_eq!(broad_phase.stats().reuses, 1);
+        assert_eq!(broad_phase.stats().incremental_updates, 0);
+        assert_eq!(broad_phase.stats().reinserts, 0);
     }
 
     #[test]
-    fn escaping_a_fat_leaf_rebuilds_deterministically() {
+    fn escaping_a_fat_leaf_reinserts_without_full_rebuild() {
         let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
         let initial = [
             dynamic(1, Vec3i::ZERO, Vec3i::ZERO),
-            fixed(2, Vec3i::new(10, 0, 0)),
+            dynamic(2, Vec3i::new(10, 0, 0), Vec3i::ZERO),
+            fixed(3, Vec3i::new(20, 0, 0)),
         ];
         let escaped = [
             dynamic(1, Vec3i::new(1_000, 0, 0), Vec3i::ZERO),
+            dynamic(2, Vec3i::new(10, 0, 0), Vec3i::ZERO),
+            fixed(3, Vec3i::new(20, 0, 0)),
+        ];
+        let mut broad_phase = RotatingBroadPhase3d::default();
+
+        broad_phase
+            .candidate_pairs(&initial, config)
+            .expect("initial persistent query");
+        let actual = broad_phase
+            .candidate_pairs(&escaped, config)
+            .expect("escaped persistent query");
+
+        assert_eq!(actual, brute_force_candidate_pairs(&escaped, config));
+        assert_eq!(broad_phase.stats().rebuilds, 1);
+        assert_eq!(broad_phase.stats().reuses, 0);
+        assert_eq!(broad_phase.stats().incremental_updates, 1);
+        assert_eq!(broad_phase.stats().reinserts, 1);
+    }
+
+    #[test]
+    fn membership_change_still_rebuilds_the_tree() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let initial = [dynamic(1, Vec3i::ZERO, Vec3i::ZERO)];
+        let added = [
+            dynamic(1, Vec3i::ZERO, Vec3i::ZERO),
             fixed(2, Vec3i::new(10, 0, 0)),
         ];
         let mut broad_phase = RotatingBroadPhase3d::default();
@@ -630,11 +915,108 @@ mod tests {
             .candidate_pairs(&initial, config)
             .expect("initial persistent query");
         broad_phase
-            .candidate_pairs(&escaped, config)
-            .expect("escaped persistent query");
+            .candidate_pairs(&added, config)
+            .expect("membership-changing query");
 
         assert_eq!(broad_phase.stats().rebuilds, 2);
-        assert_eq!(broad_phase.stats().reuses, 0);
+        assert_eq!(broad_phase.stats().incremental_updates, 0);
+        assert_eq!(broad_phase.stats().reinserts, 0);
+    }
+
+    #[test]
+    fn bulk_escape_falls_back_to_balanced_rebuild() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let initial = (0..16_u64)
+            .map(|id| {
+                dynamic(
+                    id + 1,
+                    Vec3i::new(i32::try_from(id).expect("small position") * 8, 0, 0),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let escaped = (0..16_u64)
+            .map(|id| {
+                dynamic(
+                    id + 1,
+                    Vec3i::new(
+                        10_000 + i32::try_from(id).expect("small position") * 8,
+                        0,
+                        0,
+                    ),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut broad_phase = RotatingBroadPhase3d::default();
+
+        broad_phase
+            .candidate_pairs(&initial, config)
+            .expect("initial bulk query");
+        let actual = broad_phase
+            .candidate_pairs(&escaped, config)
+            .expect("bulk escape query");
+
+        assert_eq!(actual, brute_force_candidate_pairs(&escaped, config));
+        assert_eq!(broad_phase.stats().rebuilds, 2);
+        assert_eq!(broad_phase.stats().incremental_updates, 0);
+        assert_eq!(broad_phase.stats().reinserts, 0);
+    }
+
+    #[test]
+    fn forced_skew_executes_a_rotation_and_reduces_height() {
+        let deep_left = BroadPhaseBvhNode3d::branch(
+            BroadPhaseBvhNode3d::branch(bounded_leaf(1, 0), bounded_leaf(2, 4)),
+            bounded_leaf(3, 8),
+        );
+        let root = BroadPhaseBvhNode3d::branch(deep_left, bounded_leaf(4, 12));
+        assert_eq!(root.height, 4);
+
+        let mut rotations = 0_u64;
+        let balanced = rebalance_node(root, &mut rotations);
+
+        assert!(rotations > 0);
+        assert!(balanced.height < 4);
+        assert_eq!(balanced.minimum_id, BodyId(1));
+    }
+
+    #[test]
+    fn repeated_leaf_churn_stays_balanced_and_matches_brute_force() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let mut boxes = (0..127_u64)
+            .map(|id| {
+                dynamic(
+                    id + 1,
+                    Vec3i::new(i32::try_from(id).expect("small position") * 8, 0, 0),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("initial churn query");
+
+        for iteration in 0..64_i32 {
+            boxes[0] = dynamic(1, Vec3i::new(10_000 + iteration * 100, 0, 0), Vec3i::ZERO);
+            let actual = broad_phase
+                .candidate_pairs(&boxes, config)
+                .expect("incremental churn query");
+            assert_eq!(actual, brute_force_candidate_pairs(&boxes, config));
+            let tree = broad_phase
+                .tree
+                .as_ref()
+                .expect("non-empty persistent tree");
+            assert!(
+                bvh_height(tree) <= 12,
+                "tree height grew to {}",
+                bvh_height(tree)
+            );
+        }
+
+        assert_eq!(broad_phase.stats().rebuilds, 1);
+        assert!(broad_phase.stats().incremental_updates > 0);
+        assert!(broad_phase.stats().reinserts > 0);
     }
 
     #[test]
@@ -702,6 +1084,61 @@ mod tests {
         );
         assert_eq!(persistent.stats().rebuilds, 1);
         assert_eq!(persistent.stats().reuses, u64::from(iterations - 1));
+    }
+
+    #[test]
+    #[ignore = "microbenchmark; run explicitly in release mode"]
+    fn incremental_leaf_churn_benchmark() {
+        let base = (0..256_u64)
+            .map(|id| {
+                dynamic(
+                    id + 1,
+                    Vec3i::new(
+                        i32::try_from(id % 16).expect("small x") * 4,
+                        i32::try_from(id / 16).expect("small y") * 4,
+                        0,
+                    ),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let snapshots = (0..100_i32)
+            .map(|iteration| {
+                let mut boxes = base.clone();
+                boxes[0] = dynamic(1, Vec3i::new(10_000 + iteration * 100, 0, 0), Vec3i::ZERO);
+                boxes
+            })
+            .collect::<Vec<_>>();
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
+
+        let rebuild_start = Instant::now();
+        for boxes in &snapshots {
+            black_box(
+                rotational_sweep_candidate_pairs(black_box(boxes), config)
+                    .expect("stateless churn benchmark query"),
+            );
+        }
+        let rebuild_elapsed = rebuild_start.elapsed();
+
+        let mut persistent = RotatingBroadPhase3d::default();
+        let incremental_start = Instant::now();
+        for boxes in &snapshots {
+            black_box(
+                persistent
+                    .candidate_pairs(black_box(boxes), config)
+                    .expect("incremental churn benchmark query"),
+            );
+        }
+        let incremental_elapsed = incremental_start.elapsed();
+
+        eprintln!(
+            "broad-phase 256-body leaf churn × {}: rebuild={rebuild_elapsed:?}, incremental={incremental_elapsed:?}, stats={:?}",
+            snapshots.len(),
+            persistent.stats()
+        );
+        assert_eq!(persistent.stats().rebuilds, 1);
+        assert!(persistent.stats().incremental_updates > 0);
+        assert!(persistent.stats().reinserts > 0);
     }
 
     #[test]
