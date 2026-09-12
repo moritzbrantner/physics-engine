@@ -2,10 +2,12 @@ use std::{cmp::Ordering, collections::BTreeMap};
 
 use crate::rotating_broad_phase::RotatingBroadPhase3d;
 use crate::{
-    BodyId, ObbContactSeed3d, RigidBox3d, RotatingContactSearchConfig3d,
+    BodyId, ObbContactSeed3d, OrientedBox3d, RigidBox3d, RotatingContactSearchConfig3d,
     RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
     SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
 };
+
+const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ContactBracket3d {
@@ -15,12 +17,42 @@ struct ContactBracket3d {
     contact: ObbContactSeed3d,
 }
 
+#[derive(Debug, Default)]
+struct CoarseSampleCache3d {
+    samples: BTreeMap<(BodyId, u32, u32), OrientedBox3d>,
+}
+
+impl CoarseSampleCache3d {
+    fn sample_oriented_box(
+        &mut self,
+        rigid_box: &RigidBox3d,
+        config: RotatingContactSearchConfig3d,
+        numerator: u32,
+        denominator: u32,
+    ) -> Result<OrientedBox3d, RotatingContactSearchError3d> {
+        let key = (rigid_box.body().id(), numerator, denominator);
+        if let Some(sampled) = self.samples.get(&key).copied() {
+            return Ok(sampled);
+        }
+
+        let sampled =
+            sample_rigid_box_free_flight(rigid_box, config.free_flight, numerator, denominator)?
+                .oriented_box();
+        if self.samples.len() < MAX_CACHED_COARSE_SAMPLES {
+            self.samples.insert(key, sampled);
+        }
+        Ok(sampled)
+    }
+}
+
 /// Finds the earliest strictly-positive sampled rotating contact after an observed clear sample.
 ///
 /// This is the re-contact counterpart to [`crate::sampled_rotating_contact_search`]. A pair that is
 /// already touching at the interval start is not reported again merely because it remains touching.
 /// Such a pair becomes eligible only after the configured coarse grid observes it clear and then later
 /// observes contact again. Pairs that start clear retain the ordinary clear-to-contact search behavior.
+/// Coarse free-flight samples are cached by body and exact grid fraction, so pairs that share a body reuse
+/// identical sampling work; the cache is bounded and pair-local refinement remains unchanged.
 ///
 /// This explicit state transition is required by repeated-event stepping: a resolved/resting time-zero
 /// contact must not hide a later impact or be rediscovered forever as the next event. As with the existing
@@ -55,6 +87,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
         .iter()
         .map(|rigid_box| (rigid_box.body().id(), rigid_box))
         .collect::<BTreeMap<BodyId, &RigidBox3d>>();
+    let mut coarse_samples = CoarseSampleCache3d::default();
     let mut best = None;
     for pair in pairs {
         let left = by_id.get(&pair.left).copied().ok_or(
@@ -63,7 +96,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
         let right = by_id.get(&pair.right).copied().ok_or(
             RotatingContactSearchError3d::MissingCandidateBody(pair.right),
         )?;
-        let Some(hit) = search_pair(left, right, pair, config)? else {
+        let Some(hit) = search_pair(left, right, pair, config, &mut coarse_samples)? else {
             continue;
         };
         if best.is_none_or(|current| compare_hits(hit, current) == Ordering::Less) {
@@ -99,6 +132,7 @@ fn search_pair(
     right: &RigidBox3d,
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
+    coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     let initially_contacting =
         obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
@@ -106,9 +140,11 @@ fn search_pair(
     let mut last_clear = if initially_contacting { None } else { Some(0) };
 
     for numerator in 1..=denominator {
-        let (sampled_left, sampled_right) =
-            sample_pair(left, right, config, numerator, denominator)?;
-        match obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())? {
+        let sampled_left =
+            coarse_samples.sample_oriented_box(left, config, numerator, denominator)?;
+        let sampled_right =
+            coarse_samples.sample_oriented_box(right, config, numerator, denominator)?;
+        match obb_contact_seed(sampled_left, sampled_right)? {
             Some(contact) => {
                 let Some(clear_numerator) = last_clear else {
                     continue;
@@ -232,7 +268,9 @@ mod tests {
         Vec3i, obb_contact_seed, sample_rigid_box_free_flight,
     };
 
-    use super::sampled_rotating_recontact_search;
+    use super::{
+        CoarseSampleCache3d, MAX_CACHED_COARSE_SAMPLES, sampled_rotating_recontact_search,
+    };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -309,6 +347,44 @@ mod tests {
             .expect("first contact should be found");
 
         assert!(hit.time.numerator > 0);
+    }
+
+    #[test]
+    fn shared_body_pair_ties_keep_stable_pair_order() {
+        let moving = dynamic(11, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
+        let first = fixed(3, Vec3i::ZERO);
+        let second = fixed(8, Vec3i::ZERO);
+        let hit =
+            sampled_rotating_recontact_search(&[second, moving, first], config(Vec3i::ZERO, 8, 2))
+                .expect("valid shared-body recontact search")
+                .expect("shared body should contact both obstacles");
+
+        assert_eq!(hit.pair.left, BodyId(3));
+        assert_eq!(hit.pair.right, BodyId(11));
+    }
+
+    #[test]
+    fn coarse_sample_cache_is_bounded_and_reuses_geometry() {
+        let rigid_box = fixed(1, Vec3i::ZERO);
+        let search = config(Vec3i::ZERO, 32, 0);
+        let mut cache = CoarseSampleCache3d::default();
+
+        let first = cache
+            .sample_oriented_box(&rigid_box, search, 1, 32)
+            .expect("first coarse sample");
+        let repeated = cache
+            .sample_oriented_box(&rigid_box, search, 1, 32)
+            .expect("repeated coarse sample");
+        assert_eq!(first, repeated);
+        assert_eq!(cache.samples.len(), 1);
+
+        let denominator = u32::try_from(MAX_CACHED_COARSE_SAMPLES + 2).expect("small cache bound");
+        for numerator in 1..=denominator {
+            cache
+                .sample_oriented_box(&rigid_box, search, numerator, denominator)
+                .expect("bounded coarse sample");
+        }
+        assert_eq!(cache.samples.len(), MAX_CACHED_COARSE_SAMPLES);
     }
 
     #[test]
