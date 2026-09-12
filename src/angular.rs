@@ -425,6 +425,7 @@ fn checked_cross_component(
         .ok_or(AngularError3d::ArithmeticOverflow)
 }
 
+#[cfg(test)]
 fn orientation_norm_squared(orientation: Orientation3d) -> u128 {
     [orientation.x, orientation.y, orientation.z, orientation.w]
         .into_iter()
@@ -566,7 +567,7 @@ mod tests {
 
     #[test]
     fn fixed_body_has_zero_inverse_inertia_semantics() {
-        let body = RigidBody::fixed(BodyId(8), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(2, 3, 4));
+        let body = RigidBody::fixed(BodyId(8), Vec3i::ZERO, Vec3i::new(2, 3, 4));
         let inertia = box_inertia(&body).expect("fixed inertia is valid");
 
         assert_eq!(inertia.principal_numerators, [0; 3]);
