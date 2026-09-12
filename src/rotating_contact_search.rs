@@ -174,13 +174,8 @@ impl CoarseSampleCache3d {
             return Ok(sampled);
         }
 
-        let sampled = sample_rigid_box_free_flight(
-            rigid_box,
-            config,
-            numerator,
-            self.denominator,
-        )?
-        .oriented_box();
+        let sampled = sample_rigid_box_free_flight(rigid_box, config, numerator, self.denominator)?
+            .oriented_box();
         if self.cached_entries < MAX_CACHED_COARSE_SAMPLES
             && sample_index == self.samples_by_body[body_index].len()
         {
@@ -245,12 +240,18 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
     let mut coarse_samples = CoarseSampleCache3d::new(boxes.len(), denominator);
     let mut best: Option<RotatingContactSearchHit3d> = None;
     for pair in pairs {
-        let left_index = *by_id.get(&pair.left).ok_or(
-            RotatingContactSearchError3d::MissingCandidateBody(pair.left),
-        )?;
-        let right_index = *by_id.get(&pair.right).ok_or(
-            RotatingContactSearchError3d::MissingCandidateBody(pair.right),
-        )?;
+        let left_index =
+            *by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right_index =
+            *by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         let left = &boxes[left_index];
         let right = &boxes[right_index];
         let Some(hit) = search_pair(
@@ -261,7 +262,8 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
             pair,
             config,
             &mut coarse_samples,
-        )? else {
+        )?
+        else {
             continue;
         };
 
@@ -312,12 +314,8 @@ fn search_pair(
 
     let denominator = u32::from(config.sample_count);
     for numerator in 1..=denominator {
-        let sampled_left = coarse_samples.sample_oriented_box(
-            left_index,
-            left,
-            config.free_flight,
-            numerator,
-        )?;
+        let sampled_left =
+            coarse_samples.sample_oriented_box(left_index, left, config.free_flight, numerator)?;
         let sampled_right = coarse_samples.sample_oriented_box(
             right_index,
             right,
