@@ -89,18 +89,33 @@ fn sandbox_world() -> RotatingWorld3d {
 }
 
 fn controlled_step(world: &mut RotatingWorld3d, move_x: i32, move_z: i32, tick: usize) {
+    controlled_step_with_jump(world, move_x, move_z, false, tick);
+}
+
+fn controlled_step_with_jump(
+    world: &mut RotatingWorld3d,
+    move_x: i32,
+    move_z: i32,
+    jump: bool,
+    tick: usize,
+) {
     let current_y = world
         .box_by_id(PLAYER_ID)
         .expect("player")
         .body()
         .velocity()
         .y;
+    let next_y = if jump {
+        16_i32.saturating_mul(TICKS_PER_SECOND)
+    } else {
+        current_y
+    };
     world
         .set_linear_velocity(
             PLAYER_ID,
             Vec3i::new(
                 move_x.saturating_mul(TICKS_PER_SECOND),
-                current_y,
+                next_y,
                 move_z.saturating_mul(TICKS_PER_SECOND),
             ),
         )
@@ -108,6 +123,30 @@ fn controlled_step(world: &mut RotatingWorld3d, move_x: i32, move_z: i32, tick: 
     world
         .step(1, TICKS_PER_SECOND)
         .unwrap_or_else(|error| panic!("sandbox failed at tick {tick}: {error:?}"));
+}
+
+fn shoot(world: &mut RotatingWorld3d, id: BodyId, velocity: Vec3i) {
+    let player_position = world
+        .box_by_id(PLAYER_ID)
+        .expect("player")
+        .body()
+        .position();
+    let spawn = Vec3i::new(
+        player_position.x + velocity.x / 3,
+        player_position.y + 12 + velocity.y / 3,
+        player_position.z + velocity.z / 3,
+    );
+    let scaled_velocity = Vec3i::new(
+        velocity.x.saturating_mul(TICKS_PER_SECOND),
+        velocity.y.saturating_mul(TICKS_PER_SECOND),
+        velocity.z.saturating_mul(TICKS_PER_SECOND),
+    );
+    world
+        .add_box(rotating_box(
+            RigidBody::dynamic(id, spawn, scaled_velocity, Vec3i::new(3, 3, 3))
+                .with_material(Material::new(350)),
+        ))
+        .expect("projectile");
 }
 
 #[test]
@@ -133,5 +172,38 @@ fn alternating_wasd_input_survives_two_seconds() {
     for tick in 0..STABILITY_TICKS {
         let (move_x, move_z) = inputs[(tick / 30) % inputs.len()];
         controlled_step(&mut world, move_x, move_z, tick);
+    }
+}
+
+#[test]
+fn mixed_movement_jump_and_projectile_survives_reported_path() {
+    let mut world = sandbox_world();
+    let changes = [
+        (0, (-5, 4)),
+        (15, (-5, 5)),
+        (30, (-2, -4)),
+        (45, (5, -3)),
+        (60, (0, 0)),
+        (75, (6, -7)),
+        (90, (-1, -6)),
+        (105, (-1, 7)),
+        (120, (-6, -5)),
+    ];
+    let mut movement = (0, 0);
+
+    for tick in 0..=128 {
+        if let Some((_, next)) = changes.iter().find(|(at, _)| *at == tick) {
+            movement = *next;
+        }
+        if tick == 125 {
+            shoot(&mut world, BodyId(1_000), Vec3i::new(84, -3, -36));
+        }
+        controlled_step_with_jump(
+            &mut world,
+            movement.0,
+            movement.1,
+            tick == 71,
+            tick,
+        );
     }
 }
