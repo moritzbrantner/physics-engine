@@ -1,10 +1,10 @@
 use std::{cmp::Ordering, collections::BTreeMap, error::Error, hint::black_box, time::Instant};
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody,
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, Vec3i,
-    obb_contact_seed, rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
+    AngularState3d, AngularVelocity3d, BodyId, Orientation3d, OrientedBox3d, RigidBody, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
+    RotationalSweepPair3d, SampledContactTime3d, Vec3i, obb_contact_seed,
+    rotational_sweep_candidate_pairs, sample_rigid_box_free_flight,
     sampled_rotating_contact_search,
 };
 
@@ -37,13 +37,8 @@ impl PriorIndexedCache {
             return Ok(sampled);
         }
 
-        let sampled = sample_rigid_box_free_flight(
-            rigid_box,
-            config,
-            numerator,
-            self.denominator,
-        )?
-        .oriented_box();
+        let sampled = sample_rigid_box_free_flight(rigid_box, config, numerator, self.denominator)?
+            .oriented_box();
         if self.cached_entries < MAX_CACHED_COARSE_SAMPLES
             && sample_index == self.samples_by_body[body_index].len()
         {
@@ -71,11 +66,7 @@ fn fixed(id: u64, position: Vec3i) -> RigidBox3d {
 }
 
 fn config() -> RotatingContactSearchConfig3d {
-    RotatingContactSearchConfig3d::new(
-        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
-        64,
-        0,
-    )
+    RotatingContactSearchConfig3d::new(RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1), 64, 0)
 }
 
 fn early_hit_many_later_scene(obstacle_count: u64) -> Vec<RigidBox3d> {
@@ -118,23 +109,24 @@ fn prior_full_search(
         let left = &boxes[left_index];
         let right = &boxes[right_index];
 
-        let hit = if let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? {
-            Some(RotatingContactSearchHit3d {
-                time: SampledContactTime3d::ZERO,
-                pair,
-                contact,
-            })
-        } else {
-            prior_search_pair(
-                left_index,
-                left,
-                right_index,
-                right,
-                pair,
-                config,
-                &mut samples,
-            )?
-        };
+        let hit =
+            if let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? {
+                Some(RotatingContactSearchHit3d {
+                    time: SampledContactTime3d::ZERO,
+                    pair,
+                    contact,
+                })
+            } else {
+                prior_search_pair(
+                    left_index,
+                    left,
+                    right_index,
+                    right,
+                    pair,
+                    config,
+                    &mut samples,
+                )?
+            };
 
         let Some(hit) = hit else {
             continue;
