@@ -142,9 +142,10 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
 /// the current zero-time contact set and applies one simultaneous response pass. Pair identities from
-/// resolved and stabilization contacts remain contact history for the rest of this repeated-event advance.
-/// A historical pair can still become a later event after the configured coarse grid positively observes a
-/// clear sample in that segment; only interval-start separation is excluded as clear evidence. This prevents
+/// resolved and stabilization contacts remain contact history until the configured coarse grid positively
+/// observes them clear at or before the next selected frontier. That positive-clear evidence releases the
+/// pair from history before the following segment, so an unrelated earlier event cannot erase an already
+/// observed separation. Interval-start separation alone is still excluded as clear evidence. This prevents
 /// quantized response projection from manufacturing first-cell clear/re-contact churn without tolerances,
 /// retries, or a larger event budget. Current-frontier discovery reuses the persistent conservative broad
 /// phase at a zero timestep, then exact-filters every candidate with current OBB geometry. Later positive
@@ -231,7 +232,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let Some(next) = next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
             &state,
             next_search,
-            &persistent_pairs,
+            &mut persistent_pairs,
             broad_phase,
         )?
         else {
