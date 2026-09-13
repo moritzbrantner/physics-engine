@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBox3d, RigidBox3d, RotatingContactSearchConfig3d,
@@ -81,6 +84,20 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
     config: RotatingContactSearchConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+    sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+        boxes,
+        config,
+        &BTreeSet::new(),
+        broad_phase,
+    )
+}
+
+pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    persistent_pairs: &BTreeSet<RotationalSweepPair3d>,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     validate_resolution(config)?;
     let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     if pairs.is_empty() {
@@ -104,7 +121,15 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
         let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
             coarse_sample_limit(hit.time, config.sample_count)
         });
-        let Some(hit) = search_pair(left, right, pair, config, coarse_limit, &mut coarse_samples)?
+        let Some(hit) = search_pair(
+            left,
+            right,
+            pair,
+            config,
+            coarse_limit,
+            persistent_pairs.contains(&pair),
+            &mut coarse_samples,
+        )?
         else {
             continue;
         };
@@ -142,10 +167,11 @@ fn search_pair(
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
     coarse_numerator_limit: u32,
+    historically_contacting: bool,
     coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
-    let initially_contacting =
-        obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
+    let initially_contacting = historically_contacting
+        || obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
 
@@ -272,15 +298,19 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
         RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, RotatingContactSearchError3d,
-        Vec3i, obb_contact_seed, sample_rigid_box_free_flight,
+        RotationalSweepPair3d, Vec3i, obb_contact_seed, sample_rigid_box_free_flight,
     };
 
     use super::{
         CoarseSampleCache3d, MAX_CACHED_COARSE_SAMPLES, sampled_rotating_recontact_search,
+        sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase,
     };
+    use crate::rotating_broad_phase::RotatingBroadPhase3d;
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -320,6 +350,29 @@ mod tests {
         assert_eq!(
             sampled_rotating_recontact_search(&boxes, config(Vec3i::ZERO, 8, 3))
                 .expect("valid persistent-contact search"),
+            None
+        );
+    }
+
+    #[test]
+    fn historical_contact_requires_a_positive_clear_sample_before_recontact() {
+        let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(1, 0, 0));
+        let obstacle = fixed(2, Vec3i::ZERO);
+        let pair = RotationalSweepPair3d {
+            left: BodyId(1),
+            right: BodyId(2),
+        };
+        let persistent_pairs = BTreeSet::from([pair]);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+
+        assert_eq!(
+            sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+                &[moving, obstacle],
+                config(Vec3i::ZERO, 4, 0),
+                &persistent_pairs,
+                &mut broad_phase,
+            )
+            .expect("valid history-aware recontact search"),
             None
         );
     }
