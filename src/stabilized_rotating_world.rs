@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyId, BodyKind, Orientation3d, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
+    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
     obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
@@ -12,8 +12,6 @@ const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
 const SLEEP_STABLE_STEPS: u8 = 12;
 const SLEEP_LINEAR_SPEED_LIMIT: u32 = 120;
 const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
-
-type SleepPose3d = (Vec3i, Orientation3d);
 
 /// Engine-owned rotating world with bounded fixed-boundary stabilization and deterministic sleeping.
 ///
@@ -26,15 +24,15 @@ type SleepPose3d = (Vec3i, Orientation3d);
 /// solver is preserved.
 ///
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
-/// bounded number of consecutive steps are put to sleep only when their quantized pose remains unchanged
-/// across each admitted step. A truly stationary free body may sleep; a body with non-zero residual motion
-/// must additionally remain in contact. This preserves low-speed free-flight and frictionless tangential
-/// inertia while still letting contact jitter converge once it no longer changes observable pose. Sleeping
-/// bodies are presented to the inner solver as fixed proxies, so gravity and persistent-contact
-/// stabilization cannot keep nudging a settled body. Before each step, conservative free-flight sweep bounds
-/// wake every sleeping body that an awake dynamic body may reach, including transitive sleeping islands.
-/// Explicit velocity changes also wake their target, and removing a fixed or sleeping support wakes all
-/// sleepers.
+/// bounded number of consecutive steps are put to sleep only when they are already motionless or a current
+/// contact can physically dissipate the residual motion. A contact qualifies when its normal constraint is
+/// still opposing relative approach, or when non-zero pair friction is backed by a compressive relative
+/// gravity load. This preserves ordinary low-speed free-flight and frictionless tangential inertia while
+/// still letting gravity-loaded rough contacts converge to sleep. Sleeping bodies are presented to the inner
+/// solver as fixed proxies, so gravity and persistent-contact stabilization cannot keep nudging a settled
+/// body. Before each step, conservative free-flight sweep bounds wake every sleeping body that an awake
+/// dynamic body may reach, including transitive sleeping islands. Explicit velocity changes also wake their
+/// target, and removing a fixed or sleeping support wakes all sleepers.
 ///
 /// The requested frame is staged on a clone and committed only after the authoritative step, fixed-boundary
 /// stabilization, proxy restoration, and sleep-state update succeed. Failed frames therefore leave the
@@ -124,32 +122,15 @@ impl RotatingWorld3d {
 
         let mut staged = self.clone();
         staged.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
-        let previous_poses = staged.awake_dynamic_poses();
         staged.freeze_sleeping_bodies()?;
         let report = staged
             .inner
             .step(timestep_numerator, timestep_denominator)?;
         staged.stabilize_fixed_boundaries()?;
         staged.restore_sleeping_bodies()?;
-        staged.update_sleep_state(&previous_poses)?;
+        staged.update_sleep_state()?;
         *self = staged;
         Ok(report)
-    }
-
-    fn awake_dynamic_poses(&self) -> BTreeMap<BodyId, SleepPose3d> {
-        self.inner
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body.kind == BodyKind::Dynamic
-                    && !self.sleeping.contains(&rigid_box.body.id)
-            })
-            .map(|rigid_box| {
-                (
-                    rigid_box.body.id,
-                    (rigid_box.body.position, rigid_box.angular.orientation),
-                )
-            })
-            .collect()
     }
 
     fn wake_sleepers_for_sweeps(
@@ -254,10 +235,7 @@ impl RotatingWorld3d {
         self.inner.add_box(rigid_box)
     }
 
-    fn update_sleep_state(
-        &mut self,
-        previous_poses: &BTreeMap<BodyId, SleepPose3d>,
-    ) -> Result<(), RotatingWorldError3d> {
+    fn update_sleep_state(&mut self) -> Result<(), RotatingWorldError3d> {
         let motion = self
             .inner
             .boxes()
@@ -266,33 +244,25 @@ impl RotatingWorld3d {
                     && !self.sleeping.contains(&rigid_box.body.id)
             })
             .map(|rigid_box| {
-                let id = rigid_box.body.id;
-                let pose_unchanged = previous_poses.get(&id).is_some_and(|pose| {
-                    pose.0 == rigid_box.body.position && pose.1 == rigid_box.angular.orientation
-                });
                 (
-                    id,
+                    rigid_box.body.id,
                     low_motion(rigid_box),
                     motion_is_zero(rigid_box),
-                    pose_unchanged,
-                    rigid_box.oriented_box(),
+                    rigid_box.clone(),
                 )
             })
             .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
         let mut to_sleep = Vec::new();
 
-        for (id, is_low_motion, is_stationary, pose_unchanged, query) in motion {
+        for (id, is_low_motion, is_stationary, rigid_box) in motion {
             seen.insert(id);
-            let has_contact = if is_low_motion && pose_unchanged && !is_stationary {
-                self.inner
-                    .overlap_query(query)?
-                    .into_iter()
-                    .any(|candidate| candidate != id)
+            let has_dissipative_contact = if is_low_motion && !is_stationary {
+                self.has_dissipative_sleep_contact(&rigid_box)?
             } else {
                 false
             };
-            if is_low_motion && pose_unchanged && (is_stationary || has_contact) {
+            if is_low_motion && (is_stationary || has_dissipative_contact) {
                 let streak = self.sleep_streaks.entry(id).or_default();
                 *streak = streak.saturating_add(1);
                 if *streak >= SLEEP_STABLE_STEPS {
@@ -310,6 +280,60 @@ impl RotatingWorld3d {
             self.sleep_streaks.remove(&id);
         }
         Ok(())
+    }
+
+    fn has_dissipative_sleep_contact(
+        &self,
+        rigid_box: &RigidBox3d,
+    ) -> Result<bool, RotatingWorldError3d> {
+        let id = rigid_box.body.id;
+        let gravity = self.config().gravity;
+        for other_id in self.inner.overlap_query(rigid_box.oriented_box())? {
+            if other_id == id {
+                continue;
+            }
+            let other = self
+                .inner
+                .box_by_id(other_id)
+                .ok_or(RotatingWorldError3d::MissingBody(other_id))?;
+            let (left, right) = if id < other_id {
+                (rigid_box, other)
+            } else {
+                (other, rigid_box)
+            };
+            let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
+                continue;
+            };
+
+            let relative_velocity = relative_vector(right.body.velocity, left.body.velocity);
+            if checked_axis_dot(relative_velocity, contact.axis, id)? < 0 {
+                return Ok(true);
+            }
+
+            let pair_friction = left
+                .body
+                .material
+                .friction_milli()
+                .max(right.body.material.friction_milli());
+            if pair_friction == 0 {
+                continue;
+            }
+            let left_gravity = if left.body.kind == BodyKind::Dynamic {
+                gravity
+            } else {
+                Vec3i::ZERO
+            };
+            let right_gravity = if right.body.kind == BodyKind::Dynamic {
+                gravity
+            } else {
+                Vec3i::ZERO
+            };
+            let relative_gravity = relative_vector(right_gravity, left_gravity);
+            if checked_axis_dot(relative_gravity, contact.axis, id)? < 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn put_body_to_sleep(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
@@ -522,6 +546,31 @@ fn checked_position_component(
 
 fn position_correction_overflow(id: BodyId) -> RotatingWorldError3d {
     RotatingWorldError3d::Response(RotatingContactResponseError3d::ArithmeticOverflow(id))
+}
+
+fn relative_vector(right: Vec3i, left: Vec3i) -> [i128; 3] {
+    [
+        i128::from(right.x) - i128::from(left.x),
+        i128::from(right.y) - i128::from(left.y),
+        i128::from(right.z) - i128::from(left.z),
+    ]
+}
+
+fn checked_axis_dot(
+    vector: [i128; 3],
+    axis: [i128; 3],
+    id: BodyId,
+) -> Result<i128, RotatingWorldError3d> {
+    vector
+        .into_iter()
+        .zip(axis)
+        .try_fold(0_i128, |sum, (component, axis_component)| {
+            let product = component
+                .checked_mul(axis_component)
+                .ok_or_else(|| position_correction_overflow(id))?;
+            sum.checked_add(product)
+                .ok_or_else(|| position_correction_overflow(id))
+        })
 }
 
 fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
