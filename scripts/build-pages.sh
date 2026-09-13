@@ -11,6 +11,9 @@ cargo build \
 node --input-type=module --check < site/app.js
 node --input-type=module --check < site/webgpu-renderer.js
 node --input-type=module --check < site/webgl-renderer.js
+node --input-type=module --check < site/physics-error.js
+node --check site/physics-error.mjs
+node --test site/physics-error.test.mjs
 
 rm -rf pages-dist
 mkdir -p pages-dist
@@ -20,4 +23,6 @@ test -s pages-dist/index.html
 test -s pages-dist/app.js
 test -s pages-dist/webgpu-renderer.js
 test -s pages-dist/webgl-renderer.js
+test -s pages-dist/physics-error.js
+test -s pages-dist/physics-error.mjs
 test -s pages-dist/physics_engine_demo.wasm
