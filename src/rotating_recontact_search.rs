@@ -84,10 +84,11 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
     config: RotatingContactSearchConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+    let mut persistent_pairs = BTreeSet::new();
     sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
         boxes,
         config,
-        &BTreeSet::new(),
+        &mut persistent_pairs,
         broad_phase,
     )
 }
@@ -95,7 +96,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
 pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
-    persistent_pairs: &BTreeSet<RotationalSweepPair3d>,
+    persistent_pairs: &mut BTreeSet<RotationalSweepPair3d>,
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     validate_resolution(config)?;
@@ -110,6 +111,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
         .collect::<BTreeMap<BodyId, &RigidBox3d>>();
     let mut coarse_samples = CoarseSampleCache3d::default();
     let mut best = None;
+    let mut observed_clears = Vec::new();
     let denominator = u32::from(config.sample_count);
     for pair in pairs {
         let left = by_id.get(&pair.left).copied().ok_or(
@@ -121,7 +123,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
         let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
             coarse_sample_limit(hit.time, config.sample_count)
         });
-        let Some(hit) = search_pair(
+        let (hit, first_positive_clear) = search_pair(
             left,
             right,
             pair,
@@ -129,14 +131,24 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
             coarse_limit,
             persistent_pairs.contains(&pair),
             &mut coarse_samples,
-        )?
-        else {
+        )?;
+        if let Some(clear_time) = first_positive_clear {
+            observed_clears.push((pair, clear_time));
+        }
+        let Some(hit) = hit else {
             continue;
         };
         if best.is_none_or(|current| compare_hits(hit, current) == Ordering::Less) {
             best = Some(hit);
         }
     }
+
+    for (pair, clear_time) in observed_clears {
+        if best.is_none_or(|hit| compare_times(clear_time, hit.time) != Ordering::Greater) {
+            persistent_pairs.remove(&pair);
+        }
+    }
+
     Ok(best)
 }
 
@@ -169,11 +181,18 @@ fn search_pair(
     coarse_numerator_limit: u32,
     historically_contacting: bool,
     coarse_samples: &mut CoarseSampleCache3d,
-) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+) -> Result<
+    (
+        Option<RotatingContactSearchHit3d>,
+        Option<SampledContactTime3d>,
+    ),
+    RotatingContactSearchError3d,
+> {
     let initially_contacting = historically_contacting
         || obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
+    let mut first_positive_clear = None;
 
     for numerator in 1..=coarse_numerator_limit {
         let sampled_left =
@@ -185,23 +204,31 @@ fn search_pair(
                 let Some(clear_numerator) = last_clear else {
                     continue;
                 };
-                return Ok(Some(refine_contact_bracket(
-                    left,
-                    right,
-                    pair,
-                    config,
-                    ContactBracket3d {
-                        clear_numerator,
-                        contact_numerator: numerator,
-                        denominator,
-                        contact,
-                    },
-                )?));
+                return Ok((
+                    Some(refine_contact_bracket(
+                        left,
+                        right,
+                        pair,
+                        config,
+                        ContactBracket3d {
+                            clear_numerator,
+                            contact_numerator: numerator,
+                            denominator,
+                            contact,
+                        },
+                    )?),
+                    first_positive_clear,
+                ));
             }
-            None => last_clear = Some(numerator),
+            None => {
+                last_clear = Some(numerator);
+                if historically_contacting && first_positive_clear.is_none() {
+                    first_positive_clear = Some(canonical_time(numerator, denominator));
+                }
+            }
         }
     }
-    Ok(None)
+    Ok((None, first_positive_clear))
 }
 
 fn refine_contact_bracket(
@@ -362,19 +389,20 @@ mod tests {
             left: BodyId(1),
             right: BodyId(2),
         };
-        let persistent_pairs = BTreeSet::from([pair]);
+        let mut persistent_pairs = BTreeSet::from([pair]);
         let mut broad_phase = RotatingBroadPhase3d::default();
 
         assert_eq!(
             sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
                 &[moving, obstacle],
                 config(Vec3i::ZERO, 4, 0),
-                &persistent_pairs,
+                &mut persistent_pairs,
                 &mut broad_phase,
             )
             .expect("valid history-aware recontact search"),
             None
         );
+        assert!(persistent_pairs.contains(&pair));
     }
 
     #[test]
@@ -385,12 +413,12 @@ mod tests {
             left: BodyId(1),
             right: BodyId(2),
         };
-        let persistent_pairs = BTreeSet::from([pair]);
+        let mut persistent_pairs = BTreeSet::from([pair]);
         let mut broad_phase = RotatingBroadPhase3d::default();
         let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
             &[moving, obstacle],
             config(Vec3i::ZERO, 4, 0),
-            &persistent_pairs,
+            &mut persistent_pairs,
             &mut broad_phase,
         )
         .expect("valid history-aware recontact search")
@@ -398,6 +426,45 @@ mod tests {
 
         assert_eq!(hit.time.numerator, 1);
         assert_eq!(hit.time.denominator, 2);
+        assert!(!persistent_pairs.contains(&pair));
+    }
+
+    #[test]
+    fn positive_clear_before_unrelated_frontier_releases_contact_history() {
+        let historical = RotationalSweepPair3d {
+            left: BodyId(1),
+            right: BodyId(2),
+        };
+        let selector = RotationalSweepPair3d {
+            left: BodyId(3),
+            right: BodyId(4),
+        };
+        let boxes = [
+            dynamic(1, Vec3i::new(-5, 0, 0), Vec3i::new(8, 0, 0)),
+            fixed(2, Vec3i::ZERO),
+            dynamic(3, Vec3i::new(-4, 10, 0), Vec3i::new(8, 0, 0)),
+            fixed(4, Vec3i::new(0, 10, 0)),
+        ];
+        let mut persistent_pairs = BTreeSet::from([historical]);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+            &boxes,
+            config(Vec3i::ZERO, 8, 0),
+            &mut persistent_pairs,
+            &mut broad_phase,
+        )
+        .expect("valid history-aware recontact search")
+        .expect("unrelated pair should select the earlier frontier");
+
+        assert_eq!(hit.pair, selector);
+        assert_eq!(
+            hit.time,
+            crate::SampledContactTime3d {
+                numerator: 1,
+                denominator: 4,
+            }
+        );
+        assert!(!persistent_pairs.contains(&historical));
     }
 
     #[test]
