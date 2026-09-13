@@ -142,14 +142,14 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
 /// the current zero-time contact set and applies one simultaneous response pass. Pair identities from
-/// resolved and stabilization contacts remain contact history across later event boundaries until a
-/// positive shared frontier actually observes that pair clear. A pair that was just touching must therefore
-/// produce a positive clear sample before it can become another positive event, even if quantized projection
-/// leaves the next interval's geometry a unit apart. This preserves the physical clear-then-recontact state
-/// machine without tolerances, retries, or a larger event budget. Current-frontier discovery reuses the
-/// persistent conservative broad phase at a zero timestep, then exact-filters every candidate with current
-/// OBB geometry. Later positive events are selected by the same sampled search and remain bounded sampled
-/// rotational handling, not analytic CCD.
+/// resolved and stabilization contacts remain contact history for the rest of this repeated-event advance.
+/// A historical pair can still become a later event after the configured coarse grid positively observes a
+/// clear sample in that segment; only interval-start separation is excluded as clear evidence. This prevents
+/// quantized response projection from manufacturing first-cell clear/re-contact churn without tolerances,
+/// retries, or a larger event budget. Current-frontier discovery reuses the persistent conservative broad
+/// phase at a zero timestep, then exact-filters every candidate with current OBB geometry. Later positive
+/// events are selected by the same sampled search and remain bounded sampled rotational handling, not
+/// analytic CCD.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -251,7 +251,6 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         else {
             break;
         };
-        persistent_pairs.retain(|pair| next.contacts.iter().any(|contact| contact.pair == *pair));
         frontier = next;
     }
 
