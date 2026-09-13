@@ -197,7 +197,7 @@ pub(crate) fn next_rotating_contact_frontier_with_broad_phase(
 pub(crate) fn next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
-    persistent_pairs: &BTreeSet<RotationalSweepPair3d>,
+    persistent_pairs: &mut BTreeSet<RotationalSweepPair3d>,
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
     let Some(earliest) = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
