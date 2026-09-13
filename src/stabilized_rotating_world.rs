@@ -32,7 +32,7 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// solver as fixed proxies, so gravity and persistent-contact stabilization cannot keep nudging a settled
 /// body. Before each step, conservative free-flight sweep bounds wake every sleeping body that an awake
 /// dynamic body may reach, including transitive sleeping islands. Explicit velocity changes also wake their
-/// target, and removing a fixed or sleeping support wakes all sleepers.
+/// target, and adding or removing fixed geometry invalidates existing sleepers conservatively.
 ///
 /// The requested frame is staged on a clone and committed only after the authoritative step, fixed-boundary
 /// stabilization, proxy restoration, and sleep-state update succeed. Failed frames therefore leave the
@@ -64,7 +64,12 @@ impl RotatingWorld3d {
     }
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
-        self.inner.add_box(rigid_box)
+        let invalidates_sleep = rigid_box.body.kind == BodyKind::Fixed;
+        self.inner.add_box(rigid_box)?;
+        if invalidates_sleep {
+            self.wake_all_sleepers();
+        }
+        Ok(())
     }
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
