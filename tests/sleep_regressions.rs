@@ -90,7 +90,9 @@ fn adding_fixed_geometry_wakes_a_sleeping_dynamic_before_resolution() {
         "new fixed geometry must invalidate the sleeper's old constraint state"
     );
 
-    world.step(1, TICKS_PER_SECOND).expect("resolve new fixed contact");
+    world
+        .step(1, TICKS_PER_SECOND)
+        .expect("resolve new fixed contact");
     assert_ne!(
         world.box_by_id(id).expect("woken body").body().position(),
         Vec3i::ZERO,
