@@ -57,11 +57,7 @@ fn frictionless_tangential_contact_does_not_turn_sleep_into_drag() {
         .add_box(fixed(90, Vec3i::ZERO, Vec3i::new(100, 1, 100)))
         .expect("add floor");
     world
-        .add_box(dynamic(
-            id.0,
-            Vec3i::new(0, 2, 0),
-            Vec3i::new(60, 0, 0),
-        ))
+        .add_box(dynamic(id.0, Vec3i::new(0, 2, 0), Vec3i::new(60, 0, 0)))
         .expect("add sliding body");
 
     for _ in 0..24 {
