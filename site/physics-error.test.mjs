@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { physicsFailureMessage } from "./physics-error.js";
+import { physicsFailureMessage } from "./physics-error.mjs";
 
 test("error 6 exposes the deterministic engine detail", () => {
   assert.equal(
