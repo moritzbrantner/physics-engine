@@ -237,11 +237,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         else {
             break;
         };
-        persistent_pairs.retain(|pair| {
-            next.contacts
-                .iter()
-                .any(|contact| contact.pair == *pair)
-        });
+        persistent_pairs.retain(|pair| next.contacts.iter().any(|contact| contact.pair == *pair));
         frontier = next;
     }
 
