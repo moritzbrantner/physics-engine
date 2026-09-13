@@ -355,8 +355,8 @@ mod tests {
     }
 
     #[test]
-    fn historical_contact_requires_a_positive_clear_sample_before_recontact() {
-        let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(1, 0, 0));
+    fn historical_contact_does_not_treat_interval_start_separation_as_clear() {
+        let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(4, 0, 0));
         let obstacle = fixed(2, Vec3i::ZERO);
         let pair = RotationalSweepPair3d {
             left: BodyId(1),
@@ -375,6 +375,29 @@ mod tests {
             .expect("valid history-aware recontact search"),
             None
         );
+    }
+
+    #[test]
+    fn historical_contact_recontacts_after_positive_clear_sample() {
+        let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(1, 0, 0));
+        let obstacle = fixed(2, Vec3i::ZERO);
+        let pair = RotationalSweepPair3d {
+            left: BodyId(1),
+            right: BodyId(2),
+        };
+        let persistent_pairs = BTreeSet::from([pair]);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+            &[moving, obstacle],
+            config(Vec3i::ZERO, 4, 0),
+            &persistent_pairs,
+            &mut broad_phase,
+        )
+        .expect("valid history-aware recontact search")
+        .expect("positive clear sample should admit later recontact");
+
+        assert_eq!(hit.time.numerator, 1);
+        assert_eq!(hit.time.denominator, 2);
     }
 
     #[test]
