@@ -23,11 +23,13 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// solver is preserved.
 ///
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
-/// bounded number of consecutive steps are put to sleep with zero residual velocity. Sleeping bodies are
-/// presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization cannot
-/// keep nudging a settled body. Before each step, conservative free-flight sweep bounds wake every sleeping
-/// body that an awake dynamic body may reach, including transitive sleeping islands. Explicit velocity
-/// changes also wake their target, and removing a fixed or sleeping support wakes all sleepers.
+/// bounded number of consecutive steps are put to sleep only when they are already motionless or remain in
+/// contact with another body. This preserves ordinary low-speed free-flight inertia while still letting
+/// contact jitter converge to a sleeping state. Sleeping bodies are presented to the inner solver as fixed
+/// proxies, so gravity and persistent-contact stabilization cannot keep nudging a settled body. Before each
+/// step, conservative free-flight sweep bounds wake every sleeping body that an awake dynamic body may
+/// reach, including transitive sleeping islands. Explicit velocity changes also wake their target, and
+/// removing a fixed or sleeping support wakes all sleepers.
 ///
 /// The requested frame is staged on a clone and committed only after the authoritative step, fixed-boundary
 /// stabilization, proxy restoration, and sleep-state update succeed. Failed frames therefore leave the
@@ -238,14 +240,29 @@ impl RotatingWorld3d {
                 rigid_box.body.kind == BodyKind::Dynamic
                     && !self.sleeping.contains(&rigid_box.body.id)
             })
-            .map(|rigid_box| (rigid_box.body.id, low_motion(rigid_box)))
+            .map(|rigid_box| {
+                (
+                    rigid_box.body.id,
+                    low_motion(rigid_box),
+                    motion_is_zero(rigid_box),
+                    rigid_box.oriented_box(),
+                )
+            })
             .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
         let mut to_sleep = Vec::new();
 
-        for (id, is_low_motion) in motion {
+        for (id, is_low_motion, is_stationary, query) in motion {
             seen.insert(id);
-            if is_low_motion {
+            let has_contact = if is_low_motion && !is_stationary {
+                self.inner
+                    .overlap_query(query)?
+                    .into_iter()
+                    .any(|candidate| candidate != id)
+            } else {
+                false
+            };
+            if is_low_motion && (is_stationary || has_contact) {
                 let streak = self.sleep_streaks.entry(id).or_default();
                 *streak = streak.saturating_add(1);
                 if *streak >= SLEEP_STABLE_STEPS {
@@ -500,6 +517,10 @@ fn low_motion(rigid_box: &RigidBox3d) -> bool {
         .max(angular.y.unsigned_abs())
         .max(angular.z.unsigned_abs());
     linear_speed <= SLEEP_LINEAR_SPEED_LIMIT && angular_speed <= SLEEP_ANGULAR_SPEED_LIMIT
+}
+
+fn motion_is_zero(rigid_box: &RigidBox3d) -> bool {
+    rigid_box.body.velocity() == Vec3i::ZERO && rigid_box.angular().angular_velocity.is_zero()
 }
 
 fn sweep_bounds_overlap(left: RotationalSweepBounds3d, right: RotationalSweepBounds3d) -> bool {
