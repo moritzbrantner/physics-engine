@@ -61,10 +61,7 @@ fn tower_boxes() -> Vec<RigidBox3d> {
                         )
                         .with_mass(2)
                         .with_material(material),
-                        AngularState3d::new(
-                            Orientation3d::IDENTITY,
-                            AngularVelocity3d::default(),
-                        ),
+                        AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
                     )
                     .expect("valid tower block"),
                 );
@@ -143,7 +140,8 @@ fn step_frame(boxes: &[RigidBox3d], frame: u32) -> Vec<RigidBox3d> {
 
 fn assert_above_floor(boxes: &[RigidBox3d], frame: u32) {
     for rigid_box in boxes.iter().skip(1) {
-        let vertices = oriented_box_vertices(rigid_box.oriented_box()).expect("valid tower geometry");
+        let vertices =
+            oriented_box_vertices(rigid_box.oriented_box()).expect("valid tower geometry");
         assert!(
             vertices.iter().all(|vertex| vertex.y >= 0),
             "body {} penetrated the floor at frame {frame}",
