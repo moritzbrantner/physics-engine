@@ -1,16 +1,20 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
+    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
     resolve_rotating_contact_frontier,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
     rotating_contact_frontier::{
         earliest_rotating_contact_frontier_with_broad_phase,
-        next_rotating_contact_frontier_with_broad_phase,
+        next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase,
     },
 };
 
@@ -137,13 +141,14 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// The first event is selected with [`crate::earliest_rotating_contact_frontier`]. After response, the
 /// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
-/// the current zero-time contact set and applies one simultaneous response pass. This keeps resting and
-/// newly-created support constraints in the authoritative solver without demanding exact global
-/// idempotence from quantized contact projection. Current-frontier discovery reuses the persistent
-/// conservative broad phase at a zero timestep, then exact-filters every candidate with the current OBB
-/// geometry; it deliberately does not re-enter the sampled temporal search. Later positive events are then
-/// selected with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize
-/// event discovery.
+/// the current zero-time contact set and applies one simultaneous response pass. The pair identities from
+/// the resolved event and those zero-time passes are carried into the next recontact search as contact
+/// history. A pair that was just touching must therefore produce a positive clear sample before it can
+/// become another positive event, even if quantized projection leaves the next interval's geometry a unit
+/// apart. This preserves the physical clear-then-recontact state machine without tolerances, retries, or a
+/// larger event budget. Current-frontier discovery reuses the persistent conservative broad phase at a
+/// zero timestep, then exact-filters every candidate with current OBB geometry. Later positive events are
+/// selected by the same sampled search and remain bounded sampled rotational handling, not analytic CCD.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -204,9 +209,17 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response = resolve_rotating_contact_frontier(frontier, config.solver_passes)?;
         remaining = scale_remaining_time(remaining, response.remaining_numerator, response.time)?;
         let response_time = response.time;
+        let mut persistent_pairs = response
+            .contacts
+            .iter()
+            .map(|contact| contact.pair)
+            .collect::<BTreeSet<_>>();
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        state = stabilize_current_contacts(response.boxes, config.solver_passes, broad_phase)?;
+        let (stabilized, stabilization_pairs) =
+            stabilize_current_contacts(response.boxes, config.solver_passes, broad_phase)?;
+        persistent_pairs.extend(stabilization_pairs);
+        state = stabilized;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -217,8 +230,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             break;
         }
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next) =
-            next_rotating_contact_frontier_with_broad_phase(&state, next_search, broad_phase)?
+        let Some(next) = next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
+            &state,
+            next_search,
+            &persistent_pairs,
+            broad_phase,
+        )?
         else {
             break;
         };
@@ -236,18 +253,20 @@ fn stabilize_current_contacts(
     mut boxes: Vec<RigidBox3d>,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
-) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
+) -> Result<(Vec<RigidBox3d>, BTreeSet<RotationalSweepPair3d>), RepeatedRotatingEventError3d> {
+    let mut persistent_pairs = BTreeSet::new();
     for _ in 0..solver_passes {
         let Some(frontier) = current_contact_frontier_with_broad_phase(&boxes, broad_phase)? else {
             break;
         };
+        persistent_pairs.extend(frontier.contacts.iter().map(|contact| contact.pair));
         let response = resolve_rotating_contact_frontier(frontier, 1)?;
         if response.boxes == boxes {
             break;
         }
         boxes = response.boxes;
     }
-    Ok(boxes)
+    Ok((boxes, persistent_pairs))
 }
 
 fn current_contact_frontier_with_broad_phase(
