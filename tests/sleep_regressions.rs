@@ -71,6 +71,34 @@ fn frictionless_tangential_contact_does_not_turn_sleep_into_drag() {
 }
 
 #[test]
+fn adding_fixed_geometry_wakes_a_sleeping_dynamic_before_resolution() {
+    let id = BodyId(4);
+    let mut world = world();
+    world
+        .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))
+        .expect("add sleeper");
+    for _ in 0..24 {
+        world.step(1, TICKS_PER_SECOND).expect("settle sleeper");
+    }
+    assert!(world.is_sleeping(id));
+
+    world
+        .add_box(fixed(91, Vec3i::new(1, 0, 0), Vec3i::new(1, 1, 1)))
+        .expect("add overlapping fixed body");
+    assert!(
+        !world.is_sleeping(id),
+        "new fixed geometry must invalidate the sleeper's old constraint state"
+    );
+
+    world.step(1, TICKS_PER_SECOND).expect("resolve new fixed contact");
+    assert_ne!(
+        world.box_by_id(id).expect("woken body").body().position(),
+        Vec3i::ZERO,
+        "woken body did not resolve the newly introduced overlap"
+    );
+}
+
+#[test]
 fn truly_stationary_unconstrained_body_may_sleep_without_changing_state() {
     let id = BodyId(2);
     let mut world = world();
