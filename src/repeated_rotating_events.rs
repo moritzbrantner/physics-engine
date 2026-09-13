@@ -204,20 +204,6 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     let mut persistent_pairs = BTreeSet::new();
 
     loop {
-        if events.len() >= 56 {
-            eprintln!(
-                "repeated-event trace event={} time={}/{} contacts={:?} persistent={:?}",
-                events.len(),
-                frontier.time.numerator,
-                frontier.time.denominator,
-                frontier
-                    .contacts
-                    .iter()
-                    .map(|contact| contact.pair)
-                    .collect::<Vec<_>>(),
-                persistent_pairs,
-            );
-        }
         if events.len() >= usize::from(config.max_events) {
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
