@@ -1,6 +1,6 @@
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE, Material, Orientation3d,
-    RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i, oriented_box_vertices,
+    RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i, obb_contact_seed,
 };
 
 const SCALE: i32 = 3_600;
@@ -138,13 +138,14 @@ fn step_frame(boxes: &[RigidBox3d], frame: u32) -> Vec<RigidBox3d> {
     world.boxes().map(damped_box).collect()
 }
 
-fn assert_above_floor(boxes: &[RigidBox3d], frame: u32) {
+fn assert_no_floor_penetration(boxes: &[RigidBox3d], frame: u32) {
+    let floor = &boxes[0];
     for rigid_box in boxes.iter().skip(1) {
-        let vertices =
-            oriented_box_vertices(rigid_box.oriented_box()).expect("valid tower geometry");
+        let contact = obb_contact_seed(floor.oriented_box(), rigid_box.oriented_box())
+            .expect("valid tower floor/body geometry");
         assert!(
-            vertices.iter().all(|vertex| vertex.y >= 0),
-            "body {} penetrated the floor at frame {frame}",
+            contact.is_none_or(|value| value.overlap_numerator == 0),
+            "body {} penetrated the finite floor collider at frame {frame}",
             rigid_box.body().id().0
         );
     }
@@ -169,7 +170,7 @@ fn ecs_tower_completes_long_horizon_without_event_churn() {
             );
             projectile_passed_front_face |= boxes[1].body().position().x > SCALE;
         }
-        assert_above_floor(&boxes, frame);
+        assert_no_floor_penetration(&boxes, frame);
     }
 
     assert!(projectile_passed_front_face);
