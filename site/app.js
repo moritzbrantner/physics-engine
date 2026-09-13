@@ -1,3 +1,4 @@
+import { physicsFailureMessage } from "./physics-error.js";
 import { createWebGlRenderer } from "./webgl-renderer.js";
 import { createWebGpuRenderer } from "./webgpu-renderer.js";
 
@@ -111,7 +112,11 @@ function simulationStep() {
   if (error !== 0) {
     paused = true;
     pauseButton.textContent = "Resume";
-    status.textContent = `Physics stopped fail-closed with sandbox error ${error}. Reset to start from the deterministic fixture again.`;
+    const detail =
+      error === 6 && typeof engine.sandbox_error_detail === "function"
+        ? engine.sandbox_error_detail()
+        : 0;
+    status.textContent = physicsFailureMessage(error, detail);
   }
 }
 
