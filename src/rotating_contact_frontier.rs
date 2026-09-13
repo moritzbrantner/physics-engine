@@ -77,10 +77,7 @@ impl fmt::Display for RotatingContactFrontierError3d {
                 )
             }
             Self::FreeFlight(error) => {
-                write!(
-                    formatter,
-                    "rotating tail free flight failed: {error}"
-                )
+                write!(formatter, "rotating tail free flight failed: {error}")
             }
             Self::Geometry(error) => {
                 write!(
