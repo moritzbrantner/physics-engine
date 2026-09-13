@@ -23,6 +23,14 @@ fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
     .expect("valid dynamic body")
 }
 
+fn fixed(id: u64, position: Vec3i, half_extents: Vec3i) -> RigidBox3d {
+    RigidBox3d::new(
+        RigidBody::fixed(BodyId(id), position, half_extents),
+        AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+    )
+    .expect("valid fixed body")
+}
+
 #[test]
 fn unconstrained_low_speed_body_preserves_inertia_instead_of_sleeping() {
     let id = BodyId(1);
@@ -37,6 +45,31 @@ fn unconstrained_low_speed_body_preserves_inertia_instead_of_sleeping() {
 
     let body = world.box_by_id(id).expect("coasting body").body();
     assert_eq!(body.position(), Vec3i::new(24, 0, 0));
+    assert_eq!(body.velocity(), Vec3i::new(60, 0, 0));
+    assert!(!world.is_sleeping(id));
+}
+
+#[test]
+fn frictionless_tangential_contact_does_not_turn_sleep_into_drag() {
+    let id = BodyId(3);
+    let mut world = world();
+    world
+        .add_box(fixed(90, Vec3i::ZERO, Vec3i::new(100, 1, 100)))
+        .expect("add floor");
+    world
+        .add_box(dynamic(
+            id.0,
+            Vec3i::new(0, 2, 0),
+            Vec3i::new(60, 0, 0),
+        ))
+        .expect("add sliding body");
+
+    for _ in 0..24 {
+        world.step(1, TICKS_PER_SECOND).expect("sliding step");
+    }
+
+    let body = world.box_by_id(id).expect("sliding body").body();
+    assert_eq!(body.position(), Vec3i::new(24, 2, 0));
     assert_eq!(body.velocity(), Vec3i::new(60, 0, 0));
     assert!(!world.is_sleeping(id));
 }
