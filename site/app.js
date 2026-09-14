@@ -19,6 +19,7 @@ const FOV_RADIANS = (70 * Math.PI) / 180;
 const NEAR_PLANE = 0.8;
 const FAR_PLANE = 1400;
 const ORIENTATION_SCALE = 1 << 30;
+const RENDER_SNAPSHOT_STRIDE = 11;
 const keys = new Set();
 
 let engine = null;
@@ -26,12 +27,16 @@ let renderer = null;
 let yaw = 0;
 let pitch = 0;
 let paused = false;
+let quiescent = false;
+let renderDirty = true;
 let jumpQueued = false;
 let previousTimestamp = null;
 let accumulator = 0;
 let dragLook = false;
 let dragDistance = 0;
 let lastPointer = null;
+let renderWidth = 0;
+let renderHeight = 0;
 
 const BOX_FACES = [
   { indices: [0, 2, 3, 1], normal: [0, 0, -1], axes: [0, 1] },
@@ -86,6 +91,8 @@ function reset() {
   yaw = 0;
   pitch = 0;
   paused = false;
+  quiescent = false;
+  renderDirty = true;
   jumpQueued = false;
   accumulator = 0;
   pauseButton.textContent = "Pause";
@@ -105,10 +112,21 @@ function movementVelocity() {
   return [Math.round(moveX), Math.round(moveZ)];
 }
 
+function simulationInputActive() {
+  return (
+    jumpQueued ||
+    keys.has("KeyW") ||
+    keys.has("KeyA") ||
+    keys.has("KeyS") ||
+    keys.has("KeyD")
+  );
+}
+
 function simulationStep() {
   const [moveX, moveZ] = movementVelocity();
   const error = engine.sandbox_step(moveX, moveZ, jumpQueued ? 1 : 0);
   jumpQueued = false;
+  renderDirty = true;
   if (error !== 0) {
     paused = true;
     pauseButton.textContent = "Resume";
@@ -117,7 +135,10 @@ function simulationStep() {
         ? engine.sandbox_error_detail()
         : 0;
     status.textContent = physicsFailureMessage(error, detail);
+    return;
   }
+  quiescent =
+    typeof engine.sandbox_is_quiescent === "function" && engine.sandbox_is_quiescent() === 1;
 }
 
 function shoot() {
@@ -127,7 +148,10 @@ function shoot() {
   const velocityZ = Math.round(-Math.cos(yaw) * cosPitch * PROJECTILE_SPEED);
   if (engine.sandbox_shoot(velocityX, velocityY, velocityZ) < 0) {
     status.textContent = "The engine rejected projectile creation.";
+    return;
   }
+  quiescent = false;
+  renderDirty = true;
 }
 
 function normalizeQuaternion(raw) {
@@ -138,28 +162,31 @@ function normalizeQuaternion(raw) {
 }
 
 function readBodies() {
-  const bodies = [];
-  const count = engine.sandbox_body_count();
-  for (let index = 0; index < count; index += 1) {
-    bodies.push({
-      role: engine.sandbox_body_role(index),
-      position: [
-        engine.sandbox_body_x(index),
-        engine.sandbox_body_y(index),
-        engine.sandbox_body_z(index),
-      ],
-      half: [
-        engine.sandbox_body_half_x(index),
-        engine.sandbox_body_half_y(index),
-        engine.sandbox_body_half_z(index),
-      ],
+  const stride = engine.sandbox_render_snapshot_stride();
+  if (stride !== RENDER_SNAPSHOT_STRIDE) {
+    throw new Error(`Unexpected render snapshot stride ${stride}`);
+  }
+  const pointer = engine.sandbox_refresh_render_snapshot();
+  const length = engine.sandbox_render_snapshot_len();
+  if (length % stride !== 0) {
+    throw new Error(`Malformed render snapshot length ${length}`);
+  }
+
+  const values = new Int32Array(engine.memory.buffer, pointer, length);
+  const bodies = new Array(length / stride);
+  for (let index = 0; index < bodies.length; index += 1) {
+    const offset = index * stride;
+    bodies[index] = {
+      role: values[offset],
+      position: [values[offset + 1], values[offset + 2], values[offset + 3]],
+      half: [values[offset + 4], values[offset + 5], values[offset + 6]],
       orientation: normalizeQuaternion([
-        engine.sandbox_body_orientation_x(index),
-        engine.sandbox_body_orientation_y(index),
-        engine.sandbox_body_orientation_z(index),
-        engine.sandbox_body_orientation_w(index),
+        values[offset + 7],
+        values[offset + 8],
+        values[offset + 9],
+        values[offset + 10],
       ]),
-    });
+    };
   }
   return bodies;
 }
@@ -169,11 +196,14 @@ function resizeCanvas() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(rect.width * dpr));
   const height = Math.max(1, Math.round(rect.height * dpr));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-  renderer.resize(canvas.width, canvas.height);
+  if (width === renderWidth && height === renderHeight) return false;
+
+  renderWidth = width;
+  renderHeight = height;
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  renderer.resize(width, height);
+  return true;
 }
 
 function cameraSpace(point, camera) {
@@ -318,7 +348,9 @@ function ensureCrosshair() {
 }
 
 function render() {
-  resizeCanvas();
+  const resized = resizeCanvas();
+  if (!renderDirty && !resized) return;
+
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
   if (!player) return;
@@ -329,23 +361,28 @@ function render() {
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const sleep = quiescent ? " · asleep" : "";
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  renderDirty = false;
 }
 
 function updateKeyboardLook(elapsedSeconds) {
   const yawInput = Number(keys.has("ArrowRight")) - Number(keys.has("ArrowLeft"));
   const pitchInput = Number(keys.has("ArrowDown")) - Number(keys.has("ArrowUp"));
+  if (yawInput === 0 && pitchInput === 0) return false;
+
   yaw += yawInput * KEYBOARD_LOOK_SPEED * elapsedSeconds;
   pitch = Math.max(-1.25, Math.min(1.25, pitch + pitchInput * KEYBOARD_LOOK_SPEED * elapsedSeconds));
+  return true;
 }
 
 function frame(timestamp) {
   if (previousTimestamp === null) previousTimestamp = timestamp;
   const elapsed = Math.min(timestamp - previousTimestamp, 250);
   previousTimestamp = timestamp;
-  updateKeyboardLook(elapsed / 1000);
+  if (updateKeyboardLook(elapsed / 1000)) renderDirty = true;
 
-  if (!paused) {
+  if (!paused && (!quiescent || simulationInputActive())) {
     accumulator += elapsed;
     let steps = 0;
     while (accumulator >= FIXED_STEP_MS && steps < 8 && !paused) {
@@ -354,6 +391,8 @@ function frame(timestamp) {
       steps += 1;
     }
     if (steps === 8 && accumulator >= FIXED_STEP_MS) accumulator = 0;
+  } else if (quiescent) {
+    accumulator = 0;
   }
 
   render();
@@ -363,6 +402,7 @@ function frame(timestamp) {
 function applyLookDelta(deltaX, deltaY) {
   yaw += deltaX * LOOK_SENSITIVITY;
   pitch = Math.max(-1.25, Math.min(1.25, pitch + deltaY * LOOK_SENSITIVITY));
+  renderDirty = true;
 }
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -409,6 +449,7 @@ document.addEventListener("pointerlockchange", () => {
   status.textContent = document.pointerLockElement === canvas
     ? `Mouse captured. Press Esc to release it. Rendering with ${renderer.backend}.`
     : `Mouse free. Click the world to capture it, or drag / use arrow keys to look. Rendering with ${renderer.backend}.`;
+  renderDirty = true;
 });
 
 document.addEventListener("keydown", (event) => {
@@ -422,6 +463,7 @@ document.addEventListener("keydown", (event) => {
   if (event.code === "KeyP" && !event.repeat) {
     paused = !paused;
     pauseButton.textContent = paused ? "Resume" : "Pause";
+    renderDirty = true;
   }
   if (event.code === "KeyN" && paused && !event.repeat) simulationStep();
 });
@@ -433,6 +475,7 @@ resetButton.addEventListener("click", reset);
 pauseButton.addEventListener("click", () => {
   paused = !paused;
   pauseButton.textContent = paused ? "Resume" : "Pause";
+  renderDirty = true;
 });
 stepButton.addEventListener("click", () => {
   if (!paused) {
