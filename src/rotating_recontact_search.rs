@@ -496,7 +496,7 @@ mod tests {
             hit.time,
             crate::SampledContactTime3d {
                 numerator: 1,
-                denominator: 8,
+                denominator: 16,
             }
         );
         assert!(
