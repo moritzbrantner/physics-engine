@@ -26,13 +26,15 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
 /// bounded number of consecutive steps are put to sleep only when they are already motionless or a current
 /// contact can physically dissipate the residual motion. A contact qualifies when its normal constraint is
-/// still opposing relative approach, or when non-zero pair friction is backed by a compressive relative
-/// gravity load. This preserves ordinary low-speed free-flight and frictionless tangential inertia while
-/// still letting gravity-loaded rough contacts converge to sleep. Sleeping bodies are presented to the inner
-/// solver as fixed proxies, so gravity and persistent-contact stabilization cannot keep nudging a settled
-/// body. Before each step, conservative free-flight sweep bounds wake every sleeping body that an awake
-/// dynamic body may reach, including transitive sleeping islands. Explicit velocity changes also wake their
-/// target, and adding or removing fixed geometry invalidates existing sleepers conservatively.
+/// still opposing relative approach, or when non-zero pair friction belongs to a low-motion support chain
+/// that is ultimately anchored by fixed geometry or an existing sleeper. This preserves ordinary low-speed
+/// free-flight and frictionless tangential inertia while letting gravity-loaded rough stacks converge to
+/// sleep as one supported island instead of repeatedly waking their lower members. Sleeping bodies are
+/// presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization cannot
+/// keep nudging a settled body. Before each step, conservative free-flight sweep bounds wake every sleeping
+/// body that an awake dynamic body may reach, including transitive sleeping islands. Explicit velocity
+/// changes also wake their target, and adding or removing fixed geometry invalidates existing sleepers
+/// conservatively.
 ///
 /// The requested frame is staged on a clone and committed only after the authoritative step, fixed-boundary
 /// stabilization, proxy restoration, and sleep-state update succeed. Failed frames therefore leave the
@@ -292,7 +294,6 @@ impl RotatingWorld3d {
         rigid_box: &RigidBox3d,
     ) -> Result<bool, RotatingWorldError3d> {
         let id = rigid_box.body.id;
-        let gravity = self.config().gravity;
         for other_id in self.inner.overlap_query(rigid_box.oriented_box())? {
             if other_id == id {
                 continue;
@@ -314,28 +315,77 @@ impl RotatingWorld3d {
             if checked_axis_dot(relative_velocity, contact.axis, id)? < 0 {
                 return Ok(true);
             }
+        }
 
-            let pair_friction = left
-                .body
-                .material
-                .friction_milli()
-                .max(right.body.material.friction_milli());
-            if pair_friction == 0 {
+        self.has_gravity_support_chain(id)
+    }
+
+    fn has_gravity_support_chain(&self, start: BodyId) -> Result<bool, RotatingWorldError3d> {
+        let gravity = self.config().gravity;
+        if gravity == Vec3i::ZERO {
+            return Ok(false);
+        }
+        let gravity_vector = relative_vector(gravity, Vec3i::ZERO);
+        let mut pending = BTreeSet::from([start]);
+        let mut visited = BTreeSet::new();
+
+        while let Some(id) = pending.pop_first() {
+            if !visited.insert(id) {
                 continue;
             }
-            let left_gravity = if left.body.kind == BodyKind::Dynamic {
-                gravity
-            } else {
-                Vec3i::ZERO
-            };
-            let right_gravity = if right.body.kind == BodyKind::Dynamic {
-                gravity
-            } else {
-                Vec3i::ZERO
-            };
-            let relative_gravity = relative_vector(right_gravity, left_gravity);
-            if checked_axis_dot(relative_gravity, contact.axis, id)? < 0 {
-                return Ok(true);
+            let rigid_box = self
+                .inner
+                .box_by_id(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            if rigid_box.body.kind != BodyKind::Dynamic {
+                continue;
+            }
+
+            for other_id in self.inner.overlap_query(rigid_box.oriented_box())? {
+                if other_id == id {
+                    continue;
+                }
+                let other = self
+                    .inner
+                    .box_by_id(other_id)
+                    .ok_or(RotatingWorldError3d::MissingBody(other_id))?;
+                let (left, right) = if id < other_id {
+                    (rigid_box, other)
+                } else {
+                    (other, rigid_box)
+                };
+                let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())?
+                else {
+                    continue;
+                };
+                let pair_friction = left
+                    .body
+                    .material
+                    .friction_milli()
+                    .max(right.body.material.friction_milli());
+                if pair_friction == 0 {
+                    continue;
+                }
+
+                let gravity_dot = checked_axis_dot(gravity_vector, contact.axis, id)?;
+                let gravity_pushes_into_other = if id == left.body.id {
+                    gravity_dot > 0
+                } else {
+                    gravity_dot < 0
+                };
+                if !gravity_pushes_into_other {
+                    continue;
+                }
+
+                if other.body.kind == BodyKind::Fixed || self.sleeping.contains(&other_id) {
+                    return Ok(true);
+                }
+                if other.body.kind == BodyKind::Dynamic
+                    && low_motion(other)
+                    && !visited.contains(&other_id)
+                {
+                    pending.insert(other_id);
+                }
             }
         }
         Ok(false)
