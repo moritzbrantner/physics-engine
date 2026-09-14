@@ -149,47 +149,6 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
         }
     }
 
-    // A positive frontier can invalidate stale history when the selected event shares a body with that
-    // historical pair. Only history that was already geometrically clear at this interval start is stale:
-    // a pair that started in contact and merely became clear before the selected frontier keeps its history,
-    // preventing response projection from manufacturing immediate clear/re-contact churn. An already-clear
-    // shared-body pair that is still clear at the exact frontier can be released before the response changes
-    // motion, so a genuine first-cell recontact in the following segment remains discoverable.
-    if let Some(hit) = best {
-        let selected_pair = hit.pair;
-        let history = persistent_pairs.iter().copied().collect::<Vec<_>>();
-        for pair in history {
-            let shares_body = pair.left == selected_pair.left
-                || pair.left == selected_pair.right
-                || pair.right == selected_pair.left
-                || pair.right == selected_pair.right;
-            if !shares_body {
-                continue;
-            }
-            let left = by_id.get(&pair.left).copied().ok_or(
-                RotatingContactSearchError3d::MissingCandidateBody(pair.left),
-            )?;
-            let right = by_id.get(&pair.right).copied().ok_or(
-                RotatingContactSearchError3d::MissingCandidateBody(pair.right),
-            )?;
-            if obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some() {
-                continue;
-            }
-            let (sampled_left, sampled_right) = sample_pair(
-                left,
-                right,
-                config,
-                hit.time.numerator,
-                hit.time.denominator,
-            )?;
-            if obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
-                .is_none()
-            {
-                persistent_pairs.remove(&pair);
-            }
-        }
-    }
-
     Ok(best)
 }
 
@@ -471,43 +430,41 @@ mod tests {
     }
 
     #[test]
-    fn shared_body_frontier_clear_releases_history_before_next_segment() {
+    fn positive_clear_before_unrelated_frontier_releases_contact_history() {
         let historical = RotationalSweepPair3d {
             left: BodyId(1),
             right: BodyId(2),
         };
         let selector = RotationalSweepPair3d {
-            left: BodyId(1),
-            right: BodyId(3),
+            left: BodyId(3),
+            right: BodyId(4),
         };
         let boxes = [
-            dynamic(1, Vec3i::new(3, 0, 0), Vec3i::new(8, 0, 0)),
+            dynamic(1, Vec3i::new(-5, 0, 0), Vec3i::new(8, 0, 0)),
             fixed(2, Vec3i::ZERO),
-            fixed(3, Vec3i::new(6, 0, 0)),
+            dynamic(3, Vec3i::new(-4, 10, 0), Vec3i::new(8, 0, 0)),
+            fixed(4, Vec3i::new(0, 10, 0)),
         ];
         let mut persistent_pairs = BTreeSet::from([historical]);
         let mut broad_phase = RotatingBroadPhase3d::default();
         let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
             &boxes,
-            config(Vec3i::ZERO, 8, 1),
+            config(Vec3i::ZERO, 8, 0),
             &mut persistent_pairs,
             &mut broad_phase,
         )
         .expect("valid history-aware recontact search")
-        .expect("shared body should reach the other wall");
+        .expect("unrelated pair should select the earlier frontier");
 
         assert_eq!(hit.pair, selector);
         assert_eq!(
             hit.time,
             crate::SampledContactTime3d {
                 numerator: 1,
-                denominator: 16,
+                denominator: 4,
             }
         );
-        assert!(
-            !persistent_pairs.contains(&historical),
-            "the shared-body event proves the old wall pair clear before motion can change"
-        );
+        assert!(!persistent_pairs.contains(&historical));
     }
 
     #[test]
