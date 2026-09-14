@@ -477,7 +477,7 @@ mod tests {
     use super::{PLAYER_ID, Sandbox, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
-        for _ in 0..16 {
+        for _ in 0..240 {
             assert_eq!(sandbox.step(0, 0, false), 0);
         }
     }
