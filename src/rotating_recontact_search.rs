@@ -148,6 +148,13 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
             persistent_pairs.remove(&pair);
         }
     }
+    // A selected frontier advances global simulation time. History from the immediately preceding
+    // frontier must not remain a time-zero proxy in the next segment; the newly resolved frontier will
+    // repopulate the set before the next search. This preserves immediate-churn suppression without
+    // hiding a genuine first-cell recontact after an intervening positive-time event.
+    if best.is_some() {
+        persistent_pairs.clear();
+    }
 
     Ok(best)
 }
@@ -188,10 +195,8 @@ fn search_pair(
     ),
     RotatingContactSearchError3d,
 > {
-    // Historical membership controls when contact history may be released; authoritative interval-start
-    // geometry still seeds the clear/contact bracket so a genuine first-cell recontact is not suppressed.
-    let initially_contacting =
-        obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
+    let initially_contacting = historically_contacting
+        || obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
     let mut first_positive_clear = None;
@@ -384,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_contact_uses_geometric_start_clear_for_first_cell_recontact() {
+    fn historical_contact_does_not_treat_interval_start_separation_as_clear() {
         let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(4, 0, 0));
         let obstacle = fixed(2, Vec3i::ZERO);
         let pair = RotationalSweepPair3d {
@@ -394,22 +399,15 @@ mod tests {
         let mut persistent_pairs = BTreeSet::from([pair]);
         let mut broad_phase = RotatingBroadPhase3d::default();
 
-        let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
-            &[moving, obstacle],
-            config(Vec3i::ZERO, 4, 0),
-            &mut persistent_pairs,
-            &mut broad_phase,
-        )
-        .expect("valid history-aware recontact search")
-        .expect("clear interval start should admit a first-cell recontact");
-
-        assert_eq!(hit.pair, pair);
         assert_eq!(
-            hit.time,
-            crate::SampledContactTime3d {
-                numerator: 1,
-                denominator: 4,
-            }
+            sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+                &[moving, obstacle],
+                config(Vec3i::ZERO, 4, 0),
+                &mut persistent_pairs,
+                &mut broad_phase,
+            )
+            .expect("valid history-aware recontact search"),
+            None
         );
         assert!(persistent_pairs.contains(&pair));
     }
@@ -435,11 +433,11 @@ mod tests {
 
         assert_eq!(hit.time.numerator, 1);
         assert_eq!(hit.time.denominator, 2);
-        assert!(!persistent_pairs.contains(&pair));
+        assert!(persistent_pairs.is_empty());
     }
 
     #[test]
-    fn positive_clear_before_unrelated_frontier_releases_contact_history() {
+    fn positive_frontier_replaces_prior_contact_history() {
         let historical = RotationalSweepPair3d {
             left: BodyId(1),
             right: BodyId(2),
@@ -449,7 +447,7 @@ mod tests {
             right: BodyId(4),
         };
         let boxes = [
-            dynamic(1, Vec3i::new(-5, 0, 0), Vec3i::new(8, 0, 0)),
+            dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(4, 0, 0)),
             fixed(2, Vec3i::ZERO),
             dynamic(3, Vec3i::new(-4, 10, 0), Vec3i::new(8, 0, 0)),
             fixed(4, Vec3i::new(0, 10, 0)),
@@ -463,7 +461,7 @@ mod tests {
             &mut broad_phase,
         )
         .expect("valid history-aware recontact search")
-        .expect("unrelated pair should select the earlier frontier");
+        .expect("unrelated pair should advance simulation time");
 
         assert_eq!(hit.pair, selector);
         assert_eq!(
@@ -473,7 +471,7 @@ mod tests {
                 denominator: 4,
             }
         );
-        assert!(!persistent_pairs.contains(&historical));
+        assert!(persistent_pairs.is_empty());
     }
 
     #[test]
