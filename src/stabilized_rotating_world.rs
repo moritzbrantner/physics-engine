@@ -27,7 +27,9 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// bounded number of consecutive steps are put to sleep only when they are already motionless or a current
 /// contact can physically dissipate the residual motion. A contact qualifies when its normal constraint is
 /// still opposing relative approach, or when non-zero pair friction belongs to a low-motion support chain
-/// that is ultimately anchored by fixed geometry or an existing sleeper. This preserves ordinary low-speed
+/// that is ultimately anchored by fixed geometry or an existing sleeper. Gravity-supported bodies settle
+/// position-only against already anchored supports before becoming sleepers, so quantized equal-mass
+/// projection cannot freeze residual penetration into a resting stack. This preserves ordinary low-speed
 /// free-flight and frictionless tangential inertia while letting gravity-loaded rough stacks converge to
 /// sleep as one supported island instead of repeatedly waking their lower members. Sleeping bodies are
 /// presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization cannot
@@ -260,7 +262,8 @@ impl RotatingWorld3d {
             })
             .collect::<Vec<_>>();
         let mut seen = BTreeSet::new();
-        let mut to_sleep = Vec::new();
+        let mut direct_sleep = Vec::new();
+        let mut supported_sleep = BTreeSet::new();
 
         for (id, is_low_motion, is_stationary, rigid_box) in motion {
             seen.insert(id);
@@ -273,7 +276,11 @@ impl RotatingWorld3d {
                 let streak = self.sleep_streaks.entry(id).or_default();
                 *streak = streak.saturating_add(1);
                 if *streak >= SLEEP_STABLE_STEPS {
-                    to_sleep.push(id);
+                    if self.has_gravity_support_chain(id)? {
+                        supported_sleep.insert(id);
+                    } else {
+                        direct_sleep.push(id);
+                    }
                 }
             } else {
                 self.sleep_streaks.remove(&id);
@@ -281,10 +288,34 @@ impl RotatingWorld3d {
         }
         self.sleep_streaks.retain(|id, _| seen.contains(id));
 
-        for id in to_sleep {
+        for id in direct_sleep {
             self.put_body_to_sleep(id)?;
             self.sleeping.insert(id);
             self.sleep_streaks.remove(&id);
+        }
+
+        loop {
+            let mut ready = Vec::new();
+            for id in supported_sleep.iter().copied() {
+                let rigid_box = self
+                    .inner
+                    .box_by_id(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
+                if !self.direct_gravity_sleep_supports(rigid_box)?.is_empty() {
+                    ready.push(id);
+                }
+            }
+            if ready.is_empty() {
+                break;
+            }
+
+            for id in ready {
+                self.settle_body_on_sleep_supports(id)?;
+                self.put_body_to_sleep(id)?;
+                self.sleeping.insert(id);
+                self.sleep_streaks.remove(&id);
+                supported_sleep.remove(&id);
+            }
         }
         Ok(())
     }
@@ -367,13 +398,7 @@ impl RotatingWorld3d {
                     continue;
                 }
 
-                let gravity_dot = checked_axis_dot(gravity_vector, contact.axis, id)?;
-                let gravity_pushes_into_other = if id == left.body.id {
-                    gravity_dot > 0
-                } else {
-                    gravity_dot < 0
-                };
-                if !gravity_pushes_into_other {
+                if !gravity_pushes_into_other(gravity_vector, contact.axis, id, left.body.id)? {
                     continue;
                 }
 
@@ -389,6 +414,126 @@ impl RotatingWorld3d {
             }
         }
         Ok(false)
+    }
+
+    fn direct_gravity_sleep_supports(
+        &self,
+        rigid_box: &RigidBox3d,
+    ) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        let gravity = self.config().gravity;
+        if gravity == Vec3i::ZERO {
+            return Ok(Vec::new());
+        }
+        let gravity_vector = relative_vector(gravity, Vec3i::ZERO);
+        let id = rigid_box.body.id;
+        let mut supports = Vec::new();
+
+        for other_id in self.inner.overlap_query(rigid_box.oriented_box())? {
+            if other_id == id {
+                continue;
+            }
+            let other = self
+                .inner
+                .box_by_id(other_id)
+                .ok_or(RotatingWorldError3d::MissingBody(other_id))?;
+            if other.body.kind != BodyKind::Fixed && !self.sleeping.contains(&other_id) {
+                continue;
+            }
+            let (left, right) = if id < other_id {
+                (rigid_box, other)
+            } else {
+                (other, rigid_box)
+            };
+            let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
+                continue;
+            };
+            let pair_friction = left
+                .body
+                .material
+                .friction_milli()
+                .max(right.body.material.friction_milli());
+            if pair_friction == 0 {
+                continue;
+            }
+            if gravity_pushes_into_other(gravity_vector, contact.axis, id, left.body.id)? {
+                supports.push(other_id);
+            }
+        }
+        Ok(supports)
+    }
+
+    fn settle_body_on_sleep_supports(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
+        let mut candidate = self
+            .inner
+            .box_by_id(id)
+            .cloned()
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        let original_position = candidate.body.position;
+        let mut converged = false;
+
+        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+            let supports = self.direct_gravity_sleep_supports(&candidate)?;
+            if supports.is_empty() {
+                converged = true;
+                break;
+            }
+
+            let before = candidate.body.position;
+            let mut corrections = PositionCorrectionAccumulator::default();
+            for support_id in supports {
+                let mut support = self
+                    .inner
+                    .box_by_id(support_id)
+                    .cloned()
+                    .ok_or(RotatingWorldError3d::MissingBody(support_id))?;
+                support.body.kind = BodyKind::Fixed;
+                support.body.velocity = Vec3i::ZERO;
+                support.angular.angular_velocity = AngularVelocity3d::default();
+
+                let response = if id < support_id {
+                    resolve_obb_contact(candidate.clone(), support, false)
+                } else {
+                    resolve_obb_contact(support, candidate.clone(), false)
+                }
+                .map_err(|error| {
+                    RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))
+                })?;
+                let projected = if id < support_id {
+                    response.left.body.position
+                } else {
+                    response.right.body.position
+                };
+                if projected != before {
+                    corrections.accumulate(id, before, projected)?;
+                }
+            }
+
+            if corrections.is_empty() {
+                converged = true;
+                break;
+            }
+            let projected = corrections.target_position(id, before)?;
+            if projected == before {
+                break;
+            }
+            candidate.body.position = projected;
+        }
+
+        if !converged {
+            return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
+                u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),
+            ));
+        }
+        if candidate.body.position == original_position {
+            return Ok(());
+        }
+
+        let mut rigid_box = self
+            .inner
+            .remove_box(id)
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        rigid_box.body.position = candidate.body.position;
+        self.inner.add_box(rigid_box)
     }
 
     fn put_body_to_sleep(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
@@ -626,6 +771,16 @@ fn checked_axis_dot(
             sum.checked_add(product)
                 .ok_or_else(|| position_correction_overflow(id))
         })
+}
+
+fn gravity_pushes_into_other(
+    gravity: [i128; 3],
+    contact_axis: [i128; 3],
+    id: BodyId,
+    left_id: BodyId,
+) -> Result<bool, RotatingWorldError3d> {
+    let dot = checked_axis_dot(gravity, contact_axis, id)?;
+    Ok(if id == left_id { dot > 0 } else { dot < 0 })
 }
 
 fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
