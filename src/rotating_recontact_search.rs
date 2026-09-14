@@ -149,12 +149,21 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
         }
     }
 
-    // A selected positive-time frontier is itself authoritative separation evidence. A history pair that
-    // is clear at that exact sampled time must be released before the following segment; pairs still in
-    // contact remain historical so response projection cannot manufacture clear/re-contact churn.
+    // A positive frontier can invalidate stale history when the selected event shares a body with that
+    // historical pair: the intervening response can change that body's motion, so a clear old pair at
+    // the exact selected frontier must be eligible for a first-cell recontact in the following segment.
+    // Unrelated events do not erase history and therefore cannot revive projection-induced churn.
     if let Some(hit) = best {
+        let selected_pair = hit.pair;
         let history = persistent_pairs.iter().copied().collect::<Vec<_>>();
         for pair in history {
+            let shares_body = pair.left == selected_pair.left
+                || pair.left == selected_pair.right
+                || pair.right == selected_pair.left
+                || pair.right == selected_pair.right;
+            if !shares_body {
+                continue;
+            }
             let left = by_id.get(&pair.left).copied().ok_or(
                 RotatingContactSearchError3d::MissingCandidateBody(pair.left),
             )?;
@@ -457,20 +466,19 @@ mod tests {
     }
 
     #[test]
-    fn selected_frontier_clear_releases_history_before_next_segment() {
+    fn shared_body_frontier_clear_releases_history_before_next_segment() {
         let historical = RotationalSweepPair3d {
             left: BodyId(1),
             right: BodyId(2),
         };
         let selector = RotationalSweepPair3d {
-            left: BodyId(3),
-            right: BodyId(4),
+            left: BodyId(1),
+            right: BodyId(3),
         };
         let boxes = [
-            dynamic(1, Vec3i::new(-4, 0, 0), Vec3i::new(4, 0, 0)),
+            dynamic(1, Vec3i::new(3, 0, 0), Vec3i::new(8, 0, 0)),
             fixed(2, Vec3i::ZERO),
-            dynamic(3, Vec3i::new(-3, 10, 0), Vec3i::new(16, 0, 0)),
-            fixed(4, Vec3i::new(0, 10, 0)),
+            fixed(3, Vec3i::new(6, 0, 0)),
         ];
         let mut persistent_pairs = BTreeSet::from([historical]);
         let mut broad_phase = RotatingBroadPhase3d::default();
@@ -481,19 +489,19 @@ mod tests {
             &mut broad_phase,
         )
         .expect("valid history-aware recontact search")
-        .expect("other pair should advance simulation time");
+        .expect("shared body should reach the other wall");
 
         assert_eq!(hit.pair, selector);
         assert_eq!(
             hit.time,
             crate::SampledContactTime3d {
                 numerator: 1,
-                denominator: 16,
+                denominator: 8,
             }
         );
         assert!(
             !persistent_pairs.contains(&historical),
-            "the exact positive-time frontier proves the historical pair clear"
+            "the shared-body event proves the old wall pair clear before motion can change"
         );
     }
 
