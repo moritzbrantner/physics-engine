@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, OrientedBox3d,
+    AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d, OrientedBox3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, Vec3i,
 };
@@ -130,9 +130,22 @@ impl Sandbox {
             .any(|id| id != PLAYER_ID))
     }
 
+    fn is_quiescent(&self) -> bool {
+        self.world.boxes().all(|rigid_box| {
+            rigid_box.body().kind() == BodyKind::Fixed
+                || self.world.is_sleeping(rigid_box.body().id())
+        })
+    }
+
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
+        if move_x == 0 && move_z == 0 && !jump && self.is_quiescent() {
+            self.last_rotating_events = 0;
+            self.last_tail_contacts = 0;
+            return 0;
+        }
+
         let Some(player) = self.world.box_by_id(PLAYER_ID) else {
             self.error_code = 1;
             return self.error_code;
@@ -339,6 +352,11 @@ pub extern "C" fn sandbox_shoot(velocity_x: i32, velocity_y: i32, velocity_z: i3
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sandbox_is_quiescent() -> i32 {
+    with_sandbox(|sandbox| i32::from(sandbox.is_quiescent()))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_body_count() -> u32 {
     with_sandbox(|sandbox| u32::try_from(sandbox.body_count()).unwrap_or(u32::MAX))
 }
@@ -481,6 +499,25 @@ mod tests {
         assert!(player.rotation_locked());
         assert!(player.angular().angular_velocity.is_zero());
         assert!(sandbox.world.boxes().count() >= 10);
+    }
+
+    #[test]
+    fn quiescent_idle_step_is_an_exact_no_op_until_input_reactivates_the_player() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        assert!(sandbox.is_quiescent());
+        let settled = sandbox.world.boxes().cloned().collect::<Vec<_>>();
+
+        for _ in 0..120 {
+            assert_eq!(sandbox.step(0, 0, false), 0);
+        }
+        assert!(sandbox.is_quiescent());
+        assert_eq!(sandbox.world.boxes().cloned().collect::<Vec<_>>(), settled);
+        assert_eq!(sandbox.last_rotating_events, 0);
+        assert_eq!(sandbox.last_tail_contacts, 0);
+
+        assert_eq!(sandbox.step(0, -7, false), 0);
+        assert!(!sandbox.is_quiescent());
     }
 
     #[test]
