@@ -19,6 +19,7 @@ const FOV_RADIANS = (70 * Math.PI) / 180;
 const NEAR_PLANE = 0.8;
 const FAR_PLANE = 1400;
 const ORIENTATION_SCALE = 1 << 30;
+const RENDER_SNAPSHOT_STRIDE = 11;
 const keys = new Set();
 
 let engine = null;
@@ -161,28 +162,31 @@ function normalizeQuaternion(raw) {
 }
 
 function readBodies() {
-  const bodies = [];
-  const count = engine.sandbox_body_count();
-  for (let index = 0; index < count; index += 1) {
-    bodies.push({
-      role: engine.sandbox_body_role(index),
-      position: [
-        engine.sandbox_body_x(index),
-        engine.sandbox_body_y(index),
-        engine.sandbox_body_z(index),
-      ],
-      half: [
-        engine.sandbox_body_half_x(index),
-        engine.sandbox_body_half_y(index),
-        engine.sandbox_body_half_z(index),
-      ],
+  const stride = engine.sandbox_render_snapshot_stride();
+  if (stride !== RENDER_SNAPSHOT_STRIDE) {
+    throw new Error(`Unexpected render snapshot stride ${stride}`);
+  }
+  const pointer = engine.sandbox_refresh_render_snapshot();
+  const length = engine.sandbox_render_snapshot_len();
+  if (length % stride !== 0) {
+    throw new Error(`Malformed render snapshot length ${length}`);
+  }
+
+  const values = new Int32Array(engine.memory.buffer, pointer, length);
+  const bodies = new Array(length / stride);
+  for (let index = 0; index < bodies.length; index += 1) {
+    const offset = index * stride;
+    bodies[index] = {
+      role: values[offset],
+      position: [values[offset + 1], values[offset + 2], values[offset + 3]],
+      half: [values[offset + 4], values[offset + 5], values[offset + 6]],
       orientation: normalizeQuaternion([
-        engine.sandbox_body_orientation_x(index),
-        engine.sandbox_body_orientation_y(index),
-        engine.sandbox_body_orientation_z(index),
-        engine.sandbox_body_orientation_w(index),
+        values[offset + 7],
+        values[offset + 8],
+        values[offset + 9],
+        values[offset + 10],
       ]),
-    });
+    };
   }
   return bodies;
 }

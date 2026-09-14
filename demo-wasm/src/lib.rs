@@ -6,6 +6,8 @@ use physics_engine::{
     RotatingWorldError3d, Vec3i,
 };
 
+mod render_snapshot;
+
 const PLAYER_ID: BodyId = BodyId(1);
 const PROJECTILE_ID_START: u64 = 1_000;
 const MAX_PROJECTILES: usize = 48;
@@ -358,6 +360,21 @@ pub extern "C" fn sandbox_shoot(velocity_x: i32, velocity_y: i32, velocity_z: i3
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_is_quiescent() -> i32 {
     with_sandbox(|sandbox| i32::from(sandbox.is_quiescent()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_refresh_render_snapshot() -> usize {
+    with_sandbox(render_snapshot::refresh)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_render_snapshot_len() -> usize {
+    render_snapshot::len()
+}
+
+#[unsafe(no_mangle)]
+pub const extern "C" fn sandbox_render_snapshot_stride() -> usize {
+    render_snapshot::STRIDE
 }
 
 #[unsafe(no_mangle)]
