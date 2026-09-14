@@ -12,7 +12,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -27,6 +27,9 @@ jobs:
         with:
           tier: fast
           install-mode: none
+
+      - name: Run long ECS tower acceptance
+        run: cargo test --release --locked --test ecs_tower_regression -- --ignored --nocapture
 
       - name: Test Pages sandbox adapter replay
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
