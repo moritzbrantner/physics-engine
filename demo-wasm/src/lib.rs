@@ -199,6 +199,10 @@ impl Sandbox {
             .total_collisions
             .saturating_add(u32::try_from(collisions).unwrap_or(u32::MAX));
         self.cleanup_projectiles();
+        if self.is_quiescent() {
+            self.last_rotating_events = 0;
+            self.last_tail_contacts = 0;
+        }
         0
     }
 
@@ -494,7 +498,7 @@ mod tests {
     use super::{PLAYER_ID, Sandbox, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
-        for _ in 0..16 {
+        for _ in 0..240 {
             assert_eq!(sandbox.step(0, 0, false), 0);
         }
     }
@@ -523,6 +527,8 @@ mod tests {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
         assert!(sandbox.is_quiescent());
+        assert_eq!(sandbox.last_rotating_events, 0);
+        assert_eq!(sandbox.last_tail_contacts, 0);
         let settled = sandbox.world.boxes().cloned().collect::<Vec<_>>();
 
         for _ in 0..120 {
