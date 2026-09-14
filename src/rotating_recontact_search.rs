@@ -150,9 +150,11 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
     }
 
     // A positive frontier can invalidate stale history when the selected event shares a body with that
-    // historical pair: the intervening response can change that body's motion, so a clear old pair at
-    // the exact selected frontier must be eligible for a first-cell recontact in the following segment.
-    // Unrelated events do not erase history and therefore cannot revive projection-induced churn.
+    // historical pair. Only history that was already geometrically clear at this interval start is stale:
+    // a pair that started in contact and merely became clear before the selected frontier keeps its history,
+    // preventing response projection from manufacturing immediate clear/re-contact churn. An already-clear
+    // shared-body pair that is still clear at the exact frontier can be released before the response changes
+    // motion, so a genuine first-cell recontact in the following segment remains discoverable.
     if let Some(hit) = best {
         let selected_pair = hit.pair;
         let history = persistent_pairs.iter().copied().collect::<Vec<_>>();
@@ -170,6 +172,9 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
             let right = by_id.get(&pair.right).copied().ok_or(
                 RotatingContactSearchError3d::MissingCandidateBody(pair.right),
             )?;
+            if obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some() {
+                continue;
+            }
             let (sampled_left, sampled_right) = sample_pair(
                 left,
                 right,
