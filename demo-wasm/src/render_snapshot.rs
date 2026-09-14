@@ -39,14 +39,19 @@ pub(super) fn len() -> usize {
 }
 
 #[cfg(test)]
+fn values() -> Vec<i32> {
+    SNAPSHOT.with(|snapshot| snapshot.borrow().clone())
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{STRIDE, Sandbox};
+    use super::{Sandbox, STRIDE, len, refresh, values};
     use crate::role_for;
 
     #[test]
     fn packed_snapshot_matches_authoritative_body_state() {
         let sandbox = Sandbox::new().expect("valid sandbox");
-        let values = sandbox
+        let expected = sandbox
             .world
             .boxes()
             .flat_map(|rigid_box| {
@@ -68,7 +73,10 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(values.len(), sandbox.body_count() * STRIDE);
-        assert_eq!(values.chunks_exact(STRIDE).len(), sandbox.body_count());
+        let pointer = refresh(&sandbox);
+        assert_ne!(pointer, 0);
+        assert_eq!(len(), expected.len());
+        assert_eq!(values(), expected);
+        assert_eq!(expected.len(), sandbox.body_count() * STRIDE);
     }
 }
