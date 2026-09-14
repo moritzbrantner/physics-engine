@@ -148,12 +148,31 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
             persistent_pairs.remove(&pair);
         }
     }
-    // A selected frontier advances global simulation time. History from the immediately preceding
-    // frontier must not remain a time-zero proxy in the next segment; the newly resolved frontier will
-    // repopulate the set before the next search. This preserves immediate-churn suppression without
-    // hiding a genuine first-cell recontact after an intervening positive-time event.
-    if best.is_some() {
-        persistent_pairs.clear();
+
+    // A selected positive-time frontier is itself authoritative separation evidence. A history pair that
+    // is clear at that exact sampled time must be released before the following segment; pairs still in
+    // contact remain historical so response projection cannot manufacture clear/re-contact churn.
+    if let Some(hit) = best {
+        let history = persistent_pairs.iter().copied().collect::<Vec<_>>();
+        for pair in history {
+            let left = by_id.get(&pair.left).copied().ok_or(
+                RotatingContactSearchError3d::MissingCandidateBody(pair.left),
+            )?;
+            let right = by_id.get(&pair.right).copied().ok_or(
+                RotatingContactSearchError3d::MissingCandidateBody(pair.right),
+            )?;
+            let (sampled_left, sampled_right) = sample_pair(
+                left,
+                right,
+                config,
+                hit.time.numerator,
+                hit.time.denominator,
+            )?;
+            if obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?.is_none()
+            {
+                persistent_pairs.remove(&pair);
+            }
+        }
     }
 
     Ok(best)
@@ -433,11 +452,11 @@ mod tests {
 
         assert_eq!(hit.time.numerator, 1);
         assert_eq!(hit.time.denominator, 2);
-        assert!(persistent_pairs.is_empty());
+        assert!(!persistent_pairs.contains(&pair));
     }
 
     #[test]
-    fn positive_frontier_replaces_prior_contact_history() {
+    fn selected_frontier_clear_releases_history_before_next_segment() {
         let historical = RotationalSweepPair3d {
             left: BodyId(1),
             right: BodyId(2),
@@ -447,31 +466,34 @@ mod tests {
             right: BodyId(4),
         };
         let boxes = [
-            dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(4, 0, 0)),
+            dynamic(1, Vec3i::new(-4, 0, 0), Vec3i::new(4, 0, 0)),
             fixed(2, Vec3i::ZERO),
-            dynamic(3, Vec3i::new(-4, 10, 0), Vec3i::new(8, 0, 0)),
+            dynamic(3, Vec3i::new(-3, 10, 0), Vec3i::new(16, 0, 0)),
             fixed(4, Vec3i::new(0, 10, 0)),
         ];
         let mut persistent_pairs = BTreeSet::from([historical]);
         let mut broad_phase = RotatingBroadPhase3d::default();
         let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
             &boxes,
-            config(Vec3i::ZERO, 8, 0),
+            config(Vec3i::ZERO, 8, 1),
             &mut persistent_pairs,
             &mut broad_phase,
         )
         .expect("valid history-aware recontact search")
-        .expect("unrelated pair should advance simulation time");
+        .expect("other pair should advance simulation time");
 
         assert_eq!(hit.pair, selector);
         assert_eq!(
             hit.time,
             crate::SampledContactTime3d {
                 numerator: 1,
-                denominator: 4,
+                denominator: 16,
             }
         );
-        assert!(persistent_pairs.is_empty());
+        assert!(
+            !persistent_pairs.contains(&historical),
+            "the exact positive-time frontier proves the historical pair clear"
+        );
     }
 
     #[test]
