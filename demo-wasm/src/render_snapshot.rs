@@ -45,7 +45,7 @@ fn values() -> Vec<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Sandbox, STRIDE, len, refresh, values};
+    use super::{STRIDE, Sandbox, len, refresh, values};
     use crate::role_for;
 
     #[test]
