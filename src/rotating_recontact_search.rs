@@ -188,8 +188,10 @@ fn search_pair(
     ),
     RotatingContactSearchError3d,
 > {
-    let initially_contacting = historically_contacting
-        || obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
+    // Historical membership controls when contact history may be released; authoritative interval-start
+    // geometry still seeds the clear/contact bracket so a genuine first-cell recontact is not suppressed.
+    let initially_contacting =
+        obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
     let mut first_positive_clear = None;
@@ -382,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_contact_does_not_treat_interval_start_separation_as_clear() {
+    fn historical_contact_uses_geometric_start_clear_for_first_cell_recontact() {
         let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(4, 0, 0));
         let obstacle = fixed(2, Vec3i::ZERO);
         let pair = RotationalSweepPair3d {
@@ -392,15 +394,22 @@ mod tests {
         let mut persistent_pairs = BTreeSet::from([pair]);
         let mut broad_phase = RotatingBroadPhase3d::default();
 
+        let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+            &[moving, obstacle],
+            config(Vec3i::ZERO, 4, 0),
+            &mut persistent_pairs,
+            &mut broad_phase,
+        )
+        .expect("valid history-aware recontact search")
+        .expect("clear interval start should admit a first-cell recontact");
+
+        assert_eq!(hit.pair, pair);
         assert_eq!(
-            sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
-                &[moving, obstacle],
-                config(Vec3i::ZERO, 4, 0),
-                &mut persistent_pairs,
-                &mut broad_phase,
-            )
-            .expect("valid history-aware recontact search"),
-            None
+            hit.time,
+            crate::SampledContactTime3d {
+                numerator: 1,
+                denominator: 4,
+            }
         );
         assert!(persistent_pairs.contains(&pair));
     }
