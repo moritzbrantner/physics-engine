@@ -31,14 +31,9 @@ fn assert_stable_stack(lower_id: BodyId, upper_id: BodyId) {
     for (id, y) in [(lower_id, 18), (upper_id, 54)] {
         world
             .add_box(rotating_box(
-                RigidBody::dynamic(
-                    id,
-                    Vec3i::new(0, y, 0),
-                    Vec3i::ZERO,
-                    Vec3i::new(18, 18, 18),
-                )
-                .with_mass(2)
-                .with_material(material),
+                RigidBody::dynamic(id, Vec3i::new(0, y, 0), Vec3i::ZERO, Vec3i::new(18, 18, 18))
+                    .with_mass(2)
+                    .with_material(material),
             ))
             .expect("crate");
     }
@@ -53,8 +48,14 @@ fn assert_stable_stack(lower_id: BodyId, upper_id: BodyId) {
     assert_eq!(upper.body().position(), Vec3i::new(0, 54, 0));
     assert_eq!(lower.body().velocity(), Vec3i::ZERO);
     assert_eq!(upper.body().velocity(), Vec3i::ZERO);
-    assert_eq!(lower.angular().angular_velocity, AngularVelocity3d::default());
-    assert_eq!(upper.angular().angular_velocity, AngularVelocity3d::default());
+    assert_eq!(
+        lower.angular().angular_velocity,
+        AngularVelocity3d::default()
+    );
+    assert_eq!(
+        upper.angular().angular_velocity,
+        AngularVelocity3d::default()
+    );
     assert!(world.is_sleeping(lower_id));
     assert!(world.is_sleeping(upper_id));
 
