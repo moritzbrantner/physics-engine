@@ -168,7 +168,8 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
                 hit.time.numerator,
                 hit.time.denominator,
             )?;
-            if obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?.is_none()
+            if obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
+                .is_none()
             {
                 persistent_pairs.remove(&pair);
             }
