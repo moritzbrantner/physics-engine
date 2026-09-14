@@ -1076,7 +1076,11 @@ mod tests {
                 .expect("bounded support projection")
         );
         assert_eq!(
-            world.box_by_id(upper).expect("upper crate").body().position(),
+            world
+                .box_by_id(upper)
+                .expect("upper crate")
+                .body()
+                .position(),
             Vec3i::new(0, 52, 0)
         );
     }
