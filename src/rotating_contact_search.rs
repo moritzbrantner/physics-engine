@@ -1,13 +1,13 @@
 use std::{cmp::Ordering, collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    oriented_box::{PreparedObb3d, obb_contact_seed_prepared},
-    rotating_broad_phase::RotatingBroadPhase3d,
-};
-use crate::{
     BodyId, ObbContactSeed3d, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotationalSweepPair3d, obb_contact_seed,
     sample_rigid_box_free_flight,
+};
+use crate::{
+    oriented_box::{PreparedObb3d, obb_contact_seed_prepared},
+    rotating_broad_phase::RotatingBroadPhase3d,
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
