@@ -102,11 +102,15 @@ fn fixed_boundary_stabilization_honors_either_layers_rejecting_the_pair() {
         let fixed_boundary = fixed(2, Vec3i::ZERO, fixed_layers);
         let dynamic_body = dynamic(1, Vec3i::new(1, 0, 0), dynamic_layers);
         if add_dynamic_first {
-            world.add_box(dynamic_body).expect("overlapping dynamic body");
+            world
+                .add_box(dynamic_body)
+                .expect("overlapping dynamic body");
             world.add_box(fixed_boundary).expect("fixed boundary");
         } else {
             world.add_box(fixed_boundary).expect("fixed boundary");
-            world.add_box(dynamic_body).expect("overlapping dynamic body");
+            world
+                .add_box(dynamic_body)
+                .expect("overlapping dynamic body");
         }
 
         let before = world
