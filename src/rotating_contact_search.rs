@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::BTreeMap, error::Error, fmt};
 
+use crate::oriented_box::{PreparedObb3d, obb_contact_seed_prepared};
 use crate::rotating_broad_phase::RotatingBroadPhase3d;
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d,
@@ -148,34 +149,58 @@ struct ContactBracket3d {
 
 #[derive(Debug)]
 struct CoarseSampleCache3d {
-    samples_by_body: Vec<Vec<OrientedBox3d>>,
+    samples_by_body: Vec<Vec<PreparedObb3d>>,
+    latest_geometry: Vec<Option<PreparedObb3d>>,
     cached_entries: usize,
     denominator: u32,
+    #[cfg(test)]
+    preparations: usize,
 }
 
 impl CoarseSampleCache3d {
     fn new(body_count: usize, denominator: u32) -> Self {
         Self {
             samples_by_body: vec![Vec::new(); body_count],
+            latest_geometry: vec![None; body_count],
             cached_entries: 0,
             denominator,
+            #[cfg(test)]
+            preparations: 0,
         }
     }
 
-    fn sample_oriented_box(
+    fn prepare_geometry(&mut self, body_index: usize, shape: OrientedBox3d) -> PreparedObb3d {
+        if let Some(prepared) = self.latest_geometry[body_index]
+            && prepared.shape == shape
+        {
+            return prepared;
+        }
+        let prepared = PreparedObb3d::new(shape);
+        self.latest_geometry[body_index] = Some(prepared);
+        #[cfg(test)]
+        {
+            self.preparations += 1;
+        }
+        prepared
+    }
+
+    fn sample_geometry(
         &mut self,
         body_index: usize,
         rigid_box: &RigidBox3d,
         config: RigidBoxFreeFlightConfig3d,
         numerator: u32,
-    ) -> Result<OrientedBox3d, RotatingContactSearchError3d> {
+    ) -> Result<PreparedObb3d, RotatingContactSearchError3d> {
         let sample_index = usize::try_from(numerator - 1).expect("coarse numerator fits usize");
         if let Some(sampled) = self.samples_by_body[body_index].get(sample_index).copied() {
             return Ok(sampled);
         }
 
-        let sampled = sample_rigid_box_free_flight(rigid_box, config, numerator, self.denominator)?
+        // Canonical free-flight sampling remains authoritative. Only SAT geometry preparation is
+        // reused after an exact sample has successfully produced its quantized shape.
+        let shape = sample_rigid_box_free_flight(rigid_box, config, numerator, self.denominator)?
             .oriented_box();
+        let sampled = self.prepare_geometry(body_index, shape);
         if self.len() < MAX_CACHED_COARSE_SAMPLES
             && sample_index == self.samples_by_body[body_index].len()
         {
@@ -194,10 +219,11 @@ impl CoarseSampleCache3d {
 /// observed contact bracket.
 ///
 /// Broad phase comes from the engine's conservative rotating broad phase. Every narrow-phase sample is
-/// rebuilt directly from the interval start through [`sample_rigid_box_free_flight`], then evaluated with
-/// [`obb_contact_seed`]. Coarse samples are cached by body index and coarse-grid numerator under the
-/// search's fixed denominator, so candidate pairs that share a body reuse identical free-flight work
-/// without a tree lookup; the cache is bounded and refinement remains pair-local.
+/// rebuilt directly from the interval start through [`sample_rigid_box_free_flight`]. Coarse samples and
+/// their exact prepared SAT geometry are cached by body index and coarse-grid numerator under the search's
+/// fixed denominator, so candidate pairs that share a body reuse identical free-flight and vertex/edge/face
+/// preparation work without a tree lookup. Preparation is also reused when a body's full quantized shape
+/// is unchanged between samples. The cache is bounded and refinement remains pair-local and canonical.
 /// For each candidate pair, the first coarse sample with contact brackets the transition against the
 /// previous coarse sample; binary refinement returns the earliest known contact side of that bracket. Pair
 /// ties are resolved by stable [`BodyId`] ordering. Once a best hit exists, later pairs inspect only
@@ -318,7 +344,9 @@ fn search_pair(
     coarse_samples: &mut CoarseSampleCache3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     let (left_index, right_index) = body_indices;
-    if let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? {
+    let prepared_left = coarse_samples.prepare_geometry(left_index, left.oriented_box());
+    let prepared_right = coarse_samples.prepare_geometry(right_index, right.oriented_box());
+    if let Some(contact) = obb_contact_seed_prepared(&prepared_left, &prepared_right)? {
         return Ok(Some(RotatingContactSearchHit3d {
             time: SampledContactTime3d::ZERO,
             pair,
@@ -329,14 +357,10 @@ fn search_pair(
     let denominator = u32::from(config.sample_count);
     for numerator in 1..=coarse_limit.min(denominator) {
         let sampled_left =
-            coarse_samples.sample_oriented_box(left_index, left, config.free_flight, numerator)?;
-        let sampled_right = coarse_samples.sample_oriented_box(
-            right_index,
-            right,
-            config.free_flight,
-            numerator,
-        )?;
-        let Some(contact) = obb_contact_seed(sampled_left, sampled_right)? else {
+            coarse_samples.sample_geometry(left_index, left, config.free_flight, numerator)?;
+        let sampled_right =
+            coarse_samples.sample_geometry(right_index, right, config.free_flight, numerator)?;
+        let Some(contact) = obb_contact_seed_prepared(&sampled_left, &sampled_right)? else {
             continue;
         };
 
@@ -605,28 +629,37 @@ mod tests {
     }
 
     #[test]
-    fn coarse_sample_cache_is_bounded_and_reuses_geometry() {
+    fn coarse_sample_cache_is_bounded_and_reuses_prepared_geometry() {
         let rigid_box = fixed(1, Vec3i::ZERO);
         let free_flight = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
         let mut cache = CoarseSampleCache3d::new(1, 32);
 
         let first = cache
-            .sample_oriented_box(0, &rigid_box, free_flight, 1)
+            .sample_geometry(0, &rigid_box, free_flight, 1)
             .expect("first coarse sample");
         let repeated = cache
-            .sample_oriented_box(0, &rigid_box, free_flight, 1)
+            .sample_geometry(0, &rigid_box, free_flight, 1)
             .expect("repeated coarse sample");
         assert_eq!(first, repeated);
         assert_eq!(cache.len(), 1);
+        assert_eq!(cache.preparations, 1);
+
+        let unchanged_next = cache
+            .sample_geometry(0, &rigid_box, free_flight, 2)
+            .expect("unchanged next sample");
+        assert_eq!(first, unchanged_next);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.preparations, 1);
 
         let denominator = u32::try_from(MAX_CACHED_COARSE_SAMPLES + 2).expect("small cache bound");
         let mut bounded_cache = CoarseSampleCache3d::new(1, denominator);
         for numerator in 1..=denominator {
             bounded_cache
-                .sample_oriented_box(0, &rigid_box, free_flight, numerator)
+                .sample_geometry(0, &rigid_box, free_flight, numerator)
                 .expect("bounded coarse sample");
         }
         assert_eq!(bounded_cache.len(), MAX_CACHED_COARSE_SAMPLES);
+        assert_eq!(bounded_cache.preparations, 1);
     }
 
     #[test]
