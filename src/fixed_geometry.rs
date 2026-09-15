@@ -189,12 +189,9 @@ impl FixedGeometryPreparationCache3d {
             return;
         }
 
-        let replacement = self
-            .prepared
-            .iter()
-            .find_map(|(candidate_id, candidate)| {
-                (candidate.obb.shape == removed.obb.shape).then_some(*candidate_id)
-            });
+        let replacement = self.prepared.iter().find_map(|(candidate_id, candidate)| {
+            (candidate.obb.shape == removed.obb.shape).then_some(*candidate_id)
+        });
         let index = Arc::make_mut(&mut self.prepared_by_shape);
         if let Some(replacement) = replacement {
             index.insert(key, replacement);
