@@ -19,6 +19,7 @@ on:
       - "src/obb_response.rs"
       - "src/rotating_contact_response.rs"
       - "src/current_contact_query.rs"
+      - "src/fixed_geometry.rs"
       - "src/rotating_world.rs"
       - "src/support_query.rs"
       - "tests/*performance*.rs"
@@ -30,6 +31,7 @@ on:
       - "scripts/run-sandbox-performance.sh"
       - "scripts/benchmark-sandbox.mjs"
       - "scripts/benchmark-character-options.mjs"
+      - "scripts/benchmark-baking.mjs"
       - ".github/workflows/performance-evidence.yml"
   workflow_dispatch:
 
@@ -72,6 +74,11 @@ jobs:
         run: |
           cp scripts/benchmark-character-options.mjs performance-evidence/
           node scripts/benchmark-character-options.mjs performance-evidence/head.wasm performance-evidence/character-options.json
+
+      - name: Compare optional fixed geometry preparation
+        run: |
+          cp scripts/benchmark-baking.mjs performance-evidence/
+          node scripts/benchmark-baking.mjs performance-evidence/head.wasm performance-evidence/baking-options.json
 
       - name: Upload reproducible performance evidence
         if: ${{ always() }}
