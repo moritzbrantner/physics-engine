@@ -1,6 +1,4 @@
-use physics_engine::{
-    FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
-};
+use physics_engine::{FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d};
 
 use crate::{Sandbox, with_sandbox, with_sandbox_mut};
 
@@ -27,7 +25,8 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     let Some(fixed_geometry_mode) = preparation_mode(fixed_geometry_mode) else {
         return -1;
     };
-    let Ok(mut replacement) = Sandbox::with_options(character_mode == 1, upright_crates == 1) else {
+    let Ok(mut replacement) = Sandbox::with_options(character_mode == 1, upright_crates == 1)
+    else {
         return -2;
     };
     replacement
@@ -39,10 +38,12 @@ pub extern "C" fn sandbox_reset_with_baking_options(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_fixed_geometry_mode() -> i32 {
-    with_sandbox(|sandbox| match sandbox.world.fixed_geometry_preparation_stats().mode {
-        FixedGeometryPreparationMode3d::Runtime => 0,
-        FixedGeometryPreparationMode3d::PrepareAtLoad => 1,
-    })
+    with_sandbox(
+        |sandbox| match sandbox.world.fixed_geometry_preparation_stats().mode {
+            FixedGeometryPreparationMode3d::Runtime => 0,
+            FixedGeometryPreparationMode3d::PrepareAtLoad => 1,
+        },
+    )
 }
 
 #[unsafe(no_mangle)]
