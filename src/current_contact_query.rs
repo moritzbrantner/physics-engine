@@ -30,11 +30,9 @@ pub(crate) fn body_current_contacts(
         .get(&body)
         .copied()
         .ok_or(RotatingWorldError3d::MissingBody(body))?;
-    let candidates = rotational_sweep_candidate_pairs(
-        boxes,
-        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
-    )
-    .map_err(map_broad_phase_error)?;
+    let candidates =
+        rotational_sweep_candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
+            .map_err(map_broad_phase_error)?;
 
     let mut contacts = Vec::new();
     for pair in candidates {
@@ -49,7 +47,8 @@ pub(crate) fn body_current_contacts(
             .get(&other)
             .copied()
             .ok_or(RotatingWorldError3d::MissingBody(other))?;
-        let Some(contact) = obb_contact_seed(subject.oriented_box(), other_box.oriented_box())? else {
+        let Some(contact) = obb_contact_seed(subject.oriented_box(), other_box.oriented_box())?
+        else {
             continue;
         };
         contacts.push(BodyCurrentContact3d { other, contact });
@@ -120,7 +119,8 @@ mod tests {
             .collect::<Vec<_>>();
         expected.sort_by_key(|(id, _)| *id);
 
-        let actual = body_current_contacts(&boxes, subject.body().id()).expect("broad-phase contacts");
+        let actual =
+            body_current_contacts(&boxes, subject.body().id()).expect("broad-phase contacts");
         assert_eq!(
             actual
                 .iter()
