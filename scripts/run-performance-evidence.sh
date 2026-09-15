@@ -55,6 +55,10 @@ if grep -Eq '(^|/)(wide_ratio\.rs)$' <<<"$changed"; then
   run_library_module wide_ratio
 fi
 
+if grep -Eq '(^|/)(oriented_box\.rs)$' <<<"$changed"; then
+  run_library_module oriented_box
+fi
+
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
   run_library_module rotating_broad_phase
 fi
