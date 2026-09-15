@@ -234,11 +234,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         observed_pairs.extend(stabilization_pairs);
         state = stabilized;
         persistent_pairs.extend(observed_pairs.iter().copied());
-        refresh_projection_clearance(
-            &mut projection_cleared_pairs,
-            &observed_pairs,
-            &state,
-        )?;
+        refresh_projection_clearance(&mut projection_cleared_pairs, &observed_pairs, &state)?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
