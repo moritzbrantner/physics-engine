@@ -346,7 +346,7 @@ impl WideNatural {
         result
     }
 
-    fn to_u128(&self) -> Option<u128> {
+    fn to_u128(self) -> Option<u128> {
         if self.limbs[2..].iter().any(|limb| *limb != 0) {
             return None;
         }
