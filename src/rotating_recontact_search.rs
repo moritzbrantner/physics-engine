@@ -312,8 +312,8 @@ fn search_pair(
     let mut contacts = PairContactCache3d::default();
     let prepared_left = coarse_samples.prepare_geometry(pair.left, left.oriented_box());
     let prepared_right = coarse_samples.prepare_geometry(pair.right, right.oriented_box());
-    let initially_contacting = historically_contacting
-        || contacts.contact(&prepared_left, &prepared_right)?.is_some();
+    let initially_contacting =
+        historically_contacting || contacts.contact(&prepared_left, &prepared_right)?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
     let mut first_positive_clear = None;
