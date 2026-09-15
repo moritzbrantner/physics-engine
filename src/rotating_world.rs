@@ -557,6 +557,12 @@ fn contact_frontier(
             if left.body().kind() == BodyKind::Fixed && right.body().kind() == BodyKind::Fixed {
                 continue;
             }
+            if !left
+                .collision_layers()
+                .collides_with(right.collision_layers())
+            {
+                continue;
+            }
             let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
                 continue;
             };

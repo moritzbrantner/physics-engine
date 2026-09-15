@@ -24,6 +24,7 @@ const requiredFunctions = [
   "sandbox_fixed_geometry_total_preparations",
   "sandbox_fixed_geometry_retained_bytes",
   "sandbox_fixed_geometry_representation_version",
+  "sandbox_simulation_rules",
   "sandbox_refresh_render_snapshot",
   "sandbox_render_snapshot_len",
   "sandbox_render_snapshot_stride",
@@ -82,7 +83,9 @@ node --input-type=module --check < site/webgl-renderer.js
 node --input-type=module --check < site/physics-error.js
 node --check site/physics-error.mjs
 node --check site/interaction-controls.mjs
-node --test site/physics-error.test.mjs site/interaction-controls.test.mjs
+node --check site/simulation-rules.mjs
+node --check site/simulation-rules-config.mjs
+node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs
 
 rm -rf pages-dist
 mkdir -p pages-dist
@@ -95,4 +98,6 @@ test -s pages-dist/webgl-renderer.js
 test -s pages-dist/physics-error.js
 test -s pages-dist/physics-error.mjs
 test -s pages-dist/interaction-controls.mjs
+test -s pages-dist/simulation-rules.mjs
+test -s pages-dist/simulation-rules-config.mjs
 test -s pages-dist/physics_engine_demo.wasm
