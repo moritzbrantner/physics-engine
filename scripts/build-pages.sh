@@ -17,13 +17,14 @@ const bytes = await readFile(
 const { instance } = await WebAssembly.instantiate(bytes, {});
 const exports = instance.exports;
 const requiredFunctions = [
+  "sandbox_reset_with_options",
   "sandbox_refresh_render_snapshot",
   "sandbox_render_snapshot_len",
   "sandbox_render_snapshot_stride",
 ];
 for (const name of requiredFunctions) {
   if (typeof exports[name] !== "function") {
-    throw new Error(`missing WASM render snapshot export: ${name}`);
+    throw new Error(`missing WASM sandbox export: ${name}`);
   }
 }
 if (!(exports.memory instanceof WebAssembly.Memory)) {
@@ -50,7 +51,8 @@ node --input-type=module --check < site/webgpu-renderer.js
 node --input-type=module --check < site/webgl-renderer.js
 node --input-type=module --check < site/physics-error.js
 node --check site/physics-error.mjs
-node --test site/physics-error.test.mjs
+node --check site/interaction-controls.mjs
+node --test site/physics-error.test.mjs site/interaction-controls.test.mjs
 
 rm -rf pages-dist
 mkdir -p pages-dist
@@ -62,4 +64,5 @@ test -s pages-dist/webgpu-renderer.js
 test -s pages-dist/webgl-renderer.js
 test -s pages-dist/physics-error.js
 test -s pages-dist/physics-error.mjs
+test -s pages-dist/interaction-controls.mjs
 test -s pages-dist/physics_engine_demo.wasm

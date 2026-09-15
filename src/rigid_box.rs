@@ -2,7 +2,20 @@ use std::{error::Error, fmt};
 
 use crate::{
     AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBody,
+    Vec3i,
 };
+
+/// Optional response policy for externally controlled bodies. Collision discovery is unchanged.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactMode3d {
+    #[default]
+    Physical,
+    /// Normal-only, inelastic linear pushing. Contacts opposing the supplied support direction
+    /// resolve this body against an unchanged support, without transferring landing load or torque.
+    /// Zero support direction disables one-way support. This is an actuator policy, not a claim of
+    /// momentum-conserving rigid-body dynamics. Two actuators use symmetric linear response.
+    LinearPush { support_direction: Vec3i },
+}
 
 /// Engine-native rotating cuboid state.
 ///
@@ -13,6 +26,7 @@ pub struct RigidBox3d {
     pub(crate) body: RigidBody,
     pub(crate) angular: AngularState3d,
     pub(crate) rotation_locked: bool,
+    pub(crate) contact_mode: ContactMode3d,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +94,7 @@ impl RigidBox3d {
             body,
             angular,
             rotation_locked: false,
+            contact_mode: ContactMode3d::Physical,
         })
     }
 
@@ -93,6 +108,19 @@ impl RigidBox3d {
         self.rotation_locked = true;
         self.angular = AngularState3d::new(self.angular.orientation, AngularVelocity3d::default());
         self
+    }
+
+    /// Opts an externally controlled body into linear-only pushing and one-way support contacts.
+    /// Only contacts involving this body change; ordinary objects and projectiles retain rotation.
+    #[must_use]
+    pub fn with_linear_push(mut self, support_direction: Vec3i) -> Self {
+        self.contact_mode = ContactMode3d::LinearPush { support_direction };
+        self.with_rotation_locked()
+    }
+
+    #[must_use]
+    pub const fn contact_mode(&self) -> ContactMode3d {
+        self.contact_mode
     }
 
     #[must_use]

@@ -189,9 +189,16 @@ impl RotatingWorld3d {
                 .copied()
                 .filter(|id| {
                     sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {
-                        awake_bounds
-                            .iter()
-                            .any(|(_, bounds)| sweep_bounds_overlap(*bounds, *sleeping_bounds))
+                        awake_bounds.iter().any(|(awake_id, bounds)| {
+                            sweep_bounds_overlap(*bounds, *sleeping_bounds)
+                                && !self.inner.box_by_id(*awake_id).is_some_and(|awake| {
+                                    self.inner.box_by_id(*id).is_some_and(|sleeping| {
+                                        crate::linear_contact::sweep_is_passive_support(
+                                            awake, *bounds, sleeping,
+                                        )
+                                    })
+                                })
+                        })
                     })
                 })
                 .collect::<Vec<_>>();

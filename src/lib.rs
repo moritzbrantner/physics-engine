@@ -23,6 +23,7 @@ mod collider;
 mod collision;
 mod current_contact_query;
 mod ecs_world;
+mod linear_contact;
 mod math;
 mod obb_friction;
 mod obb_response;
@@ -65,7 +66,7 @@ pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
     RepeatedRotatingEventError3d, RotatingResolvedEvent3d, advance_repeated_rotating_events,
 };
-pub use rigid_box::{RigidBox3d, RigidBoxError3d};
+pub use rigid_box::{ContactMode3d, RigidBox3d, RigidBoxError3d};
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, rigid_box_free_flight_sweep_bounds,
     sample_rigid_box_free_flight,

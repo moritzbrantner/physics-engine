@@ -31,6 +31,19 @@
           </div>
         </div>
 
+        <fieldset>
+          <legend>Comparison options</legend>
+          <label for="character-mode">Character interaction</label>
+          <select id="character-mode" disabled>
+            <option value="1">Linear pushes · stable crate landings</option>
+            <option value="0">Physical impacts · original response</option>
+          </select>
+          <label>
+            <input id="upright-crates" type="checkbox" checked disabled>
+            Keep crates upright (including projectile impacts)
+          </label>
+          <p>Disable upright crates to compare full rotation. Changing either option resets the scene.</p>
+        </fieldset>
         <div class="viewport-shell">
           <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>
           <div class="help" aria-hidden="true">WASD move · Space jump · Mouse / arrows look · Click / F shoot · R reset · P pause · N step</div>
@@ -76,6 +89,7 @@
  CCD · contacts · friction · inertia · sleeping</pre>
       </section>
     </main>
+    <script type="module" src="interaction-controls.mjs"></script>
     <script type="module" src="app.js"></script>
   </body>
 </html>

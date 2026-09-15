@@ -35,6 +35,14 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Result<Self, RotatingWorldError3d> {
+        Self::with_character_mode(false)
+    }
+
+    fn with_character_mode(linear_push: bool) -> Result<Self, RotatingWorldError3d> {
+        Self::with_options(linear_push, false)
+    }
+
+    fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
             sample_count: 32,
@@ -65,18 +73,21 @@ impl Sandbox {
             )))?;
         }
 
-        world.add_box(
-            rotating_box(
-                RigidBody::dynamic(
-                    PLAYER_ID,
-                    Vec3i::new(0, 38, 320),
-                    Vec3i::ZERO,
-                    Vec3i::new(12, 20, 12),
-                )
-                .with_mass(4),
+        let player = rotating_box(
+            RigidBody::dynamic(
+                PLAYER_ID,
+                Vec3i::new(0, 38, 320),
+                Vec3i::ZERO,
+                Vec3i::new(12, 20, 12),
             )
-            .with_rotation_locked(),
-        )?;
+            .with_mass(4),
+        )
+        .with_rotation_locked();
+        world.add_box(if linear_push {
+            player.with_linear_push(Vec3i::new(0, -1, 0))
+        } else {
+            player
+        })?;
 
         let crate_positions = [
             Vec3i::new(-75, 18, 135),
@@ -87,7 +98,7 @@ impl Sandbox {
             Vec3i::new(0, 18, -70),
         ];
         for (offset, position) in crate_positions.into_iter().enumerate() {
-            world.add_box(rotating_box(
+            let crate_body = rotating_box(
                 RigidBody::dynamic(
                     BodyId(100 + offset as u64),
                     position,
@@ -98,7 +109,12 @@ impl Sandbox {
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
-            ))?;
+            );
+            world.add_box(if upright_crates {
+                crate_body.with_rotation_locked()
+            } else {
+                crate_body
+            })?;
         }
 
         Ok(Self {
@@ -332,6 +348,33 @@ pub extern "C" fn sandbox_reset() {
     with_sandbox_mut(|sandbox| {
         *sandbox = Sandbox::new().expect("the built-in physics sandbox must be valid");
     });
+}
+
+/// Explicit comparison mode: 0 = legacy physical interactions, 1 = linear pushing / passive support.
+/// Invalid modes leave the current sandbox untouched. Legacy reset retains the original benchmark.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_character_mode(mode: i32) -> i32 {
+    if mode != 0 && mode != 1 {
+        return -1;
+    }
+    let Ok(replacement) = Sandbox::with_character_mode(mode == 1) else {
+        return -2;
+    };
+    with_sandbox_mut(|sandbox| *sandbox = replacement);
+    0
+}
+
+/// Independent comparison axes. Invalid options do not mutate the current scene.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_options(character_mode: i32, upright_crates: i32) -> i32 {
+    if !(0..=1).contains(&character_mode) || !(0..=1).contains(&upright_crates) {
+        return -1;
+    }
+    let Ok(replacement) = Sandbox::with_options(character_mode == 1, upright_crates == 1) else {
+        return -2;
+    };
+    with_sandbox_mut(|sandbox| *sandbox = replacement);
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -695,3 +738,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "character_interaction_tests.rs"]
+mod character_interaction_tests;

@@ -30,5 +30,8 @@ jobs:
       - name: Test Pages sandbox adapter replay
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
 
+      - name: Test character landing replay
+        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+
       - name: Build Pages artifact
         run: bash scripts/build-pages.sh
