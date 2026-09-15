@@ -9,6 +9,7 @@ use crate::{
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
+#[cfg(test)]
 const SLEEP_STABLE_STEPS_AT_60_HZ: u8 = 12;
 const SLEEP_TIME_SCALE: u128 = 1_u128 << 64;
 const SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 5;
