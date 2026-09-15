@@ -23,20 +23,12 @@ fn fixed(id: u64, position: Vec3i) -> RigidBox3d {
 }
 
 fn config() -> RotatingContactSearchConfig3d {
-    RotatingContactSearchConfig3d::new(
-        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
-        64,
-        4,
-    )
+    RotatingContactSearchConfig3d::new(RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1), 64, 4)
 }
 
 fn projectile_lane(body_count: u64) -> Vec<RigidBox3d> {
     assert!((30..=40).contains(&body_count));
-    let mut boxes = vec![dynamic(
-        1,
-        Vec3i::new(-40, 0, 0),
-        Vec3i::new(120, 0, 0),
-    )];
+    let mut boxes = vec![dynamic(1, Vec3i::new(-40, 0, 0), Vec3i::new(120, 0, 0))];
     for id in 2..body_count {
         let offset = i32::try_from(id - 2).expect("small fixture id");
         boxes.push(fixed(id, Vec3i::new(10 + offset * 2, 0, 0)));
@@ -75,16 +67,22 @@ fn thirty_to_forty_body_projectile_lane_benchmark() {
         };
 
         for _ in 0..5 {
-            let hit = black_box(sampled_rotating_recontact_search(black_box(&boxes), config()))
-                .expect("warm re-contact search")
-                .expect("warm fixture contact");
+            let hit = black_box(sampled_rotating_recontact_search(
+                black_box(&boxes),
+                config(),
+            ))
+            .expect("warm re-contact search")
+            .expect("warm fixture contact");
             assert_eq!(hit.pair, expected);
         }
         for _ in 0..25 {
             let start = Instant::now();
-            let hit = black_box(sampled_rotating_recontact_search(black_box(&boxes), config()))
-                .expect("measured re-contact search")
-                .expect("measured fixture contact");
+            let hit = black_box(sampled_rotating_recontact_search(
+                black_box(&boxes),
+                config(),
+            ))
+            .expect("measured re-contact search")
+            .expect("measured fixture contact");
             let elapsed = start.elapsed();
             assert_eq!(hit.pair, expected);
             samples.push(elapsed);
