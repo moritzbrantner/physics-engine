@@ -7,7 +7,7 @@ use crate::{
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
-    rotating_contact_search::sampled_rotating_contact_search_with_broad_phase,
+    rotating_contact_search_ordered::sampled_rotating_contact_search_with_broad_phase,
     rotating_recontact_search::sampled_rotating_recontact_search_with_broad_phase,
 };
 

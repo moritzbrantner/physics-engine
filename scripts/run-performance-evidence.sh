@@ -47,11 +47,12 @@ if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<
   run_library_module rotating_broad_phase
 fi
 
-if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_cache_performance\.rs)$' <<<"$changed"; then
+if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_search_ordered\.rs|rotating_contact_cache_performance\.rs|contact_projectile_lane_performance\.rs)$' <<<"$changed"; then
   run_integration rotating_contact_cache_performance
+  run_integration contact_projectile_lane_performance
 fi
 
-if grep -Eq '(^|/)(rotating_contact_search\.rs|indexed_contact_cache_performance\.rs|bounded_contact_search_performance\.rs)$' <<<"$changed"; then
+if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_search_ordered\.rs|indexed_contact_cache_performance\.rs|bounded_contact_search_performance\.rs)$' <<<"$changed"; then
   run_integration indexed_contact_cache_performance
   run_integration bounded_contact_search_performance
 fi
