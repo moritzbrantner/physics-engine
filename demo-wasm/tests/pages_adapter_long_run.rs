@@ -1,7 +1,11 @@
-use physics_engine_demo::{sandbox_reset, sandbox_shoot, sandbox_step};
+use physics_engine_demo::{sandbox_reset, sandbox_shoot, sandbox_step_velocity};
+
+const TICKS_PER_SECOND: i32 = 60;
 
 fn step(tick: usize, move_x: i32, move_z: i32, jump: bool) {
-    let error = sandbox_step(move_x, move_z, i32::from(jump));
+    let velocity_x = move_x.saturating_mul(TICKS_PER_SECOND);
+    let velocity_z = move_z.saturating_mul(TICKS_PER_SECOND);
+    let error = sandbox_step_velocity(velocity_x, velocity_z, i32::from(jump));
     assert_eq!(
         error, 0,
         "Pages sandbox failed at tick {tick} with error {error}"
