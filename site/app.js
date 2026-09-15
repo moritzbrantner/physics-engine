@@ -11,7 +11,7 @@ const stepButton = document.querySelector("#single-step");
 const viewportShell = document.querySelector(".viewport-shell");
 
 const FIXED_STEP_MS = 1000 / 60;
-const MOVE_SPEED = 7;
+const MOVE_SPEED = 7 * 60;
 const PROJECTILE_SPEED = 96;
 const LOOK_SENSITIVITY = 0.0022;
 const KEYBOARD_LOOK_SPEED = 1.8;
@@ -123,8 +123,8 @@ function simulationInputActive() {
 }
 
 function simulationStep() {
-  const [moveX, moveZ] = movementVelocity();
-  const error = engine.sandbox_step(moveX, moveZ, jumpQueued ? 1 : 0);
+  const [velocityX, velocityZ] = movementVelocity();
+  const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
   jumpQueued = false;
   renderDirty = true;
   if (error !== 0) {
@@ -488,6 +488,9 @@ stepButton.addEventListener("click", () => {
 try {
   renderer = await createRenderer();
   engine = await loadEngine();
+  if (typeof engine.sandbox_step_velocity !== "function") {
+    throw new Error("WASM sandbox does not expose canonical controller velocity input");
+  }
   ensureCrosshair();
   reset();
   requestAnimationFrame(frame);
