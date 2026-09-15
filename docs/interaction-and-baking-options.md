@@ -2,18 +2,18 @@
 
 ## Interactive controls
 
-The page has two independent options. Changing either resets the scene and stores the choice in URL query parameters, so disturbed piles do not contaminate the next comparison.
+The page has three independent options. Changing any option resets the scene and stores the choice in URL query parameters, so disturbed piles do not contaminate the next comparison.
 
-| Character | Crates | Behavior |
-| --- | --- | --- |
-| `linear` | `upright` | Default: linear character pushes, passive landings, and crates constrained against rotation. |
-| `linear` | `free` | Passive character landings without direct character torque; other contacts, including projectiles and floor friction, can still rotate crates. |
-| `physical` | `free` | Original rigid-body behavior for comparison. |
-| `physical` | `upright` | Original character loading/pushing, with a separate crate rotation constraint. |
+| Character | Crates | Fixed geometry | Behavior |
+| --- | --- | --- | --- |
+| `linear` | `upright` | `runtime` | Default: linear character pushes, passive landings, upright crates, and the reference runtime OBB preparation path. |
+| `linear` | `free` | either | Passive character landings without direct character torque; other contacts can rotate crates. |
+| `physical` | `free` | either | Original rigid-body gameplay response, with fixed preparation independently selectable. |
+| either | either | `load` | Same physics semantics, but genuine fixed scene OBB geometry is prepared once and retained for exact SAT reuse. |
 
-For example, `?character=linear&crates=free` keeps free crate rotation while testing the repaired landings. These modes intentionally differ in physics; they are not equivalent performance optimizations. The original physical comparison can still exhibit the reported landing disturbance. Baking is a separate future option, not a name for either of these controls.
+For example, `?character=linear&crates=free&bake=load` keeps free crate rotation while testing repaired landings and prepare-at-load fixed geometry. Character/crate modes intentionally differ in physics; the `bake` axis must not. `bake=runtime` remains the reference path and is the default when the query parameter is absent.
 
-The legacy `sandbox_reset` export and `sandbox-projectiles-v1` benchmark retain physical/free behavior. `sandbox_reset_with_character_mode(0|1)` selects character response with free crates; `sandbox_reset_with_options(character_mode, upright_crates)` independently selects both. Invalid option values leave the existing world untouched.
+The legacy `sandbox_reset` export and `sandbox-projectiles-v1` benchmark retain physical/free/runtime behavior. `sandbox_reset_with_character_mode(0|1)` selects character response with free crates; `sandbox_reset_with_options(character_mode, upright_crates)` independently selects gameplay response; `sandbox_reset_with_baking_options(character_mode, upright_crates, fixed_geometry_mode)` adds the independent runtime/prepare-at-load axis. Invalid option values leave the existing world untouched.
 
 ## Engine-owned contact policy
 
@@ -29,12 +29,16 @@ The upright option uses the existing engine rotation lock, not pose overwrites, 
 
 The required 360-tick stack-edge landing regression runs with **free** crate rotation. It checks exact crate positions and angular state throughout, verifies that the character stays on top, and requires the scene to return to sleep. A rotation constraint therefore cannot conceal a failing landing repair. Separate tests prove direct no-torque pushing, rough-floor upright pushes, moving-support preservation, projectile spin in free mode, projectile translation in upright mode, and option validation.
 
+## Optional fixed-geometry preparation
+
+Prepare-at-load retains the exact `PreparedObb3d` representation already used by SAT: quantized vertices, edges and face axes plus the original checked geometry results. The world owns this cache at the public ECS scene boundary. Only genuine `BodyKind::Fixed` bodies inserted by the consumer are registered. A dynamic body that later sleeps may be presented internally as a temporary fixed proxy, but it never crosses this registration boundary and cannot become baked static geometry.
+
+Preparation is currently in memory only. Fixed additions prepare once while load mode is active; removal invalidates the entry; changing placement by removal/re-addition produces a fresh preparation; switching modes clears/rebuilds the retained set; representation version `1` is exposed with the evidence. Persistent serialized bake artifacts are intentionally deferred until the in-memory comparison demonstrates enough value to justify an artifact format and migration policy.
+
+The world scopes prepared geometry to its own query/step. Retained maps use shared immutable storage, so activating preparation for a step does not deep-clone the geometry. Any shape not exactly matching retained fixed geometry still follows ordinary runtime preparation. Sampling, refinement, CCD event bounds, solver passes, impulse response, BodyId ordering and checked error behavior are unchanged.
+
 ## Repeatable comparisons
 
-`node scripts/benchmark-character-options.mjs <head.wasm> <results.json>` runs the versioned `character-options-v1` walking and stack-edge landing workloads, twice per option combination. It records raw WASM tick times and per-tick observable replay fingerprints; repeated executions of the same mode must agree. Different modes are not required to share a fingerprint. Timing is advisory and excludes rendering; it is not browser FPS or a wall-clock CI threshold. The existing Performance Evidence workflow retains these results alongside the unchanged physical base/head workload comparison.
+`node scripts/benchmark-character-options.mjs <head.wasm> <results.json>` runs the versioned `character-options-v1` walking and stack-edge landing workloads twice per gameplay combination. It records raw WASM tick times and per-tick observable replay fingerprints; repeated executions of the same mode must agree. Different gameplay modes are not required to share a fingerprint.
 
-## Optional baking follow-on
-
-Tracked in issue #73. Keep runtime preparation as the reference and add optional prepare-at-load static geometry reuse, independently of gameplay options. Start in memory; serialized bake artifacts come only after demonstrated value. No baking toggle is implemented in this slice.
-
-Acceptance: preserve contacts, checked errors, ordering, and replay hashes with baking on/off; explicitly invalidate geometry, placement, membership, and representation/version changes; never bake sleeping dynamic crates as permanent static geometry. Measure startup cost, retained memory, preparation counts, and steady-state performance on the stable projectile workload. Do not reduce dynamic CCD samples, event limits, or solver correctness to make a baked path look faster.
+`node scripts/benchmark-baking.mjs <head.wasm> <results.json>` runs the stable projectile workload twice in both `runtime` and `prepare-at-load` fixed-geometry modes. Every corresponding replay hash, event count and body count must be identical. It also records preparation count, representation version, retained bytes and reset/startup time. Node/V8 WASM timings are advisory and exclude rendering; they are not browser FPS or a wall-clock CI threshold. The Performance Evidence workflow retains these results alongside the unchanged physical base/head workload comparison.
