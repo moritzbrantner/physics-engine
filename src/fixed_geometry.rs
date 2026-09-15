@@ -3,7 +3,14 @@ use std::{cell::RefCell, collections::BTreeMap, mem::size_of, sync::Arc};
 use crate::oriented_box::{
     PreparedObb3d, obb_contact_seed as runtime_obb_contact_seed, obb_contact_seed_prepared,
 };
-use crate::{BodyId, BodyKind, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d};
+use crate::rigid_box_free_flight::{
+    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
+    rigid_box_free_flight_sweep_bounds as runtime_rigid_box_free_flight_sweep_bounds,
+};
+use crate::{
+    BodyId, BodyKind, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d,
+    RotationalSweepBounds3d, oriented_box_vertices,
+};
 
 /// Version of the retained fixed-geometry preparation representation.
 ///
@@ -33,10 +40,16 @@ pub struct FixedGeometryPreparationStats3d {
     pub retained_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PreparedFixedGeometry3d {
+    obb: PreparedObb3d,
+    bounds: Result<RotationalSweepBounds3d, OrientedBoxError3d>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FixedGeometryPreparationCache3d {
     mode: FixedGeometryPreparationMode3d,
-    prepared: Arc<BTreeMap<BodyId, PreparedObb3d>>,
+    prepared: Arc<BTreeMap<BodyId, PreparedFixedGeometry3d>>,
     total_preparations: u64,
 }
 
@@ -56,9 +69,9 @@ impl Drop for ActiveFixedGeometryGuard {
     }
 }
 
-/// Executes one world-owned operation with that world's immutable fixed preparation visible to the shared
-/// SAT entry point. The cache clone shares immutable prepared data; no retained geometry is copied or rebuilt
-/// per step. Scene mutation uses copy-on-write only when fixed geometry actually changes.
+/// Executes one world-owned operation with that world's immutable fixed preparation visible to shared
+/// collision and broad-phase entry points. The cache clone shares immutable prepared data; no retained
+/// geometry is copied or rebuilt per step. Scene mutation uses copy-on-write only when fixed geometry changes.
 pub(crate) fn with_fixed_geometry_context<R>(
     cache: &FixedGeometryPreparationCache3d,
     callback: impl FnOnce() -> R,
@@ -85,6 +98,33 @@ pub fn obb_contact_seed(
         };
         cache.contact_shapes(left, right)
     })
+}
+
+/// Conservative sweep bounds with optional retained exact bounds for genuine fixed scene geometry.
+///
+/// The ordinary runtime implementation remains authoritative for dynamic bodies and every unprepared shape.
+/// For an exact prepared fixed match, timestep validation still happens before returning its retained tight
+/// quantized OBB envelope, preserving the existing fail-closed malformed-time behavior.
+pub fn rigid_box_free_flight_sweep_bounds(
+    rigid_box: &RigidBox3d,
+    config: RigidBoxFreeFlightConfig3d,
+) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
+    if rigid_box.body().kind() != BodyKind::Fixed {
+        return runtime_rigid_box_free_flight_sweep_bounds(rigid_box, config);
+    }
+
+    let prepared = ACTIVE_FIXED_GEOMETRY.with(|active| {
+        let active = active.borrow();
+        active
+            .as_ref()
+            .and_then(|cache| cache.prepared_for_shape(rigid_box.oriented_box()))
+    });
+    let Some(prepared) = prepared else {
+        return runtime_rigid_box_free_flight_sweep_bounds(rigid_box, config);
+    };
+
+    config.exact_timestep()?;
+    prepared.bounds.map_err(RigidBoxFreeFlightError3d::Geometry)
 }
 
 impl FixedGeometryPreparationCache3d {
@@ -126,7 +166,7 @@ impl FixedGeometryPreparationCache3d {
             retained_bytes: self
                 .prepared
                 .len()
-                .saturating_mul(size_of::<PreparedObb3d>()),
+                .saturating_mul(size_of::<PreparedFixedGeometry3d>()),
         }
     }
 
@@ -138,22 +178,34 @@ impl FixedGeometryPreparationCache3d {
         if self.mode == FixedGeometryPreparationMode3d::Runtime {
             return runtime_obb_contact_seed(left, right);
         }
-        let left = self.prepared_shape(left);
-        let right = self.prepared_shape(right);
+        let left = self.prepared_for_shape(left).map_or_else(
+            || PreparedObb3d::new(left),
+            |prepared| prepared.obb,
+        );
+        let right = self.prepared_for_shape(right).map_or_else(
+            || PreparedObb3d::new(right),
+            |prepared| prepared.obb,
+        );
         obb_contact_seed_prepared(&left, &right)
     }
 
-    fn prepared_shape(&self, shape: OrientedBox3d) -> PreparedObb3d {
+    fn prepared_for_shape(&self, shape: OrientedBox3d) -> Option<PreparedFixedGeometry3d> {
+        if self.mode != FixedGeometryPreparationMode3d::PrepareAtLoad {
+            return None;
+        }
         self.prepared
             .values()
-            .find(|prepared| prepared.shape == shape)
+            .find(|prepared| prepared.obb.shape == shape)
             .copied()
-            .unwrap_or_else(|| PreparedObb3d::new(shape))
     }
 
     fn prepare_fixed(&mut self, rigid_box: &RigidBox3d) {
         let id = rigid_box.body().id();
-        let prepared = PreparedObb3d::new(rigid_box.oriented_box());
+        let shape = rigid_box.oriented_box();
+        let prepared = PreparedFixedGeometry3d {
+            obb: PreparedObb3d::new(shape),
+            bounds: exact_bounds(shape),
+        };
         let changed = self
             .prepared
             .get(&id)
@@ -165,16 +217,37 @@ impl FixedGeometryPreparationCache3d {
     }
 }
 
+fn exact_bounds(shape: OrientedBox3d) -> Result<RotationalSweepBounds3d, OrientedBoxError3d> {
+    let vertices = oriented_box_vertices(shape)?;
+    let first = vertices[0];
+    let mut minimum = [i64::from(first.x), i64::from(first.y), i64::from(first.z)];
+    let mut maximum = minimum;
+    for vertex in vertices.into_iter().skip(1) {
+        let components = [
+            i64::from(vertex.x),
+            i64::from(vertex.y),
+            i64::from(vertex.z),
+        ];
+        for axis in 0..3 {
+            minimum[axis] = minimum[axis].min(components[axis]);
+            maximum[axis] = maximum[axis].max(components[axis]);
+        }
+    }
+    Ok(RotationalSweepBounds3d { minimum, maximum })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::oriented_box::obb_contact_seed as runtime_obb_contact_seed;
+    use crate::rigid_box_free_flight::rigid_box_free_flight_sweep_bounds as runtime_sweep_bounds;
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
+        RigidBoxFreeFlightConfig3d, Vec3i,
     };
 
     use super::{
         FixedGeometryPreparationCache3d, FixedGeometryPreparationMode3d, obb_contact_seed,
-        with_fixed_geometry_context,
+        rigid_box_free_flight_sweep_bounds, with_fixed_geometry_context,
     };
 
     fn fixed(id: u64, position: Vec3i) -> RigidBox3d {
@@ -223,6 +296,32 @@ mod tests {
             })
             .expect("scoped prepared contact"),
             expected
+        );
+    }
+
+    #[test]
+    fn prepared_fixed_bounds_are_bit_identical_and_keep_time_validation() {
+        let floor = fixed(1, Vec3i::new(3, 0, -2));
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -3_600, 0), 1, 60);
+        let expected = runtime_sweep_bounds(&floor, config).expect("runtime fixed bounds");
+        let mut cache = FixedGeometryPreparationCache3d::default();
+        cache.set_mode(FixedGeometryPreparationMode3d::PrepareAtLoad, [&floor]);
+        assert_eq!(
+            with_fixed_geometry_context(&cache, || {
+                rigid_box_free_flight_sweep_bounds(&floor, config)
+            })
+            .expect("prepared fixed bounds"),
+            expected
+        );
+        assert!(
+            with_fixed_geometry_context(&cache, || {
+                rigid_box_free_flight_sweep_bounds(
+                    &floor,
+                    RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 0),
+                )
+            })
+            .is_err(),
+            "prepared fixed bounds must not bypass malformed-time validation"
         );
     }
 
