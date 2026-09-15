@@ -275,14 +275,15 @@ pub fn sample_rigid_box_free_flight(
 
 /// Conservatively bounds every direct free-flight sample over the configured interval.
 ///
-/// A zero-duration query returns the exact axis-aligned envelope of the current quantized OBB vertices,
-/// so broad-phase current-contact pruning uses the same integer geometry as SAT. For a nonzero interval,
-/// each center axis uses an absolute upper bound on speed after acceleration and then on displacement.
-/// Exact limb arithmetic performs multiply/divide before the final upward rounding, so a large
-/// repeated-event denominator cannot manufacture an overflow. This may overproduce broad-phase candidates,
-/// but it cannot lose a sampled contact when velocity reverses and the center reaches an interior extremum
-/// outside the start/end interval. Nonzero arbitrary orientation remains enclosed by the same
-/// circumscribed-box radius as [`crate::rotational_sweep_bounds`].
+/// Fixed bodies and zero-duration queries return the exact axis-aligned envelope of the current
+/// quantized OBB vertices, so immovable thin walls do not acquire an arbitrary-rotation radius. Time
+/// validation still precedes this fast path. Moving dynamic bodies retain the conservative rotational
+/// envelope: each center axis uses an absolute upper bound on speed after acceleration and then on
+/// displacement. Exact limb arithmetic performs multiply/divide before the final upward rounding, so a
+/// large repeated-event denominator cannot manufacture an overflow. This may overproduce broad-phase
+/// candidates, but it cannot lose a sampled contact when velocity reverses and the center reaches an
+/// interior extremum outside the start/end interval. Nonzero arbitrary orientation remains enclosed by
+/// the same circumscribed-box radius as [`crate::rotational_sweep_bounds`].
 ///
 /// # Errors
 ///
@@ -293,7 +294,7 @@ pub fn rigid_box_free_flight_sweep_bounds(
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
     let timestep = config.exact_timestep()?;
-    if timestep.is_zero() {
+    if timestep.is_zero() || rigid_box.body.kind() == BodyKind::Fixed {
         return current_quantized_obb_bounds(rigid_box);
     }
 
