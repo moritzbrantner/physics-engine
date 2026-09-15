@@ -42,3 +42,24 @@ The world scopes prepared geometry to its own query/step. Retained maps use shar
 `node scripts/benchmark-character-options.mjs <head.wasm> <results.json>` runs the versioned `character-options-v1` walking and stack-edge landing workloads twice per gameplay combination. It records raw WASM tick times and per-tick observable replay fingerprints; repeated executions of the same mode must agree. Different gameplay modes are not required to share a fingerprint.
 
 `node scripts/benchmark-baking.mjs <head.wasm> <results.json>` runs the stable projectile workload twice in both `runtime` and `prepare-at-load` fixed-geometry modes. Every corresponding replay hash, event count and body count must be identical. It also records preparation count, representation version, retained bytes and reset/startup time. Node/V8 WASM timings are advisory and exclude rendering; they are not browser FPS or a wall-clock CI threshold. The Performance Evidence workflow retains these results alongside the unchanged physical base/head workload comparison.
+
+
+## Scenario-defined simulation rules
+
+The sandbox scenario now owns an explicit interaction matrix for four roles: world, character, crate,
+and projectile. Each pair can be enabled or disabled independently. The engine represents those choices as
+symmetric collision-layer memberships/masks and rejects disabled pairs in broad-phase discovery, current
+contact queries, and persistent-tail contact handling. The browser only edits/serializes the scenario; it
+does not filter contacts after the fact.
+
+Response policy is a separate axis from collision eligibility. The puzzle-friendly default uses the
+engine's constrained linear-push actuator policy for the character, free rigid-body rotation for crates,
+and ordinary physical response for projectiles. Walking into a crate therefore transfers predictable
+linear motion without inducing torque, while an off-center projectile can still rotate the same crate.
+The existing character-options benchmark remains the stable comparison workload for physical versus
+linear character response. Fixed-geometry prepare-at-load remains independent of all gameplay rules.
+
+Legacy Wasm reset values `0` and `1` still mean physical/linear character response with every collision
+pair enabled. New scenario-aware callers set the explicit-rules marker bit and encode response plus pair
+rules in the same integer; the legacy crate argument remains accepted only for compatibility. Rule changes
+reset the acceptance world and are stored in URL query state for reproducible comparisons.

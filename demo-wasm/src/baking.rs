@@ -1,6 +1,10 @@
 use physics_engine::{FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d};
 
-use crate::{Sandbox, with_sandbox, with_sandbox_mut};
+use crate::{
+    Sandbox,
+    controller::scenario_rules::{ScenarioRules, apply_to_sandbox},
+    with_sandbox, with_sandbox_mut,
+};
 
 fn preparation_mode(value: i32) -> Option<FixedGeometryPreparationMode3d> {
     match value {
@@ -10,25 +14,33 @@ fn preparation_mode(value: i32) -> Option<FixedGeometryPreparationMode3d> {
     }
 }
 
-/// Independent sandbox comparison axes:
-/// character: 0 physical / 1 linear; crates: 0 free / 1 upright;
-/// fixed geometry: 0 runtime reference / 1 prepare-at-load.
+/// Independent sandbox comparison axes. The first argument accepts legacy 0 physical / 1 linear
+/// character values or the explicit scenario-rules bitfield. The second argument remains a legacy crate
+/// compatibility input; explicit rules carry their own crate-motion policy. Fixed geometry preparation
+/// remains a separate performance/storage choice.
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_reset_with_baking_options(
-    character_mode: i32,
+    simulation_rules: i32,
     upright_crates: i32,
     fixed_geometry_mode: i32,
 ) -> i32 {
-    if !(0..=1).contains(&character_mode) || !(0..=1).contains(&upright_crates) {
+    if !(0..=1).contains(&upright_crates) {
         return -1;
     }
+    let Some(rules) = ScenarioRules::decode(simulation_rules, upright_crates == 1) else {
+        return -1;
+    };
     let Some(fixed_geometry_mode) = preparation_mode(fixed_geometry_mode) else {
         return -1;
     };
-    let Ok(mut replacement) = Sandbox::with_options(character_mode == 1, upright_crates == 1)
+    let Ok(mut replacement) =
+        Sandbox::with_options(rules.character_linear_push(), rules.upright_crates())
     else {
         return -2;
     };
+    if apply_to_sandbox(&mut replacement, rules).is_err() {
+        return -2;
+    }
     replacement
         .world
         .set_fixed_geometry_preparation_mode(fixed_geometry_mode);

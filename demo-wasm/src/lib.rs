@@ -43,6 +43,7 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
             sample_count: 32,
@@ -237,10 +238,13 @@ impl Sandbox {
 
         if self
             .world
-            .add_box(rotating_box(
-                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                    .with_material(Material::new(350)),
-            ))
+            .add_box(
+                rotating_box(
+                    RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_material(Material::new(350)),
+                )
+                .with_collision_layers(controller::scenario_rules::projectile_layers()),
+            )
             .is_err()
         {
             self.error_code = 5;

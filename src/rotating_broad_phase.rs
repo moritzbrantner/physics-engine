@@ -135,6 +135,10 @@ impl RotatingBroadPhase3d {
         }
 
         let exact = &self.exact;
+        let collision_layers = boxes
+            .iter()
+            .map(|rigid_box| (rigid_box.body().id(), rigid_box.collision_layers()))
+            .collect::<BTreeMap<_, _>>();
         let mut pairs = Vec::new();
         self.tree.for_each_candidate_pair(|left, right| {
             let left_body = exact
@@ -143,7 +147,17 @@ impl RotatingBroadPhase3d {
             let right_body = exact
                 .get(&right)
                 .expect("indexed broad phase keeps every leaf exact bound");
-            if bounds_overlap(left_body.bounds, right_body.bounds) {
+            let left_layers = collision_layers
+                .get(&left)
+                .copied()
+                .expect("indexed broad phase keeps every left collision layer");
+            let right_layers = collision_layers
+                .get(&right)
+                .copied()
+                .expect("indexed broad phase keeps every right collision layer");
+            if bounds_overlap(left_body.bounds, right_body.bounds)
+                && left_layers.collides_with(right_layers)
+            {
                 pairs.push(RotationalSweepPair3d { left, right });
             }
         });
