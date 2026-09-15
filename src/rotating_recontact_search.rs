@@ -189,12 +189,18 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
     let mut coarse_samples = CoarseSampleCache3d::new(boxes.len(), denominator);
     let mut best = None;
     for pair in pairs {
-        let left_index = *by_id.get(&pair.left).ok_or(
-            RotatingContactSearchError3d::MissingCandidateBody(pair.left),
-        )?;
-        let right_index = *by_id.get(&pair.right).ok_or(
-            RotatingContactSearchError3d::MissingCandidateBody(pair.right),
-        )?;
+        let left_index =
+            *by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right_index =
+            *by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         let left = &boxes[left_index];
         let right = &boxes[right_index];
         let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
@@ -259,7 +265,8 @@ fn search_pair(
 
     for numerator in 1..=coarse_numerator_limit {
         let sampled_left = coarse_samples.sample_geometry(left_index, left, config, numerator)?;
-        let sampled_right = coarse_samples.sample_geometry(right_index, right, config, numerator)?;
+        let sampled_right =
+            coarse_samples.sample_geometry(right_index, right, config, numerator)?;
         match contacts.contact(&sampled_left, &sampled_right)? {
             Some(contact) => {
                 let Some(clear_numerator) = last_clear else {
