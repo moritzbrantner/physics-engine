@@ -38,6 +38,7 @@ mod rotating_recontact_search;
 mod rotating_world;
 mod rotational_sweep;
 mod stabilized_rotating_world;
+mod support_query;
 mod wide_ratio;
 mod world;
 
@@ -91,4 +92,5 @@ pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
 pub use stabilized_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
+pub use support_query::body_has_support;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};

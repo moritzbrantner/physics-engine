@@ -1,20 +1,24 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d, OrientedBox3d,
+    AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, Vec3i,
 };
 
+mod controller;
 mod render_snapshot;
+
+use controller::TICKS_PER_SECOND;
+pub use controller::controlled_velocity;
 
 const PLAYER_ID: BodyId = BodyId(1);
 const PROJECTILE_ID_START: u64 = 1_000;
 const MAX_PROJECTILES: usize = 48;
-const MOVE_SPEED: i32 = 7;
+const LEGACY_MOVE_SPEED: i32 = 7;
 const JUMP_SPEED: i32 = 16;
 const PROJECTILE_SPEED_LIMIT: i32 = 120;
-const ROTATING_TICKS_PER_SECOND: i32 = 60;
+const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 
@@ -110,26 +114,7 @@ impl Sandbox {
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
-        let player = self
-            .world
-            .box_by_id(PLAYER_ID)
-            .ok_or(RotatingWorldError3d::MissingBody(PLAYER_ID))?;
-        let position = player.body().position();
-        let half = player.body().half_extents();
-        let probe = OrientedBox3d::new(
-            Vec3i::new(position.x, position.y - half.y - 1, position.z),
-            Vec3i::new(
-                half.x.saturating_sub(1).max(1),
-                1,
-                half.z.saturating_sub(1).max(1),
-            ),
-            Orientation3d::IDENTITY,
-        );
-        Ok(self
-            .world
-            .overlap_query(probe)?
-            .into_iter()
-            .any(|id| id != PLAYER_ID))
+        physics_engine::body_has_support(&self.world, PLAYER_ID, self.world.config().gravity)
     }
 
     fn is_quiescent(&self) -> bool {
@@ -140,9 +125,19 @@ impl Sandbox {
     }
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
+        let desired_x = move_x
+            .clamp(-LEGACY_MOVE_SPEED, LEGACY_MOVE_SPEED)
+            .saturating_mul(ROTATING_TICKS_PER_SECOND);
+        let desired_z = move_z
+            .clamp(-LEGACY_MOVE_SPEED, LEGACY_MOVE_SPEED)
+            .saturating_mul(ROTATING_TICKS_PER_SECOND);
+        self.step_velocity(desired_x, desired_z, jump)
+    }
+
+    fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
-        if move_x == 0 && move_z == 0 && !jump && self.is_quiescent() {
+        if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
             return 0;
@@ -165,15 +160,7 @@ impl Sandbox {
         } else {
             current_velocity.y
         };
-        let velocity = Vec3i::new(
-            move_x
-                .clamp(-MOVE_SPEED, MOVE_SPEED)
-                .saturating_mul(ROTATING_TICKS_PER_SECOND),
-            next_y,
-            move_z
-                .clamp(-MOVE_SPEED, MOVE_SPEED)
-                .saturating_mul(ROTATING_TICKS_PER_SECOND),
-        );
+        let velocity = controlled_velocity(current_velocity, desired_x, desired_z, next_y);
         if velocity != current_velocity
             && self.world.set_linear_velocity(PLAYER_ID, velocity).is_err()
         {
@@ -350,6 +337,11 @@ pub extern "C" fn sandbox_reset() {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_step(move_x: i32, move_z: i32, jump: i32) -> i32 {
     with_sandbox_mut(|sandbox| sandbox.step(move_x, move_z, jump != 0))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_step_velocity(velocity_x: i32, velocity_z: i32, jump: i32) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.step_velocity(velocity_x, velocity_z, jump != 0))
 }
 
 #[unsafe(no_mangle)]
@@ -544,10 +536,68 @@ mod tests {
     }
 
     #[test]
+    fn canonical_controller_keeps_sub_legacy_velocity_precision() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        for _ in 0..4 {
+            assert_eq!(sandbox.step_velocity(73, -413, false), 0);
+        }
+        let velocity = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .expect("player")
+            .body()
+            .velocity();
+        assert_eq!(velocity.x, 73);
+        assert_eq!(velocity.z, -413);
+    }
+
+    #[test]
+    fn canonical_controller_does_not_zero_external_horizontal_momentum() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        sandbox
+            .world
+            .set_linear_velocity(PLAYER_ID, Vec3i::new(300, 0, 0))
+            .expect("inject external horizontal momentum");
+
+        assert_eq!(sandbox.step_velocity(0, 0, false), 0);
+        let velocity_x = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .expect("player")
+            .body()
+            .velocity()
+            .x;
+        assert!(
+            velocity_x > 0 && velocity_x < 300,
+            "controller erased or failed to oppose external momentum: {velocity_x}"
+        );
+    }
+
+    #[test]
+    fn side_wall_contact_does_not_make_player_grounded() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        sandbox.world.remove_box(BodyId(10)).expect("remove floor");
+        sandbox
+            .world
+            .add_box(rotating_box(RigidBody::fixed(
+                BodyId(900),
+                Vec3i::new(20, 38, 320),
+                Vec3i::new(8, 100, 100),
+            )))
+            .expect("touching side wall");
+
+        assert!(
+            !sandbox.grounded().expect("support-normal query"),
+            "side-wall contact incorrectly counted as ground support"
+        );
+    }
+
+    #[test]
     fn grounded_player_can_jump() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
-        assert!(sandbox.grounded().expect("valid foot probe"));
+        assert!(sandbox.grounded().expect("valid support query"));
         let before = sandbox
             .world
             .box_by_id(PLAYER_ID)
@@ -570,7 +620,7 @@ mod tests {
             player.body().velocity().y > 0,
             "jump did not preserve upward velocity"
         );
-        assert!(!sandbox.grounded().expect("valid airborne foot probe"));
+        assert!(!sandbox.grounded().expect("valid airborne support query"));
         assert!(player.rotation_locked());
         assert!(player.angular().angular_velocity.is_zero());
     }
@@ -579,7 +629,7 @@ mod tests {
     fn player_pushes_dynamic_box_without_tumbling() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
-        let crate_id = BodyId(900);
+        let crate_id = BodyId(901);
         sandbox
             .world
             .add_box(rotating_box(

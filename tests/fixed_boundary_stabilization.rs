@@ -80,10 +80,11 @@ fn no_op_fixed_boundary_stabilization_preserves_broad_phase_reuse() {
         )
         .expect("dynamic body");
 
-    let first = world.step(1, 1).expect("initial broad-phase step");
+    // Keep this below the sleep threshold: this test owns broad-phase reuse, not sleep-proxy transition.
+    let first = world.step(1, 60).expect("initial broad-phase step");
     assert!(first.stats.broad_phase_rebuilds > 0);
 
-    let second = world.step(1, 1).expect("reused broad-phase step");
+    let second = world.step(1, 60).expect("reused broad-phase step");
     assert_eq!(second.stats.broad_phase_rebuilds, 0);
     assert!(second.stats.broad_phase_reuses > 0);
 }

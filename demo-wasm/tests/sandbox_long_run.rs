@@ -2,6 +2,7 @@ use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
     RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
 };
+use physics_engine_demo::controlled_velocity;
 
 const PLAYER_ID: BodyId = BodyId(1);
 const TICKS_PER_SECOND: i32 = 60;
@@ -113,11 +114,9 @@ fn controlled_step_with_jump(
     } else {
         current_velocity.y
     };
-    let velocity = Vec3i::new(
-        move_x.saturating_mul(TICKS_PER_SECOND),
-        next_y,
-        move_z.saturating_mul(TICKS_PER_SECOND),
-    );
+    let desired_x = move_x.saturating_mul(TICKS_PER_SECOND);
+    let desired_z = move_z.saturating_mul(TICKS_PER_SECOND);
+    let velocity = controlled_velocity(current_velocity, desired_x, desired_z, next_y);
     if velocity != current_velocity {
         world
             .set_linear_velocity(PLAYER_ID, velocity)
