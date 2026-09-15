@@ -1,9 +1,9 @@
 use std::{cell::RefCell, collections::BTreeMap, mem::size_of};
 
-use crate::{BodyId, BodyKind, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d};
 use crate::oriented_box::{
     PreparedObb3d, obb_contact_seed as runtime_obb_contact_seed, obb_contact_seed_prepared,
 };
+use crate::{BodyId, BodyKind, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d};
 
 /// Version of the retained fixed-geometry preparation representation.
 ///
@@ -123,7 +123,10 @@ impl FixedGeometryPreparationCache3d {
             representation_version: FIXED_GEOMETRY_PREPARATION_VERSION,
             prepared_body_count: self.prepared.len(),
             total_preparations: self.total_preparations,
-            retained_bytes: self.prepared.len().saturating_mul(size_of::<PreparedObb3d>()),
+            retained_bytes: self
+                .prepared
+                .len()
+                .saturating_mul(size_of::<PreparedObb3d>()),
         }
     }
 
@@ -172,10 +175,10 @@ impl FixedGeometryPreparationCache3d {
 
 #[cfg(test)]
 mod tests {
+    use crate::oriented_box::obb_contact_seed as runtime_obb_contact_seed;
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d, Vec3i,
     };
-    use crate::oriented_box::obb_contact_seed as runtime_obb_contact_seed;
 
     use super::{
         FixedGeometryPreparationCache3d, FixedGeometryPreparationMode3d, obb_contact_seed,
