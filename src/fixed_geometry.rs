@@ -130,14 +130,6 @@ impl FixedGeometryPreparationCache3d {
         }
     }
 
-    pub(crate) fn contact(
-        &self,
-        left: &RigidBox3d,
-        right: &RigidBox3d,
-    ) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
-        self.contact_shapes(left.oriented_box(), right.oriented_box())
-    }
-
     fn contact_shapes(
         &self,
         left: OrientedBox3d,
@@ -225,10 +217,6 @@ mod tests {
             .expect("runtime contact");
         let mut cache = FixedGeometryPreparationCache3d::default();
         cache.set_mode(FixedGeometryPreparationMode3d::PrepareAtLoad, [&floor]);
-        assert_eq!(
-            cache.contact(&crate_box, &floor).expect("prepared contact"),
-            expected
-        );
         assert_eq!(
             with_fixed_geometry_context(&cache, || {
                 obb_contact_seed(crate_box.oriented_box(), floor.oriented_box())
