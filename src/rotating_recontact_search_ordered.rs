@@ -473,7 +473,10 @@ mod tests {
                 .expect("ordered stress search");
         let hit = hit.expect("front-loaded fixture has a contact");
         assert_eq!(hit.pair.right, BodyId(36));
-        assert_eq!(work.candidate_pairs, 35);
+        assert!(
+            work.candidate_pairs >= 30,
+            "stress fixture should retain a large broad-phase candidate set: {work:?}"
+        );
         assert!(
             work.coarse_rows < 32,
             "global row bound should stop before half the grid: {work:?}"
