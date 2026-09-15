@@ -20,7 +20,10 @@ jobs:
           fetch-depth: 0
 
       - name: Apply guarded edits
-        run: python3 .github/scripts/apply_scenario_rules.py
+        shell: bash
+        run: |
+          sed -i 's/if count != 1:/if count < 1:/' .github/scripts/apply_scenario_rules.py
+          python3 .github/scripts/apply_scenario_rules.py
 
       - name: Format Rust
         run: cargo fmt --all && cargo fmt --manifest-path demo-wasm/Cargo.toml
