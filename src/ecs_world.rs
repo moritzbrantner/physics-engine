@@ -1,12 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
     BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d, OrientedBox3d,
     RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
-};
-use crate::fixed_geometry::{
-    FixedGeometryPreparationCache3d, with_fixed_geometry_context,
 };
 
 #[derive(Clone, Debug)]
@@ -94,7 +92,8 @@ impl EcsRotatingWorld3d {
     /// Dynamic bodies are never registered here, including bodies that the inner sleep system temporarily
     /// presents as fixed proxies during a step.
     pub fn set_fixed_geometry_preparation_mode(&mut self, mode: FixedGeometryPreparationMode3d) {
-        self.fixed_geometry.set_mode(mode, self.rigid_boxes.values());
+        self.fixed_geometry
+            .set_mode(mode, self.rigid_boxes.values());
     }
 
     #[must_use]
@@ -179,8 +178,7 @@ impl EcsRotatingWorld3d {
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
         let prepared = self.fixed_geometry.clone();
         let report = with_fixed_geometry_context(&prepared, || {
-            self.physics
-                .step(timestep_numerator, timestep_denominator)
+            self.physics.step(timestep_numerator, timestep_denominator)
         })?;
         self.sync_all_from_physics();
         Ok(report)
