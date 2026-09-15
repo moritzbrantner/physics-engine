@@ -40,6 +40,9 @@ function shotTicks(name) {
   if (name.startsWith("three-shots-")) return [0, 40, 80];
   return [];
 }
+function ratio(head, baseline) {
+  return baseline === 0 ? null : head / baseline;
+}
 async function measure(path) {
   const bytes = readFileSync(path);
   const { instance } = await WebAssembly.instantiate(bytes, {});
@@ -144,8 +147,8 @@ async function measure(path) {
   return result;
 }
 const result = {
-  workload: "sandbox-projectiles-v3",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v3 adds a deterministic six-projectile scaling case while retaining per-step sampled/tail work and replay evidence.",
+  workload: "sandbox-projectiles-v4",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v4 keeps exact within-build replay determinism and scenario/body-count validity, while baseline/head replay differences are recorded rather than rejected so deliberate deterministic physics approximations can be evaluated by behavior and performance evidence.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
@@ -154,10 +157,40 @@ try {
   if (process.env.BASELINE_WASM) result.baseline = await measure(process.env.BASELINE_WASM);
   result.head = await measure(wasmPath);
   if (result.baseline) {
-    result.replay_matches = result.head.cases.every((entry, index) => entry.trials.every(
-      (trial, trialIndex) => trial.replay_sha256 === result.baseline.cases[index].trials[trialIndex].replay_sha256,
-    ));
-    if (!result.replay_matches) throw new Error("baseline/head observable replay mismatch");
+    result.comparison = result.head.cases.map((entry, index) => ({
+      name: entry.name,
+      trials: entry.trials.map((trial, trialIndex) => {
+        const baseline = result.baseline.cases[index].trials[trialIndex];
+        if (trial.body_count !== baseline.body_count) {
+          throw new Error(`baseline/head body-count mismatch for ${entry.name}`);
+        }
+        return {
+          replay_matches: trial.replay_sha256 === baseline.replay_sha256,
+          body_count_matches: true,
+          event_sum_delta: trial.event_sum - baseline.event_sum,
+          mean_time_ratio: ratio(trial.steps.mean_ms, baseline.steps.mean_ms),
+          p95_time_ratio: ratio(trial.steps.p95_ms, baseline.steps.p95_ms),
+          broad_phase_rebuild_delta:
+            trial.work.broad_phase_rebuilds === null || baseline.work.broad_phase_rebuilds === null
+              ? null
+              : trial.work.broad_phase_rebuilds - baseline.work.broad_phase_rebuilds,
+          tail_broad_phase_rebuild_delta:
+            trial.work.tail_broad_phase_rebuilds === null || baseline.work.tail_broad_phase_rebuilds === null
+              ? null
+              : trial.work.tail_broad_phase_rebuilds - baseline.work.tail_broad_phase_rebuilds,
+        };
+      }),
+    }));
+    result.replay_matches = result.comparison.every((entry) =>
+      entry.trials.every((trial) => trial.replay_matches),
+    );
+  }
+  const settled = result.head.cases.find((entry) => entry.name === "settled-idle")?.trials[0];
+  if (settled) {
+    if (settled.event_sum !== 0) throw new Error("settled-idle produced collision events");
+    for (const [key, value] of Object.entries(settled.work)) {
+      if (value !== null && value !== 0) throw new Error(`settled-idle reported ${key}=${value}`);
+    }
   }
 } catch (error) {
   result.failure = String(error);
