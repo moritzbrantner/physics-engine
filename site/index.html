@@ -42,7 +42,16 @@
             <input id="upright-crates" type="checkbox" checked disabled>
             Keep crates upright (including projectile impacts)
           </label>
-          <p>Disable upright crates to compare full rotation. Changing either option resets the scene.</p>
+          <label for="fixed-geometry-mode">Fixed collision geometry</label>
+          <select id="fixed-geometry-mode" disabled>
+            <option value="0">Runtime preparation · reference path</option>
+            <option value="1">Prepare fixed geometry at load</option>
+          </select>
+          <p>
+            The three options are independent and stored in the URL. Prepare-at-load reuses immutable fixed
+            collision geometry only; it does not bake motion or sleeping dynamic bodies. Changing any option
+            resets the scene.
+          </p>
         </fieldset>
         <div class="viewport-shell">
           <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>

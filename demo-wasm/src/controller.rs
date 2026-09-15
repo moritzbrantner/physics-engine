@@ -1,5 +1,8 @@
 use physics_engine::Vec3i;
 
+#[path = "baking.rs"]
+mod baking;
+
 pub const TICKS_PER_SECOND: i32 = 60;
 pub const MAX_HORIZONTAL_SPEED: i32 = 7 * TICKS_PER_SECOND;
 const MAX_CONTROL_DELTA_PER_TICK: i32 = 120;
