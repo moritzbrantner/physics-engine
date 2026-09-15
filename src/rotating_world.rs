@@ -609,10 +609,7 @@ fn contact_frontier(
     stats: &mut TailStepStats3d,
 ) -> Result<Vec<RotatingContactSearchHit3d>, RotatingWorldError3d> {
     let pairs = broad_phase
-        .candidate_pairs(
-            boxes,
-            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
-        )
+        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
         .map_err(map_tail_broad_phase_error)?;
     stats.candidate_pairs = stats
         .candidate_pairs
@@ -746,8 +743,8 @@ mod tests {
         let mut broad_phase = RotatingBroadPhase3d::default();
         let mut stats = TailStepStats3d::default();
 
-        let contacts = contact_frontier(&boxes, &mut broad_phase, &mut stats)
-            .expect("broad-phase frontier");
+        let contacts =
+            contact_frontier(&boxes, &mut broad_phase, &mut stats).expect("broad-phase frontier");
 
         assert_eq!(contacts.len(), 1);
         assert_eq!(contacts[0].pair.left, BodyId(1));
