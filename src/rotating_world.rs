@@ -9,6 +9,7 @@ use crate::{
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
+    current_contact_query::body_current_overlap_ids,
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
     rotating_broad_phase::RotatingBroadPhase3d,
 };
@@ -225,8 +226,23 @@ impl RotatingWorld3d {
     }
 
     /// Returns stable `BodyId`-ordered OBB overlaps for an arbitrary oriented query box.
+    ///
+    /// When the query is exactly one current dynamic body's OBB, the engine reuses the deterministic
+    /// zero-time current-contact graph. Arbitrary query geometry and fixed-body queries keep the existing
+    /// direct exact scan, so the public query contract is unchanged.
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
         oriented_box_vertices(query)?;
+        if let Some(body) = self
+            .boxes
+            .values()
+            .find(|rigid_box| {
+                rigid_box.body().kind() == BodyKind::Dynamic && rigid_box.oriented_box() == query
+            })
+            .map(|rigid_box| rigid_box.body().id())
+        {
+            return body_current_overlap_ids(&self.boxes, body);
+        }
+
         let mut hits = Vec::new();
         for (id, rigid_box) in &self.boxes {
             if obb_contact_seed(query, rigid_box.oriented_box())?.is_some() {
