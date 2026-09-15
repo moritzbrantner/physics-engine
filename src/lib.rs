@@ -57,14 +57,13 @@ pub use collision::{
 pub use ecs_world::EcsRotatingWorld3d as RotatingWorld3d;
 pub use fixed_geometry::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
-    FixedGeometryPreparationStats3d,
+    FixedGeometryPreparationStats3d, obb_contact_seed,
 };
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
 pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
 pub use oriented_box::{
-    ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, obb_contact_seed,
-    oriented_box_vertices,
+    ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, oriented_box_vertices,
 };
 pub use query::{Aabb, QueryError, QueryHit, Ray};
 pub use repeated_rotating_events::{
