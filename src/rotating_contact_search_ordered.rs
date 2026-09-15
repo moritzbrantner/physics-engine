@@ -130,12 +130,18 @@ pub(crate) fn sampled_rotating_contact_search_profiled(
     let mut states = Vec::with_capacity(pairs.len());
     let mut initial_best: Option<RotatingContactSearchHit3d> = None;
     for pair in pairs {
-        let left_index = *by_id
-            .get(&pair.left)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
-        let right_index = *by_id
-            .get(&pair.right)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
+        let left_index =
+            *by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right_index =
+            *by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         work.initial_pair_evaluations = work.initial_pair_evaluations.saturating_add(1);
         work.exact_contact_evaluations = work.exact_contact_evaluations.saturating_add(1);
         if let Some(contact) = obb_contact_seed(
@@ -398,12 +404,19 @@ mod tests {
         boxes.push(fixed(36, Vec3i::new(-20, 0, 0)));
 
         let mut broad_phase = RotatingBroadPhase3d::default();
-        let (hit, work) = sampled_rotating_contact_search_profiled(&boxes, config(64), &mut broad_phase)
-            .expect("ordered stress search");
+        let (hit, work) =
+            sampled_rotating_contact_search_profiled(&boxes, config(64), &mut broad_phase)
+                .expect("ordered stress search");
         let hit = hit.expect("front-loaded fixture has a contact");
         assert_eq!(hit.pair.right, BodyId(36));
-        assert!(work.candidate_pairs >= 30, "large candidate set expected: {work:?}");
-        assert!(work.coarse_rows < 32, "global row bound should stop early: {work:?}");
+        assert!(
+            work.candidate_pairs >= 30,
+            "large candidate set expected: {work:?}"
+        );
+        assert!(
+            work.coarse_rows < 32,
+            "global row bound should stop early: {work:?}"
+        );
         assert!(
             work.coarse_pair_evaluations < work.candidate_pairs.saturating_mul(32),
             "sample-major traversal should stop all pairs together: {work:?}"
