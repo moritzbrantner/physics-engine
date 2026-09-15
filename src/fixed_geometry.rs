@@ -1,7 +1,9 @@
-use std::{collections::BTreeMap, mem::size_of};
+use std::{cell::RefCell, collections::BTreeMap, mem::size_of};
 
 use crate::{BodyId, BodyKind, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d};
-use crate::oriented_box::{PreparedObb3d, obb_contact_seed_prepared};
+use crate::oriented_box::{
+    PreparedObb3d, obb_contact_seed as runtime_obb_contact_seed, obb_contact_seed_prepared,
+};
 
 /// Version of the retained fixed-geometry preparation representation.
 ///
@@ -36,6 +38,53 @@ pub(crate) struct FixedGeometryPreparationCache3d {
     mode: FixedGeometryPreparationMode3d,
     prepared: BTreeMap<BodyId, PreparedObb3d>,
     total_preparations: u64,
+}
+
+std::thread_local! {
+    static ACTIVE_FIXED_GEOMETRY: RefCell<Option<FixedGeometryPreparationCache3d>> =
+        const { RefCell::new(None) };
+}
+
+struct ActiveFixedGeometryGuard {
+    previous: Option<FixedGeometryPreparationCache3d>,
+}
+
+impl Drop for ActiveFixedGeometryGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        ACTIVE_FIXED_GEOMETRY.with(|active| *active.borrow_mut() = previous);
+    }
+}
+
+/// Executes one world-owned operation with that world's immutable fixed preparation visible to the shared
+/// SAT entry point. The retained cache itself remains owned by the world; the active value is a cheap clone
+/// of already-prepared data and performs no geometry preparation.
+pub(crate) fn with_fixed_geometry_context<R>(
+    cache: &FixedGeometryPreparationCache3d,
+    callback: impl FnOnce() -> R,
+) -> R {
+    let previous = ACTIVE_FIXED_GEOMETRY.with(|active| active.replace(Some(cache.clone())));
+    let _guard = ActiveFixedGeometryGuard { previous };
+    callback()
+}
+
+/// Exact OBB SAT entry point with optional world-scoped fixed-geometry preparation.
+///
+/// Without an active prepare-at-load world this is exactly the existing runtime path. With preparation
+/// enabled, only exact quantized shapes matching a genuine fixed body reuse retained vertices/edges/faces;
+/// every other shape is prepared normally. Contact semantics, validation order and checked errors remain
+/// those of `obb_contact_seed_prepared`.
+pub fn obb_contact_seed(
+    left: OrientedBox3d,
+    right: OrientedBox3d,
+) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
+    ACTIVE_FIXED_GEOMETRY.with(|active| {
+        let active = active.borrow();
+        let Some(cache) = active.as_ref() else {
+            return runtime_obb_contact_seed(left, right);
+        };
+        cache.contact_shapes(left, right)
+    })
 }
 
 impl FixedGeometryPreparationCache3d {
@@ -83,54 +132,37 @@ impl FixedGeometryPreparationCache3d {
         left: &RigidBox3d,
         right: &RigidBox3d,
     ) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
-        self.contact_shapes(
-            Some((left.body().id(), left.oriented_box())),
-            Some((right.body().id(), right.oriented_box())),
-        )
-    }
-
-    pub(crate) fn contact_query_left(
-        &self,
-        left: OrientedBox3d,
-        right: &RigidBox3d,
-    ) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
-        let left = PreparedObb3d::new(left);
-        let right_shape = right.oriented_box();
-        let right = self
-            .prepared
-            .get(&right.body().id())
-            .filter(|prepared| prepared.shape == right_shape)
-            .copied()
-            .unwrap_or_else(|| PreparedObb3d::new(right_shape));
-        obb_contact_seed_prepared(&left, &right)
+        self.contact_shapes(left.oriented_box(), right.oriented_box())
     }
 
     fn contact_shapes(
         &self,
-        left: Option<(BodyId, OrientedBox3d)>,
-        right: Option<(BodyId, OrientedBox3d)>,
+        left: OrientedBox3d,
+        right: OrientedBox3d,
     ) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
-        let (left_id, left_shape) = left.expect("contact requires a left shape");
-        let (right_id, right_shape) = right.expect("contact requires a right shape");
-        let left = self
-            .prepared
-            .get(&left_id)
-            .filter(|prepared| prepared.shape == left_shape)
-            .copied()
-            .unwrap_or_else(|| PreparedObb3d::new(left_shape));
-        let right = self
-            .prepared
-            .get(&right_id)
-            .filter(|prepared| prepared.shape == right_shape)
-            .copied()
-            .unwrap_or_else(|| PreparedObb3d::new(right_shape));
+        if self.mode == FixedGeometryPreparationMode3d::Runtime {
+            return runtime_obb_contact_seed(left, right);
+        }
+        let left = self.prepared_shape(left);
+        let right = self.prepared_shape(right);
         obb_contact_seed_prepared(&left, &right)
+    }
+
+    fn prepared_shape(&self, shape: OrientedBox3d) -> PreparedObb3d {
+        self.prepared
+            .values()
+            .find(|prepared| prepared.shape == shape)
+            .copied()
+            .unwrap_or_else(|| PreparedObb3d::new(shape))
     }
 
     fn prepare_fixed(&mut self, rigid_box: &RigidBox3d) {
         let id = rigid_box.body().id();
         let prepared = PreparedObb3d::new(rigid_box.oriented_box());
-        let changed = self.prepared.get(&id).is_none_or(|previous| *previous != prepared);
+        let changed = self
+            .prepared
+            .get(&id)
+            .is_none_or(|previous| *previous != prepared);
         self.prepared.insert(id, prepared);
         if changed {
             self.total_preparations = self.total_preparations.saturating_add(1);
@@ -142,10 +174,13 @@ impl FixedGeometryPreparationCache3d {
 mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d, Vec3i,
-        obb_contact_seed,
     };
+    use crate::oriented_box::obb_contact_seed as runtime_obb_contact_seed;
 
-    use super::{FixedGeometryPreparationCache3d, FixedGeometryPreparationMode3d};
+    use super::{
+        FixedGeometryPreparationCache3d, FixedGeometryPreparationMode3d, obb_contact_seed,
+        with_fixed_geometry_context,
+    };
 
     fn fixed(id: u64, position: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -183,12 +218,35 @@ mod tests {
     fn prepared_contact_is_bit_identical_to_runtime_contact() {
         let floor = fixed(1, Vec3i::ZERO);
         let crate_box = dynamic(2, Vec3i::new(0, 4, 0));
-        let expected = obb_contact_seed(crate_box.oriented_box(), floor.oriented_box())
+        let expected = runtime_obb_contact_seed(crate_box.oriented_box(), floor.oriented_box())
             .expect("runtime contact");
         let mut cache = FixedGeometryPreparationCache3d::default();
         cache.set_mode(FixedGeometryPreparationMode3d::PrepareAtLoad, [&floor]);
         assert_eq!(
             cache.contact(&crate_box, &floor).expect("prepared contact"),
+            expected
+        );
+        assert_eq!(
+            with_fixed_geometry_context(&cache, || {
+                obb_contact_seed(crate_box.oriented_box(), floor.oriented_box())
+            })
+            .expect("scoped prepared contact"),
+            expected
+        );
+    }
+
+    #[test]
+    fn preparation_scope_restores_reference_path() {
+        let floor = fixed(1, Vec3i::ZERO);
+        let crate_box = dynamic(2, Vec3i::new(0, 4, 0));
+        let mut cache = FixedGeometryPreparationCache3d::default();
+        cache.set_mode(FixedGeometryPreparationMode3d::PrepareAtLoad, [&floor]);
+        let expected = runtime_obb_contact_seed(crate_box.oriented_box(), floor.oriented_box());
+        let _ = with_fixed_geometry_context(&cache, || {
+            obb_contact_seed(crate_box.oriented_box(), floor.oriented_box())
+        });
+        assert_eq!(
+            obb_contact_seed(crate_box.oriented_box(), floor.oriented_box()),
             expected
         );
     }
