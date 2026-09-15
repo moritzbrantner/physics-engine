@@ -270,6 +270,7 @@ pub fn sample_rigid_box_free_flight(
         body,
         angular,
         rotation_locked: rigid_box.rotation_locked,
+        contact_mode: rigid_box.contact_mode,
     })
 }
 

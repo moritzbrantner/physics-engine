@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - "src/query.rs"
+      - "src/rigid_box.rs"
+      - "src/linear_contact.rs"
+      - "src/stabilized_rotating_world.rs"
+      - "src/obb_friction.rs"
       - "src/rigid_box_free_flight.rs"
       - "src/repeated_rotating_events.rs"
       - "src/rotating_broad_phase.rs"
@@ -16,15 +20,16 @@ on:
       - "src/rotating_contact_response.rs"
       - "src/current_contact_query.rs"
       - "src/rotating_world.rs"
-      - "src/stabilized_rotating_world.rs"
       - "src/support_query.rs"
       - "tests/*performance*.rs"
       - "tests/current_contact_broadphase.rs"
       - "tests/fixed_wall_sweep_bounds.rs"
+      - "tests/linear_contact_policy.rs"
       - "demo-wasm/**"
       - "scripts/run-performance-evidence.sh"
       - "scripts/run-sandbox-performance.sh"
       - "scripts/benchmark-sandbox.mjs"
+      - "scripts/benchmark-character-options.mjs"
       - ".github/workflows/performance-evidence.yml"
   workflow_dispatch:
 
@@ -62,6 +67,11 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/run-sandbox-performance.sh
+
+      - name: Record independent character gameplay options
+        run: |
+          cp scripts/benchmark-character-options.mjs performance-evidence/
+          node scripts/benchmark-character-options.mjs performance-evidence/head.wasm performance-evidence/character-options.json
 
       - name: Upload reproducible performance evidence
         if: ${{ always() }}

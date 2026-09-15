@@ -21,6 +21,20 @@ const FAR_PLANE = 1400;
 const ORIENTATION_SCALE = 1 << 30;
 const RENDER_SNAPSHOT_STRIDE = 11;
 const keys = new Set();
+const characterModeControl = document.querySelector("#character-mode");
+const uprightCratesControl = document.querySelector("#upright-crates");
+const characterParameters = new URLSearchParams(window.location.search);
+characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
+uprightCratesControl.checked = characterParameters.get("crates") !== "free";
+function resetInteractionOptions() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("character", characterModeControl.value === "0" ? "physical" : "linear");
+  url.searchParams.set("crates", uprightCratesControl.checked ? "upright" : "free");
+  window.history.replaceState(null, "", url);
+  if (engine) reset();
+}
+characterModeControl.addEventListener("change", resetInteractionOptions);
+uprightCratesControl.addEventListener("change", resetInteractionOptions);
 
 let engine = null;
 let renderer = null;
@@ -87,7 +101,9 @@ async function createRenderer() {
 }
 
 function reset() {
-  engine.sandbox_reset();
+  if (engine.sandbox_reset_with_options(Number(characterModeControl.value), Number(uprightCratesControl.checked)) !== 0) {
+    throw new Error("Unable to initialize the selected character contact mode");
+  }
   yaw = 0;
   pitch = 0;
   paused = false;
@@ -492,6 +508,8 @@ try {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
   ensureCrosshair();
+  characterModeControl.disabled = false;
+  uprightCratesControl.disabled = false;
   reset();
   requestAnimationFrame(frame);
 } catch (error) {
