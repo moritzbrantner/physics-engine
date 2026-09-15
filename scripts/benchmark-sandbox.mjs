@@ -16,6 +16,7 @@ const names = [
   "three-shots-idle",
   "three-shots-walking",
   "six-shots-idle",
+  "twelve-shots-idle",
 ];
 const cases = process.env.CASE ? names.filter((name) => name === process.env.CASE) : names;
 if (cases.length === 0) throw new Error("unknown CASE");
@@ -36,6 +37,7 @@ function sumKnown(values, key) {
   return known.length === values.length ? known.reduce((sum, value) => sum + value, 0) : null;
 }
 function shotTicks(name) {
+  if (name === "twelve-shots-idle") return [0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132];
   if (name === "six-shots-idle") return [0, 30, 60, 90, 120, 150];
   if (name.startsWith("three-shots-")) return [0, 40, 80];
   return [];
@@ -99,8 +101,6 @@ async function measure(path) {
         step(x, z);
         times.push(performance.now() - start);
         work.push(stepWork());
-        // State evidence is intentionally outside the timed physics call. This is an observable
-        // replay fingerprint, not a claim to expose every private solver field.
         const pointer = engine.sandbox_refresh_render_snapshot();
         const length = engine.sandbox_render_snapshot_len();
         const stride = engine.sandbox_render_snapshot_stride();
@@ -144,8 +144,8 @@ async function measure(path) {
   return result;
 }
 const result = {
-  workload: "sandbox-projectiles-v3",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v3 adds a deterministic six-projectile scaling case while retaining per-step sampled/tail work and replay evidence.",
+  workload: "sandbox-projectiles-v4",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v4 adds a deterministic twelve-projectile / 30-body stress case while retaining replay and per-step sampled/tail work evidence.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
