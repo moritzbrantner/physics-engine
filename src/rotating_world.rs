@@ -11,7 +11,7 @@ use crate::{
 use crate::{
     current_contact_query::body_current_overlap_ids,
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
-    rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -42,17 +42,37 @@ pub struct RotatingWorldStepStats3d {
     pub body_count: usize,
     pub sampled_events: usize,
     pub tail_contacts: usize,
-    /// Conservative broad-phase queries issued during this step.
+    /// Persistent-tail slices actually executed, including discarded replay work.
+    pub tail_slices: u64,
+    /// Persistent-tail attempts discarded because an impulse required a finer deterministic slice.
+    pub tail_replays: u64,
+    /// Conservative current-overlap candidates that reached exact OBB testing in the tail solver.
+    pub tail_candidate_pairs: u64,
+    /// Current-overlap broad-phase queries issued by the tail solver.
+    pub tail_broad_phase_queries: u64,
+    /// Tail broad-phase queries that rebuilt the balanced fat-AABB topology.
+    pub tail_broad_phase_rebuilds: u64,
+    /// Tail broad-phase queries that reused the retained fat-AABB topology.
+    pub tail_broad_phase_reuses: u64,
+    /// Conservative sampled-event broad-phase queries issued during this step.
     pub broad_phase_queries: u64,
-    /// Queries that had to rebuild the balanced fat-AABB topology.
+    /// Sampled-event queries that had to rebuild the balanced fat-AABB topology.
     pub broad_phase_rebuilds: u64,
-    /// Queries that reused the existing fat-AABB topology and exact-filtered its candidate leaves.
+    /// Sampled-event queries that reused the existing fat-AABB topology and exact-filtered its candidate leaves.
     pub broad_phase_reuses: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RotatingWorldStepReport3d {
     pub stats: RotatingWorldStepStats3d,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TailStepStats3d {
+    contacts: usize,
+    slices: u64,
+    replays: u64,
+    candidate_pairs: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -155,14 +175,15 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// replayed from its starting state with a finer deterministic resolution; exceeding the hard bound fails
 /// closed.
 ///
-/// The world retains a fat-AABB broad-phase tree across steps. Exact conservative sweep bounds are still
-/// recomputed for every query and remain the candidate truth; the retained tree only avoids rebuilding
-/// balanced topology while those exact bounds remain inside their deterministic fat envelopes.
+/// The world retains independent fat-AABB broad-phase trees for sampled sweeps and persistent-tail
+/// current-overlap queries. Exact conservative bounds remain candidate truth in both paths; retained tree
+/// topology only prunes exact OBB work and cannot change collision truth.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
     boxes: BTreeMap<BodyId, RigidBox3d>,
     broad_phase: RotatingBroadPhase3d,
+    tail_broad_phase: RotatingBroadPhase3d,
 }
 
 impl RotatingWorld3d {
@@ -172,6 +193,7 @@ impl RotatingWorld3d {
             config,
             boxes: BTreeMap::new(),
             broad_phase: RotatingBroadPhase3d::default(),
+            tail_broad_phase: RotatingBroadPhase3d::default(),
         }
     }
 
@@ -277,6 +299,7 @@ impl RotatingWorld3d {
         }
 
         let broad_phase_before = self.broad_phase.stats();
+        let tail_broad_phase_before = self.tail_broad_phase.stats();
         let boxes = self.boxes.values().cloned().collect::<Vec<_>>();
         let free_flight = RigidBoxFreeFlightConfig3d::new(
             self.config.gravity,
@@ -296,24 +319,42 @@ impl RotatingWorld3d {
             ),
             &mut self.broad_phase,
         )?;
-        let broad_phase_after = self.broad_phase.stats();
 
         let sampled_events = advance.events.len();
-        let (boxes, tail_contacts) = if advance.remaining.timestep_is_zero() {
-            (advance.boxes, 0)
+        let (boxes, tail) = if advance.remaining.timestep_is_zero() {
+            (advance.boxes, TailStepStats3d::default())
         } else {
-            consume_tail(advance.boxes, advance.remaining, self.config.solver_passes)?
+            consume_tail(
+                advance.boxes,
+                advance.remaining,
+                self.config.solver_passes,
+                &mut self.tail_broad_phase,
+            )?
         };
         self.boxes = boxes
             .into_iter()
             .map(|rigid_box| (rigid_box.body().id(), rigid_box))
             .collect();
 
+        let broad_phase_after = self.broad_phase.stats();
+        let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
             stats: RotatingWorldStepStats3d {
                 body_count: self.boxes.len(),
                 sampled_events,
-                tail_contacts,
+                tail_contacts: tail.contacts,
+                tail_slices: tail.slices,
+                tail_replays: tail.replays,
+                tail_candidate_pairs: tail.candidate_pairs,
+                tail_broad_phase_queries: tail_broad_phase_after
+                    .queries
+                    .saturating_sub(tail_broad_phase_before.queries),
+                tail_broad_phase_rebuilds: tail_broad_phase_after
+                    .rebuilds
+                    .saturating_sub(tail_broad_phase_before.rebuilds),
+                tail_broad_phase_reuses: tail_broad_phase_after
+                    .reuses
+                    .saturating_sub(tail_broad_phase_before.reuses),
                 broad_phase_queries: broad_phase_after
                     .queries
                     .saturating_sub(broad_phase_before.queries),
@@ -332,10 +373,15 @@ fn consume_tail(
     boxes: Vec<RigidBox3d>,
     remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
-) -> Result<(Vec<RigidBox3d>, usize), RotatingWorldError3d> {
-    let initial_contacts = contact_frontier(&boxes)?;
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
+    let mut stats = TailStepStats3d::default();
+    let initial_contacts = contact_frontier(&boxes, broad_phase, &mut stats)?;
     if initial_contacts.is_empty() {
-        return free_flight_and_stabilize(boxes, remaining, solver_passes);
+        let (boxes, contacts) =
+            free_flight_and_stabilize(boxes, remaining, solver_passes, broad_phase, &mut stats)?;
+        stats.contacts = contacts;
+        return Ok((boxes, stats));
     }
 
     let mut slice_count = persistent_tail_slice_count(&boxes, remaining, &initial_contacts)?;
@@ -346,19 +392,28 @@ fn consume_tail(
         let mut unsafe_body = None;
 
         for _ in 0..slice_count {
-            let current_contacts = contact_frontier(&current)?;
+            stats.slices = stats.slices.saturating_add(1);
+            let current_contacts = contact_frontier(&current, broad_phase, &mut stats)?;
             if let Some(id) = first_unsafe_tail_body(&current, slice_config, &current_contacts)? {
                 unsafe_body = Some(id);
                 break;
             }
-            let (next, contacts) = free_flight_and_stabilize(current, slice_config, solver_passes)?;
+            let (next, contacts) = free_flight_and_stabilize(
+                current,
+                slice_config,
+                solver_passes,
+                broad_phase,
+                &mut stats,
+            )?;
             current = next;
             contact_count = contact_count.saturating_add(contacts);
         }
 
         if unsafe_body.is_none() {
-            return Ok((current, contact_count));
+            stats.contacts = contact_count;
+            return Ok((current, stats));
         }
+        stats.replays = stats.replays.saturating_add(1);
         let target = slice_count
             .saturating_mul(2)
             .min(MAX_PERSISTENT_TAIL_SLICES);
@@ -375,12 +430,14 @@ fn free_flight_and_stabilize(
     boxes: Vec<RigidBox3d>,
     config: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
+    broad_phase: &mut RotatingBroadPhase3d,
+    stats: &mut TailStepStats3d,
 ) -> Result<(Vec<RigidBox3d>, usize), RotatingWorldError3d> {
     let sampled = boxes
         .iter()
         .map(|rigid_box| sample_rigid_box_free_flight(rigid_box, config, 1, 1))
         .collect::<Result<Vec<_>, _>>()?;
-    let contacts = contact_frontier(&sampled)?;
+    let contacts = contact_frontier(&sampled, broad_phase, stats)?;
     let contact_count = contacts.len();
     if contacts.is_empty() {
         return Ok((sampled, 0));
@@ -548,35 +605,46 @@ fn ceil_div(value: u128, denominator: u128, id: BodyId) -> Result<u128, Rotating
 
 fn contact_frontier(
     boxes: &[RigidBox3d],
-) -> Result<Vec<RotatingContactSearchHit3d>, OrientedBoxError3d> {
+    broad_phase: &mut RotatingBroadPhase3d,
+    stats: &mut TailStepStats3d,
+) -> Result<Vec<RotatingContactSearchHit3d>, RotatingWorldError3d> {
+    let pairs = broad_phase
+        .candidate_pairs(
+            boxes,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+        )
+        .map_err(map_tail_broad_phase_error)?;
+    stats.candidate_pairs = stats
+        .candidate_pairs
+        .saturating_add(u64::try_from(pairs.len()).unwrap_or(u64::MAX));
+
     let mut contacts = Vec::new();
-    for left_index in 0..boxes.len() {
-        for right_index in (left_index + 1)..boxes.len() {
-            let left = &boxes[left_index];
-            let right = &boxes[right_index];
-            if left.body().kind() == BodyKind::Fixed && right.body().kind() == BodyKind::Fixed {
-                continue;
-            }
-            if !left
-                .collision_layers()
-                .collides_with(right.collision_layers())
-            {
-                continue;
-            }
-            let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
-                continue;
-            };
-            contacts.push(RotatingContactSearchHit3d {
-                time: SampledContactTime3d::ZERO,
-                pair: RotationalSweepPair3d {
-                    left: left.body().id(),
-                    right: right.body().id(),
-                },
-                contact,
-            });
-        }
+    for pair in pairs {
+        let left = boxes
+            .iter()
+            .find(|rigid_box| rigid_box.body().id() == pair.left)
+            .expect("tail broad phase candidate left body must exist");
+        let right = boxes
+            .iter()
+            .find(|rigid_box| rigid_box.body().id() == pair.right)
+            .expect("tail broad phase candidate right body must exist");
+        let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
+            continue;
+        };
+        contacts.push(RotatingContactSearchHit3d {
+            time: SampledContactTime3d::ZERO,
+            pair,
+            contact,
+        });
     }
     Ok(contacts)
+}
+
+fn map_tail_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
+    match error {
+        RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
+    }
 }
 
 #[cfg(test)]
@@ -587,8 +655,8 @@ mod tests {
     };
 
     use super::{
-        RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, tail_motion_within_extent,
-        tail_slice_config,
+        RotatingBroadPhase3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
+        TailStepStats3d, contact_frontier, tail_motion_within_extent, tail_slice_config,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
@@ -658,6 +726,35 @@ mod tests {
         assert!(
             tail_motion_within_extent(&rigid_box, config)
                 .expect("wide tail bound remains representable")
+        );
+    }
+
+    #[test]
+    fn tail_frontier_broad_phase_prunes_separated_pairs_without_changing_contact_truth() {
+        let mut boxes = vec![
+            dynamic(1, Vec3i::new(0, 1, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
+            fixed(2, Vec3i::new(0, -1, 0), Vec3i::new(20, 1, 20)),
+        ];
+        for id in 3..35 {
+            boxes.push(fixed(
+                id,
+                Vec3i::new((id as i32) * 100, 100, 100),
+                Vec3i::new(1, 1, 1),
+            ));
+        }
+        let all_pairs = boxes.len().saturating_mul(boxes.len().saturating_sub(1)) / 2;
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut stats = TailStepStats3d::default();
+
+        let contacts = contact_frontier(&boxes, &mut broad_phase, &mut stats)
+            .expect("broad-phase frontier");
+
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0].pair.left, BodyId(1));
+        assert_eq!(contacts[0].pair.right, BodyId(2));
+        assert!(
+            stats.candidate_pairs < u64::try_from(all_pairs).unwrap_or(u64::MAX),
+            "tail broad phase did not prune any exact OBB tests"
         );
     }
 
