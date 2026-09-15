@@ -44,11 +44,7 @@ pub fn body_has_support(
     Ok(false)
 }
 
-fn checked_dot(
-    vector: Vec3i,
-    axis: [i128; 3],
-    body: BodyId,
-) -> Result<i128, RotatingWorldError3d> {
+fn checked_dot(vector: Vec3i, axis: [i128; 3], body: BodyId) -> Result<i128, RotatingWorldError3d> {
     [vector.x, vector.y, vector.z]
         .into_iter()
         .zip(axis)
@@ -110,8 +106,7 @@ mod tests {
             .expect("floor");
 
         assert!(
-            body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0))
-                .expect("support query")
+            body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0)).expect("support query")
         );
     }
 
@@ -127,8 +122,7 @@ mod tests {
             .expect("wall");
 
         assert!(
-            !body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0))
-                .expect("support query")
+            !body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0)).expect("support query")
         );
     }
 
@@ -144,8 +138,7 @@ mod tests {
             .expect("ceiling");
 
         assert!(
-            !body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0))
-                .expect("support query")
+            !body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0)).expect("support query")
         );
     }
 
