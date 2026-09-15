@@ -969,7 +969,11 @@ mod tests {
     #[ignore = "release-mode SAT candidate storage benchmark"]
     fn sat_axis_storage_benchmark() {
         let seeds = std::array::from_fn::<_, MAX_SAT_AXES, _>(|index| AxisSeed {
-            axis: [i128::try_from(index + 1).expect("axis index fits i128"), 1, -1],
+            axis: [
+                i128::try_from(index + 1).expect("axis index fits i128"),
+                1,
+                -1,
+            ],
             feature: ObbAxisFeature3d::EdgeEdge {
                 left_axis: u8::try_from(index % 3).expect("axis index fits u8"),
                 right_axis: u8::try_from((index / 3) % 3).expect("axis index fits u8"),
