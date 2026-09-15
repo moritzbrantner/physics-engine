@@ -37,10 +37,11 @@ mod rotating_broad_phase;
 mod rotating_contact_frontier;
 mod rotating_contact_response;
 mod rotating_contact_search;
-#[path = "rotating_recontact_search.rs"]
-mod rotating_recontact_search_reference;
 #[path = "rotating_recontact_search_ordered.rs"]
 mod rotating_recontact_search;
+#[cfg(test)]
+#[path = "rotating_recontact_search.rs"]
+mod rotating_recontact_search_reference;
 mod rotating_world;
 mod rotational_sweep;
 mod stabilized_rotating_world;
