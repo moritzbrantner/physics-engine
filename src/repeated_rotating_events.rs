@@ -141,16 +141,16 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// The first event is selected with [`crate::earliest_rotating_contact_frontier`]. After response, the
 /// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
-/// the current zero-time contact set and applies one simultaneous response pass. Pair identities from
-/// resolved and stabilization contacts remain contact history until the configured coarse grid positively
-/// observes them clear at or before the next selected frontier. That positive-clear evidence releases the
-/// pair from history before the following segment, so an unrelated earlier event cannot erase an already
-/// observed separation. Interval-start separation alone is still excluded as clear evidence. This prevents
-/// quantized response projection from manufacturing first-cell clear/re-contact churn without tolerances,
-/// retries, or a larger event budget. Current-frontier discovery reuses the persistent conservative broad
-/// phase at a zero timestep, then exact-filters every candidate with current OBB geometry. Later positive
-/// events are selected by the same sampled search and remain bounded sampled rotational handling, not
-/// analytic CCD.
+/// the current zero-time contact set and applies one simultaneous response pass. A resolved/stabilized pair
+/// is retained as contact history only when the final stabilized geometry has projected it clear. Pairs that
+/// remain geometrically touching need no history marker because interval-start geometry already suppresses
+/// time-zero rediscovery. A projection-cleared pair stays historical until the configured coarse grid
+/// positively observes it clear, preventing quantized response projection from manufacturing first-cell
+/// clear/re-contact churn without tolerances, retries, or a larger event budget. Once a later segment starts
+/// genuinely clear without such projection history, its interval-start separation can seed a first-cell
+/// recontact. Current-frontier discovery reuses the persistent conservative broad phase at a zero timestep,
+/// then exact-filters every candidate with current OBB geometry. Later positive events are selected by the
+/// same sampled search and remain bounded sampled rotational handling, not analytic CCD.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -212,13 +212,17 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response = resolve_rotating_contact_frontier(frontier, config.solver_passes)?;
         remaining = scale_remaining_time(remaining, response.remaining_numerator, response.time)?;
         let response_time = response.time;
-        persistent_pairs.extend(response.contacts.iter().map(|contact| contact.pair));
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
+        let mut observed_pairs = response_contacts
+            .iter()
+            .map(|contact| contact.pair)
+            .collect::<BTreeSet<_>>();
         let (stabilized, stabilization_pairs) =
             stabilize_current_contacts(response.boxes, config.solver_passes, broad_phase)?;
-        persistent_pairs.extend(stabilization_pairs);
+        observed_pairs.extend(stabilization_pairs);
         state = stabilized;
+        refresh_projection_history(&mut persistent_pairs, &observed_pairs, &state)?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -266,6 +270,42 @@ fn stabilize_current_contacts(
         boxes = response.boxes;
     }
     Ok((boxes, persistent_pairs))
+}
+
+fn refresh_projection_history(
+    persistent_pairs: &mut BTreeSet<RotationalSweepPair3d>,
+    observed_pairs: &BTreeSet<RotationalSweepPair3d>,
+    boxes: &[RigidBox3d],
+) -> Result<(), RotatingContactFrontierError3d> {
+    if observed_pairs.is_empty() {
+        return Ok(());
+    }
+
+    let indices = boxes
+        .iter()
+        .enumerate()
+        .map(|(index, rigid_box)| (rigid_box.body().id(), index))
+        .collect::<BTreeMap<_, _>>();
+
+    for pair in observed_pairs {
+        let left_index = *indices
+            .get(&pair.left)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
+        let right_index = *indices
+            .get(&pair.right)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
+        let touching = obb_contact_seed(
+            boxes[left_index].oriented_box(),
+            boxes[right_index].oriented_box(),
+        )?
+        .is_some();
+        if touching {
+            persistent_pairs.remove(pair);
+        } else {
+            persistent_pairs.insert(*pair);
+        }
+    }
+    Ok(())
 }
 
 fn current_contact_frontier_with_broad_phase(
@@ -480,6 +520,35 @@ mod tests {
         assert_eq!(advance.events[0].contacts[0].pair.right, BodyId(3));
         assert_eq!(advance.events[1].contacts[0].pair.left, BodyId(1));
         assert_eq!(advance.events[1].contacts[0].pair.right, BodyId(2));
+    }
+
+    #[test]
+    fn clear_segment_start_preserves_first_cell_alternating_recontact() {
+        let elastic = Material::new(MATERIAL_SCALE);
+        let boxes = [
+            fixed(1, Vec3i::new(-3, 0, 0), elastic),
+            dynamic(2, Vec3i::ZERO, Vec3i::new(100, 0, 0), elastic),
+            fixed(3, Vec3i::new(3, 0, 0), elastic),
+        ];
+        let narrow = RepeatedRotatingEventConfig3d::new(
+            RotatingContactSearchConfig3d::new(
+                RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 10),
+                2,
+                4,
+            ),
+            8,
+            8,
+        );
+        let advance = advance_repeated_rotating_events(&boxes, narrow)
+            .expect("first-cell alternating impacts remain discoverable");
+
+        assert!(advance.events.len() >= 3);
+        assert_eq!(advance.events[0].contacts[0].pair.left, BodyId(2));
+        assert_eq!(advance.events[0].contacts[0].pair.right, BodyId(3));
+        assert_eq!(advance.events[1].contacts[0].pair.left, BodyId(1));
+        assert_eq!(advance.events[1].contacts[0].pair.right, BodyId(2));
+        assert_eq!(advance.events[2].contacts[0].pair.left, BodyId(2));
+        assert_eq!(advance.events[2].contacts[0].pair.right, BodyId(3));
     }
 
     #[test]
