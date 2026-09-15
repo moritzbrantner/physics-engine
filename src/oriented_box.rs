@@ -380,6 +380,11 @@ fn rotate_with_matrix(
 }
 
 fn checked_mul(left: i128, right: i128) -> Result<i128, OrientedBoxError3d> {
+    if let (Ok(left), Ok(right)) = (i64::try_from(left), i64::try_from(right))
+        && let Some(product) = left.checked_mul(right)
+    {
+        return Ok(i128::from(product));
+    }
     left.checked_mul(right)
         .ok_or(OrientedBoxError3d::ArithmeticOverflow)
 }
@@ -397,6 +402,19 @@ fn checked_sub(left: i128, right: i128) -> Result<i128, OrientedBoxError3d> {
 fn div_round_nearest(numerator: i128, denominator: i128) -> Result<i128, OrientedBoxError3d> {
     if denominator <= 0 {
         return Err(OrientedBoxError3d::ArithmeticOverflow);
+    }
+    if let (Ok(numerator), Ok(denominator)) =
+        (i64::try_from(numerator), i64::try_from(denominator))
+    {
+        let half = denominator / 2;
+        let adjusted = if numerator >= 0 {
+            numerator.checked_add(half)
+        } else {
+            numerator.checked_sub(half)
+        };
+        if let Some(adjusted) = adjusted {
+            return Ok(i128::from(adjusted / denominator));
+        }
     }
     let half = denominator / 2;
     let adjusted = if numerator >= 0 {
@@ -452,14 +470,10 @@ fn cross_component(
     left_b: i128,
     right_b: i128,
 ) -> Result<i128, OrientedBoxError3d> {
-    left_a
-        .checked_mul(right_a)
-        .and_then(|first| {
-            left_b
-                .checked_mul(right_b)
-                .and_then(|second| first.checked_sub(second))
-        })
-        .ok_or(OrientedBoxError3d::ArithmeticOverflow)
+    checked_sub(
+        checked_mul(left_a, right_a)?,
+        checked_mul(left_b, right_b)?,
+    )
 }
 
 fn push_required_axis(
@@ -527,7 +541,21 @@ fn primitive_axis(mut axis: [i128; 3]) -> Result<Option<[i128; 3]>, OrientedBoxE
     Ok(Some(axis))
 }
 
-fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
+fn greatest_common_divisor(left: u128, right: u128) -> u128 {
+    if left <= u128::from(u64::MAX) && right <= u128::from(u64::MAX) {
+        return u128::from(greatest_common_divisor_u64(left as u64, right as u64));
+    }
+    let mut left = left;
+    let mut right = right;
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
+}
+
+fn greatest_common_divisor_u64(mut left: u64, mut right: u64) -> u64 {
     while right != 0 {
         let remainder = left % right;
         left = right;
@@ -560,6 +588,20 @@ fn projection(vertices: &[Vec3i; 8], axis: [i128; 3]) -> Result<(i128, i128), Or
         })
 }
 
+#[cfg(test)]
+fn projection_wide_reference(
+    vertices: &[Vec3i; 8],
+    axis: [i128; 3],
+) -> Result<(i128, i128), OrientedBoxError3d> {
+    let first = dot_position_wide_reference(vertices[0], axis)?;
+    vertices[1..]
+        .iter()
+        .try_fold((first, first), |range, vertex| {
+            let value = dot_position_wide_reference(*vertex, axis)?;
+            Ok((range.0.min(value), range.1.max(value)))
+        })
+}
+
 fn dot_position(position: Vec3i, axis: [i128; 3]) -> Result<i128, OrientedBoxError3d> {
     checked_dot(
         [
@@ -571,7 +613,33 @@ fn dot_position(position: Vec3i, axis: [i128; 3]) -> Result<i128, OrientedBoxErr
     )
 }
 
+#[cfg(test)]
+fn dot_position_wide_reference(
+    position: Vec3i,
+    axis: [i128; 3],
+) -> Result<i128, OrientedBoxError3d> {
+    checked_dot_wide_reference(
+        [
+            i128::from(position.x),
+            i128::from(position.y),
+            i128::from(position.z),
+        ],
+        axis,
+    )
+}
+
 fn checked_dot(left: [i128; 3], right: [i128; 3]) -> Result<i128, OrientedBoxError3d> {
+    let first = checked_mul(left[0], right[0])?;
+    let second = checked_mul(left[1], right[1])?;
+    let third = checked_mul(left[2], right[2])?;
+    checked_add(checked_add(first, second)?, third)
+}
+
+#[cfg(test)]
+fn checked_dot_wide_reference(
+    left: [i128; 3],
+    right: [i128; 3],
+) -> Result<i128, OrientedBoxError3d> {
     let first = left[0]
         .checked_mul(right[0])
         .ok_or(OrientedBoxError3d::ArithmeticOverflow)?;
@@ -588,6 +656,26 @@ fn checked_dot(left: [i128; 3], right: [i128; 3]) -> Result<i128, OrientedBoxErr
 }
 
 fn squared_length(axis: [i128; 3]) -> Result<u128, OrientedBoxError3d> {
+    let components = axis.map(i128::unsigned_abs);
+    if components.iter().all(|component| *component <= u128::from(u64::MAX)) {
+        let mut sum = 0_u64;
+        let mut bounded = true;
+        for component in components {
+            let component = component as u64;
+            let Some(square) = component.checked_mul(component) else {
+                bounded = false;
+                break;
+            };
+            let Some(next) = sum.checked_add(square) else {
+                bounded = false;
+                break;
+            };
+            sum = next;
+        }
+        if bounded {
+            return Ok(u128::from(sum));
+        }
+    }
     axis.into_iter().try_fold(0_u128, |sum, component| {
         let component = component.unsigned_abs();
         sum.checked_add(
@@ -632,7 +720,30 @@ fn compare_squared_ratios(
             }
         }
     }
+    if let (Some(left), Some(right)) = (bounded_product(left), bounded_product(right)) {
+        return Ok(left.cmp(&right));
+    }
     Ok(wide_product(left)?.cmp(&wide_product(right)?))
+}
+
+fn bounded_product(factors: [u128; 3]) -> Option<u128> {
+    if factors.iter().all(|factor| *factor <= u128::from(u64::MAX)) {
+        let mut product = 1_u64;
+        let mut bounded = true;
+        for factor in factors {
+            let Some(next) = product.checked_mul(factor as u64) else {
+                bounded = false;
+                break;
+            };
+            product = next;
+        }
+        if bounded {
+            return Some(u128::from(product));
+        }
+    }
+    factors
+        .into_iter()
+        .try_fold(1_u128, |product, factor| product.checked_mul(factor))
 }
 
 fn wide_product(factors: [u128; 3]) -> Result<[u64; 6], OrientedBoxError3d> {
@@ -711,12 +822,22 @@ fn support_mask(
     axis: [i128; 3],
     maximum: bool,
 ) -> Result<u8, OrientedBoxError3d> {
-    let projection = projection(vertices, axis)?;
-    let target = if maximum { projection.1 } else { projection.0 };
-    let mut mask = 0_u8;
-    for (index, vertex) in vertices.iter().enumerate() {
-        if dot_position(*vertex, axis)? == target {
-            mask |= 1_u8 << index;
+    let mut target = dot_position(vertices[0], axis)?;
+    let mut mask = 1_u8;
+    for (index, vertex) in vertices[1..].iter().enumerate() {
+        let value = dot_position(*vertex, axis)?;
+        let bit = 1_u8 << (index + 1);
+        let ordering = value.cmp(&target);
+        let better = if maximum {
+            ordering == Ordering::Greater
+        } else {
+            ordering == Ordering::Less
+        };
+        if better {
+            target = value;
+            mask = bit;
+        } else if ordering == Ordering::Equal {
+            mask |= bit;
         }
     }
     if mask == 0 {
@@ -727,11 +848,11 @@ fn support_mask(
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::Ordering;
+    use std::{cmp::Ordering, hint::black_box, time::Instant};
 
     use super::{
         ObbAxisFeature3d, OrientedBox3d, OrientedBoxError3d, compare_squared_ratios,
-        obb_contact_seed, oriented_box_vertices, wide_product,
+        obb_contact_seed, oriented_box_vertices, projection, projection_wide_reference, wide_product,
     };
     use crate::{Orientation3d, Vec3i};
 
@@ -781,6 +902,71 @@ mod tests {
         assert_eq!(
             obb_contact_seed(cube(Vec3i::ZERO), cube(Vec3i::new(3, 0, 0))).expect("valid OBB pair"),
             None
+        );
+    }
+
+    #[test]
+    fn bounded_projection_matches_wide_reference() {
+        let orientation = Orientation3d::new(0, 0, 410_903_207, 992_008_094)
+            .normalized()
+            .expect("valid orientation");
+        let vertices = oriented_box_vertices(OrientedBox3d::new(
+            Vec3i::new(123, -456, 789),
+            Vec3i::new(17, 11, 7),
+            orientation,
+        ))
+        .expect("valid vertices");
+        for axis in [
+            [1_i128, 0, 0],
+            [3, -5, 7],
+            [1_234_567, -7_654_321, 3_456_789],
+            [i128::from(i64::MAX) + 1, 1, -1],
+        ] {
+            assert_eq!(
+                projection(&vertices, axis),
+                projection_wide_reference(&vertices, axis),
+                "bounded projection drifted for {axis:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "release-mode OBB projection fast-path benchmark"]
+    fn bounded_projection_benchmark() {
+        let orientation = Orientation3d::new(0, 0, 410_903_207, 992_008_094)
+            .normalized()
+            .expect("valid orientation");
+        let vertices = oriented_box_vertices(OrientedBox3d::new(
+            Vec3i::new(123, -456, 789),
+            Vec3i::new(17, 11, 7),
+            orientation,
+        ))
+        .expect("valid vertices");
+        let axis = [1_234_567_i128, -7_654_321, 3_456_789];
+        assert_eq!(
+            projection(&vertices, axis),
+            projection_wide_reference(&vertices, axis)
+        );
+        let iterations = 100_000_usize;
+
+        let fast_start = Instant::now();
+        let mut fast = (0_i128, 0_i128);
+        for _ in 0..iterations {
+            fast = black_box(projection(black_box(&vertices), black_box(axis)).unwrap());
+        }
+        let fast_elapsed = fast_start.elapsed();
+
+        let wide_start = Instant::now();
+        let mut wide = (0_i128, 0_i128);
+        for _ in 0..iterations {
+            wide = black_box(
+                projection_wide_reference(black_box(&vertices), black_box(axis)).unwrap(),
+            );
+        }
+        let wide_elapsed = wide_start.elapsed();
+        assert_eq!(fast, wide);
+        println!(
+            "OBB projection: iterations={iterations}, fast={fast_elapsed:?}, wide={wide_elapsed:?}"
         );
     }
 
