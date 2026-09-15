@@ -172,10 +172,8 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
-) -> Result<
-    (Option<RotatingContactSearchHit3d>, RecontactSearchWork3d),
-    RotatingContactSearchError3d,
-> {
+) -> Result<(Option<RotatingContactSearchHit3d>, RecontactSearchWork3d), RotatingContactSearchError3d>
+{
     validate_resolution(config)?;
     let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     let mut work = RecontactSearchWork3d {
@@ -196,12 +194,18 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
     let mut states = Vec::with_capacity(pairs.len());
 
     for pair in pairs {
-        let left_index = *by_id
-            .get(&pair.left)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
-        let right_index = *by_id
-            .get(&pair.right)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
+        let left_index =
+            *by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right_index =
+            *by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         let mut contacts = PairContactCache3d::default();
         let prepared_left =
             coarse_samples.prepare_geometry(left_index, boxes[left_index].oriented_box());
@@ -464,12 +468,16 @@ mod tests {
         boxes.push(fixed(36, Vec3i::new(-8, 0, 0)));
 
         let mut broad_phase = RotatingBroadPhase3d::default();
-        let (hit, work) = sampled_rotating_recontact_search_profiled(&boxes, config(64), &mut broad_phase)
-            .expect("ordered stress search");
+        let (hit, work) =
+            sampled_rotating_recontact_search_profiled(&boxes, config(64), &mut broad_phase)
+                .expect("ordered stress search");
         let hit = hit.expect("front-loaded fixture has a contact");
         assert_eq!(hit.pair.right, BodyId(36));
         assert_eq!(work.candidate_pairs, 35);
-        assert!(work.coarse_rows < 32, "global row bound should stop before half the grid: {work:?}");
+        assert!(
+            work.coarse_rows < 32,
+            "global row bound should stop before half the grid: {work:?}"
+        );
         assert!(
             work.coarse_pair_evaluations < work.candidate_pairs.saturating_mul(32),
             "sample-major traversal should stop all pairs together: {work:?}"
