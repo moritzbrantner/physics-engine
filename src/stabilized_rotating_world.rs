@@ -44,10 +44,13 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// conservatively, and any successful body removal invalidates sleep because world membership and contact
 /// topology changed.
 ///
-/// The requested frame is staged on a clone and committed only after the authoritative step, fixed-boundary
-/// stabilization, proxy restoration, and sleep-state update succeed. Failed frames therefore leave the
-/// public world unchanged. A zero timestep keeps the inner world's exact no-op contract and deliberately
-/// skips stabilization and sleep bookkeeping.
+/// Non-zero commands execute in place. Malformed timesteps still fail before mutation, and an inner-solver
+/// failure restores temporary sleeping proxies before returning. The facade deliberately no longer clones
+/// the complete world merely to provide frame-level rollback around later stabilization or sleep bookkeeping:
+/// if those later phases fail after the authoritative inner step committed, the successfully advanced
+/// physical state is retained and the error is reported. Whole-frame rollback is not part of the production
+/// command contract. A zero timestep keeps the inner world's exact no-op contract and deliberately skips
+/// stabilization and sleep bookkeeping.
 ///
 /// Multiple fixed boundaries can still constrain one body, so the position-only pass is independently
 /// bounded and fails closed if those fixed constraints cannot reach an idempotent state.
@@ -133,16 +136,21 @@ impl RotatingWorld3d {
 
         let sleep_time_increment =
             sleep_time_increment_q64(timestep_numerator, timestep_denominator);
-        let mut staged = self.clone();
-        staged.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
-        staged.freeze_sleeping_bodies()?;
-        let report = staged
-            .inner
-            .step(timestep_numerator, timestep_denominator)?;
-        staged.stabilize_fixed_boundaries()?;
-        staged.restore_sleeping_bodies()?;
-        staged.update_sleep_state(sleep_time_increment)?;
-        *self = staged;
+        self.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
+        self.freeze_sleeping_bodies()?;
+        let report = match self.inner.step(timestep_numerator, timestep_denominator) {
+            Ok(report) => report,
+            Err(error) => {
+                let _ = self.restore_sleeping_bodies();
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.stabilize_fixed_boundaries() {
+            let _ = self.restore_sleeping_bodies();
+            return Err(error);
+        }
+        self.restore_sleeping_bodies()?;
+        self.update_sleep_state(sleep_time_increment)?;
         Ok(report)
     }
 
