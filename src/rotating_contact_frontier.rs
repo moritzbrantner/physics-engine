@@ -115,9 +115,10 @@ impl From<OrientedBoxError3d> for RotatingContactFrontierError3d {
 ///
 /// [`crate::sampled_rotating_contact_search`] supplies the earliest admitted sampled contact fraction.
 /// Every body is then sampled directly from the original state at exactly that rational fraction. The
-/// frontier re-evaluates every conservative rotational broad-phase candidate in that shared state and
-/// retains all equal-time OBB contacts, so response consumes one deterministic contact set rather than
-/// independently sampled pairs in discovery order.
+/// frontier runs a conservative zero-time broad phase over that shared sampled state and exact-filters
+/// every candidate with OBB geometry, retaining all equal-time contacts. Response therefore consumes one
+/// deterministic contact set rather than independently sampled pairs in discovery order, without repeating
+/// full-interval rotational sweep-bound work after the event time is already known.
 ///
 /// The original earliest hit must still exist with identical contact evidence in the reconstructed state;
 /// drift fails closed. This remains **sampled rotational collision handling, not analytic rotational CCD**:
@@ -228,7 +229,8 @@ fn reconstruct_frontier(
         .enumerate()
         .map(|(index, rigid_box)| (rigid_box.body().id(), index))
         .collect::<BTreeMap<_, _>>();
-    let candidates = broad_phase.candidate_pairs(boxes, config.free_flight)?;
+    let current = crate::RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+    let candidates = broad_phase.candidate_pairs(&sampled, current)?;
     let mut contacts = Vec::new();
 
     for pair in candidates {
