@@ -100,10 +100,22 @@ struct AxisSeed {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ProjectionEvidence {
+    minimum: i128,
+    maximum: i128,
+    minimum_mask: u8,
+    maximum_mask: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EvaluatedAxis {
     seed: AxisSeed,
     overlap: u128,
     length_squared: u128,
+    left_minimum_mask: u8,
+    left_maximum_mask: u8,
+    right_minimum_mask: u8,
+    right_maximum_mask: u8,
 }
 
 /// Returns the eight quantized world-space vertices of an oriented box in stable local-corner order.
@@ -228,14 +240,16 @@ pub(crate) fn obb_contact_seed_prepared(
     let mut best: Option<EvaluatedAxis> = None;
     let mut minimum_axis_ties = 0_u8;
     for seed in candidate_axes.iter().copied() {
-        let left_projection = projection(&left_vertices, seed.axis)?;
-        let right_projection = projection(&right_vertices, seed.axis)?;
-        if left_projection.1 < right_projection.0 || right_projection.1 < left_projection.0 {
+        let left_projection = projection_with_support(&left_vertices, seed.axis)?;
+        let right_projection = projection_with_support(&right_vertices, seed.axis)?;
+        if left_projection.maximum < right_projection.minimum
+            || right_projection.maximum < left_projection.minimum
+        {
             return Ok(None);
         }
 
-        let overlap_start = left_projection.0.max(right_projection.0);
-        let overlap_end = left_projection.1.min(right_projection.1);
+        let overlap_start = left_projection.minimum.max(right_projection.minimum);
+        let overlap_end = left_projection.maximum.min(right_projection.maximum);
         let overlap = u128::try_from(
             overlap_end
                 .checked_sub(overlap_start)
@@ -247,6 +261,10 @@ pub(crate) fn obb_contact_seed_prepared(
             seed,
             overlap,
             length_squared,
+            left_minimum_mask: left_projection.minimum_mask,
+            left_maximum_mask: left_projection.maximum_mask,
+            right_minimum_mask: right_projection.minimum_mask,
+            right_maximum_mask: right_projection.maximum_mask,
         };
 
         match best {
@@ -271,6 +289,11 @@ pub(crate) fn obb_contact_seed_prepared(
 
     let best = best.ok_or(OrientedBoxError3d::DegenerateGeometry)?;
     let contact_axis = orient_toward_right(left.shape.center, right.shape.center, best.seed.axis)?;
+    let (left_support_mask, right_support_mask) = if contact_axis == best.seed.axis {
+        (best.left_maximum_mask, best.right_minimum_mask)
+    } else {
+        (best.left_minimum_mask, best.right_maximum_mask)
+    };
     let tested_axes =
         u8::try_from(candidate_axes.len()).map_err(|_| OrientedBoxError3d::ArithmeticOverflow)?;
     Ok(Some(ObbContactSeed3d {
@@ -278,8 +301,8 @@ pub(crate) fn obb_contact_seed_prepared(
         overlap_numerator: best.overlap,
         axis_length_squared: best.length_squared,
         feature: best.seed.feature,
-        left_support_mask: support_mask(&left_vertices, contact_axis, true)?,
-        right_support_mask: support_mask(&right_vertices, contact_axis, false)?,
+        left_support_mask,
+        right_support_mask,
         tested_axes,
         minimum_axis_ties,
     }))
@@ -575,6 +598,49 @@ fn negate_axis(axis: [i128; 3]) -> Result<[i128; 3], OrientedBoxError3d> {
 }
 
 fn projection(vertices: &[Vec3i; 8], axis: [i128; 3]) -> Result<(i128, i128), OrientedBoxError3d> {
+    let evidence = projection_with_support(vertices, axis)?;
+    Ok((evidence.minimum, evidence.maximum))
+}
+
+fn projection_with_support(
+    vertices: &[Vec3i; 8],
+    axis: [i128; 3],
+) -> Result<ProjectionEvidence, OrientedBoxError3d> {
+    let first = dot_position(vertices[0], axis)?;
+    let mut evidence = ProjectionEvidence {
+        minimum: first,
+        maximum: first,
+        minimum_mask: 1,
+        maximum_mask: 1,
+    };
+    for (index, vertex) in vertices[1..].iter().enumerate() {
+        let value = dot_position(*vertex, axis)?;
+        let bit = 1_u8 << (index + 1);
+        match value.cmp(&evidence.minimum) {
+            Ordering::Less => {
+                evidence.minimum = value;
+                evidence.minimum_mask = bit;
+            }
+            Ordering::Equal => evidence.minimum_mask |= bit,
+            Ordering::Greater => {}
+        }
+        match value.cmp(&evidence.maximum) {
+            Ordering::Greater => {
+                evidence.maximum = value;
+                evidence.maximum_mask = bit;
+            }
+            Ordering::Equal => evidence.maximum_mask |= bit,
+            Ordering::Less => {}
+        }
+    }
+    Ok(evidence)
+}
+
+#[cfg(test)]
+fn projection_range_reference(
+    vertices: &[Vec3i; 8],
+    axis: [i128; 3],
+) -> Result<(i128, i128), OrientedBoxError3d> {
     let first = dot_position(vertices[0], axis)?;
     vertices[1..]
         .iter()
@@ -816,6 +882,7 @@ fn orient_toward_right(
     }
 }
 
+#[cfg(test)]
 fn support_mask(
     vertices: &[Vec3i; 8],
     axis: [i128; 3],
@@ -851,8 +918,8 @@ mod tests {
 
     use super::{
         ObbAxisFeature3d, OrientedBox3d, OrientedBoxError3d, compare_squared_ratios,
-        obb_contact_seed, oriented_box_vertices, projection, projection_wide_reference,
-        wide_product,
+        obb_contact_seed, oriented_box_vertices, projection, projection_range_reference,
+        projection_wide_reference, projection_with_support, support_mask, wide_product,
     };
     use crate::{Orientation3d, Vec3i};
 
@@ -906,6 +973,39 @@ mod tests {
     }
 
     #[test]
+    fn projection_support_masks_match_reference() {
+        let orientation = Orientation3d::new(0, 0, 410_903_207, 992_008_094)
+            .normalized()
+            .expect("valid orientation");
+        let vertices = oriented_box_vertices(OrientedBox3d::new(
+            Vec3i::new(123, -456, 789),
+            Vec3i::new(17, 11, 7),
+            orientation,
+        ))
+        .expect("valid vertices");
+        for axis in [
+            [1_i128, 0, 0],
+            [3, -5, 7],
+            [-3, 5, -7],
+            [1_234_567, -7_654_321, 3_456_789],
+        ] {
+            let evidence = projection_with_support(&vertices, axis).expect("projection evidence");
+            assert_eq!(
+                (evidence.minimum, evidence.maximum),
+                projection_range_reference(&vertices, axis).expect("reference projection")
+            );
+            assert_eq!(
+                evidence.minimum_mask,
+                support_mask(&vertices, axis, false).expect("minimum support")
+            );
+            assert_eq!(
+                evidence.maximum_mask,
+                support_mask(&vertices, axis, true).expect("maximum support")
+            );
+        }
+    }
+
+    #[test]
     fn bounded_projection_matches_wide_reference() {
         let orientation = Orientation3d::new(0, 0, 410_903_207, 992_008_094)
             .normalized()
@@ -928,6 +1028,53 @@ mod tests {
                 "bounded projection drifted for {axis:?}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "release-mode SAT support reuse benchmark"]
+    fn projection_support_reuse_benchmark() {
+        let orientation = Orientation3d::new(0, 0, 410_903_207, 992_008_094)
+            .normalized()
+            .expect("valid orientation");
+        let vertices = oriented_box_vertices(OrientedBox3d::new(
+            Vec3i::new(123, -456, 789),
+            Vec3i::new(17, 11, 7),
+            orientation,
+        ))
+        .expect("valid vertices");
+        let axis = [1_234_567_i128, -7_654_321, 3_456_789];
+        let reference_range = projection_range_reference(&vertices, axis).expect("range");
+        let reference_mask = support_mask(&vertices, axis, true).expect("support mask");
+        let evidence = projection_with_support(&vertices, axis).expect("projection evidence");
+        assert_eq!(reference_range, (evidence.minimum, evidence.maximum));
+        assert_eq!(reference_mask, evidence.maximum_mask);
+        let iterations = 100_000_usize;
+
+        let legacy_start = Instant::now();
+        let mut legacy = (0_i128, 0_i128, 0_u8);
+        for _ in 0..iterations {
+            let range = projection_range_reference(black_box(&vertices), black_box(axis)).unwrap();
+            let mask = support_mask(black_box(&vertices), black_box(axis), true).unwrap();
+            legacy = black_box((range.0, range.1, mask));
+        }
+        let legacy_elapsed = legacy_start.elapsed();
+
+        let reuse_start = Instant::now();
+        let mut reuse = (0_i128, 0_i128, 0_u8);
+        for _ in 0..iterations {
+            let evidence =
+                projection_with_support(black_box(&vertices), black_box(axis)).unwrap();
+            reuse = black_box((
+                evidence.minimum,
+                evidence.maximum,
+                evidence.maximum_mask,
+            ));
+        }
+        let reuse_elapsed = reuse_start.elapsed();
+        assert_eq!(legacy, reuse);
+        println!(
+            "SAT support reuse: iterations={iterations}, legacy={legacy_elapsed:?}, reuse={reuse_elapsed:?}"
+        );
     }
 
     #[test]
