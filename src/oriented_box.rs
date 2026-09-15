@@ -403,8 +403,7 @@ fn div_round_nearest(numerator: i128, denominator: i128) -> Result<i128, Oriente
     if denominator <= 0 {
         return Err(OrientedBoxError3d::ArithmeticOverflow);
     }
-    if let (Ok(numerator), Ok(denominator)) =
-        (i64::try_from(numerator), i64::try_from(denominator))
+    if let (Ok(numerator), Ok(denominator)) = (i64::try_from(numerator), i64::try_from(denominator))
     {
         let half = denominator / 2;
         let adjusted = if numerator >= 0 {
@@ -470,10 +469,7 @@ fn cross_component(
     left_b: i128,
     right_b: i128,
 ) -> Result<i128, OrientedBoxError3d> {
-    checked_sub(
-        checked_mul(left_a, right_a)?,
-        checked_mul(left_b, right_b)?,
-    )
+    checked_sub(checked_mul(left_a, right_a)?, checked_mul(left_b, right_b)?)
 }
 
 fn push_required_axis(
@@ -657,7 +653,10 @@ fn checked_dot_wide_reference(
 
 fn squared_length(axis: [i128; 3]) -> Result<u128, OrientedBoxError3d> {
     let components = axis.map(i128::unsigned_abs);
-    if components.iter().all(|component| *component <= u128::from(u64::MAX)) {
+    if components
+        .iter()
+        .all(|component| *component <= u128::from(u64::MAX))
+    {
         let mut sum = 0_u64;
         let mut bounded = true;
         for component in components {
@@ -852,7 +851,8 @@ mod tests {
 
     use super::{
         ObbAxisFeature3d, OrientedBox3d, OrientedBoxError3d, compare_squared_ratios,
-        obb_contact_seed, oriented_box_vertices, projection, projection_wide_reference, wide_product,
+        obb_contact_seed, oriented_box_vertices, projection, projection_wide_reference,
+        wide_product,
     };
     use crate::{Orientation3d, Vec3i};
 
