@@ -18,6 +18,12 @@ const { instance } = await WebAssembly.instantiate(bytes, {});
 const exports = instance.exports;
 const requiredFunctions = [
   "sandbox_reset_with_options",
+  "sandbox_reset_with_baking_options",
+  "sandbox_fixed_geometry_mode",
+  "sandbox_fixed_geometry_prepared_count",
+  "sandbox_fixed_geometry_total_preparations",
+  "sandbox_fixed_geometry_retained_bytes",
+  "sandbox_fixed_geometry_representation_version",
   "sandbox_refresh_render_snapshot",
   "sandbox_render_snapshot_len",
   "sandbox_render_snapshot_stride",
@@ -29,6 +35,30 @@ for (const name of requiredFunctions) {
 }
 if (!(exports.memory instanceof WebAssembly.Memory)) {
   throw new Error("WASM module does not export linear memory for the render snapshot");
+}
+
+if (exports.sandbox_reset_with_baking_options(0, 0, 0) !== 0) {
+  throw new Error("runtime fixed-geometry reference mode failed to initialize");
+}
+if (
+  exports.sandbox_fixed_geometry_mode() !== 0 ||
+  exports.sandbox_fixed_geometry_prepared_count() !== 0 ||
+  exports.sandbox_fixed_geometry_total_preparations() !== 0 ||
+  exports.sandbox_fixed_geometry_retained_bytes() !== 0
+) {
+  throw new Error("runtime fixed-geometry reference unexpectedly retained preparation");
+}
+if (exports.sandbox_reset_with_baking_options(0, 0, 1) !== 0) {
+  throw new Error("prepare-at-load fixed geometry mode failed to initialize");
+}
+if (
+  exports.sandbox_fixed_geometry_mode() !== 1 ||
+  exports.sandbox_fixed_geometry_prepared_count() !== 11 ||
+  exports.sandbox_fixed_geometry_total_preparations() !== 11 ||
+  exports.sandbox_fixed_geometry_retained_bytes() <= 0 ||
+  exports.sandbox_fixed_geometry_representation_version() !== 1
+) {
+  throw new Error("prepare-at-load fixed geometry evidence is invalid");
 }
 
 const pointer = exports.sandbox_refresh_render_snapshot();
