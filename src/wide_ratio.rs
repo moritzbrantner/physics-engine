@@ -125,20 +125,14 @@ impl ExactRatio {
         let fraction_denominator = denominator / fraction_divisor;
 
         if let Some((ratio_numerator, ratio_denominator)) = self.small_parts() {
-            let numerator_cross = greatest_common_divisor_u128(
-                ratio_denominator,
-                u128::from(fraction_numerator),
-            );
-            let denominator_cross = greatest_common_divisor_u128(
-                ratio_numerator,
-                u128::from(fraction_denominator),
-            );
+            let numerator_cross =
+                greatest_common_divisor_u128(ratio_denominator, u128::from(fraction_numerator));
+            let denominator_cross =
+                greatest_common_divisor_u128(ratio_numerator, u128::from(fraction_denominator));
             let reduced_ratio_numerator = ratio_numerator / denominator_cross;
             let reduced_ratio_denominator = ratio_denominator / numerator_cross;
-            let reduced_fraction_numerator =
-                u128::from(fraction_numerator) / numerator_cross;
-            let reduced_fraction_denominator =
-                u128::from(fraction_denominator) / denominator_cross;
+            let reduced_fraction_numerator = u128::from(fraction_numerator) / numerator_cross;
+            let reduced_fraction_denominator = u128::from(fraction_denominator) / denominator_cross;
 
             if let (Some(scaled_numerator), Some(scaled_denominator)) = (
                 checked_small_product(reduced_ratio_numerator, reduced_fraction_numerator),
@@ -668,7 +662,10 @@ mod tests {
         let iterations = 20_000_usize;
 
         for (ratio, value) in cases {
-            assert_eq!(ratio.mul_round_u128(value), ratio.mul_round_u128_wide(value));
+            assert_eq!(
+                ratio.mul_round_u128(value),
+                ratio.mul_round_u128_wide(value)
+            );
 
             let fast_start = Instant::now();
             let mut fast = 0_u128;
