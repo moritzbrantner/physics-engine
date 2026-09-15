@@ -380,13 +380,36 @@ fn rotate_with_matrix(
 }
 
 fn checked_mul(left: i128, right: i128) -> Result<i128, OrientedBoxError3d> {
-    if let (Ok(left), Ok(right)) = (i64::try_from(left), i64::try_from(right))
-        && let Some(product) = left.checked_mul(right)
-    {
-        return Ok(i128::from(product));
+    if let (Ok(left), Ok(right)) = (i64::try_from(left), i64::try_from(right)) {
+        return Ok(multiply_i64_to_i128(left, right));
     }
     left.checked_mul(right)
         .ok_or(OrientedBoxError3d::ArithmeticOverflow)
+}
+
+fn multiply_i64_to_i128(left: i64, right: i64) -> i128 {
+    let negative = (left < 0) ^ (right < 0);
+    let magnitude = multiply_u64_to_u128(left.unsigned_abs(), right.unsigned_abs());
+    let magnitude = i128::try_from(magnitude).expect("the product of two i64 values always fits i128");
+    if negative { -magnitude } else { magnitude }
+}
+
+fn multiply_u64_to_u128(left: u64, right: u64) -> u128 {
+    const LOW_MASK: u64 = u64::from(u32::MAX);
+    let left_low = left & LOW_MASK;
+    let left_high = left >> 32;
+    let right_low = right & LOW_MASK;
+    let right_high = right >> 32;
+
+    let low_low = left_low * right_low;
+    let low_high = left_low * right_high;
+    let high_low = left_high * right_low;
+    let high_high = left_high * right_high;
+
+    let middle = (low_low >> 32) + (low_high & LOW_MASK) + (high_low & LOW_MASK);
+    let low = (low_low & LOW_MASK) | ((middle & LOW_MASK) << 32);
+    let high = high_high + (low_high >> 32) + (high_low >> 32) + (middle >> 32);
+    (u128::from(high) << 64) | u128::from(low)
 }
 
 fn checked_add(left: i128, right: i128) -> Result<i128, OrientedBoxError3d> {
@@ -851,8 +874,8 @@ mod tests {
 
     use super::{
         ObbAxisFeature3d, OrientedBox3d, OrientedBoxError3d, compare_squared_ratios,
-        obb_contact_seed, oriented_box_vertices, projection, projection_wide_reference,
-        wide_product,
+        multiply_i64_to_i128, obb_contact_seed, oriented_box_vertices, projection,
+        projection_wide_reference, wide_product,
     };
     use crate::{Orientation3d, Vec3i};
 
@@ -903,6 +926,30 @@ mod tests {
             obb_contact_seed(cube(Vec3i::ZERO), cube(Vec3i::new(3, 0, 0))).expect("valid OBB pair"),
             None
         );
+    }
+
+    #[test]
+    fn native_i64_product_matches_i128_reference() {
+        let values = [
+            i64::MIN,
+            i64::MIN + 1,
+            -(1_i64 << 40),
+            -1,
+            0,
+            1,
+            1_i64 << 40,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        for left in values {
+            for right in values {
+                assert_eq!(
+                    multiply_i64_to_i128(left, right),
+                    i128::from(left) * i128::from(right),
+                    "native exact multiply drifted for {left} * {right}"
+                );
+            }
+        }
     }
 
     #[test]
