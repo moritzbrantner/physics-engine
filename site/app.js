@@ -23,18 +23,22 @@ const RENDER_SNAPSHOT_STRIDE = 11;
 const keys = new Set();
 const characterModeControl = document.querySelector("#character-mode");
 const uprightCratesControl = document.querySelector("#upright-crates");
+const fixedGeometryControl = document.querySelector("#fixed-geometry-mode");
 const characterParameters = new URLSearchParams(window.location.search);
 characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
 uprightCratesControl.checked = characterParameters.get("crates") !== "free";
+fixedGeometryControl.value = characterParameters.get("bake") === "load" ? "1" : "0";
 function resetInteractionOptions() {
   const url = new URL(window.location.href);
   url.searchParams.set("character", characterModeControl.value === "0" ? "physical" : "linear");
   url.searchParams.set("crates", uprightCratesControl.checked ? "upright" : "free");
+  url.searchParams.set("bake", fixedGeometryControl.value === "1" ? "load" : "runtime");
   window.history.replaceState(null, "", url);
   if (engine) reset();
 }
 characterModeControl.addEventListener("change", resetInteractionOptions);
 uprightCratesControl.addEventListener("change", resetInteractionOptions);
+fixedGeometryControl.addEventListener("change", resetInteractionOptions);
 
 let engine = null;
 let renderer = null;
@@ -101,8 +105,14 @@ async function createRenderer() {
 }
 
 function reset() {
-  if (engine.sandbox_reset_with_options(Number(characterModeControl.value), Number(uprightCratesControl.checked)) !== 0) {
-    throw new Error("Unable to initialize the selected character contact mode");
+  if (
+    engine.sandbox_reset_with_baking_options(
+      Number(characterModeControl.value),
+      Number(uprightCratesControl.checked),
+      Number(fixedGeometryControl.value),
+    ) !== 0
+  ) {
+    throw new Error("Unable to initialize the selected physics comparison options");
   }
   yaw = 0;
   pitch = 0;
@@ -378,7 +388,11 @@ function render() {
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
   const sleep = quiescent ? " · asleep" : "";
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const fixedGeometry =
+    engine.sandbox_fixed_geometry_mode() === 1
+      ? ` · fixed prepared ${engine.sandbox_fixed_geometry_prepared_count()} (${engine.sandbox_fixed_geometry_retained_bytes()} B)`
+      : " · fixed runtime";
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
 }
 
@@ -462,9 +476,10 @@ document.addEventListener("mousemove", (event) => {
 });
 
 document.addEventListener("pointerlockchange", () => {
-  status.textContent = document.pointerLockElement === canvas
-    ? `Mouse captured. Press Esc to release it. Rendering with ${renderer.backend}.`
-    : `Mouse free. Click the world to capture it, or drag / use arrow keys to look. Rendering with ${renderer.backend}.`;
+  status.textContent =
+    document.pointerLockElement === canvas
+      ? `Mouse captured. Press Esc to release it. Rendering with ${renderer.backend}.`
+      : `Mouse free. Click the world to capture it, or drag / use arrow keys to look. Rendering with ${renderer.backend}.`;
   renderDirty = true;
 });
 
@@ -507,9 +522,17 @@ try {
   if (typeof engine.sandbox_step_velocity !== "function") {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
+  if (
+    typeof engine.sandbox_reset_with_baking_options !== "function" ||
+    typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
+    typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
+  ) {
+    throw new Error("WASM sandbox does not expose fixed geometry comparison controls");
+  }
   ensureCrosshair();
   characterModeControl.disabled = false;
   uprightCratesControl.disabled = false;
+  fixedGeometryControl.disabled = false;
   reset();
   requestAnimationFrame(frame);
 } catch (error) {
