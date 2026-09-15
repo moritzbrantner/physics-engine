@@ -132,7 +132,7 @@ impl ScenarioRules {
 }
 
 std::thread_local! {
-    static CURRENT_RULES: Cell<ScenarioRules> = Cell::new(ScenarioRules::all(false, false));
+    static CURRENT_RULES: Cell<ScenarioRules> = const { Cell::new(ScenarioRules::all(false, false)) };
 }
 
 pub(crate) fn reset_default() {

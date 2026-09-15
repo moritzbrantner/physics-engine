@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    BodyId, BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
-    RotationalSweepBounds3d, rigid_box_free_flight_sweep_bounds,
+    BodyId, BodyKind, CollisionLayers3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RigidBoxFreeFlightError3d, RotationalSweepBounds3d, rigid_box_free_flight_sweep_bounds,
 };
 
 #[path = "rotating_broad_phase_tree.rs"]
@@ -63,6 +63,7 @@ impl From<RigidBoxFreeFlightError3d> for RotatingBroadPhaseError3d {
 struct BoundedBody3d {
     id: BodyId,
     kind: BodyKind,
+    collision_layers: CollisionLayers3d,
     bounds: RotationalSweepBounds3d,
 }
 
@@ -135,10 +136,6 @@ impl RotatingBroadPhase3d {
         }
 
         let exact = &self.exact;
-        let collision_layers = boxes
-            .iter()
-            .map(|rigid_box| (rigid_box.body().id(), rigid_box.collision_layers()))
-            .collect::<BTreeMap<_, _>>();
         let mut pairs = Vec::new();
         self.tree.for_each_candidate_pair(|left, right| {
             let left_body = exact
@@ -147,16 +144,10 @@ impl RotatingBroadPhase3d {
             let right_body = exact
                 .get(&right)
                 .expect("indexed broad phase keeps every leaf exact bound");
-            let left_layers = collision_layers
-                .get(&left)
-                .copied()
-                .expect("indexed broad phase keeps every left collision layer");
-            let right_layers = collision_layers
-                .get(&right)
-                .copied()
-                .expect("indexed broad phase keeps every right collision layer");
             if bounds_overlap(left_body.bounds, right_body.bounds)
-                && left_layers.collides_with(right_layers)
+                && left_body
+                    .collision_layers
+                    .collides_with(right_body.collision_layers)
             {
                 pairs.push(RotationalSweepPair3d { left, right });
             }
@@ -232,6 +223,7 @@ fn bounded_bodies(
         bounded.push(BoundedBody3d {
             id,
             kind: rigid_box.body().kind(),
+            collision_layers: rigid_box.collision_layers(),
             bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,
         });
     }
@@ -351,6 +343,7 @@ mod tests {
             .map(|rigid_box| BoundedBody3d {
                 id: rigid_box.body().id(),
                 kind: rigid_box.body().kind(),
+                collision_layers: rigid_box.collision_layers(),
                 bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)
                     .expect("valid brute-force sweep bounds"),
             })
@@ -698,6 +691,7 @@ mod tests {
                 BoundedBody3d {
                     id: BodyId(id + 1),
                     kind: BodyKind::Dynamic,
+                    collision_layers: crate::CollisionLayers3d::ALL,
                     bounds: RotationalSweepBounds3d {
                         minimum: [coordinate, 0, 0],
                         maximum: [coordinate + 2, 2, 2],
