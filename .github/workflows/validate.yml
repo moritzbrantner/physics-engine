@@ -21,10 +21,6 @@ jobs:
       - name: Prepare Rust toolchain
         run: rustc --version && cargo --version
 
-      - name: Diagnose alternating history sequence
-        continue-on-error: true
-        run: cargo test --locked --test repeated_history_diagnostic -- --nocapture
-
       - name: Run deterministic fast tier
         uses: moritzbrantner/coding-tooling@20afb614772346991b3e7ac60b5857ecab5472e3
         with:
