@@ -110,6 +110,11 @@ impl RotatingWorld3d {
             .saturating_add(self.active.sleeping_body_count())
     }
 
+    #[must_use]
+    pub(crate) fn is_quiescent(&self) -> bool {
+        self.active_dynamic_count == 0
+    }
+
     pub fn set_linear_velocity(
         &mut self,
         id: BodyId,
