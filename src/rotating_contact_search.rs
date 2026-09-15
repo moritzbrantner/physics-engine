@@ -6,8 +6,8 @@ use crate::{
 };
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotationalSweepPair3d,
-    SampledContactTime3d as _, obb_contact_seed, sample_rigid_box_free_flight,
+    RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotationalSweepPair3d, obb_contact_seed,
+    sample_rigid_box_free_flight,
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
