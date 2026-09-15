@@ -10,7 +10,13 @@ const trials = Number(process.env.TRIALS ?? 1);
 if (!Number.isInteger(trials) || trials < 1 || trials > 10) {
   throw new Error("TRIALS must be an integer from 1 through 10");
 }
-const names = ["settled-idle", "walking-no-shots", "three-shots-idle", "three-shots-walking"];
+const names = [
+  "settled-idle",
+  "walking-no-shots",
+  "three-shots-idle",
+  "three-shots-walking",
+  "six-shots-idle",
+];
 const cases = process.env.CASE ? names.filter((name) => name === process.env.CASE) : names;
 if (cases.length === 0) throw new Error("unknown CASE");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -28,6 +34,11 @@ function stats(values) {
 function sumKnown(values, key) {
   const known = values.map((value) => value[key]).filter((value) => Number.isInteger(value));
   return known.length === values.length ? known.reduce((sum, value) => sum + value, 0) : null;
+}
+function shotTicks(name) {
+  if (name === "six-shots-idle") return [0, 30, 60, 90, 120, 150];
+  if (name.startsWith("three-shots-")) return [0, 40, 80];
+  return [];
 }
 async function measure(path) {
   const bytes = readFileSync(path);
@@ -71,9 +82,13 @@ async function measure(path) {
       const events = [];
       const work = [];
       const trace = createHash("sha256");
+      const shots = shotTicks(name);
       for (let tick = 0; tick < 180; tick += 1) {
-        if (name.startsWith("three-") && [0, 40, 80].includes(tick)) {
-          if (engine.sandbox_shoot(tick === 40 ? -38 : 38, tick === 80 ? -7 : 0, -88) < 0) {
+        const shotIndex = shots.indexOf(tick);
+        if (shotIndex >= 0) {
+          const projectileX = shotIndex % 2 === 0 ? 38 : -38;
+          const projectileY = shotIndex % 3 === 2 ? -7 : 0;
+          if (engine.sandbox_shoot(projectileX, projectileY, -88) < 0) {
             throw new Error("projectile creation failed");
           }
         }
@@ -129,8 +144,8 @@ async function measure(path) {
   return result;
 }
 const result = {
-  workload: "sandbox-projectiles-v2",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v2 adds optional per-step persistent-tail diagnostics without changing the replay fingerprint.",
+  workload: "sandbox-projectiles-v3",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v3 adds a deterministic six-projectile scaling case while retaining per-step sampled/tail work and replay evidence.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
