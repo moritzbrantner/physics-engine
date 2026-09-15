@@ -51,6 +51,10 @@ if grep -Eq '(^|/)(stabilized_rotating_world\.rs)$' <<<"$changed"; then
   run_library_module stabilized_rotating_world
 fi
 
+if grep -Eq '(^|/)(wide_ratio\.rs)$' <<<"$changed"; then
+  run_library_module wide_ratio
+fi
+
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
   run_library_module rotating_broad_phase
 fi
