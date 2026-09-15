@@ -57,7 +57,7 @@ pub use collision::{
 pub use ecs_world::EcsRotatingWorld3d as RotatingWorld3d;
 pub use fixed_geometry::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
-    FixedGeometryPreparationStats3d, obb_contact_seed,
+    FixedGeometryPreparationStats3d, obb_contact_seed, rigid_box_free_flight_sweep_bounds,
 };
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
@@ -72,8 +72,7 @@ pub use repeated_rotating_events::{
 };
 pub use rigid_box::{ContactMode3d, RigidBox3d, RigidBoxError3d};
 pub use rigid_box_free_flight::{
-    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, rigid_box_free_flight_sweep_bounds,
-    sample_rigid_box_free_flight,
+    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, sample_rigid_box_free_flight,
 };
 pub use rotating_broad_phase::{
     RotatingBroadPhaseError3d, RotationalSweepPair3d, rotational_sweep_candidate_pairs,
