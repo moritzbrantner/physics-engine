@@ -121,12 +121,12 @@ impl PairContactCache3d {
 /// already touching at the interval start is not reported again merely because it remains touching.
 /// Such a pair becomes eligible only after the configured coarse grid observes it clear and then later
 /// observes contact again. Pairs that start clear retain the ordinary clear-to-contact search behavior.
-/// Projection/contact history suppresses an interval-start gap until that history is proven stale. A
-/// strictly-positive coarse clear releases history at or before the selected frontier. In addition, an
-/// already-clear historical pair that shares a body with the selected frontier is released when it remains
-/// clear at that exact frontier before response can change the shared body's motion. That narrow handoff
-/// preserves first-cell recontacts caused by another collision without treating response projection itself
-/// as clearance and reviving clear/re-contact churn.
+/// Persistent contact history suppresses an interval-start gap until the configured positive coarse grid
+/// actually observes clearance. Repeated-event stepping separately tracks which historical gaps came from
+/// response projection and releases only genuinely stale non-projection history before a shared-body
+/// frontier changes motion. Keeping that provenance policy outside this sampled search lets this function
+/// retain its bounded clear/contact contract while still preventing history from hiding the next segment's
+/// first-cell collision.
 /// Coarse free-flight samples and prepared SAT geometry are cached by body and exact grid fraction.
 /// Preparation is also reused when a body's full quantized shape is unchanged between samples. The
 /// coarse cache is bounded; at capacity, uncached canonical sampling remains the fallback. One additional
@@ -221,52 +221,6 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
     for (pair, clear_time) in observed_clears {
         if best.is_none_or(|hit| compare_times(clear_time, hit.time) != Ordering::Greater) {
             persistent_pairs.remove(&pair);
-        }
-    }
-
-    // A selected positive frontier can make old history stale when its response is about to change a
-    // shared body's motion. Release only history that was already geometrically clear at this interval
-    // start and is still clear at the exact selected frontier. A pair that started touching, or that only
-    // became clear during this interval, keeps history so response projection cannot manufacture immediate
-    // first-cell clear/re-contact churn. The next segment can then use ordinary start-clear search for a
-    // genuinely separated old pair whose shared body has just received a new response.
-    if let Some(hit) = best {
-        let selected_pair = hit.pair;
-        let history = persistent_pairs.iter().copied().collect::<Vec<_>>();
-        for pair in history {
-            let shares_body = pair.left == selected_pair.left
-                || pair.left == selected_pair.right
-                || pair.right == selected_pair.left
-                || pair.right == selected_pair.right;
-            if !shares_body {
-                continue;
-            }
-            let left = by_id.get(&pair.left).copied().ok_or(
-                RotatingContactSearchError3d::MissingCandidateBody(pair.left),
-            )?;
-            let right = by_id.get(&pair.right).copied().ok_or(
-                RotatingContactSearchError3d::MissingCandidateBody(pair.right),
-            )?;
-            let current_left = coarse_samples.prepare_geometry(pair.left, left.oriented_box());
-            let current_right = coarse_samples.prepare_geometry(pair.right, right.oriented_box());
-            if obb_contact_seed_prepared(&current_left, &current_right)?.is_some() {
-                continue;
-            }
-            let sampled_left = coarse_samples.sample_geometry(
-                left,
-                config,
-                hit.time.numerator,
-                hit.time.denominator,
-            )?;
-            let sampled_right = coarse_samples.sample_geometry(
-                right,
-                config,
-                hit.time.numerator,
-                hit.time.denominator,
-            )?;
-            if obb_contact_seed_prepared(&sampled_left, &sampled_right)?.is_none() {
-                persistent_pairs.remove(&pair);
-            }
         }
     }
 
@@ -589,46 +543,6 @@ mod tests {
             }
         );
         assert!(!persistent_pairs.contains(&historical));
-    }
-
-    #[test]
-    fn shared_body_frontier_releases_already_clear_history_before_response() {
-        let historical = RotationalSweepPair3d {
-            left: BodyId(1),
-            right: BodyId(2),
-        };
-        let selector = RotationalSweepPair3d {
-            left: BodyId(1),
-            right: BodyId(3),
-        };
-        let boxes = [
-            dynamic(1, Vec3i::new(3, 0, 0), Vec3i::new(8, 0, 0)),
-            fixed(2, Vec3i::ZERO),
-            fixed(3, Vec3i::new(6, 0, 0)),
-        ];
-        let mut persistent_pairs = BTreeSet::from([historical]);
-        let mut broad_phase = RotatingBroadPhase3d::default();
-        let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
-            &boxes,
-            config(Vec3i::ZERO, 8, 1),
-            &mut persistent_pairs,
-            &mut broad_phase,
-        )
-        .expect("valid history-aware recontact search")
-        .expect("shared body should reach the other wall");
-
-        assert_eq!(hit.pair, selector);
-        assert_eq!(
-            hit.time,
-            SampledContactTime3d {
-                numerator: 1,
-                denominator: 16,
-            }
-        );
-        assert!(
-            !persistent_pairs.contains(&historical),
-            "history already clear before the shared-body response must not hide the next-segment impact"
-        );
     }
 
     #[test]
