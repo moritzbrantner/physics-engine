@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, Vec3i,
+    RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
 
 mod controller;
@@ -28,6 +28,7 @@ struct Sandbox {
     projectile_ids: Vec<BodyId>,
     last_rotating_events: usize,
     last_tail_contacts: usize,
+    last_step_stats: RotatingWorldStepStats3d,
     total_collisions: u32,
     error_code: i32,
     error_detail: i32,
@@ -35,6 +36,15 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Result<Self, RotatingWorldError3d> {
+        Self::with_character_mode(false)
+    }
+
+    fn with_character_mode(linear_push: bool) -> Result<Self, RotatingWorldError3d> {
+        Self::with_options(linear_push, false)
+    }
+
+    fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
             sample_count: 32,
@@ -65,18 +75,21 @@ impl Sandbox {
             )))?;
         }
 
-        world.add_box(
-            rotating_box(
-                RigidBody::dynamic(
-                    PLAYER_ID,
-                    Vec3i::new(0, 38, 320),
-                    Vec3i::ZERO,
-                    Vec3i::new(12, 20, 12),
-                )
-                .with_mass(4),
+        let player = rotating_box(
+            RigidBody::dynamic(
+                PLAYER_ID,
+                Vec3i::new(0, 38, 320),
+                Vec3i::ZERO,
+                Vec3i::new(12, 20, 12),
             )
-            .with_rotation_locked(),
-        )?;
+            .with_mass(4),
+        )
+        .with_rotation_locked();
+        world.add_box(if linear_push {
+            player.with_linear_push(Vec3i::new(0, -1, 0))
+        } else {
+            player
+        })?;
 
         let crate_positions = [
             Vec3i::new(-75, 18, 135),
@@ -87,7 +100,7 @@ impl Sandbox {
             Vec3i::new(0, 18, -70),
         ];
         for (offset, position) in crate_positions.into_iter().enumerate() {
-            world.add_box(rotating_box(
+            let crate_body = rotating_box(
                 RigidBody::dynamic(
                     BodyId(100 + offset as u64),
                     position,
@@ -98,7 +111,12 @@ impl Sandbox {
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
-            ))?;
+            );
+            world.add_box(if upright_crates {
+                crate_body.with_rotation_locked()
+            } else {
+                crate_body
+            })?;
         }
 
         Ok(Self {
@@ -107,6 +125,7 @@ impl Sandbox {
             projectile_ids: Vec::new(),
             last_rotating_events: 0,
             last_tail_contacts: 0,
+            last_step_stats: RotatingWorldStepStats3d::default(),
             total_collisions: 0,
             error_code: 0,
             error_detail: 0,
@@ -140,6 +159,7 @@ impl Sandbox {
         if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
+            self.last_step_stats = RotatingWorldStepStats3d::default();
             return 0;
         }
 
@@ -177,8 +197,9 @@ impl Sandbox {
             }
         };
 
-        self.last_rotating_events = report.stats.sampled_events;
-        self.last_tail_contacts = report.stats.tail_contacts;
+        self.last_step_stats = report.stats;
+        self.last_rotating_events = self.last_step_stats.sampled_events;
+        self.last_tail_contacts = self.last_step_stats.tail_contacts;
         let collisions = self
             .last_rotating_events
             .saturating_add(self.last_tail_contacts);
@@ -221,10 +242,13 @@ impl Sandbox {
 
         if self
             .world
-            .add_box(rotating_box(
-                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                    .with_material(Material::new(350)),
-            ))
+            .add_box(
+                rotating_box(
+                    RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_material(Material::new(350)),
+                )
+                .with_collision_layers(controller::scenario_rules::projectile_layers()),
+            )
             .is_err()
         {
             self.error_code = 5;
@@ -313,6 +337,10 @@ fn role_for(id: BodyId) -> i32 {
     }
 }
 
+fn saturating_u32(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 std::thread_local! {
     static SANDBOX: RefCell<Sandbox> = RefCell::new(
         Sandbox::new().expect("the built-in physics sandbox must be valid")
@@ -332,6 +360,33 @@ pub extern "C" fn sandbox_reset() {
     with_sandbox_mut(|sandbox| {
         *sandbox = Sandbox::new().expect("the built-in physics sandbox must be valid");
     });
+}
+
+/// Explicit comparison mode: 0 = legacy physical interactions, 1 = linear pushing / passive support.
+/// Invalid modes leave the current sandbox untouched. Legacy reset retains the original benchmark.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_character_mode(mode: i32) -> i32 {
+    if mode != 0 && mode != 1 {
+        return -1;
+    }
+    let Ok(replacement) = Sandbox::with_character_mode(mode == 1) else {
+        return -2;
+    };
+    with_sandbox_mut(|sandbox| *sandbox = replacement);
+    0
+}
+
+/// Independent comparison axes. Invalid options do not mutate the current scene.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_options(character_mode: i32, upright_crates: i32) -> i32 {
+    if !(0..=1).contains(&character_mode) || !(0..=1).contains(&upright_crates) {
+        return -1;
+    }
+    let Ok(replacement) = Sandbox::with_options(character_mode == 1, upright_crates == 1) else {
+        return -2;
+    };
+    with_sandbox_mut(|sandbox| *sandbox = replacement);
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -456,6 +511,63 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
         )
         .unwrap_or(u32::MAX)
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_sampled_events() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.sampled_events).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_contacts() -> u32 {
+    with_sandbox(|sandbox| u32::try_from(sandbox.last_step_stats.tail_contacts).unwrap_or(u32::MAX))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_slices() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_slices))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_replays() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_replays))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_candidate_pairs() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_candidate_pairs))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_broad_phase_rebuilds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_broad_phase_rebuilds))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_broad_phase_reuses() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_broad_phase_reuses))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_rebuilds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_rebuilds))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_reuses() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_reuses))
 }
 
 #[unsafe(no_mangle)]
@@ -695,3 +807,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "character_interaction_tests.rs"]
+mod character_interaction_tests;

@@ -568,6 +568,7 @@ mod tests {
         BoundedBody3d {
             id: BodyId(id),
             kind: BodyKind::Dynamic,
+            collision_layers: crate::CollisionLayers3d::ALL,
             bounds: RotationalSweepBounds3d {
                 minimum: [coordinate, 0, 0],
                 maximum: [coordinate + 2, 2, 2],

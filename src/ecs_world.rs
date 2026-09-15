@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
-    BodyId, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, Vec3i,
+    BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d, OrientedBox3d,
+    RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -54,6 +55,10 @@ impl<T> ComponentStore<T> {
 /// Component slots are reused in place during stepping, so the ECS boundary does not rebuild its storage
 /// every frame.
 ///
+/// Optional fixed-geometry preparation is also owned here, at the stable public scene boundary. Only fixed
+/// bodies inserted by the consumer are registered for preparation; temporary fixed proxies created internally
+/// for sleeping dynamics never cross this boundary and therefore can never become baked static geometry.
+///
 /// This is the default public `RotatingWorld3d` integration. Consumers that deliberately need the raw
 /// solver resource can use `PhysicsWorld3dKernel` instead.
 #[derive(Clone, Debug)]
@@ -61,6 +66,7 @@ pub struct EcsRotatingWorld3d {
     entities: BTreeSet<BodyId>,
     rigid_boxes: ComponentStore<RigidBox3d>,
     physics: PhysicsSystem3d,
+    fixed_geometry: FixedGeometryPreparationCache3d,
 }
 
 impl EcsRotatingWorld3d {
@@ -70,12 +76,29 @@ impl EcsRotatingWorld3d {
             entities: BTreeSet::new(),
             rigid_boxes: ComponentStore::default(),
             physics: PhysicsSystem3d::new(config),
+            fixed_geometry: FixedGeometryPreparationCache3d::default(),
         }
     }
 
     #[must_use]
     pub fn config(&self) -> RotatingWorldConfig3d {
         self.physics.config()
+    }
+
+    /// Switches between the existing runtime preparation path and retained prepare-at-load geometry.
+    ///
+    /// Enabling prepare-at-load immediately prepares every currently registered genuine fixed body. Later
+    /// fixed additions are prepared on insertion, and removals invalidate their retained preparation.
+    /// Dynamic bodies are never registered here, including bodies that the inner sleep system temporarily
+    /// presents as fixed proxies during a step.
+    pub fn set_fixed_geometry_preparation_mode(&mut self, mode: FixedGeometryPreparationMode3d) {
+        self.fixed_geometry
+            .set_mode(mode, self.rigid_boxes.values());
+    }
+
+    #[must_use]
+    pub fn fixed_geometry_preparation_stats(&self) -> FixedGeometryPreparationStats3d {
+        self.fixed_geometry.stats()
     }
 
     /// Adds one entity with its rotating rigid-body component.
@@ -85,6 +108,7 @@ impl EcsRotatingWorld3d {
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
         let entity = rigid_box.body().id();
         self.physics.add_box(rigid_box.clone())?;
+        self.fixed_geometry.register_fixed(&rigid_box);
         let inserted = self.entities.insert(entity);
         debug_assert!(inserted);
         let previous = self.rigid_boxes.insert(entity, rigid_box);
@@ -94,6 +118,7 @@ impl EcsRotatingWorld3d {
 
     pub fn remove_box(&mut self, entity: BodyId) -> Option<RigidBox3d> {
         let removed = self.physics.remove_box(entity)?;
+        self.fixed_geometry.unregister(entity);
         let was_alive = self.entities.remove(&entity);
         debug_assert!(was_alive);
         let component = self.rigid_boxes.remove(entity);
@@ -142,7 +167,7 @@ impl EcsRotatingWorld3d {
     }
 
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
-        self.physics.overlap_query(query)
+        self.with_prepared_fixed_geometry(|| self.physics.overlap_query(query))
     }
 
     /// Runs the physics system and writes authoritative results back to ECS components.
@@ -151,11 +176,16 @@ impl EcsRotatingWorld3d {
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
-        let report = self
-            .physics
-            .step(timestep_numerator, timestep_denominator)?;
+        let prepared = self.fixed_geometry.clone();
+        let report = with_fixed_geometry_context(&prepared, || {
+            self.physics.step(timestep_numerator, timestep_denominator)
+        })?;
         self.sync_all_from_physics();
         Ok(report)
+    }
+
+    pub(crate) fn with_prepared_fixed_geometry<R>(&self, callback: impl FnOnce() -> R) -> R {
+        with_fixed_geometry_context(&self.fixed_geometry, callback)
     }
 
     fn sync_entity_from_physics(&mut self, entity: BodyId) {
@@ -185,8 +215,8 @@ impl EcsRotatingWorld3d {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorldConfig3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, FixedGeometryPreparationMode3d, Orientation3d,
+        RigidBody, RigidBox3d, RotatingWorldConfig3d, Vec3i,
     };
 
     use super::EcsRotatingWorld3d;
@@ -207,6 +237,14 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid ECS physics component")
+    }
+
+    fn fixed(id: u64, position: Vec3i) -> RigidBox3d {
+        RigidBox3d::new(
+            RigidBody::fixed(BodyId(id), position, Vec3i::new(4, 1, 4)),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid fixed physics component")
     }
 
     #[test]
@@ -261,6 +299,35 @@ mod tests {
                 .body()
                 .velocity(),
             Vec3i::new(120, 0, 0)
+        );
+    }
+
+    #[test]
+    fn prepare_at_load_tracks_only_scene_fixed_bodies_and_invalidates_removal() {
+        let mut world = world();
+        world.add_box(fixed(1, Vec3i::ZERO)).expect("fixed floor");
+        world
+            .add_box(dynamic(2, Vec3i::new(0, 2, 0), Vec3i::ZERO))
+            .expect("dynamic crate");
+        world.set_fixed_geometry_preparation_mode(FixedGeometryPreparationMode3d::PrepareAtLoad);
+        let prepared = world.fixed_geometry_preparation_stats();
+        assert_eq!(prepared.prepared_body_count, 1);
+        assert_eq!(prepared.total_preparations, 1);
+
+        world.remove_box(BodyId(1)).expect("remove fixed floor");
+        assert_eq!(
+            world.fixed_geometry_preparation_stats().prepared_body_count,
+            0
+        );
+    }
+
+    #[test]
+    fn runtime_mode_retains_no_fixed_preparation() {
+        let mut world = world();
+        world.add_box(fixed(1, Vec3i::ZERO)).expect("fixed floor");
+        assert_eq!(
+            world.fixed_geometry_preparation_stats().prepared_body_count,
+            0
         );
     }
 }

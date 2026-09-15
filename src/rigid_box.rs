@@ -2,7 +2,61 @@ use std::{error::Error, fmt};
 
 use crate::{
     AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBody,
+    Vec3i,
 };
+
+/// Symmetric collision-layer membership and mask for one rotating body.
+///
+/// A pair is eligible only when each body's membership intersects the other body's mask. The default
+/// deliberately preserves the historical engine behavior by allowing every layer to interact with every
+/// other layer. Layers affect collision discovery only; they do not change material or response policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CollisionLayers3d {
+    memberships: u32,
+    mask: u32,
+}
+
+impl CollisionLayers3d {
+    pub const ALL: Self = Self::new(u32::MAX, u32::MAX);
+
+    #[must_use]
+    pub const fn new(memberships: u32, mask: u32) -> Self {
+        Self { memberships, mask }
+    }
+
+    #[must_use]
+    pub const fn memberships(self) -> u32 {
+        self.memberships
+    }
+
+    #[must_use]
+    pub const fn mask(self) -> u32 {
+        self.mask
+    }
+
+    #[must_use]
+    pub const fn collides_with(self, other: Self) -> bool {
+        self.memberships & other.mask != 0 && other.memberships & self.mask != 0
+    }
+}
+
+impl Default for CollisionLayers3d {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+/// Optional response policy for externally controlled bodies. Collision discovery is unchanged.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactMode3d {
+    #[default]
+    Physical,
+    /// Normal-only, inelastic linear pushing. Contacts opposing the supplied support direction
+    /// resolve this body against an unchanged support, without transferring landing load or torque.
+    /// Zero support direction disables one-way support. This is an actuator policy, not a claim of
+    /// momentum-conserving rigid-body dynamics. Two actuators use symmetric linear response.
+    LinearPush { support_direction: Vec3i },
+}
 
 /// Engine-native rotating cuboid state.
 ///
@@ -13,6 +67,8 @@ pub struct RigidBox3d {
     pub(crate) body: RigidBody,
     pub(crate) angular: AngularState3d,
     pub(crate) rotation_locked: bool,
+    pub(crate) contact_mode: ContactMode3d,
+    pub(crate) collision_layers: CollisionLayers3d,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +136,8 @@ impl RigidBox3d {
             body,
             angular,
             rotation_locked: false,
+            contact_mode: ContactMode3d::Physical,
+            collision_layers: CollisionLayers3d::default(),
         })
     }
 
@@ -93,6 +151,31 @@ impl RigidBox3d {
         self.rotation_locked = true;
         self.angular = AngularState3d::new(self.angular.orientation, AngularVelocity3d::default());
         self
+    }
+
+    /// Opts an externally controlled body into linear-only pushing and one-way support contacts.
+    /// Only contacts involving this body change; ordinary objects and projectiles retain rotation.
+    #[must_use]
+    pub fn with_linear_push(mut self, support_direction: Vec3i) -> Self {
+        self.contact_mode = ContactMode3d::LinearPush { support_direction };
+        self.with_rotation_locked()
+    }
+
+    /// Assigns collision-layer membership and the symmetric interaction mask used by collision discovery.
+    #[must_use]
+    pub const fn with_collision_layers(mut self, collision_layers: CollisionLayers3d) -> Self {
+        self.collision_layers = collision_layers;
+        self
+    }
+
+    #[must_use]
+    pub const fn contact_mode(&self) -> ContactMode3d {
+        self.contact_mode
+    }
+
+    #[must_use]
+    pub const fn collision_layers(&self) -> CollisionLayers3d {
+        self.collision_layers
     }
 
     #[must_use]
@@ -129,7 +212,7 @@ impl RigidBox3d {
 mod tests {
     use crate::{AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, Vec3i};
 
-    use super::{RigidBox3d, RigidBoxError3d};
+    use super::{CollisionLayers3d, RigidBox3d, RigidBoxError3d};
 
     #[test]
     fn constructor_preserves_engine_body_identity_and_geometry() {
@@ -149,6 +232,7 @@ mod tests {
         assert_eq!(rigid_box.oriented_box().center, body.position());
         assert_eq!(rigid_box.oriented_box().half_extents, body.half_extents());
         assert!(!rigid_box.rotation_locked());
+        assert_eq!(rigid_box.collision_layers(), CollisionLayers3d::ALL);
     }
 
     #[test]
@@ -171,6 +255,16 @@ mod tests {
         assert!(rigid_box.rotation_locked());
         assert_eq!(rigid_box.angular().orientation, Orientation3d::IDENTITY);
         assert!(rigid_box.angular().angular_velocity.is_zero());
+    }
+
+    #[test]
+    fn collision_layers_require_both_masks_to_accept_the_pair() {
+        let character = CollisionLayers3d::new(0b0010, 0b0100);
+        let crate_body = CollisionLayers3d::new(0b0100, 0b0010);
+        let projectile = CollisionLayers3d::new(0b1000, u32::MAX);
+
+        assert!(character.collides_with(crate_body));
+        assert!(!character.collides_with(projectile));
     }
 
     #[test]

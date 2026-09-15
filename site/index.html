@@ -31,6 +31,74 @@
           </div>
         </div>
 
+        <fieldset>
+          <legend>Simulation rules</legend>
+          <p>
+            These scenario rules are authoritative for interaction eligibility and response. Changing a rule
+            resets the scene so comparisons start from identical initial state.
+          </p>
+          <label for="character-response">Character response</label>
+          <select id="character-response" disabled>
+            <option value="linear">Constrained linear push · no induced rotation</option>
+            <option value="physical">Full physical impact</option>
+          </select>
+          <label for="crate-motion">Crate motion</label>
+          <select id="crate-motion" disabled>
+            <option value="free">Free rigid-body rotation</option>
+            <option value="upright">Translation only · keep upright</option>
+          </select>
+          <p>Projectiles always use full rigid-body response, including off-center torque.</p>
+          <table class="rules-table">
+            <thead><tr><th>Collision pair</th><th>Enabled</th></tr></thead>
+            <tbody>
+              <tr><td>World ↔ world</td><td><input type="checkbox" data-collision-pair="world-world" checked disabled></td></tr>
+              <tr><td>World ↔ character</td><td><input type="checkbox" data-collision-pair="world-character" checked disabled></td></tr>
+              <tr><td>World ↔ crate</td><td><input type="checkbox" data-collision-pair="world-crate" checked disabled></td></tr>
+              <tr><td>World ↔ projectile</td><td><input type="checkbox" data-collision-pair="world-projectile" checked disabled></td></tr>
+              <tr><td>Character ↔ character</td><td><input type="checkbox" data-collision-pair="character-character" checked disabled></td></tr>
+              <tr><td>Character ↔ crate</td><td><input type="checkbox" data-collision-pair="character-crate" checked disabled></td></tr>
+              <tr><td>Character ↔ projectile</td><td><input type="checkbox" data-collision-pair="character-projectile" checked disabled></td></tr>
+              <tr><td>Crate ↔ crate</td><td><input type="checkbox" data-collision-pair="crate-crate" checked disabled></td></tr>
+              <tr><td>Crate ↔ projectile</td><td><input type="checkbox" data-collision-pair="crate-projectile" checked disabled></td></tr>
+              <tr><td>Projectile ↔ projectile</td><td><input type="checkbox" data-collision-pair="projectile-projectile" checked disabled></td></tr>
+            </tbody>
+          </table>
+          <select id="character-mode" hidden disabled>
+            <option value="1">Linear</option>
+            <option value="0">Physical</option>
+          </select>
+          <input id="upright-crates" type="checkbox" hidden disabled>
+        </fieldset>
+        <fieldset>
+          <legend>Engine preparation</legend>
+          <label for="fixed-geometry-mode">Fixed collision geometry</label>
+          <select id="fixed-geometry-mode" disabled>
+            <option value="0">Runtime preparation · reference path</option>
+            <option value="1">Prepare fixed geometry at load</option>
+          </select>
+          <p>
+            Prepare-at-load reuses immutable fixed collision geometry only; it does not bake motion or
+            sleeping dynamic bodies. This is a performance/storage axis, not a gameplay rule.
+          </p>
+        </fieldset>
+        <fieldset>
+          <legend>Performance log</legend>
+          <p>
+            Capture a bounded local browser session with raw frame, rendering and physics-step timings,
+            scenario settings, engine revision and environment details. Nothing is uploaded automatically.
+          </p>
+          <div class="actions performance-log-actions">
+            <button id="start-performance-log" type="button" disabled>Start performance log</button>
+            <button id="download-performance-log" type="button" disabled>Stop and download JSON</button>
+          </div>
+          <p id="performance-log-status" class="status" aria-live="polite">
+            Start a log before reproducing a slowdown or frame spike.
+          </p>
+          <p class="privacy-note">
+            The export contains browser and hardware metadata for comparison. Review it before sharing if
+            those details are sensitive.
+          </p>
+        </fieldset>
         <div class="viewport-shell">
           <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>
           <div class="help" aria-hidden="true">WASD move · Space jump · Mouse / arrows look · Click / F shoot · R reset · P pause · N step</div>
@@ -76,6 +144,8 @@
  CCD · contacts · friction · inertia · sleeping</pre>
       </section>
     </main>
+    <script type="module" src="simulation-rules.mjs"></script>
+    <script type="module" src="interaction-controls.mjs"></script>
     <script type="module" src="app.js"></script>
   </body>
 </html>

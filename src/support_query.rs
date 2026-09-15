@@ -1,21 +1,23 @@
+use crate::current_contact_query::body_current_contacts;
 use crate::ecs_world::EcsRotatingWorld3d;
-use crate::{
-    BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,
-};
+use crate::{BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i};
 
 /// Returns whether `body` currently has a contact whose normal can oppose the supplied acceleration.
 ///
-/// Contact geometry remains engine-owned. The subject body is always evaluated as the left OBB, so the
-/// SAT axis points from the subject toward the other body. A support therefore requires a strictly positive
-/// dot product between that axis and the acceleration vector. Side-wall and ceiling contacts do not count as
-/// support under downward gravity, while floors and sufficiently upward-facing slopes do.
+/// Contact candidates are pruned through the engine's zero-time rotational broad phase and then exact-filtered
+/// by the shared OBB SAT query. The subject body is always evaluated as the left OBB, so the cached SAT axis
+/// points from the subject toward the other body. A support therefore requires a strictly positive dot product
+/// between that axis and the acceleration vector. Side-wall and ceiling contacts do not count as support under
+/// downward gravity, while floors and sufficiently upward-facing slopes do.
 ///
-/// This is a current-contact query; it does not predict future contact or apply impulses.
+/// This is a current-contact query; it does not predict future contact or apply impulses. When the world has
+/// opted into fixed-geometry preparation, the same exact query transparently reuses its retained genuine-fixed
+/// geometry.
 ///
 /// # Errors
 ///
-/// Returns [`RotatingWorldError3d`] if the body is missing, overlap/contact geometry is invalid, or the
-/// support-direction dot product overflows the deterministic integer contract.
+/// Returns [`RotatingWorldError3d`] if the body is missing, broad-phase/current OBB geometry is invalid, or
+/// the support-direction dot product overflows the deterministic integer contract.
 pub fn body_has_support(
     world: &EcsRotatingWorld3d,
     body: BodyId,
@@ -24,24 +26,15 @@ pub fn body_has_support(
     if acceleration == Vec3i::ZERO {
         return Ok(false);
     }
-    let subject = world
-        .box_by_id(body)
-        .ok_or(RotatingWorldError3d::MissingBody(body))?;
-    for other_id in world.overlap_query(subject.oriented_box())? {
-        if other_id == body {
-            continue;
+    world.with_prepared_fixed_geometry(|| {
+        let boxes = world.boxes().cloned().collect::<Vec<_>>();
+        for current in body_current_contacts(&boxes, body)? {
+            if checked_dot(acceleration, current.axis, body)? > 0 {
+                return Ok(true);
+            }
         }
-        let other = world
-            .box_by_id(other_id)
-            .ok_or(RotatingWorldError3d::MissingBody(other_id))?;
-        let Some(contact) = obb_contact_seed(subject.oriented_box(), other.oriented_box())? else {
-            continue;
-        };
-        if checked_dot(acceleration, contact.axis, body)? > 0 {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+        Ok(false)
+    })
 }
 
 fn checked_dot(vector: Vec3i, axis: [i128; 3], body: BodyId) -> Result<i128, RotatingWorldError3d> {
@@ -64,8 +57,8 @@ fn arithmetic_overflow(body: BodyId) -> RotatingWorldError3d {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, FixedGeometryPreparationMode3d, Orientation3d,
+        RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
     };
 
     use super::body_has_support;
@@ -107,6 +100,25 @@ mod tests {
 
         assert!(
             body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0)).expect("support query")
+        );
+    }
+
+    #[test]
+    fn prepared_floor_contact_matches_runtime_support() {
+        let mut runtime = world_with_subject();
+        runtime
+            .add_box(rotating(RigidBody::fixed(
+                BodyId(2),
+                Vec3i::ZERO,
+                Vec3i::new(5, 1, 5),
+            )))
+            .expect("runtime floor");
+        let mut prepared = runtime.clone();
+        prepared.set_fixed_geometry_preparation_mode(FixedGeometryPreparationMode3d::PrepareAtLoad);
+
+        assert_eq!(
+            body_has_support(&runtime, BodyId(1), Vec3i::new(0, -3_600, 0)),
+            body_has_support(&prepared, BodyId(1), Vec3i::new(0, -3_600, 0))
         );
     }
 
