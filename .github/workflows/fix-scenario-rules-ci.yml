@@ -1,0 +1,85 @@
+name: Fix scenario rules CI
+
+on:
+  push:
+    branches:
+      - feat/scenario-simulation-rules
+    paths:
+      - .github/workflows/fix-scenario-rules-ci.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: feat/scenario-simulation-rules
+          fetch-depth: 0
+
+      - name: Apply focused repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          scenario = Path("demo-wasm/src/scenario_rules.rs")
+          text = scenario.read_text()
+          old = "    static CURRENT_RULES: Cell<ScenarioRules> = Cell::new(ScenarioRules::all(false, false));"
+          new = "    static CURRENT_RULES: Cell<ScenarioRules> = const { Cell::new(ScenarioRules::all(false, false)) };"
+          assert text.count(old) == 1
+          scenario.write_text(text.replace(old, new, 1))
+
+          broad = Path("src/rotating_broad_phase.rs")
+          text = broad.read_text()
+
+          old = "    BodyId, BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,\n"
+          new = "    BodyId, BodyKind, CollisionLayers3d, RigidBox3d, RigidBoxFreeFlightConfig3d,\n    RigidBoxFreeFlightError3d,\n"
+          assert text.count(old) == 1
+          text = text.replace(old, new, 1)
+
+          old = "struct BoundedBody3d {\n    id: BodyId,\n    kind: BodyKind,\n    bounds: RotationalSweepBounds3d,\n}"
+          new = "struct BoundedBody3d {\n    id: BodyId,\n    kind: BodyKind,\n    collision_layers: CollisionLayers3d,\n    bounds: RotationalSweepBounds3d,\n}"
+          assert text.count(old) == 1
+          text = text.replace(old, new, 1)
+
+          old = "        let collision_layers = boxes\n            .iter()\n            .map(|rigid_box| (rigid_box.body().id(), rigid_box.collision_layers()))\n            .collect::<BTreeMap<_, _>>();\n"
+          assert text.count(old) == 1
+          text = text.replace(old, "", 1)
+
+          old = "            let left_layers = collision_layers\n                .get(&left)\n                .copied()\n                .expect(\"indexed broad phase keeps every left collision layer\");\n            let right_layers = collision_layers\n                .get(&right)\n                .copied()\n                .expect(\"indexed broad phase keeps every right collision layer\");\n            if bounds_overlap(left_body.bounds, right_body.bounds)\n                && left_layers.collides_with(right_layers)\n"
+          new = "            if bounds_overlap(left_body.bounds, right_body.bounds)\n                && left_body\n                    .collision_layers\n                    .collides_with(right_body.collision_layers)\n"
+          assert text.count(old) == 1
+          text = text.replace(old, new, 1)
+
+          old = "        bounded.push(BoundedBody3d {\n            id,\n            kind: rigid_box.body().kind(),\n            bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,\n        });"
+          new = "        bounded.push(BoundedBody3d {\n            id,\n            kind: rigid_box.body().kind(),\n            collision_layers: rigid_box.collision_layers(),\n            bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,\n        });"
+          assert text.count(old) == 1
+          broad.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Format
+        run: cargo fmt --all && cargo fmt --manifest-path demo-wasm/Cargo.toml
+
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- -D warnings && cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: Test engine
+        run: cargo test --locked
+
+      - name: Test Wasm adapter
+        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
+
+      - name: Validate Pages bundle
+        run: bash scripts/build-pages.sh
+
+      - name: Commit validated repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add demo-wasm/src/scenario_rules.rs src/rotating_broad_phase.rs
+          git commit -m "Fix scenario rules validation and allocation"
+          git push origin HEAD:feat/scenario-simulation-rules
