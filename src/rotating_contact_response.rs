@@ -1,8 +1,12 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     BodyId, ObbContactResponseError3d, RigidBox3d, RotatingContactFrontier3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, resolve_obb_contact,
+    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, resolve_obb_contact,
 };
 
 /// Deterministic result of resolving one sampled rotating-contact frontier.
@@ -188,6 +192,18 @@ pub fn resolve_rotating_contact_frontier(
     frontier: RotatingContactFrontier3d,
     solver_passes: u8,
 ) -> Result<RotatingContactResponse3d, RotatingContactResponseError3d> {
+    resolve_rotating_contact_frontier_with_inelastic_pairs(
+        frontier,
+        solver_passes,
+        &BTreeSet::new(),
+    )
+}
+
+pub(crate) fn resolve_rotating_contact_frontier_with_inelastic_pairs(
+    frontier: RotatingContactFrontier3d,
+    solver_passes: u8,
+    inelastic_pairs: &BTreeSet<RotationalSweepPair3d>,
+) -> Result<RotatingContactResponse3d, RotatingContactResponseError3d> {
     if solver_passes == 0 {
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
@@ -231,7 +247,7 @@ pub fn resolve_rotating_contact_frontier(
             let response = resolve_obb_contact(
                 snapshot[left_index].clone(),
                 snapshot[right_index].clone(),
-                pass == 0,
+                pass == 0 && !inelastic_pairs.contains(&contact.pair),
             )?;
             let Some(resolved_contact) = response.contact else {
                 continue;
