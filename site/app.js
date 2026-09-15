@@ -36,7 +36,7 @@ const fixedGeometryControl = document.querySelector("#fixed-geometry-mode");
 const characterParameters = new URLSearchParams(window.location.search);
 characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
 uprightCratesControl.checked = characterParameters.get("crates") !== "free";
-fixedGeometryControl.value = characterParameters.get("bake") === "load" ? "1" : "0";
+fixedGeometryControl.value = characterParameters.get("bake") === "runtime" ? "0" : "1";
 function resetInteractionOptions() {
   const url = new URL(window.location.href);
   url.searchParams.set("character", characterModeControl.value === "0" ? "physical" : "linear");
@@ -89,7 +89,7 @@ function performanceScenario() {
   return {
     character_response: query.get("character") ?? "linear",
     crate_motion: query.get("crates") ?? "upright",
-    fixed_geometry: query.get("bake") ?? "runtime",
+    fixed_geometry: query.get("bake") ?? "load",
     collision_pairs: query.get("collisions") ?? "all",
   };
 }
