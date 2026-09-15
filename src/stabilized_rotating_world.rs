@@ -4,7 +4,8 @@ use crate::{
     AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
     RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
-    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
+    obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
@@ -637,7 +638,8 @@ impl RotatingWorld3d {
         let mut converged = false;
         let mut any_changed = false;
         for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
-            let candidate_pairs = fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;
+            let candidate_pairs =
+                fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;
             if candidate_pairs.is_empty() {
                 converged = true;
                 break;
@@ -908,10 +910,7 @@ fn fixed_dynamic_pairs(
         .map(|(index, rigid_box)| (rigid_box.body.id, index))
         .collect::<BTreeMap<_, _>>();
     let candidates = broad_phase
-        .candidate_pairs(
-            boxes,
-            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
-        )
+        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
         .map_err(map_fixed_boundary_broad_phase_error)?;
     let mut pairs = Vec::with_capacity(candidates.len());
     for pair in candidates {
@@ -968,8 +967,7 @@ mod tests {
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorldConfig3d, Vec3i, obb_contact_seed,
-        rotating_broad_phase::RotatingBroadPhase3d,
+        RotatingWorldConfig3d, Vec3i, obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,
     };
 
     use super::{
