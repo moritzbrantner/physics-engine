@@ -43,11 +43,7 @@ fn dense_overlap(body_count: u64) -> Vec<RigidBox3d> {
 }
 
 fn config() -> RotatingContactSearchConfig3d {
-    RotatingContactSearchConfig3d::new(
-        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
-        16,
-        0,
-    )
+    RotatingContactSearchConfig3d::new(RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1), 16, 0)
 }
 
 fn measure(boxes: &[RigidBox3d], search: RotatingContactSearchConfig3d) -> Measurement {
