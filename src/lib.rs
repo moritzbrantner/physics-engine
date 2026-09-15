@@ -36,6 +36,8 @@ mod rigid_box_free_flight;
 mod rotating_broad_phase;
 mod rotating_contact_frontier;
 mod rotating_contact_response;
+// The pair-major implementation remains compiled as a deterministic test oracle for the ordered search.
+#[allow(dead_code)]
 mod rotating_contact_search;
 mod rotating_contact_search_ordered;
 #[cfg(test)]
