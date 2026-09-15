@@ -57,7 +57,24 @@ jobs:
           old = "        bounded.push(BoundedBody3d {\n            id,\n            kind: rigid_box.body().kind(),\n            bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,\n        });"
           new = "        bounded.push(BoundedBody3d {\n            id,\n            kind: rigid_box.body().kind(),\n            collision_layers: rigid_box.collision_layers(),\n            bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,\n        });"
           assert text.count(old) == 1
+          text = text.replace(old, new, 1)
+
+          old = "            .map(|rigid_box| BoundedBody3d {\n                id: rigid_box.body().id(),\n                kind: rigid_box.body().kind(),\n                bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)"
+          new = "            .map(|rigid_box| BoundedBody3d {\n                id: rigid_box.body().id(),\n                kind: rigid_box.body().kind(),\n                collision_layers: rigid_box.collision_layers(),\n                bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)"
+          assert text.count(old) == 1
+          text = text.replace(old, new, 1)
+
+          old = "                    id: BodyId(id + 1),\n                    kind: BodyKind::Dynamic,\n                    bounds: RotationalSweepBounds3d {"
+          new = "                    id: BodyId(id + 1),\n                    kind: BodyKind::Dynamic,\n                    collision_layers: crate::CollisionLayers3d::ALL,\n                    bounds: RotationalSweepBounds3d {"
+          assert text.count(old) == 1
           broad.write_text(text.replace(old, new, 1))
+
+          tree = Path("src/rotating_broad_phase_tree.rs")
+          text = tree.read_text()
+          old = "            id: BodyId(id),\n            kind: BodyKind::Dynamic,\n            bounds: RotationalSweepBounds3d {"
+          new = "            id: BodyId(id),\n            kind: BodyKind::Dynamic,\n            collision_layers: crate::CollisionLayers3d::ALL,\n            bounds: RotationalSweepBounds3d {"
+          assert text.count(old) == 1
+          tree.write_text(text.replace(old, new, 1))
           PY
 
       - name: Format
@@ -80,6 +97,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add demo-wasm/src/scenario_rules.rs src/rotating_broad_phase.rs
+          git add demo-wasm/src/scenario_rules.rs src/rotating_broad_phase.rs src/rotating_broad_phase_tree.rs
           git commit -m "Fix scenario rules validation and allocation"
           git push origin HEAD:feat/scenario-simulation-rules
