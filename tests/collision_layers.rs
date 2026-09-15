@@ -78,3 +78,49 @@ fn default_layers_preserve_historical_collision_eligibility() {
     .expect("valid broad phase");
     assert_eq!(pairs.len(), 1);
 }
+
+#[test]
+fn fixed_boundary_stabilization_honors_either_layers_rejecting_the_pair() {
+    let cases = [
+        (
+            CollisionLayers3d::new(0b0001, 0b0010),
+            CollisionLayers3d::new(0b0010, 0b0100),
+            false,
+        ),
+        (
+            CollisionLayers3d::new(0b0001, 0b0100),
+            CollisionLayers3d::new(0b0010, 0b0001),
+            true,
+        ),
+    ];
+
+    for (fixed_layers, dynamic_layers, add_dynamic_first) in cases {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            ..RotatingWorldConfig3d::default()
+        });
+        let fixed_boundary = fixed(2, Vec3i::ZERO, fixed_layers);
+        let dynamic_body = dynamic(1, Vec3i::new(1, 0, 0), dynamic_layers);
+        if add_dynamic_first {
+            world.add_box(dynamic_body).expect("overlapping dynamic body");
+            world.add_box(fixed_boundary).expect("fixed boundary");
+        } else {
+            world.add_box(fixed_boundary).expect("fixed boundary");
+            world.add_box(dynamic_body).expect("overlapping dynamic body");
+        }
+
+        let before = world
+            .box_by_id(BodyId(1))
+            .expect("dynamic body before step")
+            .body()
+            .position();
+        world.step(1, 60).expect("disabled pair steps safely");
+        let after = world
+            .box_by_id(BodyId(1))
+            .expect("dynamic body after step")
+            .body()
+            .position();
+
+        assert_eq!(after, before);
+    }
+}

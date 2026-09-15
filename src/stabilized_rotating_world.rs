@@ -893,7 +893,11 @@ fn fixed_dynamic_pairs(boxes: &[RigidBox3d]) -> Vec<(usize, usize, usize)> {
                 (BodyKind::Dynamic, BodyKind::Fixed) => Some(left_index),
                 _ => None,
             };
-            if let Some(dynamic_index) = dynamic_index {
+            if let Some(dynamic_index) = dynamic_index
+                && boxes[left_index]
+                    .collision_layers()
+                    .collides_with(boxes[right_index].collision_layers())
+            {
                 pairs.push((left_index, right_index, dynamic_index));
             }
         }
