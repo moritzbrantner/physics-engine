@@ -229,11 +229,8 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         current_pairs.extend(stabilization_pairs);
         state = stabilized;
         persistent_pairs.extend(current_pairs.iter().copied());
-        let next_segment_exemptions = unrelated_shared_start_clear_exemptions(
-            &persistent_pairs,
-            &current_pairs,
-            &state,
-        )?;
+        let next_segment_exemptions =
+            unrelated_shared_start_clear_exemptions(&persistent_pairs, &current_pairs, &state)?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
