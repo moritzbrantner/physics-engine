@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
-    rigid_box_free_flight_sweep_bounds,
+    BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
+    RotationalSweepBounds3d, Vec3i, obb_contact_seed, rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -101,7 +100,9 @@ impl RotatingWorld3d {
 
     #[must_use]
     pub fn sleeping_body_count(&self) -> usize {
-        self.parked.len().saturating_add(self.active.sleeping_body_count())
+        self.parked
+            .len()
+            .saturating_add(self.active.sleeping_body_count())
     }
 
     pub fn set_linear_velocity(
@@ -153,9 +154,7 @@ impl RotatingWorld3d {
             return Ok(self.quiescent_report());
         }
 
-        let mut report = self
-            .active
-            .step(timestep_numerator, timestep_denominator)?;
+        let mut report = self.active.step(timestep_numerator, timestep_denominator)?;
         self.park_new_sleepers()?;
         self.sync_active_boxes();
         report.stats.body_count = self.boxes.len();
