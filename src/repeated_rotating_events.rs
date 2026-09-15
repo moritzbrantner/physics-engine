@@ -141,16 +141,18 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// The first event is selected with [`crate::earliest_rotating_contact_frontier`]. After response, the
 /// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
-/// the current zero-time contact set and applies one simultaneous response pass. A resolved/stabilized pair
-/// is retained as contact history only when the final stabilized geometry has projected it clear. Pairs that
-/// remain geometrically touching need no history marker because interval-start geometry already suppresses
-/// time-zero rediscovery. A projection-cleared pair stays historical until the configured coarse grid
-/// positively observes it clear, preventing quantized response projection from manufacturing first-cell
-/// clear/re-contact churn without tolerances, retries, or a larger event budget. Once a later segment starts
-/// genuinely clear without such projection history, its interval-start separation can seed a first-cell
-/// recontact. Current-frontier discovery reuses the persistent conservative broad phase at a zero timestep,
-/// then exact-filters every candidate with current OBB geometry. Later positive events are selected by the
-/// same sampled search and remain bounded sampled rotational handling, not analytic CCD.
+/// the current zero-time contact set and applies one simultaneous response pass. Every resolved or stabilized
+/// pair remains in contact history, preserving the existing anti-churn behavior. A second, narrower set marks
+/// only pairs whose final stabilized geometry was projected clear. Those projection-cleared pairs are not
+/// eligible for interval-start stale-history release until the configured positive coarse grid observes real
+/// clearance. For ordinary historical pairs, exact interval-start separation is remembered; if such a pair
+/// shares a body with a later selected frontier and is still clear at that exact pre-response frontier, its
+/// stale history is released before the frontier response changes motion. The following segment can then
+/// discover a genuine first-cell collision without treating response projection itself as clearance.
+///
+/// Current-frontier discovery reuses the persistent conservative broad phase at a zero timestep, then
+/// exact-filters every candidate with current OBB geometry. Later positive events are selected by the same
+/// sampled search and remain bounded sampled rotational handling, not analytic CCD.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -203,11 +205,20 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     let mut events = Vec::new();
     let mut frontier = first_frontier;
     let mut persistent_pairs = BTreeSet::new();
+    let mut projection_cleared_pairs = BTreeSet::new();
+    let mut stale_release_candidates = BTreeSet::new();
 
     loop {
         if events.len() >= usize::from(config.max_events) {
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
+
+        release_stale_shared_history_before_response(
+            &mut persistent_pairs,
+            &mut projection_cleared_pairs,
+            &stale_release_candidates,
+            &frontier,
+        )?;
 
         let response = resolve_rotating_contact_frontier(frontier, config.solver_passes)?;
         remaining = scale_remaining_time(remaining, response.remaining_numerator, response.time)?;
@@ -222,7 +233,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             stabilize_current_contacts(response.boxes, config.solver_passes, broad_phase)?;
         observed_pairs.extend(stabilization_pairs);
         state = stabilized;
-        refresh_projection_history(&mut persistent_pairs, &observed_pairs, &state)?;
+        persistent_pairs.extend(observed_pairs.iter().copied());
+        refresh_projection_clearance(
+            &mut projection_cleared_pairs,
+            &observed_pairs,
+            &state,
+        )?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -232,16 +248,24 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         if remaining.timestep_is_zero() {
             break;
         }
+
+        let next_release_candidates = start_clear_non_projection_history(
+            &persistent_pairs,
+            &projection_cleared_pairs,
+            &state,
+        )?;
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next) = next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
+        let next = next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
             &state,
             next_search,
             &mut persistent_pairs,
             broad_phase,
-        )?
-        else {
+        )?;
+        projection_cleared_pairs.retain(|pair| persistent_pairs.contains(pair));
+        let Some(next) = next else {
             break;
         };
+        stale_release_candidates = next_release_candidates;
         frontier = next;
     }
 
@@ -272,8 +296,8 @@ fn stabilize_current_contacts(
     Ok((boxes, persistent_pairs))
 }
 
-fn refresh_projection_history(
-    persistent_pairs: &mut BTreeSet<RotationalSweepPair3d>,
+fn refresh_projection_clearance(
+    projection_cleared_pairs: &mut BTreeSet<RotationalSweepPair3d>,
     observed_pairs: &BTreeSet<RotationalSweepPair3d>,
     boxes: &[RigidBox3d],
 ) -> Result<(), RotatingContactFrontierError3d> {
@@ -281,31 +305,91 @@ fn refresh_projection_history(
         return Ok(());
     }
 
-    let indices = boxes
-        .iter()
-        .enumerate()
-        .map(|(index, rigid_box)| (rigid_box.body().id(), index))
-        .collect::<BTreeMap<_, _>>();
-
+    let indices = body_indices(boxes);
     for pair in observed_pairs {
-        let left_index = *indices
-            .get(&pair.left)
-            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
-        let right_index = *indices
-            .get(&pair.right)
-            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
-        let touching = obb_contact_seed(
-            boxes[left_index].oriented_box(),
-            boxes[right_index].oriented_box(),
-        )?
-        .is_some();
-        if touching {
-            persistent_pairs.remove(pair);
+        if pair_is_touching(*pair, boxes, &indices)? {
+            projection_cleared_pairs.remove(pair);
         } else {
-            persistent_pairs.insert(*pair);
+            projection_cleared_pairs.insert(*pair);
         }
     }
     Ok(())
+}
+
+fn start_clear_non_projection_history(
+    persistent_pairs: &BTreeSet<RotationalSweepPair3d>,
+    projection_cleared_pairs: &BTreeSet<RotationalSweepPair3d>,
+    boxes: &[RigidBox3d],
+) -> Result<BTreeSet<RotationalSweepPair3d>, RotatingContactFrontierError3d> {
+    let indices = body_indices(boxes);
+    let mut clear_pairs = BTreeSet::new();
+    for pair in persistent_pairs {
+        if projection_cleared_pairs.contains(pair) {
+            continue;
+        }
+        if !pair_is_touching(*pair, boxes, &indices)? {
+            clear_pairs.insert(*pair);
+        }
+    }
+    Ok(clear_pairs)
+}
+
+fn release_stale_shared_history_before_response(
+    persistent_pairs: &mut BTreeSet<RotationalSweepPair3d>,
+    projection_cleared_pairs: &mut BTreeSet<RotationalSweepPair3d>,
+    candidates: &BTreeSet<RotationalSweepPair3d>,
+    frontier: &RotatingContactFrontier3d,
+) -> Result<(), RotatingContactFrontierError3d> {
+    if candidates.is_empty() || frontier.contacts.is_empty() {
+        return Ok(());
+    }
+
+    let mut active_bodies = BTreeSet::new();
+    for contact in &frontier.contacts {
+        active_bodies.insert(contact.pair.left);
+        active_bodies.insert(contact.pair.right);
+    }
+    let indices = body_indices(&frontier.boxes);
+
+    for pair in candidates {
+        if !persistent_pairs.contains(pair)
+            || projection_cleared_pairs.contains(pair)
+            || (!active_bodies.contains(&pair.left) && !active_bodies.contains(&pair.right))
+        {
+            continue;
+        }
+        if !pair_is_touching(*pair, &frontier.boxes, &indices)? {
+            persistent_pairs.remove(pair);
+            projection_cleared_pairs.remove(pair);
+        }
+    }
+    Ok(())
+}
+
+fn body_indices(boxes: &[RigidBox3d]) -> BTreeMap<crate::BodyId, usize> {
+    boxes
+        .iter()
+        .enumerate()
+        .map(|(index, rigid_box)| (rigid_box.body().id(), index))
+        .collect()
+}
+
+fn pair_is_touching(
+    pair: RotationalSweepPair3d,
+    boxes: &[RigidBox3d],
+    indices: &BTreeMap<crate::BodyId, usize>,
+) -> Result<bool, RotatingContactFrontierError3d> {
+    let left_index = *indices
+        .get(&pair.left)
+        .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
+    let right_index = *indices
+        .get(&pair.right)
+        .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
+    Ok(obb_contact_seed(
+        boxes[left_index].oriented_box(),
+        boxes[right_index].oriented_box(),
+    )?
+    .is_some())
 }
 
 fn current_contact_frontier_with_broad_phase(
@@ -422,14 +506,19 @@ fn scale_remaining_time(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
-        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
+        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d,
+        RotationalSweepPair3d, Vec3i, next_rotating_contact_frontier,
     };
 
     use super::{
         RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-        advance_repeated_rotating_events, current_contact_frontier, scale_remaining_time,
+        advance_repeated_rotating_events, current_contact_frontier,
+        release_stale_shared_history_before_response, scale_remaining_time,
+        start_clear_non_projection_history,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -549,6 +638,57 @@ mod tests {
         assert_eq!(advance.events[1].contacts[0].pair.right, BodyId(2));
         assert_eq!(advance.events[2].contacts[0].pair.left, BodyId(2));
         assert_eq!(advance.events[2].contacts[0].pair.right, BodyId(3));
+    }
+
+    #[test]
+    fn stale_shared_history_releases_before_response_but_projection_history_does_not() {
+        let elastic = Material::new(MATERIAL_SCALE);
+        let historical = RotationalSweepPair3d {
+            left: BodyId(1),
+            right: BodyId(2),
+        };
+        let boxes = [
+            dynamic(1, Vec3i::new(3, 0, 0), Vec3i::new(8, 0, 0), elastic),
+            fixed(2, Vec3i::ZERO, elastic),
+            fixed(3, Vec3i::new(6, 0, 0), elastic),
+        ];
+        let search = RotatingContactSearchConfig3d::new(
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
+            8,
+            1,
+        );
+        let frontier = next_rotating_contact_frontier(&boxes, search)
+            .expect("valid shared-body frontier")
+            .expect("moving body should reach the other wall");
+
+        let mut persistent = BTreeSet::from([historical]);
+        let mut projection = BTreeSet::new();
+        let candidates = start_clear_non_projection_history(&persistent, &projection, &boxes)
+            .expect("classify genuine interval-start separation");
+        assert!(candidates.contains(&historical));
+        release_stale_shared_history_before_response(
+            &mut persistent,
+            &mut projection,
+            &candidates,
+            &frontier,
+        )
+        .expect("release stale live-contact history");
+        assert!(!persistent.contains(&historical));
+
+        let mut persistent = BTreeSet::from([historical]);
+        let mut projection = BTreeSet::from([historical]);
+        let candidates = start_clear_non_projection_history(&persistent, &projection, &boxes)
+            .expect("classify projection-cleared history");
+        assert!(!candidates.contains(&historical));
+        release_stale_shared_history_before_response(
+            &mut persistent,
+            &mut projection,
+            &candidates,
+            &frontier,
+        )
+        .expect("preserve projection-cleared history");
+        assert!(persistent.contains(&historical));
+        assert!(projection.contains(&historical));
     }
 
     #[test]
