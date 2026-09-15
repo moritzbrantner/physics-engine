@@ -24,6 +24,7 @@ jobs:
         run: |
           sed -i 's/if count != 1:/if count < 1:/' .github/scripts/apply_scenario_rules.py
           python3 .github/scripts/apply_scenario_rules.py
+          python3 -c 'from pathlib import Path; p=Path("src/rigid_box_free_flight.rs"); s=p.read_text(); old="        contact_mode: rigid_box.contact_mode,\n"; assert old in s; p.write_text(s.replace(old, old + "        collision_layers: rigid_box.collision_layers,\n", 1))'
 
       - name: Format Rust
         run: cargo fmt --all && cargo fmt --manifest-path demo-wasm/Cargo.toml
