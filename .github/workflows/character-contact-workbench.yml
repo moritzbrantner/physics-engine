@@ -27,27 +27,40 @@ jobs:
           cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
           cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm .workbench-evidence/base.wasm
           python3 scripts/prepare-character-contact.py
+          python3 scripts/refine-character-contact.py
           cargo fmt
           cargo fmt --manifest-path demo-wasm/Cargo.toml
+          cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
+          cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm .workbench-evidence/head.wasm
       - name: Validate engine and real sandbox interactions
         shell: bash
         run: |
           set -euo pipefail
-          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee .workbench-evidence/clippy.log
-          cargo test --locked 2>&1 | tee .workbench-evidence/engine-tests.log
-          cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets --all-features -- -D warnings 2>&1 | tee .workbench-evidence/demo-clippy.log
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked 2>&1 | tee .workbench-evidence/demo-tests.log
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored --nocapture 2>&1 | tee .workbench-evidence/landing-replay.log
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored 2>&1 | tee .workbench-evidence/pages-replay.log
-          bash scripts/build-pages.sh
-          cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm .workbench-evidence/head.wasm
-          BASELINE_WASM=.workbench-evidence/base.wasm node scripts/benchmark-sandbox.mjs .workbench-evidence/head.wasm .workbench-evidence/physical-parity.json
+          failed=0
+          check() {
+            name="$1"; shift
+            if "$@" > ".workbench-evidence/$name.log" 2>&1; then
+              cat ".workbench-evidence/$name.log"
+            else
+              cat ".workbench-evidence/$name.log"
+              failed=1
+            fi
+          }
+          check clippy cargo clippy --all-targets --all-features -- -D warnings
+          check engine-tests cargo test --locked
+          check demo-clippy cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets --all-features -- -D warnings
+          check demo-tests cargo test --manifest-path demo-wasm/Cargo.toml --locked
+          check landing-replay cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored --nocapture
+          check pages-replay cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
+          check pages-build bash scripts/build-pages.sh
+          check physical-parity env BASELINE_WASM=.workbench-evidence/base.wasm node scripts/benchmark-sandbox.mjs .workbench-evidence/head.wasm .workbench-evidence/physical-parity.json
+          exit "$failed"
       - name: Publish only validated implementation tree
         shell: bash
         run: |
           set -euo pipefail
           git add src demo-wasm/src tests site docs .github/workflows/validate.yml
-          git add -u scripts/prepare-character-contact.py .github/workflows/character-contact-workbench.yml
+          git add -u scripts .github/workflows/character-contact-workbench.yml
           tree="$(git write-tree)"
           commit="$(printf '%s\n' 'Add optional linear character pushes and passive crate support' | git -c user.name='coding-agent' -c user.email='coding-agent@users.noreply.github.com' commit-tree "$tree" -p "$BASE_SHA")"
           git push origin "$commit:refs/heads/feat/character-linear-push"
@@ -63,4 +76,6 @@ jobs:
         with:
           name: character-contact-workbench-${{ github.sha }}
           path: .workbench-evidence/
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 7
