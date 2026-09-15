@@ -637,7 +637,6 @@ impl RotatingWorld3d {
         let mut converged = false;
         let mut any_changed = false;
         for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
-            let snapshot = boxes.clone();
             for correction in &mut corrections {
                 correction.clear();
             }
@@ -645,8 +644,8 @@ impl RotatingWorld3d {
             let mut had_projection = false;
             for &(left_index, right_index, dynamic_index) in &candidate_pairs {
                 let response = resolve_obb_contact(
-                    snapshot[left_index].clone(),
-                    snapshot[right_index].clone(),
+                    boxes[left_index].clone(),
+                    boxes[right_index].clone(),
                     false,
                 )
                 .map_err(|error| {
@@ -657,10 +656,10 @@ impl RotatingWorld3d {
                 } else {
                     response.right.body.position
                 };
-                let before = snapshot[dynamic_index].body.position;
+                let before = boxes[dynamic_index].body.position;
                 if projected != before {
                     corrections[dynamic_index].accumulate(
-                        snapshot[dynamic_index].body.id,
+                        boxes[dynamic_index].body.id,
                         before,
                         projected,
                     )?;
@@ -678,9 +677,10 @@ impl RotatingWorld3d {
                 if correction.is_empty() {
                     continue;
                 }
-                let id = snapshot[index].body.id;
-                let projected = correction.target_position(id, snapshot[index].body.position)?;
-                if projected != snapshot[index].body.position {
+                let id = boxes[index].body.id;
+                let before = boxes[index].body.position;
+                let projected = correction.target_position(id, before)?;
+                if projected != before {
                     boxes[index].body.position = projected;
                     changed = true;
                     any_changed = true;
