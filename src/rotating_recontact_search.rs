@@ -56,6 +56,8 @@ impl CoarseSampleCache3d {
 /// already touching at the interval start is not reported again merely because it remains touching.
 /// Such a pair becomes eligible only after the configured coarse grid observes it clear and then later
 /// observes contact again. Pairs that start clear retain the ordinary clear-to-contact search behavior.
+/// Historical contact changes only the release bookkeeping: an exact interval-start gap still seeds a
+/// clear-to-contact bracket, while only a strictly-positive coarse clear sample releases the history marker.
 /// Coarse free-flight samples are cached by body and exact grid fraction, so pairs that share a body reuse
 /// identical sampling work; the cache is bounded and pair-local refinement remains unchanged. Once a
 /// best hit exists, later pairs inspect only coarse samples that can still match or precede its exact
@@ -188,10 +190,14 @@ fn search_pair(
     ),
     RotatingContactSearchError3d,
 > {
-    let initially_contacting = historically_contacting
-        || obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
+    let interval_start_contacting =
+        obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
     let denominator = u32::from(config.sample_count);
-    let mut last_clear = if initially_contacting { None } else { Some(0) };
+    let mut last_clear = if interval_start_contacting {
+        None
+    } else {
+        Some(0)
+    };
     let mut first_positive_clear = None;
 
     for numerator in 1..=coarse_numerator_limit {
@@ -330,7 +336,8 @@ mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
         RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, RotatingContactSearchError3d,
-        RotationalSweepPair3d, Vec3i, obb_contact_seed, sample_rigid_box_free_flight,
+        RotationalSweepPair3d, SampledContactTime3d, Vec3i, obb_contact_seed,
+        sample_rigid_box_free_flight,
     };
 
     use super::{
@@ -382,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_contact_does_not_treat_interval_start_separation_as_clear() {
+    fn historical_contact_honors_real_interval_start_separation_for_search() {
         let moving = dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(4, 0, 0));
         let obstacle = fixed(2, Vec3i::ZERO);
         let pair = RotationalSweepPair3d {
@@ -392,15 +399,22 @@ mod tests {
         let mut persistent_pairs = BTreeSet::from([pair]);
         let mut broad_phase = RotatingBroadPhase3d::default();
 
+        let hit = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+            &[moving, obstacle],
+            config(Vec3i::ZERO, 4, 0),
+            &mut persistent_pairs,
+            &mut broad_phase,
+        )
+        .expect("valid history-aware recontact search")
+        .expect("real interval-start separation must seed the later sampled collision");
+
+        assert_eq!(hit.pair, pair);
         assert_eq!(
-            sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
-                &[moving, obstacle],
-                config(Vec3i::ZERO, 4, 0),
-                &mut persistent_pairs,
-                &mut broad_phase,
-            )
-            .expect("valid history-aware recontact search"),
-            None
+            hit.time,
+            SampledContactTime3d {
+                numerator: 1,
+                denominator: 4,
+            }
         );
         assert!(persistent_pairs.contains(&pair));
     }
