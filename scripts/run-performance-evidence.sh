@@ -9,13 +9,15 @@ fi
 
 changed="$(cat "$changed_file_list")"
 ran=0
+output="${PERFORMANCE_EVIDENCE_DIR:-$(pwd)/performance-evidence}"
+mkdir -p "$output/rust"
 
 run_integration() {
   local target="$1"
   [[ -f "tests/${target}.rs" ]] || return 0
   echo "::group::release performance evidence: integration target ${target}"
   /usr/bin/time -v cargo test --release --locked --test "$target" -- \
-    --ignored --nocapture --test-threads=1
+    --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${target}.log"
   echo "::endgroup::"
   ran=1
 }
@@ -24,7 +26,7 @@ run_library_module() {
   local module="$1"
   echo "::group::release performance evidence: library module ${module}"
   /usr/bin/time -v cargo test --release --locked --lib "${module}::tests::" -- \
-    --ignored --nocapture --test-threads=1
+    --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${module}.log"
   echo "::endgroup::"
   ran=1
 }

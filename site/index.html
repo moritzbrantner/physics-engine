@@ -81,6 +81,24 @@
             sleeping dynamic bodies. This is a performance/storage axis, not a gameplay rule.
           </p>
         </fieldset>
+        <fieldset>
+          <legend>Performance log</legend>
+          <p>
+            Capture a bounded local browser session with raw frame, rendering and physics-step timings,
+            scenario settings, engine revision and environment details. Nothing is uploaded automatically.
+          </p>
+          <div class="actions performance-log-actions">
+            <button id="start-performance-log" type="button" disabled>Start performance log</button>
+            <button id="download-performance-log" type="button" disabled>Stop and download JSON</button>
+          </div>
+          <p id="performance-log-status" class="status" aria-live="polite">
+            Start a log before reproducing a slowdown or frame spike.
+          </p>
+          <p class="privacy-note">
+            The export contains browser and hardware metadata for comparison. Review it before sharing if
+            those details are sensitive.
+          </p>
+        </fieldset>
         <div class="viewport-shell">
           <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>
           <div class="help" aria-hidden="true">WASD move · Space jump · Mouse / arrows look · Click / F shoot · R reset · P pause · N step</div>

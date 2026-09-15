@@ -154,6 +154,13 @@ canvas:focus-visible {
 
 .status { min-height: 1.5em; }
 
+.performance-log-actions { justify-content: flex-start; }
+
+.privacy-note {
+  font-size: 0.86rem;
+  opacity: 0.76;
+}
+
 .notes, .architecture { max-width: 820px; }
 
 pre {
