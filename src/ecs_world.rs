@@ -30,7 +30,7 @@ impl<T> ComponentStore<T> {
     }
 
     fn get_mut(&mut self, entity: BodyId) -> Option<&mut T> {
-        self.values.get_mut(entity)
+        self.values.get_mut(&entity)
     }
 
     fn remove(&mut self, entity: BodyId) -> Option<T> {
