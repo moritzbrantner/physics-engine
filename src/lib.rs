@@ -23,6 +23,7 @@ mod collider;
 mod collision;
 mod current_contact_query;
 mod ecs_world;
+mod fixed_geometry;
 mod linear_contact;
 mod math;
 mod obb_friction;
@@ -54,6 +55,10 @@ pub use collision::{
     ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,
 };
 pub use ecs_world::EcsRotatingWorld3d as RotatingWorld3d;
+pub use fixed_geometry::{
+    FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
+    FixedGeometryPreparationStats3d,
+};
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
 pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
