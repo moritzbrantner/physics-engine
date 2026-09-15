@@ -5,7 +5,7 @@ use crate::{
     RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    RotationalSweepPair3d, SampledContactTime3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    SampledContactTime3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
