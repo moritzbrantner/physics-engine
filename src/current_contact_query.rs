@@ -125,19 +125,11 @@ fn cached_contacts(
         if cache.fingerprint != fingerprint {
             return None;
         }
-        cache
-            .graph
-            .as_ref()?
-            .contacts
-            .get(&body)
-            .cloned()
+        cache.graph.as_ref()?.contacts.get(&body).cloned()
     })
 }
 
-fn cache_graph(
-    fingerprint: Vec<(BodyId, BodyKind, OrientedBox3d)>,
-    graph: CurrentContactGraph3d,
-) {
+fn cache_graph(fingerprint: Vec<(BodyId, BodyKind, OrientedBox3d)>, graph: CurrentContactGraph3d) {
     CURRENT_CONTACT_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         cache.fingerprint = fingerprint;
@@ -259,9 +251,7 @@ mod tests {
         rotating_world::RotatingWorld3d,
     };
 
-    use super::{
-        body_current_contacts, build_current_contact_graph, cache_stats, reset_cache,
-    };
+    use super::{body_current_contacts, build_current_contact_graph, cache_stats, reset_cache};
 
     fn rotating(body: RigidBody) -> RigidBox3d {
         RigidBox3d::new(
@@ -386,20 +376,35 @@ mod tests {
                 .overlap_query(rigid_box.oriented_box())
                 .expect("cached body overlap");
         }
-        assert_eq!(cache_stats().0, 1, "one stable snapshot should build one graph");
+        assert_eq!(
+            cache_stats().0,
+            1,
+            "one stable snapshot should build one graph"
+        );
 
         world
             .set_linear_velocity(BodyId(1), Vec3i::new(17, 0, 0))
             .expect("velocity update");
         let first = world.box_by_id(BodyId(1)).expect("body one").oriented_box();
-        world.overlap_query(first).expect("velocity-only cache reuse");
-        assert_eq!(cache_stats().0, 1, "velocity alone must not rebuild contact geometry");
+        world
+            .overlap_query(first)
+            .expect("velocity-only cache reuse");
+        assert_eq!(
+            cache_stats().0,
+            1,
+            "velocity alone must not rebuild contact geometry"
+        );
 
         let mut moved = world.remove_box(BodyId(1)).expect("body one");
         moved.body.position.x = moved.body.position.x.saturating_add(1);
         world.add_box(moved).expect("moved body");
-        let moved_query = world.box_by_id(BodyId(1)).expect("moved body").oriented_box();
-        world.overlap_query(moved_query).expect("moved geometry query");
+        let moved_query = world
+            .box_by_id(BodyId(1))
+            .expect("moved body")
+            .oriented_box();
+        world
+            .overlap_query(moved_query)
+            .expect("moved geometry query");
         assert_eq!(cache_stats().0, 2, "pose change must refresh the graph");
     }
 
@@ -469,12 +474,19 @@ mod tests {
 
         let started = Instant::now();
         for query in &queries {
-            black_box(world.overlap_query(black_box(*query)).expect("body overlap"));
+            black_box(
+                world
+                    .overlap_query(black_box(*query))
+                    .expect("body overlap"),
+            );
         }
         let elapsed = started.elapsed();
         let (builds, candidate_pairs, exact_pair_tests) = cache_stats();
 
-        assert_eq!(builds, 1, "stable sleep-style traversal should build one graph");
+        assert_eq!(
+            builds, 1,
+            "stable sleep-style traversal should build one graph"
+        );
         assert!(
             usize::try_from(exact_pair_tests).unwrap_or(usize::MAX) * 4 < legacy_exact_tests,
             "broad-phase graph did not materially reduce exact OBB evaluations: graph={exact_pair_tests}, legacy={legacy_exact_tests}"
