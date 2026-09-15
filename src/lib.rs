@@ -38,6 +38,10 @@ mod rotating_contact_frontier;
 mod rotating_contact_response;
 mod rotating_contact_search;
 mod rotating_contact_search_ordered;
+#[cfg(test)]
+mod rotating_contact_search_reference {
+    pub(crate) use super::rotating_contact_search::sampled_rotating_contact_search_with_broad_phase;
+}
 #[path = "rotating_recontact_search_ordered.rs"]
 mod rotating_recontact_search;
 #[cfg(test)]
