@@ -36,11 +36,8 @@ mod rigid_box_free_flight;
 mod rotating_broad_phase;
 mod rotating_contact_frontier;
 mod rotating_contact_response;
-#[path = "rotating_contact_search_ordered.rs"]
 mod rotating_contact_search;
-#[cfg(test)]
-#[path = "rotating_contact_search.rs"]
-mod rotating_contact_search_reference;
+mod rotating_contact_search_ordered;
 #[path = "rotating_recontact_search_ordered.rs"]
 mod rotating_recontact_search;
 #[cfg(test)]
@@ -94,8 +91,9 @@ pub use rotating_contact_response::{
 };
 pub use rotating_contact_search::{
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
-    SampledContactTime3d, sampled_rotating_contact_search,
+    SampledContactTime3d,
 };
+pub use rotating_contact_search_ordered::sampled_rotating_contact_search;
 pub use rotating_recontact_search::sampled_rotating_recontact_search;
 pub use rotating_world::{
     RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
