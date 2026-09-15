@@ -9,7 +9,9 @@ use crate::{
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
-const SLEEP_STABLE_STEPS: u8 = 12;
+const SLEEP_STABLE_STEPS_AT_60_HZ: u8 = 12;
+const SLEEP_TIME_SCALE: u128 = 1_u128 << 64;
+const SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 5;
 const SLEEP_LINEAR_SPEED_LIMIT: u32 = 120;
 const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 
@@ -24,19 +26,22 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// solver is preserved.
 ///
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
-/// bounded number of consecutive steps are put to sleep only when they are already motionless or a current
-/// contact can physically dissipate the residual motion. A contact qualifies when its normal constraint is
-/// still opposing relative approach, or when non-zero pair friction belongs to a low-motion support chain
-/// that is ultimately anchored by fixed geometry or an existing sleeper. Gravity-supported bodies settle
-/// position-only against already anchored supports before becoming sleepers, so quantized equal-mass
-/// projection cannot freeze residual penetration into a resting stack. This preserves ordinary low-speed
-/// free-flight and frictionless tangential inertia while letting gravity-loaded rough stacks converge to
-/// sleep as one supported island instead of repeatedly waking their lower members. Sleeping bodies are
-/// presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization cannot
-/// keep nudging a settled body. Before each step, conservative free-flight sweep bounds wake every sleeping
-/// body that an awake dynamic body may reach, including transitive sleeping islands. Explicit velocity
-/// changes also wake their target, adding fixed geometry invalidates existing sleepers conservatively, and
-/// any successful body removal invalidates sleep because world membership and contact topology changed.
+/// continuous simulated duration are put to sleep only when they are already motionless or a current
+/// contact can physically dissipate the residual motion. Sleep stability time is accumulated in deterministic
+/// Q64 units from the requested rational timestep, so equivalent elapsed simulation time reaches the same
+/// sleep threshold independently of 30, 60, or 120 Hz step partitioning. A contact qualifies when its normal
+/// constraint is still opposing relative approach, or when non-zero pair friction belongs to a low-motion
+/// support chain that is ultimately anchored by fixed geometry or an existing sleeper. Gravity-supported
+/// bodies settle position-only against already anchored supports before becoming sleepers, so quantized
+/// equal-mass projection cannot freeze residual penetration into a resting stack. This preserves ordinary
+/// low-speed free-flight and frictionless tangential inertia while letting gravity-loaded rough stacks
+/// converge to sleep as one supported island instead of repeatedly waking their lower members. Sleeping
+/// bodies are presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization
+/// cannot keep nudging a settled body. Before each step, conservative free-flight sweep bounds wake every
+/// sleeping body that an awake dynamic body may reach, including transitive sleeping islands. Explicit
+/// velocity changes also wake their target, adding fixed geometry invalidates existing sleepers
+/// conservatively, and any successful body removal invalidates sleep because world membership and contact
+/// topology changed.
 ///
 /// The requested frame is staged on a clone and committed only after the authoritative step, fixed-boundary
 /// stabilization, proxy restoration, and sleep-state update succeed. Failed frames therefore leave the
@@ -49,7 +54,7 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 pub struct RotatingWorld3d {
     inner: InnerRotatingWorld3d,
     sleeping: BTreeSet<BodyId>,
-    sleep_streaks: BTreeMap<BodyId, u8>,
+    sleep_stable_time_q64: BTreeMap<BodyId, u128>,
 }
 
 impl RotatingWorld3d {
@@ -58,7 +63,7 @@ impl RotatingWorld3d {
         Self {
             inner: InnerRotatingWorld3d::new(config),
             sleeping: BTreeSet::new(),
-            sleep_streaks: BTreeMap::new(),
+            sleep_stable_time_q64: BTreeMap::new(),
         }
     }
 
@@ -108,7 +113,7 @@ impl RotatingWorld3d {
     ) -> Result<(), RotatingWorldError3d> {
         self.inner.set_linear_velocity(id, velocity)?;
         self.sleeping.remove(&id);
-        self.sleep_streaks.remove(&id);
+        self.sleep_stable_time_q64.remove(&id);
         Ok(())
     }
 
@@ -125,6 +130,7 @@ impl RotatingWorld3d {
             return self.inner.step(timestep_numerator, timestep_denominator);
         }
 
+        let sleep_time_increment = sleep_time_increment_q64(timestep_numerator, timestep_denominator);
         let mut staged = self.clone();
         staged.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
         staged.freeze_sleeping_bodies()?;
@@ -133,7 +139,7 @@ impl RotatingWorld3d {
             .step(timestep_numerator, timestep_denominator)?;
         staged.stabilize_fixed_boundaries()?;
         staged.restore_sleeping_bodies()?;
-        staged.update_sleep_state()?;
+        staged.update_sleep_state(sleep_time_increment)?;
         *self = staged;
         Ok(report)
     }
@@ -193,7 +199,7 @@ impl RotatingWorld3d {
 
             for id in newly_awake {
                 self.sleeping.remove(&id);
-                self.sleep_streaks.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
                 sleeper_bounds.remove(&id);
                 let rigid_box = self
                     .inner
@@ -240,7 +246,10 @@ impl RotatingWorld3d {
         self.inner.add_box(rigid_box)
     }
 
-    fn update_sleep_state(&mut self) -> Result<(), RotatingWorldError3d> {
+    fn update_sleep_state(
+        &mut self,
+        sleep_time_increment: u128,
+    ) -> Result<(), RotatingWorldError3d> {
         let motion = self
             .inner
             .boxes()
@@ -269,9 +278,9 @@ impl RotatingWorld3d {
                 false
             };
             if is_low_motion && (is_stationary || has_dissipative_contact) {
-                let streak = self.sleep_streaks.entry(id).or_default();
-                *streak = streak.saturating_add(1);
-                if *streak >= SLEEP_STABLE_STEPS {
+                let stable_time = self.sleep_stable_time_q64.entry(id).or_default();
+                *stable_time = stable_time.saturating_add(sleep_time_increment);
+                if *stable_time >= SLEEP_STABLE_DURATION_Q64 {
                     if self.has_gravity_support_chain(id)? {
                         supported_sleep.insert(id);
                     } else {
@@ -279,15 +288,16 @@ impl RotatingWorld3d {
                     }
                 }
             } else {
-                self.sleep_streaks.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
             }
         }
-        self.sleep_streaks.retain(|id, _| seen.contains(id));
+        self.sleep_stable_time_q64
+            .retain(|id, _| seen.contains(id));
 
         for id in direct_sleep {
             self.put_body_to_sleep(id)?;
             self.sleeping.insert(id);
-            self.sleep_streaks.remove(&id);
+            self.sleep_stable_time_q64.remove(&id);
         }
 
         loop {
@@ -312,7 +322,7 @@ impl RotatingWorld3d {
                 }
                 self.put_body_to_sleep(id)?;
                 self.sleeping.insert(id);
-                self.sleep_streaks.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
             }
         }
         Ok(())
@@ -593,7 +603,7 @@ impl RotatingWorld3d {
 
     fn wake_all_sleepers(&mut self) {
         self.sleeping.clear();
-        self.sleep_streaks.clear();
+        self.sleep_stable_time_q64.clear();
     }
 
     fn stabilize_fixed_boundaries(&mut self) -> Result<(), RotatingWorldError3d> {
@@ -826,6 +836,11 @@ fn gravity_pushes_into_other(
     Ok(if id == left_id { dot > 0 } else { dot < 0 })
 }
 
+fn sleep_time_increment_q64(timestep_numerator: i32, timestep_denominator: i32) -> u128 {
+    let numerator = u128::from(timestep_numerator.unsigned_abs()) * SLEEP_TIME_SCALE;
+    numerator.div_ceil(u128::from(timestep_denominator.unsigned_abs()))
+}
+
 fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
     while right != 0 {
         let remainder = left % right;
@@ -885,7 +900,9 @@ mod tests {
         RotatingWorldConfig3d, Vec3i,
     };
 
-    use super::{PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS};
+    use super::{
+        PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS_AT_60_HZ,
+    };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -951,7 +968,7 @@ mod tests {
             .add_box(dynamic(id.0, Vec3i::new(10, 20, 30), Vec3i::ZERO))
             .expect("add body");
 
-        for _ in 0..SLEEP_STABLE_STEPS {
+        for _ in 0..SLEEP_STABLE_STEPS_AT_60_HZ {
             world.step(1, 60).expect("settle body");
         }
         assert!(world.is_sleeping(id));
@@ -965,13 +982,38 @@ mod tests {
     }
 
     #[test]
+    fn equivalent_simulated_time_owns_sleep_threshold() {
+        for (denominator, steps) in [(30, 6_u8), (60, 12_u8), (120, 24_u8)] {
+            let id = BodyId(u64::from(denominator as u32));
+            let mut world = zero_gravity_world();
+            world
+                .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))
+                .expect("add stable body");
+
+            for _ in 0..steps - 1 {
+                world.step(1, denominator).expect("pre-threshold step");
+            }
+            assert!(
+                !world.is_sleeping(id),
+                "body slept before 0.2 simulated seconds at {denominator} Hz"
+            );
+
+            world.step(1, denominator).expect("threshold step");
+            assert!(
+                world.is_sleeping(id),
+                "body did not sleep after 0.2 simulated seconds at {denominator} Hz"
+            );
+        }
+    }
+
+    #[test]
     fn explicit_velocity_change_wakes_sleeping_body() {
         let id = BodyId(2);
         let mut world = zero_gravity_world();
         world
             .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))
             .expect("add body");
-        for _ in 0..SLEEP_STABLE_STEPS {
+        for _ in 0..SLEEP_STABLE_STEPS_AT_60_HZ {
             world.step(1, 60).expect("settle body");
         }
         assert!(world.is_sleeping(id));
@@ -994,7 +1036,7 @@ mod tests {
         world
             .add_box(dynamic(sleeper.0, Vec3i::ZERO, Vec3i::ZERO))
             .expect("add sleeper");
-        for _ in 0..SLEEP_STABLE_STEPS {
+        for _ in 0..SLEEP_STABLE_STEPS_AT_60_HZ {
             world.step(1, 60).expect("settle sleeper");
         }
         assert!(world.is_sleeping(sleeper));
