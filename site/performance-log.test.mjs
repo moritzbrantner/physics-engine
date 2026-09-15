@@ -17,6 +17,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
   recorder.recordFrame({
     frame_interval_ms: 16,
     callback_ms: 5,
+    render_performed: true,
     render_ms: 3,
     physics_steps_ms: [1, 2],
     body_count: 12,
@@ -35,13 +36,19 @@ test("session output keeps raw timings and derives stable summaries", () => {
     max_ms: 2,
   });
   assert.equal(result.raw.frames[0].body_count, 12);
+  assert.equal(result.summary.rendered_frames, 1);
   assert.equal(JSON.parse(serializePerformanceSession(result)).schema_version, 1);
 });
 
 test("session storage is bounded and reports omitted frames", () => {
   const recorder = createPerformanceSessionRecorder({ maxFrames: 1, maxMarkers: 1 });
   recorder.start();
-  const frame = { frame_interval_ms: 16, callback_ms: 1, render_ms: 1 };
+  const frame = {
+    frame_interval_ms: 16,
+    callback_ms: 1,
+    render_performed: false,
+    render_ms: null,
+  };
   recorder.recordFrame(frame);
   recorder.recordFrame(frame);
   recorder.recordMarker("first");
@@ -51,6 +58,8 @@ test("session storage is bounded and reports omitted frames", () => {
   assert.equal(result.summary.recorded_frames, 1);
   assert.equal(result.summary.omitted_frames, 1);
   assert.equal(result.summary.omitted_markers, 1);
+  assert.equal(result.summary.rendering.count, 0);
+  assert.equal(result.summary.no_op_render_frames, 1);
 });
 
 test("environment and scenario identify the start of the recorded interval", () => {
@@ -66,7 +75,12 @@ test("invalid timing evidence fails instead of being silently normalized", () =>
   const recorder = createPerformanceSessionRecorder();
   recorder.start();
   assert.throws(
-    () => recorder.recordFrame({ frame_interval_ms: Number.NaN, callback_ms: 1, render_ms: 1 }),
+    () => recorder.recordFrame({
+      frame_interval_ms: Number.NaN,
+      callback_ms: 1,
+      render_performed: true,
+      render_ms: 1,
+    }),
     /frame_interval_ms/,
   );
 });

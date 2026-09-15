@@ -429,11 +429,11 @@ function ensureCrosshair() {
 
 function render() {
   const resized = resizeCanvas();
-  if (!renderDirty && !resized) return;
+  if (!renderDirty && !resized) return false;
 
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
-  if (!player) return;
+  if (!player) return false;
   const camera = [player.position[0], player.position[1] + 13, player.position[2]];
   renderer.render(buildSceneVertices(bodies, camera));
 
@@ -448,6 +448,7 @@ function render() {
       : " · fixed runtime";
   debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
+  return true;
 }
 
 function updateKeyboardLook(elapsedSeconds) {
@@ -486,12 +487,13 @@ function frame(timestamp) {
   }
 
   const renderStarted = performance.now();
-  render();
+  const renderPerformed = render();
   const renderMs = performance.now() - renderStarted;
   performanceRecorder.recordFrame({
     frame_interval_ms: Math.max(0, frameInterval),
     callback_ms: performance.now() - callbackStarted,
-    render_ms: renderMs,
+    render_performed: renderPerformed,
+    render_ms: renderPerformed ? renderMs : null,
     physics_steps_ms: pendingPhysicsStepMs,
     dropped_accumulator_ms: droppedAccumulatorMs,
     body_count: typeof engine?.sandbox_body_count === "function" ? engine.sandbox_body_count() : null,

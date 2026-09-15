@@ -68,7 +68,8 @@ export function createPerformanceSessionRecorder({
       const normalized = {
         frame_interval_ms: finiteNumber(frame.frame_interval_ms, "frame_interval_ms"),
         callback_ms: finiteNumber(frame.callback_ms, "callback_ms"),
-        render_ms: finiteNumber(frame.render_ms, "render_ms"),
+        render_performed: Boolean(frame.render_performed),
+        render_ms: frame.render_performed ? finiteNumber(frame.render_ms, "render_ms") : null,
         physics_steps_ms: (frame.physics_steps_ms ?? []).map((value) =>
           finiteNumber(value, "physics_steps_ms"),
         ),
@@ -102,7 +103,9 @@ export function createPerformanceSessionRecorder({
       active = false;
       const frameIntervals = frames.map((frame) => frame.frame_interval_ms);
       const callbacks = frames.map((frame) => frame.callback_ms);
-      const renders = frames.map((frame) => frame.render_ms);
+      const renders = frames
+        .filter((frame) => frame.render_performed)
+        .map((frame) => frame.render_ms);
       const physicsSteps = frames.flatMap((frame) => frame.physics_steps_ms);
       return {
         schema_version: SCHEMA_VERSION,
@@ -121,6 +124,8 @@ export function createPerformanceSessionRecorder({
           frames: statistics(frameIntervals),
           callbacks: statistics(callbacks),
           rendering: statistics(renders),
+          rendered_frames: renders.length,
+          no_op_render_frames: frames.length - renders.length,
           physics_steps: statistics(physicsSteps),
           physics_step_count: physicsSteps.length,
           frames_with_dropped_accumulator: frames.filter(
