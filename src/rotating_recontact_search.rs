@@ -234,8 +234,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
         });
         let (hit, first_positive_clear) = search_pair(
             (left_index, right_index),
-            left,
-            right,
+            (left, right),
             pair,
             config,
             coarse_limit,
@@ -285,8 +284,7 @@ fn validate_resolution(
 
 fn search_pair(
     body_indices: (usize, usize),
-    left: &RigidBox3d,
-    right: &RigidBox3d,
+    boxes: (&RigidBox3d, &RigidBox3d),
     pair: RotationalSweepPair3d,
     config: RotatingContactSearchConfig3d,
     coarse_numerator_limit: u32,
@@ -300,6 +298,7 @@ fn search_pair(
     RotatingContactSearchError3d,
 > {
     let (left_index, right_index) = body_indices;
+    let (left, right) = boxes;
     let mut contacts = PairContactCache3d::default();
     let prepared_left = coarse_samples.prepare_geometry(left_index, left.oriented_box());
     let prepared_right = coarse_samples.prepare_geometry(right_index, right.oriented_box());
