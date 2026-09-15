@@ -30,10 +30,17 @@ struct ContactBracket3d {
     contact: ObbContactSeed3d,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PreparedSample3d {
+    geometry: PreparedObb3d,
+    generation: u32,
+}
+
 #[derive(Debug)]
 struct CoarseSampleCache3d {
-    samples_by_body: Vec<Vec<PreparedObb3d>>,
+    samples_by_body: Vec<Vec<PreparedSample3d>>,
     latest_geometry: Vec<Option<PreparedObb3d>>,
+    latest_generation: Vec<u32>,
     cached_entries: usize,
     denominator: u32,
 }
@@ -43,20 +50,31 @@ impl CoarseSampleCache3d {
         Self {
             samples_by_body: vec![Vec::new(); body_count],
             latest_geometry: vec![None; body_count],
+            latest_generation: vec![0; body_count],
             cached_entries: 0,
             denominator,
         }
     }
 
-    fn prepare_geometry(&mut self, body_index: usize, shape: OrientedBox3d) -> PreparedObb3d {
+    fn prepare_geometry(&mut self, body_index: usize, shape: OrientedBox3d) -> PreparedSample3d {
         if let Some(prepared) = self.latest_geometry[body_index]
             && prepared.shape == shape
         {
-            return prepared;
+            return PreparedSample3d {
+                geometry: prepared,
+                generation: self.latest_generation[body_index],
+            };
         }
         let prepared = PreparedObb3d::new(shape);
+        let generation = self.latest_generation[body_index]
+            .checked_add(1)
+            .expect("one sampled search cannot exhaust u32 geometry generations");
         self.latest_geometry[body_index] = Some(prepared);
-        prepared
+        self.latest_generation[body_index] = generation;
+        PreparedSample3d {
+            geometry: prepared,
+            generation,
+        }
     }
 
     fn sample_geometry(
@@ -65,7 +83,7 @@ impl CoarseSampleCache3d {
         rigid_box: &RigidBox3d,
         config: RotatingContactSearchConfig3d,
         numerator: u32,
-    ) -> Result<PreparedObb3d, RotatingContactSearchError3d> {
+    ) -> Result<PreparedSample3d, RotatingContactSearchError3d> {
         let sample_index = usize::try_from(numerator - 1).expect("coarse numerator fits usize");
         if let Some(sampled) = self.samples_by_body[body_index].get(sample_index).copied() {
             return Ok(sampled);
@@ -95,8 +113,8 @@ impl CoarseSampleCache3d {
 
 #[derive(Clone, Copy, Debug)]
 struct CachedPairContact3d {
-    left: OrientedBox3d,
-    right: OrientedBox3d,
+    left_generation: u32,
+    right_generation: u32,
     contact: Option<ObbContactSeed3d>,
 }
 
@@ -108,20 +126,20 @@ struct PairContactCache3d {
 impl PairContactCache3d {
     fn contact(
         &mut self,
-        left: &PreparedObb3d,
-        right: &PreparedObb3d,
+        left: PreparedSample3d,
+        right: PreparedSample3d,
         work: &mut RecontactSearchWork3d,
     ) -> Result<Option<ObbContactSeed3d>, RotatingContactSearchError3d> {
         if let Some(previous) = self.previous
-            && previous.left == left.shape
-            && previous.right == right.shape
+            && previous.left_generation == left.generation
+            && previous.right_generation == right.generation
         {
             return Ok(previous.contact);
         }
-        let contact = obb_contact_seed_prepared(left, right)?;
+        let contact = obb_contact_seed_prepared(&left.geometry, &right.geometry)?;
         self.previous = Some(CachedPairContact3d {
-            left: left.shape,
-            right: right.shape,
+            left_generation: left.generation,
+            right_generation: right.generation,
             contact,
         });
         work.exact_contact_evaluations = work.exact_contact_evaluations.saturating_add(1);
@@ -149,8 +167,11 @@ struct PairState3d {
 /// therefore stop globally after refining all eligible contacts in that row.
 ///
 /// Pair-local state retains only the previous exact contact result and the latest clear coarse numerator.
-/// No state survives a search or collision response, so repeated-event semantics and fail-closed behavior
-/// remain unchanged. The optimization changes work ordering only; it does not reuse sampled times across a
+/// Prepared body samples carry compact per-body geometry generations so unchanged samples reuse that result
+/// through two integer comparisons rather than comparing complete quantized shapes. Generations are scoped
+/// to one immutable search and change whenever that body's sampled shape changes; they never survive a
+/// collision response. Repeated-event semantics and fail-closed behavior therefore remain unchanged.
+/// The optimization changes work ordering and cache keys only; it does not reuse sampled times across a
 /// response or reinterpret the sampled approximation as analytic CCD.
 pub fn sampled_rotating_recontact_search(
     boxes: &[RigidBox3d],
@@ -213,7 +234,7 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
             coarse_samples.prepare_geometry(right_index, boxes[right_index].oriented_box());
         work.initial_pair_evaluations = work.initial_pair_evaluations.saturating_add(1);
         let initially_contacting = contacts
-            .contact(&prepared_left, &prepared_right, &mut work)?
+            .contact(prepared_left, prepared_right, &mut work)?
             .is_some();
         states.push(PairState3d {
             pair,
@@ -243,7 +264,7 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
             )?;
             match state
                 .contacts
-                .contact(&sampled_left, &sampled_right, &mut work)?
+                .contact(sampled_left, sampled_right, &mut work)?
             {
                 Some(contact) => {
                     let Some(clear_numerator) = state.last_clear else {
@@ -393,7 +414,7 @@ mod tests {
         rotating_recontact_search_reference::sampled_rotating_recontact_search_with_broad_phase as reference_search,
     };
 
-    use super::sampled_rotating_recontact_search_profiled;
+    use super::{CoarseSampleCache3d, sampled_rotating_recontact_search_profiled};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -428,6 +449,16 @@ mod tests {
             sampled_rotating_recontact_search_profiled(boxes, config, &mut ordered_broad_phase)
                 .expect("ordered re-contact search");
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn unchanged_body_geometry_keeps_the_same_generation() {
+        let rigid_box = fixed(1, Vec3i::ZERO);
+        let mut cache = CoarseSampleCache3d::new(1, 8);
+        let first = cache.prepare_geometry(0, rigid_box.oriented_box());
+        let repeated = cache.prepare_geometry(0, rigid_box.oriented_box());
+        assert_eq!(first.generation, repeated.generation);
+        assert_eq!(first.geometry, repeated.geometry);
     }
 
     #[test]
