@@ -9,8 +9,8 @@ use physics_engine::{
 mod controller;
 mod render_snapshot;
 
-pub use controller::controlled_velocity;
 use controller::TICKS_PER_SECOND;
+pub use controller::controlled_velocity;
 
 const PLAYER_ID: BodyId = BodyId(1);
 const PROJECTILE_ID_START: u64 = 1_000;
