@@ -515,12 +515,16 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_sampled_events() -> u32 {
-    with_sandbox(|sandbox| u32::try_from(sandbox.last_step_stats.sampled_events).unwrap_or(u32::MAX))
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.sampled_events).unwrap_or(u32::MAX)
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_tail_contacts() -> u32 {
-    with_sandbox(|sandbox| u32::try_from(sandbox.last_step_stats.tail_contacts).unwrap_or(u32::MAX))
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.tail_contacts).unwrap_or(u32::MAX)
+    })
 }
 
 #[unsafe(no_mangle)]
