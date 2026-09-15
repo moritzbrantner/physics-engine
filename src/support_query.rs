@@ -5,7 +5,7 @@ use crate::{BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i}
 /// Returns whether `body` currently has a contact whose normal can oppose the supplied acceleration.
 ///
 /// Contact candidates are pruned through the engine's zero-time rotational broad phase and then exact-filtered
-/// by the shared OBB SAT query. The subject body is always evaluated as the left OBB, so the returned SAT axis
+/// by the shared OBB SAT query. The subject body is always evaluated as the left OBB, so the cached SAT axis
 /// points from the subject toward the other body. A support therefore requires a strictly positive dot product
 /// between that axis and the acceleration vector. Side-wall and ceiling contacts do not count as support under
 /// downward gravity, while floors and sufficiently upward-facing slopes do.
@@ -26,7 +26,7 @@ pub fn body_has_support(
     }
     let boxes = world.boxes().cloned().collect::<Vec<_>>();
     for current in body_current_contacts(&boxes, body)? {
-        if checked_dot(acceleration, current.contact.axis, body)? > 0 {
+        if checked_dot(acceleration, current.axis, body)? > 0 {
             return Ok(true);
         }
     }

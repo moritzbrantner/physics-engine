@@ -37,6 +37,10 @@ if grep -Eq '(^|/)(rigid_box_free_flight\.rs|repeated_rotating_events\.rs|curren
   run_integration current_contact_broadphase
 fi
 
+if grep -Eq '(^|/)(current_contact_query\.rs|rotating_world\.rs|stabilized_rotating_world\.rs|support_query\.rs)$' <<<"$changed"; then
+  run_library_module current_contact_query
+fi
+
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
   run_library_module rotating_broad_phase
 fi
