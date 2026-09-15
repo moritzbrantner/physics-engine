@@ -230,10 +230,7 @@ pub fn sampled_rotating_contact_search(
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
-    Ok(
-        sampled_rotating_contact_search_with_broad_phase(boxes, config, &mut broad_phase)?
-            .hit,
-    )
+    Ok(sampled_rotating_contact_search_with_broad_phase(boxes, config, &mut broad_phase)?.hit)
 }
 
 pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
