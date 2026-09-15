@@ -1,4 +1,4 @@
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEFAULT_MAX_FRAMES = 36_000;
 const DEFAULT_MAX_MARKERS = 10_000;
 
@@ -8,6 +8,12 @@ function snapshot(value) {
 
 function finiteNumber(value, name) {
   if (!Number.isFinite(value) || value < 0) throw new Error(`${name} must be finite and non-negative`);
+  return value;
+}
+
+function optionalCounter(value, name) {
+  if (value === null || value === undefined) return null;
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
   return value;
 }
 
@@ -21,6 +27,35 @@ function statistics(values) {
     p50_ms: percentile(0.5),
     p95_ms: percentile(0.95),
     max_ms: sorted.at(-1),
+  };
+}
+
+function sumCounter(steps, name) {
+  return steps.reduce((sum, step) => sum + (step[name] ?? 0), 0);
+}
+
+function normalizeStepStats(step) {
+  return {
+    sampled_events: optionalCounter(step.sampled_events, "sampled_events"),
+    tail_contacts: optionalCounter(step.tail_contacts, "tail_contacts"),
+    tail_slices: optionalCounter(step.tail_slices, "tail_slices"),
+    tail_replays: optionalCounter(step.tail_replays, "tail_replays"),
+    tail_candidate_pairs: optionalCounter(step.tail_candidate_pairs, "tail_candidate_pairs"),
+    tail_broad_phase_queries: optionalCounter(
+      step.tail_broad_phase_queries,
+      "tail_broad_phase_queries",
+    ),
+    tail_broad_phase_rebuilds: optionalCounter(
+      step.tail_broad_phase_rebuilds,
+      "tail_broad_phase_rebuilds",
+    ),
+    tail_broad_phase_reuses: optionalCounter(
+      step.tail_broad_phase_reuses,
+      "tail_broad_phase_reuses",
+    ),
+    broad_phase_queries: optionalCounter(step.broad_phase_queries, "broad_phase_queries"),
+    broad_phase_rebuilds: optionalCounter(step.broad_phase_rebuilds, "broad_phase_rebuilds"),
+    broad_phase_reuses: optionalCounter(step.broad_phase_reuses, "broad_phase_reuses"),
   };
 }
 
@@ -73,6 +108,7 @@ export function createPerformanceSessionRecorder({
         physics_steps_ms: (frame.physics_steps_ms ?? []).map((value) =>
           finiteNumber(value, "physics_steps_ms"),
         ),
+        physics_step_stats: (frame.physics_step_stats ?? []).map(normalizeStepStats),
         dropped_accumulator_ms: finiteNumber(
           frame.dropped_accumulator_ms ?? 0,
           "dropped_accumulator_ms",
@@ -83,6 +119,9 @@ export function createPerformanceSessionRecorder({
           : null,
         paused: Boolean(frame.paused),
       };
+      if (normalized.physics_step_stats.length !== 0 && normalized.physics_step_stats.length !== normalized.physics_steps_ms.length) {
+        throw new Error("physics_step_stats must align one-to-one with physics_steps_ms");
+      }
       if (frames.length < maxFrames) frames.push(normalized);
       else omittedFrames += 1;
     },
@@ -107,6 +146,7 @@ export function createPerformanceSessionRecorder({
         .filter((frame) => frame.render_performed)
         .map((frame) => frame.render_ms);
       const physicsSteps = frames.flatMap((frame) => frame.physics_steps_ms);
+      const physicsStepStats = frames.flatMap((frame) => frame.physics_step_stats);
       return {
         schema_version: SCHEMA_VERSION,
         kind: "physics-engine-browser-session",
@@ -128,6 +168,19 @@ export function createPerformanceSessionRecorder({
           no_op_render_frames: frames.length - renders.length,
           physics_steps: statistics(physicsSteps),
           physics_step_count: physicsSteps.length,
+          physics_work: {
+            sampled_events: sumCounter(physicsStepStats, "sampled_events"),
+            tail_contacts: sumCounter(physicsStepStats, "tail_contacts"),
+            tail_slices: sumCounter(physicsStepStats, "tail_slices"),
+            tail_replays: sumCounter(physicsStepStats, "tail_replays"),
+            tail_candidate_pairs: sumCounter(physicsStepStats, "tail_candidate_pairs"),
+            tail_broad_phase_queries: sumCounter(physicsStepStats, "tail_broad_phase_queries"),
+            tail_broad_phase_rebuilds: sumCounter(physicsStepStats, "tail_broad_phase_rebuilds"),
+            tail_broad_phase_reuses: sumCounter(physicsStepStats, "tail_broad_phase_reuses"),
+            broad_phase_queries: sumCounter(physicsStepStats, "broad_phase_queries"),
+            broad_phase_rebuilds: sumCounter(physicsStepStats, "broad_phase_rebuilds"),
+            broad_phase_reuses: sumCounter(physicsStepStats, "broad_phase_reuses"),
+          },
           frames_with_dropped_accumulator: frames.filter(
             (frame) => frame.dropped_accumulator_ms > 0,
           ).length,

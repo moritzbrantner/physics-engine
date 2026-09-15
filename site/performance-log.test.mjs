@@ -20,6 +20,34 @@ test("session output keeps raw timings and derives stable summaries", () => {
     render_performed: true,
     render_ms: 3,
     physics_steps_ms: [1, 2],
+    physics_step_stats: [
+      {
+        sampled_events: 1,
+        tail_contacts: 2,
+        tail_slices: 3,
+        tail_replays: 0,
+        tail_candidate_pairs: 4,
+        tail_broad_phase_queries: 5,
+        tail_broad_phase_rebuilds: 1,
+        tail_broad_phase_reuses: 4,
+        broad_phase_queries: 6,
+        broad_phase_rebuilds: 1,
+        broad_phase_reuses: 5,
+      },
+      {
+        sampled_events: 2,
+        tail_contacts: 3,
+        tail_slices: 4,
+        tail_replays: 1,
+        tail_candidate_pairs: 5,
+        tail_broad_phase_queries: 6,
+        tail_broad_phase_rebuilds: 0,
+        tail_broad_phase_reuses: 6,
+        broad_phase_queries: 7,
+        broad_phase_rebuilds: 0,
+        broad_phase_reuses: 7,
+      },
+    ],
     body_count: 12,
     collision_contacts: 2,
     paused: false,
@@ -35,9 +63,23 @@ test("session output keeps raw timings and derives stable summaries", () => {
     p95_ms: 2,
     max_ms: 2,
   });
+  assert.deepEqual(result.summary.physics_work, {
+    sampled_events: 3,
+    tail_contacts: 5,
+    tail_slices: 7,
+    tail_replays: 1,
+    tail_candidate_pairs: 9,
+    tail_broad_phase_queries: 11,
+    tail_broad_phase_rebuilds: 1,
+    tail_broad_phase_reuses: 10,
+    broad_phase_queries: 13,
+    broad_phase_rebuilds: 1,
+    broad_phase_reuses: 12,
+  });
+  assert.equal(result.raw.frames[0].physics_step_stats.length, 2);
   assert.equal(result.raw.frames[0].body_count, 12);
   assert.equal(result.summary.rendered_frames, 1);
-  assert.equal(JSON.parse(serializePerformanceSession(result)).schema_version, 1);
+  assert.equal(JSON.parse(serializePerformanceSession(result)).schema_version, 2);
 });
 
 test("session storage is bounded and reports omitted frames", () => {
@@ -69,6 +111,21 @@ test("environment and scenario identify the start of the recorded interval", () 
   scenario.mode = "after";
 
   assert.equal(recorder.finish().scenario.mode, "before");
+});
+
+test("physics step diagnostics must align with timed physics steps", () => {
+  const recorder = createPerformanceSessionRecorder();
+  recorder.start();
+  assert.throws(
+    () => recorder.recordFrame({
+      frame_interval_ms: 16,
+      callback_ms: 2,
+      render_performed: false,
+      physics_steps_ms: [1, 1],
+      physics_step_stats: [{ tail_slices: 1 }],
+    }),
+    /align one-to-one/,
+  );
 });
 
 test("invalid timing evidence fails instead of being silently normalized", () => {

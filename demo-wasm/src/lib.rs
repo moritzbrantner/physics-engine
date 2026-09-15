@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, Vec3i,
+    RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
 
 mod controller;
@@ -28,6 +28,7 @@ struct Sandbox {
     projectile_ids: Vec<BodyId>,
     last_rotating_events: usize,
     last_tail_contacts: usize,
+    last_step_stats: RotatingWorldStepStats3d,
     total_collisions: u32,
     error_code: i32,
     error_detail: i32,
@@ -124,6 +125,7 @@ impl Sandbox {
             projectile_ids: Vec::new(),
             last_rotating_events: 0,
             last_tail_contacts: 0,
+            last_step_stats: RotatingWorldStepStats3d::default(),
             total_collisions: 0,
             error_code: 0,
             error_detail: 0,
@@ -157,6 +159,7 @@ impl Sandbox {
         if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
+            self.last_step_stats = RotatingWorldStepStats3d::default();
             return 0;
         }
 
@@ -194,8 +197,9 @@ impl Sandbox {
             }
         };
 
-        self.last_rotating_events = report.stats.sampled_events;
-        self.last_tail_contacts = report.stats.tail_contacts;
+        self.last_step_stats = report.stats;
+        self.last_rotating_events = self.last_step_stats.sampled_events;
+        self.last_tail_contacts = self.last_step_stats.tail_contacts;
         let collisions = self
             .last_rotating_events
             .saturating_add(self.last_tail_contacts);
@@ -331,6 +335,10 @@ fn role_for(id: BodyId) -> i32 {
     } else {
         0
     }
+}
+
+fn saturating_u32(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 std::thread_local! {
@@ -503,6 +511,63 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
         )
         .unwrap_or(u32::MAX)
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_sampled_events() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.sampled_events).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_contacts() -> u32 {
+    with_sandbox(|sandbox| u32::try_from(sandbox.last_step_stats.tail_contacts).unwrap_or(u32::MAX))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_slices() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_slices))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_replays() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_replays))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_candidate_pairs() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_candidate_pairs))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_broad_phase_rebuilds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_broad_phase_rebuilds))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_tail_broad_phase_reuses() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.tail_broad_phase_reuses))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_rebuilds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_rebuilds))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_reuses() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_reuses))
 }
 
 #[unsafe(no_mangle)]

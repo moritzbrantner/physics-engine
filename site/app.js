@@ -18,6 +18,8 @@ const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
 
 const FIXED_STEP_MS = 1000 / 60;
+const MAX_CATCH_UP_STEPS = 8;
+const MAX_CATCH_UP_WALL_MS = 40;
 const MOVE_SPEED = 7 * 60;
 const PROJECTILE_SPEED = 96;
 const LOOK_SENSITIVITY = 0.0022;
@@ -64,6 +66,7 @@ let renderWidth = 0;
 let renderHeight = 0;
 let buildProvenance = null;
 let pendingPhysicsStepMs = [];
+let pendingPhysicsStepStats = [];
 
 function performanceEnvironment() {
   return {
@@ -170,6 +173,8 @@ function reset() {
   renderDirty = true;
   jumpQueued = false;
   accumulator = 0;
+  pendingPhysicsStepMs = [];
+  pendingPhysicsStepStats = [];
   pauseButton.textContent = "Pause";
   performanceRecorder.recordMarker("reset", performanceScenario());
   status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
@@ -198,11 +203,34 @@ function simulationInputActive() {
   );
 }
 
+function readPhysicsCounter(name) {
+  const read = engine?.[name];
+  return typeof read === "function" ? read() : null;
+}
+
+function lastPhysicsStepStats() {
+  return {
+    sampled_events: readPhysicsCounter("sandbox_last_sampled_events"),
+    tail_contacts: readPhysicsCounter("sandbox_last_tail_contacts"),
+    tail_slices: readPhysicsCounter("sandbox_last_tail_slices"),
+    tail_replays: readPhysicsCounter("sandbox_last_tail_replays"),
+    tail_candidate_pairs: readPhysicsCounter("sandbox_last_tail_candidate_pairs"),
+    tail_broad_phase_queries: readPhysicsCounter("sandbox_last_tail_broad_phase_queries"),
+    tail_broad_phase_rebuilds: readPhysicsCounter("sandbox_last_tail_broad_phase_rebuilds"),
+    tail_broad_phase_reuses: readPhysicsCounter("sandbox_last_tail_broad_phase_reuses"),
+    broad_phase_queries: readPhysicsCounter("sandbox_last_broad_phase_queries"),
+    broad_phase_rebuilds: readPhysicsCounter("sandbox_last_broad_phase_rebuilds"),
+    broad_phase_reuses: readPhysicsCounter("sandbox_last_broad_phase_reuses"),
+  };
+}
+
 function simulationStep() {
   const [velocityX, velocityZ] = movementVelocity();
   const started = performance.now();
   const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
-  pendingPhysicsStepMs.push(performance.now() - started);
+  const durationMs = performance.now() - started;
+  pendingPhysicsStepMs.push(durationMs);
+  pendingPhysicsStepStats.push(error === 0 ? lastPhysicsStepStats() : {});
   jumpQueued = false;
   renderDirty = true;
   if (error !== 0) {
@@ -446,7 +474,11 @@ function render() {
     engine.sandbox_fixed_geometry_mode() === 1
       ? ` · fixed prepared ${engine.sandbox_fixed_geometry_prepared_count()} (${engine.sandbox_fixed_geometry_retained_bytes()} B)`
       : " · fixed runtime";
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const tailDiagnostics =
+    typeof engine.sandbox_last_tail_slices === "function"
+      ? ` · tail ${engine.sandbox_last_tail_slices()} slices / ${engine.sandbox_last_tail_candidate_pairs()} candidates`
+      : "";
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
   return true;
 }
@@ -473,12 +505,18 @@ function frame(timestamp) {
   if (!paused && (!quiescent || simulationInputActive())) {
     accumulator += elapsed;
     let steps = 0;
-    while (accumulator >= FIXED_STEP_MS && steps < 8 && !paused) {
+    let workBudgetExceeded = false;
+    const physicsWorkStarted = performance.now();
+    while (accumulator >= FIXED_STEP_MS && steps < MAX_CATCH_UP_STEPS && !paused) {
       simulationStep();
       accumulator -= FIXED_STEP_MS;
       steps += 1;
+      if (performance.now() - physicsWorkStarted >= MAX_CATCH_UP_WALL_MS) {
+        workBudgetExceeded = true;
+        break;
+      }
     }
-    if (steps === 8 && accumulator >= FIXED_STEP_MS) {
+    if ((steps === MAX_CATCH_UP_STEPS || workBudgetExceeded) && accumulator >= FIXED_STEP_MS) {
       droppedAccumulatorMs = accumulator;
       accumulator = 0;
     }
@@ -495,6 +533,7 @@ function frame(timestamp) {
     render_performed: renderPerformed,
     render_ms: renderPerformed ? renderMs : null,
     physics_steps_ms: pendingPhysicsStepMs,
+    physics_step_stats: pendingPhysicsStepStats,
     dropped_accumulator_ms: droppedAccumulatorMs,
     body_count: typeof engine?.sandbox_body_count === "function" ? engine.sandbox_body_count() : null,
     collision_contacts:
@@ -504,6 +543,7 @@ function frame(timestamp) {
     paused,
   });
   pendingPhysicsStepMs = [];
+  pendingPhysicsStepStats = [];
   requestAnimationFrame(frame);
 }
 
@@ -606,6 +646,7 @@ stepButton.addEventListener("click", () => {
 });
 startPerformanceLogButton.addEventListener("click", () => {
   pendingPhysicsStepMs = [];
+  pendingPhysicsStepStats = [];
   performanceRecorder.start();
   startPerformanceLogButton.disabled = true;
   downloadPerformanceLogButton.disabled = false;
