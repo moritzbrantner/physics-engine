@@ -1,6 +1,6 @@
+use crate::ecs_world::EcsRotatingWorld3d;
 use crate::{
-    BodyId, EcsRotatingWorld3d, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i,
-    obb_contact_seed,
+    BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,
 };
 
 /// Returns whether `body` currently has a contact whose normal can oppose the supplied acceleration.
