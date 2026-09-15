@@ -395,7 +395,7 @@ fn multiply_i64_to_i128(left: i64, right: i64) -> i128 {
 }
 
 fn multiply_u64_to_u128(left: u64, right: u64) -> u128 {
-    const LOW_MASK: u64 = u64::from(u32::MAX);
+    const LOW_MASK: u64 = 0xffff_ffff;
     let left_low = left & LOW_MASK;
     let left_high = left >> 32;
     let right_low = right & LOW_MASK;
