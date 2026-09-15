@@ -6,15 +6,19 @@ use physics_engine::{
     RotatingWorldError3d, Vec3i,
 };
 
+mod controller;
 mod render_snapshot;
+
+use controller::TICKS_PER_SECOND;
+pub use controller::controlled_velocity;
 
 const PLAYER_ID: BodyId = BodyId(1);
 const PROJECTILE_ID_START: u64 = 1_000;
 const MAX_PROJECTILES: usize = 48;
-const MOVE_SPEED: i32 = 7;
+const LEGACY_MOVE_SPEED: i32 = 7;
 const JUMP_SPEED: i32 = 16;
 const PROJECTILE_SPEED_LIMIT: i32 = 120;
-const ROTATING_TICKS_PER_SECOND: i32 = 60;
+const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 
@@ -140,9 +144,19 @@ impl Sandbox {
     }
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
+        let desired_x = move_x
+            .clamp(-LEGACY_MOVE_SPEED, LEGACY_MOVE_SPEED)
+            .saturating_mul(ROTATING_TICKS_PER_SECOND);
+        let desired_z = move_z
+            .clamp(-LEGACY_MOVE_SPEED, LEGACY_MOVE_SPEED)
+            .saturating_mul(ROTATING_TICKS_PER_SECOND);
+        self.step_velocity(desired_x, desired_z, jump)
+    }
+
+    fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
-        if move_x == 0 && move_z == 0 && !jump && self.is_quiescent() {
+        if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
             return 0;
@@ -165,15 +179,7 @@ impl Sandbox {
         } else {
             current_velocity.y
         };
-        let velocity = Vec3i::new(
-            move_x
-                .clamp(-MOVE_SPEED, MOVE_SPEED)
-                .saturating_mul(ROTATING_TICKS_PER_SECOND),
-            next_y,
-            move_z
-                .clamp(-MOVE_SPEED, MOVE_SPEED)
-                .saturating_mul(ROTATING_TICKS_PER_SECOND),
-        );
+        let velocity = controlled_velocity(current_velocity, desired_x, desired_z, next_y);
         if velocity != current_velocity
             && self.world.set_linear_velocity(PLAYER_ID, velocity).is_err()
         {
@@ -350,6 +356,11 @@ pub extern "C" fn sandbox_reset() {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_step(move_x: i32, move_z: i32, jump: i32) -> i32 {
     with_sandbox_mut(|sandbox| sandbox.step(move_x, move_z, jump != 0))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_step_velocity(velocity_x: i32, velocity_z: i32, jump: i32) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.step_velocity(velocity_x, velocity_z, jump != 0))
 }
 
 #[unsafe(no_mangle)]
@@ -541,6 +552,45 @@ mod tests {
 
         assert_eq!(sandbox.step(0, -7, false), 0);
         assert!(!sandbox.is_quiescent());
+    }
+
+    #[test]
+    fn canonical_controller_keeps_sub_legacy_velocity_precision() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        for _ in 0..4 {
+            assert_eq!(sandbox.step_velocity(73, -413, false), 0);
+        }
+        let velocity = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .expect("player")
+            .body()
+            .velocity();
+        assert_eq!(velocity.x, 73);
+        assert_eq!(velocity.z, -413);
+    }
+
+    #[test]
+    fn canonical_controller_does_not_zero_external_horizontal_momentum() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        sandbox
+            .world
+            .set_linear_velocity(PLAYER_ID, Vec3i::new(300, 0, 0))
+            .expect("inject external horizontal momentum");
+
+        assert_eq!(sandbox.step_velocity(0, 0, false), 0);
+        let velocity_x = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .expect("player")
+            .body()
+            .velocity()
+            .x;
+        assert!(
+            velocity_x > 0 && velocity_x < 300,
+            "controller erased or failed to oppose external momentum: {velocity_x}"
+        );
     }
 
     #[test]
