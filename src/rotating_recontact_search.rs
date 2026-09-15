@@ -8,7 +8,7 @@ use crate::{
 use crate::{
     oriented_box::{PreparedObb3d, obb_contact_seed_prepared},
     rotating_broad_phase::RotatingBroadPhase3d,
-    rotating_contact_search::coarse_sample_limit,
+    rotating_contact_search::{RotatingContactSearchResult3d, coarse_sample_limit},
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
@@ -142,18 +142,24 @@ pub fn sampled_rotating_recontact_search(
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
-    sampled_rotating_recontact_search_with_broad_phase(boxes, config, &mut broad_phase)
+    Ok(
+        sampled_rotating_recontact_search_with_broad_phase(boxes, config, &mut broad_phase)?
+            .hit,
+    )
 }
 
 pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
-) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+) -> Result<RotatingContactSearchResult3d, RotatingContactSearchError3d> {
     validate_resolution(config)?;
     let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     if pairs.is_empty() {
-        return Ok(None);
+        return Ok(RotatingContactSearchResult3d {
+            hit: None,
+            candidates: pairs,
+        });
     }
 
     let by_id = boxes
@@ -163,7 +169,7 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
     let mut coarse_samples = CoarseSampleCache3d::default();
     let mut best = None;
     let denominator = u32::from(config.sample_count);
-    for pair in pairs {
+    for pair in pairs.iter().copied() {
         let left = by_id.get(&pair.left).copied().ok_or(
             RotatingContactSearchError3d::MissingCandidateBody(pair.left),
         )?;
@@ -181,7 +187,10 @@ pub(crate) fn sampled_rotating_recontact_search_with_broad_phase(
             best = Some(hit);
         }
     }
-    Ok(best)
+    Ok(RotatingContactSearchResult3d {
+        hit: best,
+        candidates: pairs,
+    })
 }
 
 fn validate_resolution(
