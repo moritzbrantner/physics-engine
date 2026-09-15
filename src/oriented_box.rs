@@ -99,6 +99,45 @@ struct AxisSeed {
     feature: ObbAxisFeature3d,
 }
 
+const EMPTY_AXIS_SEED: AxisSeed = AxisSeed {
+    axis: [0; 3],
+    feature: ObbAxisFeature3d::LeftFace(0),
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AxisSeedBuffer {
+    entries: [AxisSeed; MAX_SAT_AXES],
+    len: usize,
+}
+
+impl Default for AxisSeedBuffer {
+    fn default() -> Self {
+        Self {
+            entries: [EMPTY_AXIS_SEED; MAX_SAT_AXES],
+            len: 0,
+        }
+    }
+}
+
+impl AxisSeedBuffer {
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &AxisSeed> {
+        self.entries[..self.len].iter()
+    }
+
+    fn push(&mut self, seed: AxisSeed) -> Result<(), OrientedBoxError3d> {
+        if self.len >= MAX_SAT_AXES {
+            return Err(OrientedBoxError3d::ArithmeticOverflow);
+        }
+        self.entries[self.len] = seed;
+        self.len += 1;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EvaluatedAxis {
     seed: AxisSeed,
@@ -187,7 +226,7 @@ pub(crate) fn obb_contact_seed_prepared(
     let left_faces = left.faces?;
     let right_faces = right.faces?;
 
-    let mut candidate_axes = Vec::with_capacity(MAX_SAT_AXES);
+    let mut candidate_axes = AxisSeedBuffer::default();
     for (index, direction) in left_faces.into_iter().enumerate() {
         push_required_axis(
             &mut candidate_axes,
@@ -473,7 +512,7 @@ fn cross_component(
 }
 
 fn push_required_axis(
-    candidate_axes: &mut Vec<AxisSeed>,
+    candidate_axes: &mut AxisSeedBuffer,
     direction: [i128; 3],
     feature: ObbAxisFeature3d,
 ) -> Result<(), OrientedBoxError3d> {
@@ -482,7 +521,7 @@ fn push_required_axis(
 }
 
 fn push_optional_axis(
-    candidate_axes: &mut Vec<AxisSeed>,
+    candidate_axes: &mut AxisSeedBuffer,
     direction: [i128; 3],
     feature: ObbAxisFeature3d,
 ) -> Result<(), OrientedBoxError3d> {
@@ -493,7 +532,7 @@ fn push_optional_axis(
 }
 
 fn push_unique_axis(
-    candidate_axes: &mut Vec<AxisSeed>,
+    candidate_axes: &mut AxisSeedBuffer,
     direction: [i128; 3],
     feature: ObbAxisFeature3d,
 ) -> Result<(), OrientedBoxError3d> {
@@ -503,14 +542,10 @@ fn push_unique_axis(
     {
         return Ok(());
     }
-    if candidate_axes.len() >= MAX_SAT_AXES {
-        return Err(OrientedBoxError3d::ArithmeticOverflow);
-    }
     candidate_axes.push(AxisSeed {
         axis: direction,
         feature,
-    });
-    Ok(())
+    })
 }
 
 fn primitive_axis(mut axis: [i128; 3]) -> Result<Option<[i128; 3]>, OrientedBoxError3d> {
@@ -850,9 +885,9 @@ mod tests {
     use std::{cmp::Ordering, hint::black_box, time::Instant};
 
     use super::{
-        ObbAxisFeature3d, OrientedBox3d, OrientedBoxError3d, compare_squared_ratios,
-        obb_contact_seed, oriented_box_vertices, projection, projection_wide_reference,
-        wide_product,
+        AxisSeed, AxisSeedBuffer, MAX_SAT_AXES, ObbAxisFeature3d, OrientedBox3d,
+        OrientedBoxError3d, compare_squared_ratios, obb_contact_seed, oriented_box_vertices,
+        projection, projection_wide_reference, wide_product,
     };
     use crate::{Orientation3d, Vec3i};
 
@@ -928,6 +963,45 @@ mod tests {
                 "bounded projection drifted for {axis:?}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "release-mode SAT candidate storage benchmark"]
+    fn sat_axis_storage_benchmark() {
+        let seeds = std::array::from_fn::<_, MAX_SAT_AXES, _>(|index| AxisSeed {
+            axis: [i128::try_from(index + 1).expect("axis index fits i128"), 1, -1],
+            feature: ObbAxisFeature3d::EdgeEdge {
+                left_axis: u8::try_from(index % 3).expect("axis index fits u8"),
+                right_axis: u8::try_from((index / 3) % 3).expect("axis index fits u8"),
+            },
+        });
+        let iterations = 100_000_usize;
+
+        let vec_start = Instant::now();
+        let mut vec_total = 0_usize;
+        for _ in 0..iterations {
+            let mut candidate_axes = Vec::with_capacity(MAX_SAT_AXES);
+            for seed in seeds {
+                candidate_axes.push(seed);
+            }
+            vec_total = vec_total.saturating_add(black_box(candidate_axes.len()));
+        }
+        let vec_elapsed = vec_start.elapsed();
+
+        let stack_start = Instant::now();
+        let mut stack_total = 0_usize;
+        for _ in 0..iterations {
+            let mut candidate_axes = AxisSeedBuffer::default();
+            for seed in seeds {
+                candidate_axes.push(seed).expect("bounded candidate axes");
+            }
+            stack_total = stack_total.saturating_add(black_box(candidate_axes.len()));
+        }
+        let stack_elapsed = stack_start.elapsed();
+        assert_eq!(vec_total, stack_total);
+        println!(
+            "SAT axis storage: iterations={iterations}, vec={vec_elapsed:?}, stack={stack_elapsed:?}"
+        );
     }
 
     #[test]
