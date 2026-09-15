@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d,
@@ -8,7 +12,10 @@ use crate::{
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
     rotating_contact_search::sampled_rotating_contact_search_with_broad_phase,
-    rotating_recontact_search::sampled_rotating_recontact_search_with_broad_phase,
+    rotating_recontact_search::{
+        sampled_rotating_recontact_search_with_broad_phase,
+        sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase,
+    },
 };
 
 /// One shared pre-response world reconstructed at an admitted sampled rotating contact time.
@@ -70,10 +77,7 @@ impl fmt::Display for RotatingContactFrontierError3d {
                 )
             }
             Self::FreeFlight(error) => {
-                write!(
-                    formatter,
-                    "rotating contact frontier free flight failed: {error}"
-                )
+                write!(formatter, "rotating tail free flight failed: {error}")
             }
             Self::Geometry(error) => {
                 write!(
@@ -187,17 +191,39 @@ pub(crate) fn next_rotating_contact_frontier_with_broad_phase(
     else {
         return Ok(None);
     };
+    reconstruct_positive_frontier(boxes, config, earliest, broad_phase).map(Some)
+}
+
+pub(crate) fn next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    persistent_pairs: &mut BTreeSet<RotationalSweepPair3d>,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
+    let Some(earliest) = sampled_rotating_recontact_search_with_persistent_pairs_and_broad_phase(
+        boxes,
+        config,
+        persistent_pairs,
+        broad_phase,
+    )?
+    else {
+        return Ok(None);
+    };
+    reconstruct_positive_frontier(boxes, config, earliest, broad_phase).map(Some)
+}
+
+fn reconstruct_positive_frontier(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    earliest: RotatingContactSearchHit3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<RotatingContactFrontier3d, RotatingContactFrontierError3d> {
     if earliest.time.numerator == 0 {
         return Err(RotatingContactFrontierError3d::InvalidSearchTime(
             earliest.time,
         ));
     }
-    Ok(Some(reconstruct_frontier(
-        boxes,
-        config,
-        earliest,
-        broad_phase,
-    )?))
+    reconstruct_frontier(boxes, config, earliest, broad_phase)
 }
 
 fn reconstruct_frontier(
