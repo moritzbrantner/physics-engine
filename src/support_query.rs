@@ -1,21 +1,21 @@
+use crate::current_contact_query::body_current_contacts;
 use crate::ecs_world::EcsRotatingWorld3d;
-use crate::{
-    BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,
-};
+use crate::{BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i};
 
 /// Returns whether `body` currently has a contact whose normal can oppose the supplied acceleration.
 ///
-/// Contact geometry remains engine-owned. The subject body is always evaluated as the left OBB, so the
-/// SAT axis points from the subject toward the other body. A support therefore requires a strictly positive
-/// dot product between that axis and the acceleration vector. Side-wall and ceiling contacts do not count as
-/// support under downward gravity, while floors and sufficiently upward-facing slopes do.
+/// Contact candidates are pruned through the engine's zero-time rotational broad phase and then exact-filtered
+/// by the shared OBB SAT query. The subject body is always evaluated as the left OBB, so the returned SAT axis
+/// points from the subject toward the other body. A support therefore requires a strictly positive dot product
+/// between that axis and the acceleration vector. Side-wall and ceiling contacts do not count as support under
+/// downward gravity, while floors and sufficiently upward-facing slopes do.
 ///
 /// This is a current-contact query; it does not predict future contact or apply impulses.
 ///
 /// # Errors
 ///
-/// Returns [`RotatingWorldError3d`] if the body is missing, overlap/contact geometry is invalid, or the
-/// support-direction dot product overflows the deterministic integer contract.
+/// Returns [`RotatingWorldError3d`] if the body is missing, broad-phase/current OBB geometry is invalid, or
+/// the support-direction dot product overflows the deterministic integer contract.
 pub fn body_has_support(
     world: &EcsRotatingWorld3d,
     body: BodyId,
@@ -24,20 +24,9 @@ pub fn body_has_support(
     if acceleration == Vec3i::ZERO {
         return Ok(false);
     }
-    let subject = world
-        .box_by_id(body)
-        .ok_or(RotatingWorldError3d::MissingBody(body))?;
-    for other_id in world.overlap_query(subject.oriented_box())? {
-        if other_id == body {
-            continue;
-        }
-        let other = world
-            .box_by_id(other_id)
-            .ok_or(RotatingWorldError3d::MissingBody(other_id))?;
-        let Some(contact) = obb_contact_seed(subject.oriented_box(), other.oriented_box())? else {
-            continue;
-        };
-        if checked_dot(acceleration, contact.axis, body)? > 0 {
+    let boxes = world.boxes().cloned().collect::<Vec<_>>();
+    for current in body_current_contacts(&boxes, body)? {
+        if checked_dot(acceleration, current.contact.axis, body)? > 0 {
             return Ok(true);
         }
     }

@@ -21,6 +21,7 @@ mod angular;
 mod body;
 mod collider;
 mod collision;
+mod current_contact_query;
 mod ecs_world;
 mod math;
 mod obb_friction;
