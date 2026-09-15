@@ -64,6 +64,17 @@ pub struct RotatingContactSearchHit3d {
     pub contact: ObbContactSeed3d,
 }
 
+/// Internal temporal-search result that keeps the conservative pair set used to select [`Self::hit`].
+///
+/// The candidate list is stable `BodyId` ordered and already respects symmetric collision layers. Frontier
+/// reconstruction may exact-filter this same conservative set at the admitted sampled instant instead of
+/// issuing another broad-phase query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RotatingContactSearchResult3d {
+    pub hit: Option<RotatingContactSearchHit3d>,
+    pub candidates: Vec<RotationalSweepPair3d>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RotatingContactSearchError3d {
     ZeroSampleCount,
@@ -219,18 +230,24 @@ pub fn sampled_rotating_contact_search(
     config: RotatingContactSearchConfig3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
-    sampled_rotating_contact_search_with_broad_phase(boxes, config, &mut broad_phase)
+    Ok(
+        sampled_rotating_contact_search_with_broad_phase(boxes, config, &mut broad_phase)?
+            .hit,
+    )
 }
 
 pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
-) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
+) -> Result<RotatingContactSearchResult3d, RotatingContactSearchError3d> {
     validate_resolution(config)?;
     let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
     if pairs.is_empty() {
-        return Ok(None);
+        return Ok(RotatingContactSearchResult3d {
+            hit: None,
+            candidates: pairs,
+        });
     }
 
     let by_id: BTreeMap<BodyId, usize> = boxes
@@ -241,7 +258,7 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
     let denominator = u32::from(config.sample_count);
     let mut coarse_samples = CoarseSampleCache3d::new(boxes.len(), denominator);
     let mut best: Option<RotatingContactSearchHit3d> = None;
-    for pair in pairs {
+    for pair in pairs.iter().copied() {
         let left_index =
             *by_id
                 .get(&pair.left)
@@ -276,7 +293,10 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
             best = Some(hit);
         }
     }
-    Ok(best)
+    Ok(RotatingContactSearchResult3d {
+        hit: best,
+        candidates: pairs,
+    })
 }
 
 fn validate_resolution(
