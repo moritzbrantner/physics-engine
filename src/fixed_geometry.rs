@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::BTreeMap, mem::size_of};
+use std::{cell::RefCell, collections::BTreeMap, mem::size_of, sync::Arc};
 
 use crate::oriented_box::{
     PreparedObb3d, obb_contact_seed as runtime_obb_contact_seed, obb_contact_seed_prepared,
@@ -36,7 +36,7 @@ pub struct FixedGeometryPreparationStats3d {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FixedGeometryPreparationCache3d {
     mode: FixedGeometryPreparationMode3d,
-    prepared: BTreeMap<BodyId, PreparedObb3d>,
+    prepared: Arc<BTreeMap<BodyId, PreparedObb3d>>,
     total_preparations: u64,
 }
 
@@ -57,8 +57,8 @@ impl Drop for ActiveFixedGeometryGuard {
 }
 
 /// Executes one world-owned operation with that world's immutable fixed preparation visible to the shared
-/// SAT entry point. The retained cache itself remains owned by the world; the active value is a cheap clone
-/// of already-prepared data and performs no geometry preparation.
+/// SAT entry point. The cache clone shares immutable prepared data; no retained geometry is copied or rebuilt
+/// per step. Scene mutation uses copy-on-write only when fixed geometry actually changes.
 pub(crate) fn with_fixed_geometry_context<R>(
     cache: &FixedGeometryPreparationCache3d,
     callback: impl FnOnce() -> R,
@@ -94,7 +94,7 @@ impl FixedGeometryPreparationCache3d {
         boxes: impl IntoIterator<Item = &'a RigidBox3d>,
     ) {
         self.mode = mode;
-        self.prepared.clear();
+        Arc::make_mut(&mut self.prepared).clear();
         if mode == FixedGeometryPreparationMode3d::PrepareAtLoad {
             for rigid_box in boxes {
                 if rigid_box.body().kind() == BodyKind::Fixed {
@@ -113,7 +113,7 @@ impl FixedGeometryPreparationCache3d {
     }
 
     pub(crate) fn unregister(&mut self, id: BodyId) {
-        self.prepared.remove(&id);
+        Arc::make_mut(&mut self.prepared).remove(&id);
     }
 
     #[must_use]
@@ -158,7 +158,7 @@ impl FixedGeometryPreparationCache3d {
             .prepared
             .get(&id)
             .is_none_or(|previous| *previous != prepared);
-        self.prepared.insert(id, prepared);
+        Arc::make_mut(&mut self.prepared).insert(id, prepared);
         if changed {
             self.total_preparations = self.total_preparations.saturating_add(1);
         }
