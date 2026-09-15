@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i,
-    obb_contact_seed, rigid_box_free_flight_sweep_bounds,
+    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
+    rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -424,7 +424,12 @@ mod tests {
         assert!(world.is_sleeping(sleeper));
         assert_eq!(world.box_by_id(sleeper), Some(&sleeper_before));
         assert_eq!(
-            world.box_by_id(BodyId(3)).expect("actuator").body().position().y,
+            world
+                .box_by_id(BodyId(3))
+                .expect("actuator")
+                .body()
+                .position()
+                .y,
             2
         );
     }
