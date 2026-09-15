@@ -178,14 +178,12 @@ impl FixedGeometryPreparationCache3d {
         if self.mode == FixedGeometryPreparationMode3d::Runtime {
             return runtime_obb_contact_seed(left, right);
         }
-        let left = self.prepared_for_shape(left).map_or_else(
-            || PreparedObb3d::new(left),
-            |prepared| prepared.obb,
-        );
-        let right = self.prepared_for_shape(right).map_or_else(
-            || PreparedObb3d::new(right),
-            |prepared| prepared.obb,
-        );
+        let left = self
+            .prepared_for_shape(left)
+            .map_or_else(|| PreparedObb3d::new(left), |prepared| prepared.obb);
+        let right = self
+            .prepared_for_shape(right)
+            .map_or_else(|| PreparedObb3d::new(right), |prepared| prepared.obb);
         obb_contact_seed_prepared(&left, &right)
     }
 
