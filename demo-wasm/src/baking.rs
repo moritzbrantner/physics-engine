@@ -2,7 +2,7 @@ use physics_engine::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
 };
 
-use super::{Sandbox, with_sandbox, with_sandbox_mut};
+use crate::{Sandbox, with_sandbox, with_sandbox_mut};
 
 fn preparation_mode(value: i32) -> Option<FixedGeometryPreparationMode3d> {
     match value {
@@ -93,7 +93,7 @@ pub const extern "C" fn sandbox_fixed_geometry_representation_version() -> u32 {
 mod tests {
     use physics_engine::FixedGeometryPreparationMode3d;
 
-    use super::Sandbox;
+    use crate::Sandbox;
 
     #[test]
     fn prepare_at_load_keeps_sleeping_dynamics_out_of_baked_set() {
