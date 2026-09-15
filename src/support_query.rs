@@ -10,7 +10,9 @@ use crate::{BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i}
 /// between that axis and the acceleration vector. Side-wall and ceiling contacts do not count as support under
 /// downward gravity, while floors and sufficiently upward-facing slopes do.
 ///
-/// This is a current-contact query; it does not predict future contact or apply impulses.
+/// This is a current-contact query; it does not predict future contact or apply impulses. When the world has
+/// opted into fixed-geometry preparation, the same exact query transparently reuses its retained genuine-fixed
+/// geometry.
 ///
 /// # Errors
 ///
@@ -24,13 +26,15 @@ pub fn body_has_support(
     if acceleration == Vec3i::ZERO {
         return Ok(false);
     }
-    let boxes = world.boxes().cloned().collect::<Vec<_>>();
-    for current in body_current_contacts(&boxes, body)? {
-        if checked_dot(acceleration, current.axis, body)? > 0 {
-            return Ok(true);
+    world.with_prepared_fixed_geometry(|| {
+        let boxes = world.boxes().cloned().collect::<Vec<_>>();
+        for current in body_current_contacts(&boxes, body)? {
+            if checked_dot(acceleration, current.axis, body)? > 0 {
+                return Ok(true);
+            }
         }
-    }
-    Ok(false)
+        Ok(false)
+    })
 }
 
 fn checked_dot(vector: Vec3i, axis: [i128; 3], body: BodyId) -> Result<i128, RotatingWorldError3d> {
@@ -53,8 +57,8 @@ fn arithmetic_overflow(body: BodyId) -> RotatingWorldError3d {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, FixedGeometryPreparationMode3d, Orientation3d,
+        RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
     };
 
     use super::body_has_support;
@@ -96,6 +100,25 @@ mod tests {
 
         assert!(
             body_has_support(&world, BodyId(1), Vec3i::new(0, -3_600, 0)).expect("support query")
+        );
+    }
+
+    #[test]
+    fn prepared_floor_contact_matches_runtime_support() {
+        let mut runtime = world_with_subject();
+        runtime
+            .add_box(rotating(RigidBody::fixed(
+                BodyId(2),
+                Vec3i::ZERO,
+                Vec3i::new(5, 1, 5),
+            )))
+            .expect("runtime floor");
+        let mut prepared = runtime.clone();
+        prepared.set_fixed_geometry_preparation_mode(FixedGeometryPreparationMode3d::PrepareAtLoad);
+
+        assert_eq!(
+            body_has_support(&runtime, BodyId(1), Vec3i::new(0, -3_600, 0)),
+            body_has_support(&prepared, BodyId(1), Vec3i::new(0, -3_600, 0))
         );
     }
 
