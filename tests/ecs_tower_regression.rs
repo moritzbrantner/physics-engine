@@ -152,6 +152,7 @@ fn assert_no_floor_penetration(boxes: &[RigidBox3d], frame: u32) {
 }
 
 #[test]
+#[ignore = "long deterministic ECS tower acceptance runs explicitly in Validate"]
 fn ecs_tower_completes_long_horizon_without_event_churn() {
     let mut boxes = tower_boxes();
     let mut maximum_spinning_blocks = 0_usize;

@@ -34,14 +34,14 @@ fn stationary_grid_reuses_two_preparations_and_one_sat_evaluation() {
     );
     let expected = obb_contact_seed(left.oriented_box(), right.oriented_box()).unwrap();
     assert!(expected.is_some());
-    let mut geometry = CoarseSampleCache3d::default();
+    let mut geometry = CoarseSampleCache3d::new(2, 32);
     let mut contacts = PairContactCache3d::default();
     for numerator in 1..=32 {
         let left = geometry
-            .sample_geometry(&left, search, numerator, 32)
+            .sample_geometry(0, &left, search, numerator)
             .unwrap();
         let right = geometry
-            .sample_geometry(&right, search, numerator, 32)
+            .sample_geometry(1, &right, search, numerator)
             .unwrap();
         assert_eq!(contacts.contact(&left, &right).unwrap(), expected);
     }
@@ -82,12 +82,12 @@ fn every_shape_component_and_pair_order_invalidates_the_exact_result() {
 
 #[test]
 fn geometry_cache_tracks_full_shape_instead_of_only_body_identity() {
-    let mut cache = CoarseSampleCache3d::default();
+    let mut cache = CoarseSampleCache3d::new(1, 1);
     let original = shape(Vec3i::ZERO);
     let moved = shape(Vec3i::new(1, 0, 0));
-    assert_eq!(cache.prepare_geometry(BodyId(7), original).shape, original);
-    assert_eq!(cache.prepare_geometry(BodyId(7), moved).shape, moved);
-    assert_eq!(cache.prepare_geometry(BodyId(7), original).shape, original);
+    assert_eq!(cache.prepare_geometry(0, original).shape, original);
+    assert_eq!(cache.prepare_geometry(0, moved).shape, moved);
+    assert_eq!(cache.prepare_geometry(0, original).shape, original);
     assert_eq!(cache.preparations, 3);
     assert_eq!(cache.latest_geometry.len(), 1);
 }
@@ -139,10 +139,10 @@ fn fixed_geometry_reuse_still_validates_each_uncached_sample_fraction() {
         32,
         4,
     );
-    let mut cache = CoarseSampleCache3d::default();
-    cache.sample_geometry(&fixed, search, 1, 32).unwrap();
+    let mut cache = CoarseSampleCache3d::new(1, 0);
+    cache.prepare_geometry(0, fixed.oriented_box());
     assert_eq!(
-        cache.sample_geometry(&fixed, search, 1, 0),
+        cache.sample_geometry(0, &fixed, search, 1),
         Err(RotatingContactSearchError3d::FreeFlight(
             RigidBoxFreeFlightError3d::ZeroFractionDenominator,
         )),

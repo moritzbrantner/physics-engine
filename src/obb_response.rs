@@ -117,6 +117,17 @@ pub fn resolve_obb_contact(
     right: RigidBox3d,
     allow_restitution: bool,
 ) -> Result<ObbContactResponse3d, ObbContactResponseError3d> {
+    if crate::linear_contact::uses_linear_response(&left, &right) {
+        return crate::linear_contact::resolve(left, right);
+    }
+    resolve_physical_obb_contact(left, right, allow_restitution)
+}
+
+pub(crate) fn resolve_physical_obb_contact(
+    left: RigidBox3d,
+    right: RigidBox3d,
+    allow_restitution: bool,
+) -> Result<ObbContactResponse3d, ObbContactResponseError3d> {
     validate_pair(&left, &right)?;
     let Some(seed) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
         return Ok(ObbContactResponse3d {
@@ -212,7 +223,10 @@ pub fn resolve_obb_contact(
     })
 }
 
-fn validate_pair(left: &RigidBox3d, right: &RigidBox3d) -> Result<(), ObbContactResponseError3d> {
+pub(crate) fn validate_pair(
+    left: &RigidBox3d,
+    right: &RigidBox3d,
+) -> Result<(), ObbContactResponseError3d> {
     if left.body.id >= right.body.id {
         return Err(ObbContactResponseError3d::NonCanonicalPair(
             left.body.id,

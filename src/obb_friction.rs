@@ -46,9 +46,15 @@ pub fn resolve_obb_contact(
     validate_friction(&left)?;
     validate_friction(&right)?;
 
+    let linear_only = crate::linear_contact::uses_linear_response(&left, &right);
     let left_start = left.clone();
     let right_start = right.clone();
     let mut response = resolve_normal_obb_contact(left, right, allow_restitution)?;
+    // Actuator contacts intentionally do not drag a support or apply off-centre friction torque.
+    // Material validation above remains unconditional; ordinary rigid contacts are unchanged.
+    if linear_only {
+        return Ok(response);
+    }
     let Some(contact) = response.contact else {
         return Ok(response);
     };

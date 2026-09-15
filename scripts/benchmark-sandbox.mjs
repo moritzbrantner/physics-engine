@@ -10,7 +10,13 @@ const trials = Number(process.env.TRIALS ?? 1);
 if (!Number.isInteger(trials) || trials < 1 || trials > 10) {
   throw new Error("TRIALS must be an integer from 1 through 10");
 }
-const names = ["settled-idle", "walking-no-shots", "three-shots-idle", "three-shots-walking"];
+const names = [
+  "settled-idle",
+  "walking-no-shots",
+  "three-shots-idle",
+  "three-shots-walking",
+  "six-shots-idle",
+];
 const cases = process.env.CASE ? names.filter((name) => name === process.env.CASE) : names;
 if (cases.length === 0) throw new Error("unknown CASE");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -25,6 +31,15 @@ function stats(values) {
     max_ms: sorted.at(-1),
   };
 }
+function sumKnown(values, key) {
+  const known = values.map((value) => value[key]).filter((value) => Number.isInteger(value));
+  return known.length === values.length ? known.reduce((sum, value) => sum + value, 0) : null;
+}
+function shotTicks(name) {
+  if (name === "six-shots-idle") return [0, 30, 60, 90, 120, 150];
+  if (name.startsWith("three-shots-")) return [0, 40, 80];
+  return [];
+}
 async function measure(path) {
   const bytes = readFileSync(path);
   const { instance } = await WebAssembly.instantiate(bytes, {});
@@ -32,6 +47,24 @@ async function measure(path) {
   function step(x, z) {
     const error = engine.sandbox_step_velocity(x, z, 0);
     if (error !== 0) throw new Error(`physics error ${error}, detail ${engine.sandbox_error_detail()}`);
+  }
+  function readCounter(name) {
+    return typeof engine[name] === "function" ? engine[name]() : null;
+  }
+  function stepWork() {
+    return {
+      sampled_events: readCounter("sandbox_last_sampled_events"),
+      tail_contacts: readCounter("sandbox_last_tail_contacts"),
+      tail_slices: readCounter("sandbox_last_tail_slices"),
+      tail_replays: readCounter("sandbox_last_tail_replays"),
+      tail_candidate_pairs: readCounter("sandbox_last_tail_candidate_pairs"),
+      tail_broad_phase_queries: readCounter("sandbox_last_tail_broad_phase_queries"),
+      tail_broad_phase_rebuilds: readCounter("sandbox_last_tail_broad_phase_rebuilds"),
+      tail_broad_phase_reuses: readCounter("sandbox_last_tail_broad_phase_reuses"),
+      broad_phase_queries: readCounter("sandbox_last_broad_phase_queries"),
+      broad_phase_rebuilds: readCounter("sandbox_last_broad_phase_rebuilds"),
+      broad_phase_reuses: readCounter("sandbox_last_broad_phase_reuses"),
+    };
   }
   function settle() {
     engine.sandbox_reset();
@@ -47,10 +80,15 @@ async function measure(path) {
       settle();
       const times = [];
       const events = [];
+      const work = [];
       const trace = createHash("sha256");
+      const shots = shotTicks(name);
       for (let tick = 0; tick < 180; tick += 1) {
-        if (name.startsWith("three-") && [0, 40, 80].includes(tick)) {
-          if (engine.sandbox_shoot(tick === 40 ? -38 : 38, tick === 80 ? -7 : 0, -88) < 0) {
+        const shotIndex = shots.indexOf(tick);
+        if (shotIndex >= 0) {
+          const projectileX = shotIndex % 2 === 0 ? 38 : -38;
+          const projectileY = shotIndex % 3 === 2 ? -7 : 0;
+          if (engine.sandbox_shoot(projectileX, projectileY, -88) < 0) {
             throw new Error("projectile creation failed");
           }
         }
@@ -60,6 +98,7 @@ async function measure(path) {
         const start = performance.now();
         step(x, z);
         times.push(performance.now() - start);
+        work.push(stepWork());
         // State evidence is intentionally outside the timed physics call. This is an observable
         // replay fingerprint, not a claim to expose every private solver field.
         const pointer = engine.sandbox_refresh_render_snapshot();
@@ -79,8 +118,24 @@ async function measure(path) {
         throw new Error(`nondeterministic replay for ${name}`);
       }
       measurements.push({
-        steps: stats(times), replay_sha256: replay, body_count: engine.sandbox_body_count(),
-        event_sum: events.reduce((a, b) => a + b, 0), raw: { steps_ms: times, events },
+        steps: stats(times),
+        replay_sha256: replay,
+        body_count: engine.sandbox_body_count(),
+        event_sum: events.reduce((a, b) => a + b, 0),
+        work: {
+          sampled_events: sumKnown(work, "sampled_events"),
+          tail_contacts: sumKnown(work, "tail_contacts"),
+          tail_slices: sumKnown(work, "tail_slices"),
+          tail_replays: sumKnown(work, "tail_replays"),
+          tail_candidate_pairs: sumKnown(work, "tail_candidate_pairs"),
+          tail_broad_phase_queries: sumKnown(work, "tail_broad_phase_queries"),
+          tail_broad_phase_rebuilds: sumKnown(work, "tail_broad_phase_rebuilds"),
+          tail_broad_phase_reuses: sumKnown(work, "tail_broad_phase_reuses"),
+          broad_phase_queries: sumKnown(work, "broad_phase_queries"),
+          broad_phase_rebuilds: sumKnown(work, "broad_phase_rebuilds"),
+          broad_phase_reuses: sumKnown(work, "broad_phase_reuses"),
+        },
+        raw: { steps_ms: times, events, work },
       });
     }
     result.cases.push({ name, trials: measurements });
@@ -89,8 +144,8 @@ async function measure(path) {
   return result;
 }
 const result = {
-  workload: "sandbox-projectiles-v1",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory.",
+  workload: "sandbox-projectiles-v3",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v3 adds a deterministic six-projectile scaling case while retaining per-step sampled/tail work and replay evidence.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
