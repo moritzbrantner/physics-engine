@@ -72,6 +72,7 @@ pub use oriented_box::{
     ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, oriented_box_vertices,
 };
 pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
     RepeatedRotatingEventError3d, RotatingResolvedEvent3d, advance_repeated_rotating_events,
@@ -102,6 +103,5 @@ pub use rotating_world::{
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
-pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use support_query::body_has_support;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
