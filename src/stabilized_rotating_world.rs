@@ -4,7 +4,9 @@ use crate::{
     AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
     RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
-    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
+    obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds,
+    rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
@@ -24,7 +26,9 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// every constraint from one shared snapshot and commits at most one combined positional correction per
 /// dynamic body per pass, so adjacent or duplicated fixed surfaces cannot sequentially move the same body
 /// several times inside one stabilization pass. Every velocity and orientation result from the simultaneous
-/// solver is preserved.
+/// solver is preserved. A retained zero-time broad phase prunes separated fixed/dynamic pairs before exact
+/// OBB response work; it is refreshed after every position-correction pass, so a newly introduced contact
+/// is visible on the next pass without returning to an all-pairs world scan.
 ///
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
 /// continuous simulated duration are put to sleep only when they are already motionless or a current
@@ -59,6 +63,7 @@ pub struct RotatingWorld3d {
     inner: InnerRotatingWorld3d,
     sleeping: BTreeSet<BodyId>,
     sleep_stable_time_q64: BTreeMap<BodyId, u128>,
+    fixed_boundary_broad_phase: RotatingBroadPhase3d,
 }
 
 impl RotatingWorld3d {
@@ -68,6 +73,7 @@ impl RotatingWorld3d {
             inner: InnerRotatingWorld3d::new(config),
             sleeping: BTreeSet::new(),
             sleep_stable_time_q64: BTreeMap::new(),
+            fixed_boundary_broad_phase: RotatingBroadPhase3d::default(),
         }
     }
 
@@ -628,15 +634,17 @@ impl RotatingWorld3d {
             return Ok(());
         }
 
-        let candidate_pairs = fixed_dynamic_pairs(&boxes);
-        if candidate_pairs.is_empty() {
-            return Ok(());
-        }
-
         let mut corrections = vec![PositionCorrectionAccumulator::default(); boxes.len()];
         let mut converged = false;
         let mut any_changed = false;
         for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+            let candidate_pairs =
+                fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;
+            if candidate_pairs.is_empty() {
+                converged = true;
+                break;
+            }
+
             for correction in &mut corrections {
                 correction.clear();
             }
@@ -892,7 +900,47 @@ fn sweep_bounds_overlap(left: RotationalSweepBounds3d, right: RotationalSweepBou
     })
 }
 
-fn fixed_dynamic_pairs(boxes: &[RigidBox3d]) -> Vec<(usize, usize, usize)> {
+fn fixed_dynamic_pairs(
+    boxes: &[RigidBox3d],
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<Vec<(usize, usize, usize)>, RotatingWorldError3d> {
+    let indices = boxes
+        .iter()
+        .enumerate()
+        .map(|(index, rigid_box)| (rigid_box.body.id, index))
+        .collect::<BTreeMap<_, _>>();
+    let candidates = broad_phase
+        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
+        .map_err(map_fixed_boundary_broad_phase_error)?;
+    let mut pairs = Vec::with_capacity(candidates.len());
+    for pair in candidates {
+        let left_index = *indices
+            .get(&pair.left)
+            .ok_or(RotatingWorldError3d::MissingBody(pair.left))?;
+        let right_index = *indices
+            .get(&pair.right)
+            .ok_or(RotatingWorldError3d::MissingBody(pair.right))?;
+        let dynamic_index = match (boxes[left_index].body.kind, boxes[right_index].body.kind) {
+            (BodyKind::Fixed, BodyKind::Dynamic) => Some(right_index),
+            (BodyKind::Dynamic, BodyKind::Fixed) => Some(left_index),
+            _ => None,
+        };
+        if let Some(dynamic_index) = dynamic_index {
+            pairs.push((left_index, right_index, dynamic_index));
+        }
+    }
+    Ok(pairs)
+}
+
+fn map_fixed_boundary_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
+    match error {
+        RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
+    }
+}
+
+#[cfg(test)]
+fn fixed_dynamic_pairs_reference(boxes: &[RigidBox3d]) -> Vec<(usize, usize, usize)> {
     let mut pairs = Vec::new();
     for left_index in 0..boxes.len() {
         for right_index in (left_index + 1)..boxes.len() {
@@ -915,12 +963,17 @@ fn fixed_dynamic_pairs(boxes: &[RigidBox3d]) -> Vec<(usize, usize, usize)> {
 
 #[cfg(test)]
 mod tests {
+    use std::{hint::black_box, time::Instant};
+
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorldConfig3d, Vec3i,
+        RotatingWorldConfig3d, Vec3i, obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,
     };
 
-    use super::{PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS_AT_60_HZ};
+    use super::{
+        PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS_AT_60_HZ,
+        fixed_dynamic_pairs, fixed_dynamic_pairs_reference,
+    };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -928,6 +981,48 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid dynamic box")
+    }
+
+    fn fixed(id: u64, position: Vec3i) -> RigidBox3d {
+        RigidBox3d::new(
+            RigidBody::fixed(BodyId(id), position, Vec3i::new(1, 1, 1)),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid fixed box")
+    }
+
+    fn sparse_fixed_dynamic_scene(pair_count: usize) -> Vec<RigidBox3d> {
+        let mut boxes = Vec::with_capacity(pair_count.saturating_mul(2));
+        for index in 0..pair_count {
+            let base = i32::try_from(index).expect("benchmark index fits i32") * 32;
+            boxes.push(fixed(
+                u64::try_from(index).expect("benchmark id fits u64") * 2 + 1,
+                Vec3i::new(base, 0, 0),
+            ));
+            boxes.push(dynamic(
+                u64::try_from(index).expect("benchmark id fits u64") * 2 + 2,
+                Vec3i::new(base + 2, 0, 0),
+                Vec3i::ZERO,
+            ));
+        }
+        boxes.sort_by_key(|rigid_box| rigid_box.body.id);
+        boxes
+    }
+
+    fn exact_fixed_contacts(
+        boxes: &[RigidBox3d],
+        pairs: &[(usize, usize, usize)],
+    ) -> Vec<(BodyId, BodyId)> {
+        let mut contacts = pairs
+            .iter()
+            .filter_map(|&(left, right, _)| {
+                obb_contact_seed(boxes[left].oriented_box(), boxes[right].oriented_box())
+                    .expect("benchmark geometry is valid")
+                    .map(|_| (boxes[left].body.id, boxes[right].body.id))
+            })
+            .collect::<Vec<_>>();
+        contacts.sort_unstable();
+        contacts
     }
 
     fn zero_gravity_world() -> RotatingWorld3d {
@@ -976,6 +1071,59 @@ mod tests {
                 .expect("combined correction"),
             Vec3i::new(2, 3, 0)
         );
+    }
+
+    #[test]
+    fn fixed_boundary_broad_phase_preserves_exact_current_contacts() {
+        for pair_count in [8_usize, 32, 128] {
+            let boxes = sparse_fixed_dynamic_scene(pair_count);
+            let reference = fixed_dynamic_pairs_reference(&boxes);
+            let mut broad_phase = RotatingBroadPhase3d::default();
+            let pruned = fixed_dynamic_pairs(&boxes, &mut broad_phase).expect("broad phase");
+            assert_eq!(
+                exact_fixed_contacts(&boxes, &pruned),
+                exact_fixed_contacts(&boxes, &reference),
+                "exact fixed contacts drifted at {pair_count} sparse pairs"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "release-mode scaling evidence for fixed-boundary broad-phase pruning"]
+    fn fixed_boundary_broad_phase_scaling_benchmark() {
+        for pair_count in [32_usize, 64, 128, 256] {
+            let boxes = sparse_fixed_dynamic_scene(pair_count);
+            let iterations = 100_usize;
+
+            let reference_start = Instant::now();
+            let mut reference_candidates = 0_usize;
+            for _ in 0..iterations {
+                reference_candidates = reference_candidates.saturating_add(black_box(
+                    fixed_dynamic_pairs_reference(black_box(&boxes)).len(),
+                ));
+            }
+            let reference_elapsed = reference_start.elapsed();
+
+            let mut broad_phase = RotatingBroadPhase3d::default();
+            let broad_start = Instant::now();
+            let mut broad_candidates = 0_usize;
+            for _ in 0..iterations {
+                broad_candidates = broad_candidates.saturating_add(black_box(
+                    fixed_dynamic_pairs(black_box(&boxes), &mut broad_phase)
+                        .expect("broad phase")
+                        .len(),
+                ));
+            }
+            let broad_elapsed = broad_start.elapsed();
+
+            assert_eq!(reference_candidates, pair_count * pair_count * iterations);
+            assert_eq!(broad_candidates, pair_count * iterations);
+            println!(
+                "fixed-boundary candidates: pairs={pair_count}, iterations={iterations}, all_pairs={}, broad_phase={}, all_pairs_elapsed={reference_elapsed:?}, broad_phase_elapsed={broad_elapsed:?}",
+                reference_candidates / iterations,
+                broad_candidates / iterations,
+            );
+        }
     }
 
     #[test]

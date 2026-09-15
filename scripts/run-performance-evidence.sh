@@ -47,6 +47,10 @@ if grep -Eq '(^|/)(stabilized_rotating_world\.rs|relaxed_rotating_world\.rs|slee
   run_integration sleep_parking_performance
 fi
 
+if grep -Eq '(^|/)(stabilized_rotating_world\.rs)$' <<<"$changed"; then
+  run_library_module stabilized_rotating_world
+fi
+
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
   run_library_module rotating_broad_phase
 fi
