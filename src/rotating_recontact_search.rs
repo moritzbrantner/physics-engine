@@ -208,12 +208,18 @@ pub(crate) fn sampled_rotating_recontact_search_with_persistent_pairs_and_broad_
     let mut best = None;
     let mut observed_clears = Vec::new();
     for pair in pairs {
-        let left_index = *by_id
-            .get(&pair.left)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
-        let right_index = *by_id
-            .get(&pair.right)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
+        let left_index =
+            *by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right_index =
+            *by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         let left = &boxes[left_index];
         let right = &boxes[right_index];
         let coarse_limit = best.map_or(denominator, |hit: RotatingContactSearchHit3d| {
@@ -290,15 +296,16 @@ fn search_pair(
     let mut contacts = PairContactCache3d::default();
     let prepared_left = coarse_samples.prepare_geometry(left_index, left.oriented_box());
     let prepared_right = coarse_samples.prepare_geometry(right_index, right.oriented_box());
-    let initially_contacting = historically_contacting
-        || contacts.contact(&prepared_left, &prepared_right)?.is_some();
+    let initially_contacting =
+        historically_contacting || contacts.contact(&prepared_left, &prepared_right)?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if initially_contacting { None } else { Some(0) };
     let mut first_positive_clear = None;
 
     for numerator in 1..=coarse_numerator_limit {
         let sampled_left = coarse_samples.sample_geometry(left_index, left, config, numerator)?;
-        let sampled_right = coarse_samples.sample_geometry(right_index, right, config, numerator)?;
+        let sampled_right =
+            coarse_samples.sample_geometry(right_index, right, config, numerator)?;
         match contacts.contact(&sampled_left, &sampled_right)? {
             Some(contact) => {
                 let Some(clear_numerator) = last_clear else {
@@ -648,11 +655,9 @@ mod tests {
         let moving = dynamic(11, Vec3i::new(-10, 0, 0), Vec3i::new(20, 0, 0));
         let obstacle = fixed(3, Vec3i::ZERO);
         let search = config(Vec3i::ZERO, 8, 2);
-        let forward = sampled_rotating_recontact_search(
-            &[moving.clone(), obstacle.clone()],
-            search,
-        )
-        .expect("valid forward search");
+        let forward =
+            sampled_rotating_recontact_search(&[moving.clone(), obstacle.clone()], search)
+                .expect("valid forward search");
         let reverse = sampled_rotating_recontact_search(&[obstacle, moving], search)
             .expect("valid reverse search");
 
