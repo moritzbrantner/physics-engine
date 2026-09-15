@@ -46,10 +46,37 @@ struct PreparedFixedGeometry3d {
     bounds: Result<RotationalSweepBounds3d, OrientedBoxError3d>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FixedGeometryShapeKey3d {
+    center: [i32; 3],
+    half_extents: [i32; 3],
+    orientation: [i32; 4],
+}
+
+impl From<OrientedBox3d> for FixedGeometryShapeKey3d {
+    fn from(shape: OrientedBox3d) -> Self {
+        Self {
+            center: [shape.center.x, shape.center.y, shape.center.z],
+            half_extents: [
+                shape.half_extents.x,
+                shape.half_extents.y,
+                shape.half_extents.z,
+            ],
+            orientation: [
+                shape.orientation.x,
+                shape.orientation.y,
+                shape.orientation.z,
+                shape.orientation.w,
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FixedGeometryPreparationCache3d {
     mode: FixedGeometryPreparationMode3d,
     prepared: Arc<BTreeMap<BodyId, PreparedFixedGeometry3d>>,
+    prepared_by_shape: Arc<BTreeMap<FixedGeometryShapeKey3d, BodyId>>,
     total_preparations: u64,
 }
 
@@ -135,6 +162,7 @@ impl FixedGeometryPreparationCache3d {
     ) {
         self.mode = mode;
         Arc::make_mut(&mut self.prepared).clear();
+        Arc::make_mut(&mut self.prepared_by_shape).clear();
         if mode == FixedGeometryPreparationMode3d::PrepareAtLoad {
             for rigid_box in boxes {
                 if rigid_box.body().kind() == BodyKind::Fixed {
@@ -153,20 +181,42 @@ impl FixedGeometryPreparationCache3d {
     }
 
     pub(crate) fn unregister(&mut self, id: BodyId) {
-        Arc::make_mut(&mut self.prepared).remove(&id);
+        let Some(removed) = Arc::make_mut(&mut self.prepared).remove(&id) else {
+            return;
+        };
+        let key = FixedGeometryShapeKey3d::from(removed.obb.shape);
+        if self.prepared_by_shape.get(&key).copied() != Some(id) {
+            return;
+        }
+
+        let replacement = self
+            .prepared
+            .iter()
+            .find_map(|(candidate_id, candidate)| {
+                (candidate.obb.shape == removed.obb.shape).then_some(*candidate_id)
+            });
+        let index = Arc::make_mut(&mut self.prepared_by_shape);
+        if let Some(replacement) = replacement {
+            index.insert(key, replacement);
+        } else {
+            index.remove(&key);
+        }
     }
 
     #[must_use]
     pub(crate) fn stats(&self) -> FixedGeometryPreparationStats3d {
+        let prepared_bytes = self.prepared.len().saturating_mul(
+            size_of::<BodyId>().saturating_add(size_of::<PreparedFixedGeometry3d>()),
+        );
+        let shape_index_bytes = self.prepared_by_shape.len().saturating_mul(
+            size_of::<FixedGeometryShapeKey3d>().saturating_add(size_of::<BodyId>()),
+        );
         FixedGeometryPreparationStats3d {
             mode: self.mode,
             representation_version: FIXED_GEOMETRY_PREPARATION_VERSION,
             prepared_body_count: self.prepared.len(),
             total_preparations: self.total_preparations,
-            retained_bytes: self
-                .prepared
-                .len()
-                .saturating_mul(size_of::<PreparedFixedGeometry3d>()),
+            retained_bytes: prepared_bytes.saturating_add(shape_index_bytes),
         }
     }
 
@@ -191,10 +241,10 @@ impl FixedGeometryPreparationCache3d {
         if self.mode != FixedGeometryPreparationMode3d::PrepareAtLoad {
             return None;
         }
-        self.prepared
-            .values()
-            .find(|prepared| prepared.obb.shape == shape)
-            .copied()
+        let id = self
+            .prepared_by_shape
+            .get(&FixedGeometryShapeKey3d::from(shape))?;
+        self.prepared.get(id).copied()
     }
 
     fn prepare_fixed(&mut self, rigid_box: &RigidBox3d) {
@@ -208,10 +258,17 @@ impl FixedGeometryPreparationCache3d {
             .prepared
             .get(&id)
             .is_none_or(|previous| *previous != prepared);
-        Arc::make_mut(&mut self.prepared).insert(id, prepared);
-        if changed {
-            self.total_preparations = self.total_preparations.saturating_add(1);
+        if !changed {
+            return;
         }
+        if self.prepared.contains_key(&id) {
+            self.unregister(id);
+        }
+        Arc::make_mut(&mut self.prepared).insert(id, prepared);
+        Arc::make_mut(&mut self.prepared_by_shape)
+            .entry(FixedGeometryShapeKey3d::from(shape))
+            .or_insert(id);
+        self.total_preparations = self.total_preparations.saturating_add(1);
     }
 }
 
@@ -350,5 +407,22 @@ mod tests {
         cache.register_fixed(&moved);
         assert_eq!(cache.stats().prepared_body_count, 1);
         assert_eq!(cache.stats().total_preparations, 2);
+    }
+
+    #[test]
+    fn removing_one_duplicate_fixed_shape_keeps_indexed_preparation_available() {
+        let first = fixed(1, Vec3i::ZERO);
+        let duplicate = fixed(2, Vec3i::ZERO);
+        let mut cache = FixedGeometryPreparationCache3d::default();
+        cache.set_mode(
+            FixedGeometryPreparationMode3d::PrepareAtLoad,
+            [&first, &duplicate],
+        );
+        assert!(cache.prepared_for_shape(first.oriented_box()).is_some());
+
+        cache.unregister(BodyId(1));
+
+        assert_eq!(cache.stats().prepared_body_count, 1);
+        assert!(cache.prepared_for_shape(duplicate.oriented_box()).is_some());
     }
 }
