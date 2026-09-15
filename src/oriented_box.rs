@@ -134,6 +134,30 @@ pub fn oriented_box_vertices(box_shape: OrientedBox3d) -> Result<[Vec3i; 8], Ori
     Ok(vertices)
 }
 
+/// Immutable preparation for exactly one quantized shape, not a world/contact authority.
+/// Errors are retained separately so pair evaluation preserves the original left/right validation order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedObb3d {
+    pub(crate) shape: OrientedBox3d,
+    vertices: Result<[Vec3i; 8], OrientedBoxError3d>,
+    edges: Result<[[i128; 3]; 3], OrientedBoxError3d>,
+    faces: Result<[[i128; 3]; 3], OrientedBoxError3d>,
+}
+
+impl PreparedObb3d {
+    pub(crate) fn new(shape: OrientedBox3d) -> Self {
+        let vertices = oriented_box_vertices(shape);
+        let edges = vertices.and_then(|vertices| box_edges(&vertices));
+        let faces = edges.and_then(face_axes);
+        Self {
+            shape,
+            vertices,
+            edges,
+            faces,
+        }
+    }
+}
+
 /// Evaluates exact integer SAT semantics for the quantized vertices of two oriented boxes.
 ///
 /// The query tests each box's three face normals and all nine edge-cross-edge axes, removes exact
@@ -149,12 +173,19 @@ pub fn obb_contact_seed(
     left: OrientedBox3d,
     right: OrientedBox3d,
 ) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
-    let left_vertices = oriented_box_vertices(left)?;
-    let right_vertices = oriented_box_vertices(right)?;
-    let left_edges = box_edges(&left_vertices)?;
-    let right_edges = box_edges(&right_vertices)?;
-    let left_faces = face_axes(left_edges)?;
-    let right_faces = face_axes(right_edges)?;
+    obb_contact_seed_prepared(&PreparedObb3d::new(left), &PreparedObb3d::new(right))
+}
+
+pub(crate) fn obb_contact_seed_prepared(
+    left: &PreparedObb3d,
+    right: &PreparedObb3d,
+) -> Result<Option<ObbContactSeed3d>, OrientedBoxError3d> {
+    let left_vertices = left.vertices?;
+    let right_vertices = right.vertices?;
+    let left_edges = left.edges?;
+    let right_edges = right.edges?;
+    let left_faces = left.faces?;
+    let right_faces = right.faces?;
 
     let mut candidate_axes = Vec::with_capacity(MAX_SAT_AXES);
     for (index, direction) in left_faces.into_iter().enumerate() {
@@ -239,7 +270,7 @@ pub fn obb_contact_seed(
     }
 
     let best = best.ok_or(OrientedBoxError3d::DegenerateGeometry)?;
-    let contact_axis = orient_toward_right(left.center, right.center, best.seed.axis)?;
+    let contact_axis = orient_toward_right(left.shape.center, right.shape.center, best.seed.axis)?;
     let tested_axes =
         u8::try_from(candidate_axes.len()).map_err(|_| OrientedBoxError3d::ArithmeticOverflow)?;
     Ok(Some(ObbContactSeed3d {

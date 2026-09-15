@@ -6,10 +6,12 @@ use std::{
 use crate::{
     BodyId, ObbContactSeed3d, OrientedBox3d, RigidBox3d, RotatingContactSearchConfig3d,
     RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
-    SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
+    SampledContactTime3d, sample_rigid_box_free_flight,
 };
 use crate::{
-    rotating_broad_phase::RotatingBroadPhase3d, rotating_contact_search::coarse_sample_limit,
+    oriented_box::{PreparedObb3d, obb_contact_seed_prepared},
+    rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_contact_search::coarse_sample_limit,
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
@@ -24,29 +26,92 @@ struct ContactBracket3d {
 
 #[derive(Debug, Default)]
 struct CoarseSampleCache3d {
-    samples: BTreeMap<(BodyId, u32, u32), OrientedBox3d>,
+    samples: BTreeMap<(BodyId, u32, u32), PreparedObb3d>,
+    // At most one preparation per input body, scoped to this immutable search interval.
+    latest_geometry: BTreeMap<BodyId, PreparedObb3d>,
+    #[cfg(test)]
+    preparations: usize,
 }
 
 impl CoarseSampleCache3d {
-    fn sample_oriented_box(
+    fn prepare_geometry(&mut self, id: BodyId, shape: OrientedBox3d) -> PreparedObb3d {
+        if let Some(prepared) = self.latest_geometry.get(&id)
+            && prepared.shape == shape
+        {
+            return *prepared;
+        }
+        let prepared = PreparedObb3d::new(shape);
+        self.latest_geometry.insert(id, prepared);
+        #[cfg(test)]
+        {
+            self.preparations += 1;
+        }
+        prepared
+    }
+
+    fn sample_geometry(
         &mut self,
         rigid_box: &RigidBox3d,
         config: RotatingContactSearchConfig3d,
         numerator: u32,
         denominator: u32,
-    ) -> Result<OrientedBox3d, RotatingContactSearchError3d> {
+    ) -> Result<PreparedObb3d, RotatingContactSearchError3d> {
         let key = (rigid_box.body().id(), numerator, denominator);
         if let Some(sampled) = self.samples.get(&key).copied() {
             return Ok(sampled);
         }
 
-        let sampled =
+        // Keep canonical sampling and its checked exact-time arithmetic authoritative, even for
+        // fixed/unchanged geometry. Only geometry preparation is reused after the sample succeeds.
+        let shape =
             sample_rigid_box_free_flight(rigid_box, config.free_flight, numerator, denominator)?
                 .oriented_box();
+        let sampled = self.prepare_geometry(rigid_box.body().id(), shape);
         if self.samples.len() < MAX_CACHED_COARSE_SAMPLES {
             self.samples.insert(key, sampled);
         }
         Ok(sampled)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CachedPairContact3d {
+    left: OrientedBox3d,
+    right: OrientedBox3d,
+    contact: Option<ObbContactSeed3d>,
+}
+
+/// A single exact result for one pair traversal. No cached contact result survives a search or response.
+#[derive(Debug, Default)]
+struct PairContactCache3d {
+    previous: Option<CachedPairContact3d>,
+    #[cfg(test)]
+    evaluations: usize,
+}
+
+impl PairContactCache3d {
+    fn contact(
+        &mut self,
+        left: &PreparedObb3d,
+        right: &PreparedObb3d,
+    ) -> Result<Option<ObbContactSeed3d>, RotatingContactSearchError3d> {
+        if let Some(previous) = self.previous
+            && previous.left == left.shape
+            && previous.right == right.shape
+        {
+            return Ok(previous.contact);
+        }
+        let contact = obb_contact_seed_prepared(left, right)?;
+        self.previous = Some(CachedPairContact3d {
+            left: left.shape,
+            right: right.shape,
+            contact,
+        });
+        #[cfg(test)]
+        {
+            self.evaluations += 1;
+        }
+        Ok(contact)
     }
 }
 
@@ -56,12 +121,16 @@ impl CoarseSampleCache3d {
 /// already touching at the interval start is not reported again merely because it remains touching.
 /// Such a pair becomes eligible only after the configured coarse grid observes it clear and then later
 /// observes contact again. Pairs that start clear retain the ordinary clear-to-contact search behavior.
-/// Historical contact changes only the release bookkeeping: an exact interval-start gap still seeds a
+/// Historical contact changes only release bookkeeping: an exact interval-start gap still seeds a
 /// clear-to-contact bracket, while only a strictly-positive coarse clear sample releases the history marker.
-/// Coarse free-flight samples are cached by body and exact grid fraction, so pairs that share a body reuse
-/// identical sampling work; the cache is bounded and pair-local refinement remains unchanged. Once a
-/// best hit exists, later pairs inspect only coarse samples that can still match or precede its exact
-/// rational time, including the containing known-contact sample.
+/// Coarse free-flight samples and prepared SAT geometry are cached by body and exact grid fraction.
+/// Preparation is also reused when a body's full quantized shape is unchanged between samples. The
+/// coarse cache is bounded; at capacity, uncached canonical sampling remains the fallback. One additional
+/// preparation per input body and one exact pair-result slot avoid repeated work for stationary geometry.
+/// These caches live only within this search, never across collision response or world mutation.
+/// Refinement and every configured clear/contact observation remain unchanged. Once a best hit exists,
+/// later pairs inspect only coarse samples that can still match or precede its exact rational time,
+/// including the containing known-contact sample.
 ///
 /// This explicit state transition is required by repeated-event stepping: a resolved/resting time-zero
 /// contact must not hide a later impact or be rediscovered forever as the next event. As with the existing
@@ -190,8 +259,10 @@ fn search_pair(
     ),
     RotatingContactSearchError3d,
 > {
-    let interval_start_contacting =
-        obb_contact_seed(left.oriented_box(), right.oriented_box())?.is_some();
+    let mut contacts = PairContactCache3d::default();
+    let prepared_left = coarse_samples.prepare_geometry(pair.left, left.oriented_box());
+    let prepared_right = coarse_samples.prepare_geometry(pair.right, right.oriented_box());
+    let interval_start_contacting = contacts.contact(&prepared_left, &prepared_right)?.is_some();
     let denominator = u32::from(config.sample_count);
     let mut last_clear = if interval_start_contacting {
         None
@@ -201,11 +272,10 @@ fn search_pair(
     let mut first_positive_clear = None;
 
     for numerator in 1..=coarse_numerator_limit {
-        let sampled_left =
-            coarse_samples.sample_oriented_box(left, config, numerator, denominator)?;
+        let sampled_left = coarse_samples.sample_geometry(left, config, numerator, denominator)?;
         let sampled_right =
-            coarse_samples.sample_oriented_box(right, config, numerator, denominator)?;
-        match obb_contact_seed(sampled_left, sampled_right)? {
+            coarse_samples.sample_geometry(right, config, numerator, denominator)?;
+        match contacts.contact(&sampled_left, &sampled_right)? {
             Some(contact) => {
                 let Some(clear_numerator) = last_clear else {
                     continue;
@@ -265,7 +335,7 @@ fn refine_contact_bracket(
         let (sampled_left, sampled_right) =
             sample_pair(left, right, config, midpoint_numerator, bracket.denominator)?;
         if let Some(contact) =
-            obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
+            crate::obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
         {
             bracket.contact_numerator = midpoint_numerator;
             bracket.contact = contact;
@@ -473,7 +543,7 @@ mod tests {
         assert_eq!(hit.pair, selector);
         assert_eq!(
             hit.time,
-            crate::SampledContactTime3d {
+            SampledContactTime3d {
                 numerator: 1,
                 denominator: 4,
             }
@@ -537,10 +607,10 @@ mod tests {
         let mut cache = CoarseSampleCache3d::default();
 
         let first = cache
-            .sample_oriented_box(&rigid_box, search, 1, 32)
+            .sample_geometry(&rigid_box, search, 1, 32)
             .expect("first coarse sample");
         let repeated = cache
-            .sample_oriented_box(&rigid_box, search, 1, 32)
+            .sample_geometry(&rigid_box, search, 1, 32)
             .expect("repeated coarse sample");
         assert_eq!(first, repeated);
         assert_eq!(cache.samples.len(), 1);
@@ -548,10 +618,12 @@ mod tests {
         let denominator = u32::try_from(MAX_CACHED_COARSE_SAMPLES + 2).expect("small cache bound");
         for numerator in 1..=denominator {
             cache
-                .sample_oriented_box(&rigid_box, search, numerator, denominator)
+                .sample_geometry(&rigid_box, search, numerator, denominator)
                 .expect("bounded coarse sample");
         }
         assert_eq!(cache.samples.len(), MAX_CACHED_COARSE_SAMPLES);
+        assert_eq!(cache.latest_geometry.len(), 1);
+        assert_eq!(cache.preparations, 1);
     }
 
     #[test]
@@ -592,3 +664,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "rotating_recontact_prepared_tests.rs"]
+mod prepared_tests;
