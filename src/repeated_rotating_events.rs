@@ -8,7 +8,6 @@ use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
     RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
-    resolve_rotating_contact_frontier,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
@@ -16,6 +15,7 @@ use crate::{
         earliest_rotating_contact_frontier_with_broad_phase,
         next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase,
     },
+    rotating_contact_response::resolve_rotating_contact_frontier_with_inelastic_pairs,
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
@@ -141,14 +141,16 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// The first event is selected with [`crate::earliest_rotating_contact_frontier`]. After response, the
 /// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
 /// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
-/// the current zero-time contact set and applies one simultaneous response pass. A resolved/stabilized pair
-/// is retained as contact history only when the final stabilized geometry has projected it clear. Pairs that
-/// remain geometrically touching need no history marker because interval-start geometry already suppresses
-/// time-zero rediscovery. A projection-cleared pair stays historical until the configured coarse grid
-/// positively observes it clear, preventing quantized response projection from manufacturing first-cell
-/// clear/re-contact churn without tolerances, retries, or a larger event budget. Once a later segment starts
-/// genuinely clear without such projection history, its interval-start separation can seed a first-cell
-/// recontact. Current-frontier discovery reuses the persistent conservative broad phase at a zero timestep,
+/// the current zero-time contact set and applies one simultaneous inelastic correction pass. A
+/// resolved/stabilized pair is retained as contact history only when the final stabilized geometry has
+/// projected it clear. Pairs that remain geometrically touching need no history marker because
+/// interval-start geometry already suppresses time-zero rediscovery. A projection-cleared pair stays
+/// historical until the configured coarse grid positively observes it clear. If that same historical pair
+/// re-enters contact before an unrelated event has established an ordinary clear-start segment, its first
+/// response is inelastic: restitution already belonged to the physical impact that created the projection
+/// history and is not injected a second time. Genuine clear-start impacts still receive ordinary first-pass
+/// restitution. This prevents projection/re-entry churn without tolerances, retries, or a larger event
+/// budget. Current-frontier discovery reuses the persistent conservative broad phase at a zero timestep,
 /// then exact-filters every candidate with current OBB geometry. Later positive events are selected by the
 /// same sampled search and remain bounded sampled rotational handling, not analytic CCD.
 ///
@@ -203,13 +205,18 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     let mut events = Vec::new();
     let mut frontier = first_frontier;
     let mut persistent_pairs = BTreeSet::new();
+    let mut inelastic_pairs = BTreeSet::new();
 
     loop {
         if events.len() >= usize::from(config.max_events) {
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
-        let response = resolve_rotating_contact_frontier(frontier, config.solver_passes)?;
+        let response = resolve_rotating_contact_frontier_with_inelastic_pairs(
+            frontier,
+            config.solver_passes,
+            &inelastic_pairs,
+        )?;
         remaining = scale_remaining_time(remaining, response.remaining_numerator, response.time)?;
         let response_time = response.time;
         let response_contacts = response.contacts;
@@ -233,6 +240,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             break;
         }
         let next_search = search_with_free_flight(config.search, remaining);
+        let next_inelastic_pairs = persistent_pairs.clone();
         let Some(next) = next_rotating_contact_frontier_with_persistent_pairs_and_broad_phase(
             &state,
             next_search,
@@ -243,6 +251,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             break;
         };
         frontier = next;
+        inelastic_pairs = next_inelastic_pairs;
     }
 
     Ok(RepeatedRotatingEventAdvance3d {
@@ -262,8 +271,14 @@ fn stabilize_current_contacts(
         let Some(frontier) = current_contact_frontier_with_broad_phase(&boxes, broad_phase)? else {
             break;
         };
-        persistent_pairs.extend(frontier.contacts.iter().map(|contact| contact.pair));
-        let response = resolve_rotating_contact_frontier(frontier, 1)?;
+        let inelastic_pairs = frontier
+            .contacts
+            .iter()
+            .map(|contact| contact.pair)
+            .collect::<BTreeSet<_>>();
+        persistent_pairs.extend(inelastic_pairs.iter().copied());
+        let response =
+            resolve_rotating_contact_frontier_with_inelastic_pairs(frontier, 1, &inelastic_pairs)?;
         if response.boxes == boxes {
             break;
         }
