@@ -14,7 +14,7 @@ jobs:
   apply-and-validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4f8c0b89c0b5f28b6241c17d6515 # v6.0.1
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           ref: feat/scenario-simulation-rules
           fetch-depth: 0
