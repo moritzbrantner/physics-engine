@@ -130,7 +130,8 @@ impl RotatingWorld3d {
             return self.inner.step(timestep_numerator, timestep_denominator);
         }
 
-        let sleep_time_increment = sleep_time_increment_q64(timestep_numerator, timestep_denominator);
+        let sleep_time_increment =
+            sleep_time_increment_q64(timestep_numerator, timestep_denominator);
         let mut staged = self.clone();
         staged.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
         staged.freeze_sleeping_bodies()?;
@@ -291,8 +292,7 @@ impl RotatingWorld3d {
                 self.sleep_stable_time_q64.remove(&id);
             }
         }
-        self.sleep_stable_time_q64
-            .retain(|id, _| seen.contains(id));
+        self.sleep_stable_time_q64.retain(|id, _| seen.contains(id));
 
         for id in direct_sleep {
             self.put_body_to_sleep(id)?;
@@ -900,9 +900,7 @@ mod tests {
         RotatingWorldConfig3d, Vec3i,
     };
 
-    use super::{
-        PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS_AT_60_HZ,
-    };
+    use super::{PositionCorrectionAccumulator, RotatingWorld3d, SLEEP_STABLE_STEPS_AT_60_HZ};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
