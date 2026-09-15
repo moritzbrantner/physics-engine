@@ -229,7 +229,7 @@ fn reconstruct_frontier(
         .enumerate()
         .map(|(index, rigid_box)| (rigid_box.body().id(), index))
         .collect::<BTreeMap<_, _>>();
-    let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+    let current = crate::RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
     let candidates = broad_phase.candidate_pairs(&sampled, current)?;
     let mut contacts = Vec::new();
 
