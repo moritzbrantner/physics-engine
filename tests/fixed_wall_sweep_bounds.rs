@@ -90,14 +90,18 @@ fn remote_wall_is_pruned_but_swept_projectile_and_touching_pairs_are_retained() 
         let boxes = [wall.clone(), projectile];
         let pairs = rotational_sweep_candidate_pairs(&boxes, config).unwrap();
         assert_eq!(pairs, vec![pair]);
-        let hit = sampled_rotating_contact_search(&boxes, search).unwrap().unwrap();
+        let hit = sampled_rotating_contact_search(&boxes, search)
+            .unwrap()
+            .unwrap();
         assert_eq!(hit.pair, pair);
     }
     let boxes = [
         wall,
         projectile(Vec3i::new(0, 72, -480), Vec3i::new(0, 0, -5760)),
     ];
-    let hit = sampled_rotating_recontact_search(&boxes, search).unwrap().unwrap();
+    let hit = sampled_rotating_recontact_search(&boxes, search)
+        .unwrap()
+        .unwrap();
     assert_eq!(hit.pair, pair);
 }
 

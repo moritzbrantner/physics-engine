@@ -32,10 +32,10 @@ struct CoarseSampleCache3d {
 
 impl CoarseSampleCache3d {
     fn prepare_geometry(&mut self, id: BodyId, shape: OrientedBox3d) -> PreparedObb3d {
-        if let Some(prepared) = self.latest_geometry.get(&id) {
-            if prepared.shape == shape {
-                return *prepared;
-            }
+        if let Some(prepared) = self.latest_geometry.get(&id)
+            && prepared.shape == shape
+        {
+            return *prepared;
         }
         let prepared = PreparedObb3d::new(shape);
         self.latest_geometry.insert(id, prepared);
@@ -92,10 +92,11 @@ impl PairContactCache3d {
         left: &PreparedObb3d,
         right: &PreparedObb3d,
     ) -> Result<Option<ObbContactSeed3d>, RotatingContactSearchError3d> {
-        if let Some(previous) = self.previous {
-            if previous.left == left.shape && previous.right == right.shape {
-                return Ok(previous.contact);
-            }
+        if let Some(previous) = self.previous
+            && previous.left == left.shape
+            && previous.right == right.shape
+        {
+            return Ok(previous.contact);
         }
         let contact = obb_contact_seed_prepared(left, right)?;
         self.previous = Some(CachedPairContact3d {
@@ -221,7 +222,8 @@ fn search_pair(
 
     for numerator in 1..=coarse_numerator_limit {
         let sampled_left = coarse_samples.sample_geometry(left, config, numerator, denominator)?;
-        let sampled_right = coarse_samples.sample_geometry(right, config, numerator, denominator)?;
+        let sampled_right =
+            coarse_samples.sample_geometry(right, config, numerator, denominator)?;
         match contacts.contact(&sampled_left, &sampled_right)? {
             Some(contact) => {
                 let Some(clear_numerator) = last_clear else {
