@@ -49,15 +49,16 @@ impl<T> ComponentStore<T> {
 /// ECS-backed consumer world for rotating rigid-body physics.
 ///
 /// Entity membership and the `RigidBox3d` physics component live in deterministic component storage.
-/// The existing stabilized rotating solver is retained as a system-owned resource so broad-phase caches,
-/// sleeping state, exact collision discovery, and response authority stay inside the physics engine. After
-/// every successful system step, authoritative solver state is written back into the ECS component store.
-/// Component slots are reused in place during stepping, so the ECS boundary does not rebuild its storage
-/// every frame.
+/// The performance-oriented rotating solver is retained as a system-owned resource so broad-phase caches,
+/// sleeping state, collision discovery, and response authority stay inside the physics engine. After a
+/// successful active system step, authoritative solver state is written back into the ECS component store.
+/// When the physics system was already fully quiescent before the step, its parked-state contract guarantees
+/// that no body state can change, so the ECS boundary skips the otherwise linear component-clone pass as
+/// well. Component slots are reused in place during active stepping.
 ///
 /// Optional fixed-geometry preparation is also owned here, at the stable public scene boundary. Only fixed
-/// bodies inserted by the consumer are registered for preparation; temporary fixed proxies created internally
-/// for sleeping dynamics never cross this boundary and therefore can never become baked static geometry.
+/// bodies inserted by the consumer are registered for preparation; internal persistent sleep proxies never
+/// cross this boundary and therefore can never become baked static geometry.
 ///
 /// This is the default public `RotatingWorld3d` integration. Consumers that deliberately need the raw
 /// solver resource can use `PhysicsWorld3dKernel` instead.
@@ -89,8 +90,8 @@ impl EcsRotatingWorld3d {
     ///
     /// Enabling prepare-at-load immediately prepares every currently registered genuine fixed body. Later
     /// fixed additions are prepared on insertion, and removals invalidate their retained preparation.
-    /// Dynamic bodies are never registered here, including bodies that the inner sleep system temporarily
-    /// presents as fixed proxies during a step.
+    /// Dynamic bodies are never registered here, including bodies that the inner sleep system presents as
+    /// persistent fixed proxies after they settle.
     pub fn set_fixed_geometry_preparation_mode(&mut self, mode: FixedGeometryPreparationMode3d) {
         self.fixed_geometry
             .set_mode(mode, self.rigid_boxes.values());
@@ -170,17 +171,20 @@ impl EcsRotatingWorld3d {
         self.with_prepared_fixed_geometry(|| self.physics.overlap_query(query))
     }
 
-    /// Runs the physics system and writes authoritative results back to ECS components.
+    /// Runs the physics system and writes authoritative active results back to ECS components.
     pub fn step(
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        let was_quiescent = self.physics.is_quiescent();
         let prepared = self.fixed_geometry.clone();
         let report = with_fixed_geometry_context(&prepared, || {
             self.physics.step(timestep_numerator, timestep_denominator)
         })?;
-        self.sync_all_from_physics();
+        if !was_quiescent {
+            self.sync_all_from_physics();
+        }
         Ok(report)
     }
 

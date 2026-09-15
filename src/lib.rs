@@ -10,8 +10,9 @@
 //! OBB/frontier response, Coulomb-limited OBB friction, bounded repeated sampled-event advancement,
 //! and a rotating-box world that consumes persistent contact tails deterministically. The original
 //! `World` solver remains translational and AABB-only. The public `RotatingWorld3d` defaults to an
-//! ECS-backed entity/component world that runs the stabilized rotating solver as a physics system; the raw
-//! solver resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! ECS-backed entity/component world that runs the performance-oriented parked-sleep physics system; the
+//! raw solver resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level
+//! integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
@@ -30,6 +31,7 @@ mod obb_friction;
 mod obb_response;
 mod oriented_box;
 mod query;
+mod relaxed_rotating_world;
 mod repeated_rotating_events;
 mod rigid_box;
 mod rigid_box_free_flight;
@@ -40,7 +42,11 @@ mod rotating_contact_search;
 mod rotating_recontact_search;
 mod rotating_world;
 mod rotational_sweep;
-mod stabilized_rotating_world;
+#[path = "stabilized_rotating_world.rs"]
+mod strict_stabilized_rotating_world;
+mod stabilized_rotating_world {
+    pub(crate) use crate::relaxed_rotating_world::RotatingWorld3d;
+}
 mod support_query;
 mod wide_ratio;
 mod world;
@@ -66,6 +72,7 @@ pub use oriented_box::{
     ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, oriented_box_vertices,
 };
 pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
     RepeatedRotatingEventError3d, RotatingResolvedEvent3d, advance_repeated_rotating_events,
@@ -96,6 +103,5 @@ pub use rotating_world::{
 pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
-pub use stabilized_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use support_query::body_has_support;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
