@@ -1,20 +1,16 @@
-use std::{
-    cell::RefCell,
-    collections::BTreeMap,
-    hint::black_box,
-    time::Instant,
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
-    BodyId, BodyKind, ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d,
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d, RotatingWorldError3d,
-    Vec3i, obb_contact_seed, rotational_sweep_candidate_pairs,
+    BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingBroadPhaseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,
+    rotational_sweep_candidate_pairs,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct BodyCurrentContact3d {
     pub other: BodyId,
-    pub contact: ObbContactSeed3d,
+    /// Exact SAT contact axis oriented from the queried subject toward `other`.
+    pub axis: [i128; 3],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,20 +183,20 @@ fn build_current_contact_graph(
         let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
             continue;
         };
-        let reverse = reverse_contact(contact)?;
+        let reverse_axis = reverse_axis(contact.axis, pair.left)?;
         contacts
             .get_mut(&pair.left)
             .ok_or(RotatingWorldError3d::MissingBody(pair.left))?
             .push(BodyCurrentContact3d {
                 other: pair.right,
-                contact,
+                axis: contact.axis,
             });
         contacts
             .get_mut(&pair.right)
             .ok_or(RotatingWorldError3d::MissingBody(pair.right))?
             .push(BodyCurrentContact3d {
                 other: pair.left,
-                contact: reverse,
+                axis: reverse_axis,
             });
     }
 
@@ -215,39 +211,22 @@ fn build_current_contact_graph(
     })
 }
 
-fn reverse_contact(contact: ObbContactSeed3d) -> Result<ObbContactSeed3d, OrientedBoxError3d> {
-    let axis = [
-        contact.axis[0]
+fn reverse_axis(axis: [i128; 3], body: BodyId) -> Result<[i128; 3], RotatingWorldError3d> {
+    Ok([
+        axis[0]
             .checked_neg()
-            .ok_or(OrientedBoxError3d::ArithmeticOverflow)?,
-        contact.axis[1]
+            .ok_or_else(|| contact_overflow(body))?,
+        axis[1]
             .checked_neg()
-            .ok_or(OrientedBoxError3d::ArithmeticOverflow)?,
-        contact.axis[2]
+            .ok_or_else(|| contact_overflow(body))?,
+        axis[2]
             .checked_neg()
-            .ok_or(OrientedBoxError3d::ArithmeticOverflow)?,
-    ];
-    let feature = match contact.feature {
-        ObbAxisFeature3d::LeftFace(axis) => ObbAxisFeature3d::RightFace(axis),
-        ObbAxisFeature3d::RightFace(axis) => ObbAxisFeature3d::LeftFace(axis),
-        ObbAxisFeature3d::EdgeEdge {
-            left_axis,
-            right_axis,
-        } => ObbAxisFeature3d::EdgeEdge {
-            left_axis: right_axis,
-            right_axis: left_axis,
-        },
-    };
-    Ok(ObbContactSeed3d {
-        axis,
-        overlap_numerator: contact.overlap_numerator,
-        axis_length_squared: contact.axis_length_squared,
-        feature,
-        left_support_mask: contact.right_support_mask,
-        right_support_mask: contact.left_support_mask,
-        tested_axes: contact.tested_axes,
-        minimum_axis_ties: contact.minimum_axis_ties,
-    })
+            .ok_or_else(|| contact_overflow(body))?,
+    ])
+}
+
+fn contact_overflow(body: BodyId) -> RotatingWorldError3d {
+    RotatingWorldError3d::PersistentTailArithmeticOverflow(body)
 }
 
 fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
@@ -272,6 +251,8 @@ fn cache_stats() -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    use std::{hint::black_box, time::Instant};
+
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, ORIENTATION_SCALE, Orientation3d, RigidBody,
         RigidBox3d, RotatingWorldConfig3d, Vec3i, obb_contact_seed,
@@ -318,7 +299,7 @@ mod tests {
                 .filter_map(|candidate| {
                     obb_contact_seed(subject.oriented_box(), candidate.oriented_box())
                         .expect("valid exact query")
-                        .map(|contact| (candidate.body().id(), contact))
+                        .map(|contact| (candidate.body().id(), contact.axis))
                 })
                 .collect::<Vec<_>>();
             expected.sort_by_key(|(id, _)| *id);
@@ -327,7 +308,7 @@ mod tests {
                 .get(&subject.body().id())
                 .expect("dynamic graph entry")
                 .iter()
-                .map(|entry| (entry.other, entry.contact))
+                .map(|entry| (entry.other, entry.axis))
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected);
         }
