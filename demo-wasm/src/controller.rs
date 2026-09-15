@@ -41,7 +41,7 @@ fn approach(current: i32, target: i32, maximum_delta: i32) -> i32 {
 mod tests {
     use physics_engine::Vec3i;
 
-    use super::{controlled_velocity, MAX_HORIZONTAL_SPEED};
+    use super::{MAX_HORIZONTAL_SPEED, controlled_velocity};
 
     #[test]
     fn controller_does_not_erase_external_horizontal_momentum_in_one_tick() {
@@ -63,12 +63,8 @@ mod tests {
 
     #[test]
     fn controller_clamps_target_speed_without_clamping_external_momentum() {
-        let next = controlled_velocity(
-            Vec3i::new(MAX_HORIZONTAL_SPEED + 300, 0, 0),
-            i32::MAX,
-            0,
-            0,
-        );
+        let next =
+            controlled_velocity(Vec3i::new(MAX_HORIZONTAL_SPEED + 300, 0, 0), i32::MAX, 0, 0);
         assert_eq!(next.x, MAX_HORIZONTAL_SPEED + 180);
     }
 }
