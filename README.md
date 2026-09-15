@@ -88,6 +88,35 @@ The fixture currently exercises:
 
 The player is intentionally box-shaped because the acceptance sandbox still uses the translational/AABB-only `World` path. Capsules, slopes and a richer character controller should be added as real engine capabilities rather than approximated in the renderer; rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
 
+## Portable performance logs
+
+The Pages sandbox can record an opt-in interactive performance session. Start the log, reproduce the
+slowdown or frame spike, then stop it to download a bounded JSON file. The session contains raw frame,
+rendering and physics-step timing arrays, scenario settings, the deployed engine revision and WASM hash,
+and browser/device metadata. It is created locally and is never uploaded automatically.
+
+To combine one or more downloaded sessions with the repository's deterministic release benchmarks:
+
+```bash
+bash scripts/collect-performance-log.sh ~/Downloads/physics-browser-session-*.json
+```
+
+The command produces `physics-performance-log-<revision>.tar.gz`. Attach that single archive in a later
+conversation for analysis. It contains:
+
+- `README.md`, `manifest.json`, `provenance.json` and `SHA256SUMS` as the handoff contract;
+- unchanged deterministic sandbox workloads with raw per-step timings and replay hashes;
+- independent character-response and fixed-geometry comparisons;
+- raw release-test command logs, including `/usr/bin/time -v` resource evidence;
+- `physics-wasm.cpuprofile` and `profile-summary.json` for locating sampled WASM/JavaScript hot paths;
+- any supplied interactive browser sessions.
+
+The `Performance Evidence` workflow creates the same portable archive for pull requests. Timings stay
+advisory: shared CI runners and interactive browser sessions are not stable enough for wall-clock pass/fail
+thresholds. Correctness remains fail-closed through the ordinary deterministic tests and replay hashes.
+Because browser exports contain browser and hardware metadata, review them before sharing if those details
+are sensitive.
+
 ## Ownership boundary
 
 ```text

@@ -85,12 +85,27 @@ node --check site/physics-error.mjs
 node --check site/interaction-controls.mjs
 node --check site/simulation-rules.mjs
 node --check site/simulation-rules-config.mjs
-node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs
+node --check site/performance-log.mjs
+node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs site/performance-log.test.mjs scripts/package-performance-log.test.mjs scripts/summarize-cpu-profile.test.mjs
 
 rm -rf pages-dist
 mkdir -p pages-dist
 cp -R site/. pages-dist/
 cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm pages-dist/
+node --input-type=module <<'NODE'
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+
+const wasm = await readFile("pages-dist/physics_engine_demo.wasm");
+const provenance = {
+  schema_version: 1,
+  repository: "moritzbrantner/physics-engine",
+  revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+  wasm_sha256: createHash("sha256").update(wasm).digest("hex"),
+};
+await writeFile("pages-dist/build-provenance.json", `${JSON.stringify(provenance, null, 2)}\n`);
+NODE
 test -s pages-dist/index.html
 test -s pages-dist/app.js
 test -s pages-dist/webgpu-renderer.js
@@ -100,4 +115,6 @@ test -s pages-dist/physics-error.mjs
 test -s pages-dist/interaction-controls.mjs
 test -s pages-dist/simulation-rules.mjs
 test -s pages-dist/simulation-rules-config.mjs
+test -s pages-dist/performance-log.mjs
+test -s pages-dist/build-provenance.json
 test -s pages-dist/physics_engine_demo.wasm

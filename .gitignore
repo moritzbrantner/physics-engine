@@ -1,3 +1,5 @@
 /target
 /demo-wasm/target
 /pages-dist
+/performance-evidence
+/physics-performance-log-*.tar.gz

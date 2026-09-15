@@ -32,6 +32,14 @@ on:
       - "scripts/benchmark-sandbox.mjs"
       - "scripts/benchmark-character-options.mjs"
       - "scripts/benchmark-baking.mjs"
+      - "scripts/collect-performance-log.sh"
+      - "scripts/package-performance-log.mjs"
+      - "scripts/summarize-cpu-profile.mjs"
+      - "site/performance-log.mjs"
+      - "site/performance-log.test.mjs"
+      - "site/app.js"
+      - "site/index.html"
+      - "scripts/build-pages.sh"
       - ".github/workflows/performance-evidence.yml"
   workflow_dispatch:
 
@@ -80,11 +88,23 @@ jobs:
           cp scripts/benchmark-baking.mjs performance-evidence/
           node scripts/benchmark-baking.mjs performance-evidence/head.wasm performance-evidence/baking-options.json
 
+      - name: Package portable performance log
+        if: ${{ always() }}
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          node scripts/package-performance-log.mjs \
+            performance-evidence \
+            "physics-performance-log-${HEAD_SHA}-${GITHUB_RUN_ID}.tar.gz"
+
       - name: Upload reproducible performance evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: physics-performance-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
-          path: performance-evidence/
+          path: |
+            performance-evidence/
+            physics-performance-log-*.tar.gz
           if-no-files-found: warn
           retention-days: 14
