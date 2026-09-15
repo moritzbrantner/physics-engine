@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d, OrientedBox3d,
+    AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, Vec3i,
 };
@@ -114,26 +114,7 @@ impl Sandbox {
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
-        let player = self
-            .world
-            .box_by_id(PLAYER_ID)
-            .ok_or(RotatingWorldError3d::MissingBody(PLAYER_ID))?;
-        let position = player.body().position();
-        let half = player.body().half_extents();
-        let probe = OrientedBox3d::new(
-            Vec3i::new(position.x, position.y - half.y - 1, position.z),
-            Vec3i::new(
-                half.x.saturating_sub(1).max(1),
-                1,
-                half.z.saturating_sub(1).max(1),
-            ),
-            Orientation3d::IDENTITY,
-        );
-        Ok(self
-            .world
-            .overlap_query(probe)?
-            .into_iter()
-            .any(|id| id != PLAYER_ID))
+        physics_engine::body_has_support(&self.world, PLAYER_ID, self.world.config().gravity)
     }
 
     fn is_quiescent(&self) -> bool {
@@ -594,10 +575,29 @@ mod tests {
     }
 
     #[test]
+    fn side_wall_contact_does_not_make_player_grounded() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        sandbox.world.remove_box(BodyId(10)).expect("remove floor");
+        sandbox
+            .world
+            .add_box(rotating_box(RigidBody::fixed(
+                BodyId(900),
+                Vec3i::new(20, 38, 320),
+                Vec3i::new(8, 100, 100),
+            )))
+            .expect("touching side wall");
+
+        assert!(
+            !sandbox.grounded().expect("support-normal query"),
+            "side-wall contact incorrectly counted as ground support"
+        );
+    }
+
+    #[test]
     fn grounded_player_can_jump() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
-        assert!(sandbox.grounded().expect("valid foot probe"));
+        assert!(sandbox.grounded().expect("valid support query"));
         let before = sandbox
             .world
             .box_by_id(PLAYER_ID)
@@ -620,7 +620,7 @@ mod tests {
             player.body().velocity().y > 0,
             "jump did not preserve upward velocity"
         );
-        assert!(!sandbox.grounded().expect("valid airborne foot probe"));
+        assert!(!sandbox.grounded().expect("valid airborne support query"));
         assert!(player.rotation_locked());
         assert!(player.angular().angular_velocity.is_zero());
     }
@@ -629,7 +629,7 @@ mod tests {
     fn player_pushes_dynamic_box_without_tumbling() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
-        let crate_id = BodyId(900);
+        let crate_id = BodyId(901);
         sandbox
             .world
             .add_box(rotating_box(
