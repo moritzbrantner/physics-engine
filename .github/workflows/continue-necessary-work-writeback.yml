@@ -31,7 +31,21 @@ jobs:
       - name: Implement changed-body step deltas
         run: python3 .github/scripts/changed_body_writeback.py
       - name: Remove obsolete quiescence scan hook
-        run: python3 -c "from pathlib import Path; p=Path('src/relaxed_rotating_world.rs'); t=p.read_text(); old='    #[must_use]\n    pub(crate) fn is_quiescent(&self) -> bool {\n        self.active_dynamic_count == 0\n    }\n\n'; assert t.count(old)==1; p.write_text(t.replace(old,'',1))"
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/relaxed_rotating_world.rs')
+          text = path.read_text()
+          old = (
+              "    #[must_use]\n"
+              "    pub(crate) fn is_quiescent(&self) -> bool {\n"
+              "        self.active_dynamic_count == 0\n"
+              "    }\n\n"
+          )
+          if text.count(old) != 1:
+              raise SystemExit('is_quiescent method not found exactly once')
+          path.write_text(text.replace(old, '', 1))
+          PY
       - name: Format and lint
         run: |
           cargo fmt --all
