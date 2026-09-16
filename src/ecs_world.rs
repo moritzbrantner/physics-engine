@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
-    BodyCurrentContact3d, BodyId, BodyKind, FixedGeometryPreparationMode3d,
-    FixedGeometryPreparationStats3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
+    BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
+    OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -185,19 +185,20 @@ impl EcsRotatingWorld3d {
     }
 
     /// Runs the physics system and writes authoritative active results back to ECS components.
+    /// Runs the physics system and writes back only bodies named by the authoritative step delta.
     pub fn step(
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
-        let was_quiescent = self.physics.is_quiescent();
         let prepared = self.fixed_geometry.clone();
         let report = with_fixed_geometry_context(&prepared, || {
             self.physics.step(timestep_numerator, timestep_denominator)
         })?;
-        if !was_quiescent {
-            self.sync_all_from_physics();
+        for entity in report.changed_body_ids.iter().copied() {
+            self.sync_entity_from_physics(entity);
         }
+        debug_assert_eq!(self.rigid_boxes.len(), self.entities.len());
         Ok(report)
     }
 
@@ -214,22 +215,6 @@ impl EcsRotatingWorld3d {
             .get_mut(entity)
             .expect("live physics entity must retain its ECS component");
         component.clone_from(rigid_box);
-    }
-
-    fn sync_all_from_physics(&mut self) {
-        for rigid_box in self
-            .physics
-            .boxes()
-            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)
-        {
-            let entity = rigid_box.body().id();
-            let component = self
-                .rigid_boxes
-                .get_mut(entity)
-                .expect("physics system body must have an ECS component");
-            component.clone_from(rigid_box);
-        }
-        debug_assert_eq!(self.rigid_boxes.len(), self.entities.len());
     }
 }
 
@@ -299,6 +284,43 @@ mod tests {
                 .body()
                 .position(),
             Vec3i::new(1, 0, 0)
+        );
+    }
+
+    #[test]
+    fn step_delta_names_only_observably_changed_entities() {
+        let mut world = world();
+        world
+            .add_box(dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0)))
+            .expect("moving entity");
+        for id in 2..=66 {
+            world
+                .add_box(dynamic(
+                    id,
+                    Vec3i::new(i32::try_from(id).expect("small id") * 16, 0, 0),
+                    Vec3i::ZERO,
+                ))
+                .expect("unrelated stationary entity");
+        }
+
+        let report = world.step(1, 60).expect("precise writeback step");
+
+        assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
+        assert_eq!(
+            world
+                .box_by_id(BodyId(1))
+                .expect("moving entity")
+                .body()
+                .position(),
+            Vec3i::new(1, 0, 0)
+        );
+        assert_eq!(
+            world
+                .box_by_id(BodyId(66))
+                .expect("stationary entity")
+                .body()
+                .position(),
+            Vec3i::new(66 * 16, 0, 0)
         );
     }
 

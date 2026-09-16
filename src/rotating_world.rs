@@ -77,6 +77,10 @@ pub struct RotatingWorldStepStats3d {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RotatingWorldStepReport3d {
+    /// Stable `BodyId`-ordered bodies whose observable rigid-body or sleep state changed this step.
+    ///
+    /// Higher integration layers consume this precise delta instead of cloning every dynamic body.
+    pub changed_body_ids: Vec<BodyId>,
     pub stats: RotatingWorldStepStats3d,
 }
 
@@ -313,6 +317,7 @@ impl RotatingWorld3d {
         }
         if timestep_numerator == 0 {
             return Ok(RotatingWorldStepReport3d {
+                changed_body_ids: Vec::new(),
                 stats: RotatingWorldStepStats3d {
                     body_count: self.boxes.len(),
                     ..RotatingWorldStepStats3d::default()
@@ -353,6 +358,13 @@ impl RotatingWorld3d {
                 &mut self.tail_broad_phase,
             )?
         };
+        let changed_body_ids = boxes
+            .iter()
+            .filter_map(|rigid_box| {
+                let id = rigid_box.body().id();
+                (self.boxes.get(&id) != Some(rigid_box)).then_some(id)
+            })
+            .collect::<Vec<_>>();
         self.boxes = boxes
             .into_iter()
             .map(|rigid_box| (rigid_box.body().id(), rigid_box))
@@ -361,6 +373,7 @@ impl RotatingWorld3d {
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
+            changed_body_ids,
             stats: RotatingWorldStepStats3d {
                 body_count: self.boxes.len(),
                 sampled_events,

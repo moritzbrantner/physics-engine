@@ -111,11 +111,6 @@ impl RotatingWorld3d {
             .saturating_add(self.active.sleeping_body_count())
     }
 
-    #[must_use]
-    pub(crate) fn is_quiescent(&self) -> bool {
-        self.active_dynamic_count == 0
-    }
-
     pub fn set_linear_velocity(
         &mut self,
         id: BodyId,
@@ -155,20 +150,24 @@ impl RotatingWorld3d {
             return Ok(self.quiescent_report());
         }
 
-        self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
+        let mut changed_body_ids =
+            self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
         if self.active_dynamic_count == 0 {
             return Ok(self.quiescent_report());
         }
 
         let mut report = self.active.step(timestep_numerator, timestep_denominator)?;
-        self.park_new_sleepers()?;
-        self.sync_active_boxes();
+        changed_body_ids.extend(report.changed_body_ids.iter().copied());
+        self.park_new_sleepers(&changed_body_ids)?;
+        self.sync_active_boxes(&changed_body_ids)?;
+        report.changed_body_ids = changed_body_ids.into_iter().collect();
         report.stats.body_count = self.boxes.len();
         Ok(report)
     }
 
     fn quiescent_report(&self) -> RotatingWorldStepReport3d {
         RotatingWorldStepReport3d {
+            changed_body_ids: Vec::new(),
             stats: RotatingWorldStepStats3d {
                 body_count: self.boxes.len(),
                 ..RotatingWorldStepStats3d::default()
@@ -176,15 +175,18 @@ impl RotatingWorld3d {
         }
     }
 
-    fn park_new_sleepers(&mut self) -> Result<(), RotatingWorldError3d> {
-        let sleepers = self
-            .active
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic
-                    && self.active.is_sleeping(rigid_box.body().id())
+    fn park_new_sleepers(
+        &mut self,
+        changed_body_ids: &BTreeSet<BodyId>,
+    ) -> Result<(), RotatingWorldError3d> {
+        let sleepers = changed_body_ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.active.box_by_id(*id).is_some_and(|rigid_box| {
+                    rigid_box.body().kind() == BodyKind::Dynamic && self.active.is_sleeping(*id)
+                })
             })
-            .map(|rigid_box| rigid_box.body().id())
             .collect::<Vec<_>>();
 
         for id in sleepers {
@@ -201,19 +203,23 @@ impl RotatingWorld3d {
         Ok(())
     }
 
-    fn sync_active_boxes(&mut self) {
-        let updates = self
-            .active
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic
-                    && !self.parked.contains(&rigid_box.body().id())
-            })
-            .map(|rigid_box| (rigid_box.body().id(), rigid_box.clone()))
-            .collect::<Vec<_>>();
-        for (id, rigid_box) in updates {
-            self.boxes.insert(id, rigid_box);
+    fn sync_active_boxes(
+        &mut self,
+        changed_body_ids: &BTreeSet<BodyId>,
+    ) -> Result<(), RotatingWorldError3d> {
+        for id in changed_body_ids.iter().copied() {
+            if self.parked.contains(&id) {
+                continue;
+            }
+            let rigid_box = self
+                .active
+                .box_by_id(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            if rigid_box.body().kind() == BodyKind::Dynamic {
+                self.boxes.insert(id, rigid_box.clone());
+            }
         }
+        Ok(())
     }
 
     fn unpark(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
@@ -252,9 +258,10 @@ impl RotatingWorld3d {
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
-    ) -> Result<(), RotatingWorldError3d> {
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let mut awakened = BTreeSet::new();
         if self.parked.is_empty() || self.active_dynamic_count == 0 {
-            return Ok(());
+            return Ok(awakened);
         }
 
         let awake_config = RigidBoxFreeFlightConfig3d::new(
@@ -323,6 +330,7 @@ impl RotatingWorld3d {
 
             for id in newly_awake {
                 self.unpark(id)?;
+                awakened.insert(id);
                 parked_bounds.remove(&id);
                 let rigid_box = self
                     .boxes
@@ -334,7 +342,7 @@ impl RotatingWorld3d {
                 ));
             }
         }
-        Ok(())
+        Ok(awakened)
     }
 }
 
