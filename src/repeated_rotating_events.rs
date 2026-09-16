@@ -224,11 +224,11 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// Quantized projection can leave a contact pair microscopically clear even when the resolved contact-point
 /// motion is not separating. Such a solver-created gap is not evidence that the physical constraint was
 /// released. When current-contact stabilization exhausts its configured passes, this function builds the
-/// non-separating multi-body contact component from the solver's own observed contacts. A pair belongs to
-/// that component only when its post-solver contact-point normal velocity and relative normal acceleration
-/// are both non-separating. The component is eligible for continuation only if at least one of those pairs
-/// was projected clear. If the ordinary positive re-contact selector stays inside that component, the
-/// solver advances exactly to the selected contact state and hands the contacted suffix to the existing
+/// multi-body contact component from all solver-observed contacts. Every observed pair contributes to
+/// component topology. A component is eligible for continuation only when at least one projected-clear
+/// pair has both non-separating post-solver contact-point normal velocity and non-separating relative normal
+/// acceleration. If the ordinary positive re-contact selector stays inside that component, the solver
+/// advances exactly to the selected contact state and hands the contacted suffix to the existing
 /// persistent-tail solver without minting another impact event. A genuine releasing pair, a new external
 /// impact, and every two-body bounce remain on the ordinary repeated-event path.
 ///
@@ -396,9 +396,8 @@ fn build_contact_continuation_graph(
         let normal_acceleration =
             progression_relative_normal_acceleration(left, right, gravity, seed)
                 .map_err(RotatingContactResponseError3d::from)?;
-        if normal_velocity <= 0 && normal_acceleration <= 0 {
-            graph.add_edge(*pair, projected_clear);
-        }
+        let non_separating = normal_velocity <= 0 && normal_acceleration <= 0;
+        graph.add_edge(*pair, projected_clear && non_separating);
     }
 
     Ok(graph)
