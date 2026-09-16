@@ -25,61 +25,46 @@ jobs:
           path = Path('src/repeated_rotating_events.rs')
           text = path.read_text()
 
-          old_limit = '''        if events.len() >= usize::from(config.max_events) {
-              return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
-          }
-          '''
-          new_limit = '''        if events.len() >= usize::from(config.max_events) {
-              let pending_pairs = frontier
-                  .contacts
-                  .iter()
-                  .map(|contact| (contact.pair.left.0, contact.pair.right.0))
-                  .collect::<Vec<_>>();
-              eprintln!(
-                  "repeated-event trace pending {}: time={}/{} pairs={pending_pairs:?} remaining={remaining:?}",
-                  events.len() + 1,
-                  frontier.time.numerator,
-                  frontier.time.denominator,
-              );
-              return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
-          }
-          '''
-          if old_limit not in text:
-              raise SystemExit('event-limit block not found')
-          text = text.replace(old_limit, new_limit, 1)
+          limit_return = '            return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));'
+          if limit_return not in text:
+              raise SystemExit('event-limit return not found')
+          limit_trace = '\n'.join([
+              '            let pending_pairs = frontier',
+              '                .contacts',
+              '                .iter()',
+              '                .map(|contact| (contact.pair.left.0, contact.pair.right.0))',
+              '                .collect::<Vec<_>>();',
+              '            eprintln!(',
+              '                "repeated-event trace pending {}: time={}/{} pairs={pending_pairs:?} remaining={remaining:?}",',
+              '                events.len() + 1,',
+              '                frontier.time.numerator,',
+              '                frontier.time.denominator,',
+              '            );',
+              limit_return,
+          ])
+          text = text.replace(limit_return, limit_trace, 1)
 
-          old_push = '''        events.push(RotatingResolvedEvent3d {
-              time: response_time,
-              contacts: response_contacts,
-              response_passes,
-          });
-
-          if remaining.timestep_is_zero() {
-          '''
-          new_push = '''        events.push(RotatingResolvedEvent3d {
-              time: response_time,
-              contacts: response_contacts,
-              response_passes,
-          });
-          let traced = events.last().expect("just pushed repeated event");
-          let traced_pairs = traced
-              .contacts
-              .iter()
-              .map(|contact| (contact.pair.left.0, contact.pair.right.0))
-              .collect::<Vec<_>>();
-          eprintln!(
-              "repeated-event trace {}: time={}/{} pairs={traced_pairs:?} response_passes={} remaining={remaining:?}",
-              events.len(),
-              traced.time.numerator,
-              traced.time.denominator,
-              traced.response_passes,
-          );
-
-          if remaining.timestep_is_zero() {
-          '''
-          if old_push not in text:
-              raise SystemExit('event push block not found')
-          text = text.replace(old_push, new_push, 1)
+          zero_tail = '        if remaining.timestep_is_zero() {\n            break;\n        }'
+          if zero_tail not in text:
+              raise SystemExit('post-event zero-tail block not found')
+          event_trace = '\n'.join([
+              '        let traced = events.last().expect("just pushed repeated event");',
+              '        let traced_pairs = traced',
+              '            .contacts',
+              '            .iter()',
+              '            .map(|contact| (contact.pair.left.0, contact.pair.right.0))',
+              '            .collect::<Vec<_>>();',
+              '        eprintln!(',
+              '            "repeated-event trace {}: time={}/{} pairs={traced_pairs:?} response_passes={} remaining={remaining:?}",',
+              '            events.len(),',
+              '            traced.time.numerator,',
+              '            traced.time.denominator,',
+              '            traced.response_passes,',
+              '        );',
+              '',
+              zero_tail,
+          ])
+          text = text.replace(zero_tail, event_trace, 1)
           path.write_text(text)
           PY
       - name: Commit trace instrumentation
