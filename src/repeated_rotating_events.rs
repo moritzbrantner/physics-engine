@@ -8,22 +8,20 @@ use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
     RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
+    sample_rigid_box_free_flight,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
-    rotating_contact_frontier::{
-        earliest_rotating_contact_frontier_with_broad_phase,
-        next_rotating_contact_frontier_with_broad_phase,
-    },
     rotating_contact_response::{
         RotatingContactResponseScratch3d,
         resolve_rotating_contact_frontier_with_activity_and_scratch,
     },
+    rotating_contact_search::sampled_rotating_contact_search_with_broad_phase,
+    rotating_recontact_search::sampled_rotating_recontact_search_with_broad_phase,
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
 
-/// Bounded policy for advancing through sampled rotating collision events.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RepeatedRotatingEventConfig3d {
     pub search: RotatingContactSearchConfig3d,
@@ -46,7 +44,6 @@ impl RepeatedRotatingEventConfig3d {
     }
 }
 
-/// One resolved sampled event, expressed relative to the segment that began after the previous event.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RotatingResolvedEvent3d {
     pub time: SampledContactTime3d,
@@ -64,14 +61,10 @@ pub struct RepeatedRotatingEventWorkStats3d {
     pub stabilization_active_bodies: u64,
 }
 
-/// Result of consuming every sampled rotating event admitted before the first unresolved tail.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepeatedRotatingEventAdvance3d {
-    /// State immediately after the last resolved sampled frontier, or the unchanged input if no event
-    /// was admitted.
     pub boxes: Vec<RigidBox3d>,
     pub events: Vec<RotatingResolvedEvent3d>,
-    /// Requested time that remains deliberately unconsumed.
     pub remaining: RigidBoxFreeFlightConfig3d,
     pub work: RepeatedRotatingEventWorkStats3d,
 }
@@ -142,16 +135,59 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
     }
 }
 
-/// Advances through a bounded sequence of sampled rotating collision events while preserving the exact
-/// remaining requested interval.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BodyMotionDelta3d {
+    world_index: usize,
+    position: Option<crate::Vec3i>,
+    velocity: Option<crate::Vec3i>,
+    orientation: Option<crate::Orientation3d>,
+    angular_velocity: Option<crate::AngularVelocity3d>,
+}
+
+impl BodyMotionDelta3d {
+    fn between(world_index: usize, before: &RigidBox3d, after: &RigidBox3d) -> Option<Self> {
+        let delta = Self {
+            world_index,
+            position: (before.body.position != after.body.position).then_some(after.body.position),
+            velocity: (before.body.velocity != after.body.velocity).then_some(after.body.velocity),
+            orientation: (before.angular.orientation != after.angular.orientation)
+                .then_some(after.angular.orientation),
+            angular_velocity: (before.angular.angular_velocity != after.angular.angular_velocity)
+                .then_some(after.angular.angular_velocity),
+        };
+        (delta.position.is_some()
+            || delta.velocity.is_some()
+            || delta.orientation.is_some()
+            || delta.angular_velocity.is_some())
+        .then_some(delta)
+    }
+
+    fn apply(self, boxes: &mut [RigidBox3d]) {
+        let rigid_box = boxes
+            .get_mut(self.world_index)
+            .expect("motion delta index came from the current world layout");
+        if let Some(position) = self.position {
+            rigid_box.body.position = position;
+        }
+        if let Some(velocity) = self.velocity {
+            rigid_box.body.velocity = velocity;
+        }
+        if let Some(orientation) = self.orientation {
+            rigid_box.angular.orientation = orientation;
+        }
+        if let Some(angular_velocity) = self.angular_velocity {
+            rigid_box.angular.angular_velocity = angular_velocity;
+        }
+    }
+}
+
+/// Advances through sampled events while keeping one mutable working world.
 ///
-/// The authoritative working state is allocated once at entry. Contact frontiers carry evidence only;
-/// each response advances and mutates that same state through compact motion updates and active-island
-/// deltas. Stabilization likewise reuses the same state and never materializes a full-world frontier copy.
-///
-/// Current-frontier discovery retains exact edges whose endpoints did not change. The broad phase may still
-/// contain conservative sweep bounds for those inactive bodies from event discovery; this can overproduce a
-/// candidate but cannot lose a current contact because exact OBB filtering remains authoritative.
+/// Temporal search remains read-only. Once a hit is admitted, free flight is sampled exactly once into a
+/// compact changed-field delta batch and committed to the working world. The broad phase is then synchronized
+/// at zero time against that current state, and all equal-time contacts are exact-filtered there. Response
+/// therefore receives an evidence-only zero-time frontier and stages only the active contact island; it does
+/// not resample the world or inherit conservative temporal sweep bounds into stabilization.
 pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
@@ -171,9 +207,15 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     let mut response_scratch = RotatingContactResponseScratch3d::default();
     let mut remaining = config.search.free_flight;
     let mut state = boxes.to_vec();
+    response_scratch.ensure_body_index(&state);
+
     let first_search = search_with_free_flight(config.search, remaining);
-    let Some(mut frontier) =
-        earliest_rotating_contact_frontier_with_broad_phase(&state, first_search, broad_phase)?
+    let Some(first_hit) = sampled_rotating_contact_search_with_broad_phase(
+        &state,
+        first_search,
+        broad_phase,
+    )
+    .map_err(RotatingContactFrontierError3d::from)?
     else {
         return Ok(RepeatedRotatingEventAdvance3d {
             boxes: state,
@@ -182,6 +224,14 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             work,
         });
     };
+    advance_state_to_time(&mut state, first_search.free_flight, first_hit.time)?;
+    let mut event_time = first_hit.time;
+    let mut frontier = current_frontier_from_admitted_hit(
+        &state,
+        first_hit,
+        broad_phase,
+        &response_scratch,
+    )?;
 
     let mut events = Vec::new();
     loop {
@@ -196,8 +246,11 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
                 config.solver_passes,
                 &mut response_scratch,
             )?;
-        remaining = scale_remaining_time(remaining, response.remaining_numerator, response.time)?;
-        let response_time = response.time;
+        remaining = scale_remaining_time(
+            remaining,
+            event_remaining_numerator(event_time)?,
+            event_time,
+        )?;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
         work.event_response_passes = work
@@ -213,7 +266,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             &mut work,
         )?;
         events.push(RotatingResolvedEvent3d {
-            time: response_time,
+            time: event_time,
             contacts: response_contacts,
             response_passes,
         });
@@ -221,13 +274,25 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         if remaining.timestep_is_zero() {
             break;
         }
+
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next) =
-            next_rotating_contact_frontier_with_broad_phase(&state, next_search, broad_phase)?
+        let Some(next_hit) = sampled_rotating_recontact_search_with_broad_phase(
+            &state,
+            next_search,
+            broad_phase,
+        )
+        .map_err(RotatingContactFrontierError3d::from)?
         else {
             break;
         };
-        frontier = next;
+        advance_state_to_time(&mut state, next_search.free_flight, next_hit.time)?;
+        event_time = next_hit.time;
+        frontier = current_frontier_from_admitted_hit(
+            &state,
+            next_hit,
+            broad_phase,
+            &response_scratch,
+        )?;
     }
 
     Ok(RepeatedRotatingEventAdvance3d {
@@ -236,6 +301,92 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         remaining,
         work,
     })
+}
+
+fn advance_state_to_time(
+    boxes: &mut [RigidBox3d],
+    free_flight: RigidBoxFreeFlightConfig3d,
+    time: SampledContactTime3d,
+) -> Result<(), RepeatedRotatingEventError3d> {
+    if time == SampledContactTime3d::ZERO {
+        return Ok(());
+    }
+
+    let mut deltas = Vec::new();
+    for (world_index, rigid_box) in boxes.iter().enumerate() {
+        let sampled = sample_rigid_box_free_flight(
+            rigid_box,
+            free_flight,
+            time.numerator,
+            time.denominator,
+        )
+        .map_err(RotatingContactFrontierError3d::from)?;
+        if let Some(delta) = BodyMotionDelta3d::between(world_index, rigid_box, &sampled) {
+            deltas.push(delta);
+        }
+    }
+    for delta in deltas {
+        delta.apply(boxes);
+    }
+    Ok(())
+}
+
+fn current_frontier_from_admitted_hit(
+    boxes: &[RigidBox3d],
+    admitted: RotatingContactSearchHit3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+    body_index: &RotatingContactResponseScratch3d,
+) -> Result<RotatingContactFrontier3d, RotatingContactFrontierError3d> {
+    let zero_time = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+    let candidates = broad_phase.candidate_pairs(boxes, zero_time)?;
+    let mut contacts = Vec::new();
+
+    for pair in candidates {
+        let left = body_index
+            .indexed_box(boxes, pair.left)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
+        let right = body_index
+            .indexed_box(boxes, pair.right)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
+        let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
+            continue;
+        };
+        contacts.push(RotatingContactSearchHit3d {
+            time: admitted.time,
+            pair,
+            contact,
+        });
+    }
+
+    let reconstructed = contacts
+        .iter()
+        .find(|contact| contact.pair == admitted.pair)
+        .ok_or(RotatingContactFrontierError3d::EarliestContactMissing(
+            admitted.pair,
+        ))?;
+    if reconstructed.contact != admitted.contact {
+        return Err(RotatingContactFrontierError3d::EarliestContactChanged(
+            admitted.pair,
+        ));
+    }
+
+    Ok(RotatingContactFrontier3d {
+        free_flight: zero_time,
+        time: SampledContactTime3d::ZERO,
+        contacts,
+        remaining_numerator: 0,
+    })
+}
+
+fn event_remaining_numerator(
+    time: SampledContactTime3d,
+) -> Result<u32, RepeatedRotatingEventError3d> {
+    if time.denominator == 0 || time.numerator > time.denominator {
+        return Err(RepeatedRotatingEventError3d::InvalidRemainder(time));
+    }
+    time.denominator
+        .checked_sub(time.numerator)
+        .ok_or(RepeatedRotatingEventError3d::InvalidRemainder(time))
 }
 
 fn stabilize_current_contacts(
@@ -314,13 +465,6 @@ struct CurrentContactFrontierResult3d {
     recomputed_contacts: usize,
 }
 
-/// Refreshes only exact contact edges whose geometry can have changed.
-///
-/// Contacts whose two endpoints are unchanged are retained as authoritative exact evidence. Every cached
-/// edge touching an active body is discarded and revalidated from current geometry, while the targeted
-/// broad phase discovers any newly-created neighbors of those active bodies. Unchanged retained broad-phase
-/// bounds are allowed to be conservative supersets from the preceding temporal search; false-positive pairs
-/// are harmless because current OBB geometry is exact-filtered before entering the frontier.
 fn refresh_current_contacts_for_changed_bodies(
     boxes: &[RigidBox3d],
     active: &[crate::BodyId],
