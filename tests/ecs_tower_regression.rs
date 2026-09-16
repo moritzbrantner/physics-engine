@@ -1,6 +1,8 @@
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE, Material, Orientation3d,
-    RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i, obb_contact_seed,
+    RepeatedRotatingEventConfig3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingContactSearchConfig3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
+    advance_repeated_rotating_events, obb_contact_seed,
 };
 
 const SCALE: i32 = 3_600;
@@ -155,6 +157,56 @@ fn assert_no_floor_penetration(boxes: &[RigidBox3d], frame: u32) {
             "body {} penetrated the finite floor collider at frame {frame}",
             rigid_box.body().id().0
         );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic-only event trace; production remains capped at 64"]
+fn diagnose_frame_38_repeated_event_sequence() {
+    let mut boxes = tower_boxes();
+    for frame in 1..=37 {
+        boxes = step_frame(&boxes, frame);
+    }
+
+    let config = world_config();
+    let free_flight = RigidBoxFreeFlightConfig3d::new(config.gravity, 1, 60);
+    let diagnostic = advance_repeated_rotating_events(
+        &boxes,
+        RepeatedRotatingEventConfig3d::new(
+            RotatingContactSearchConfig3d::new(
+                free_flight,
+                config.sample_count,
+                config.refinement_steps,
+            ),
+            config.solver_passes,
+            512,
+        ),
+    );
+
+    match diagnostic {
+        Ok(advance) => {
+            eprintln!(
+                "frame 38 diagnostic completed with {} sampled events; remaining={}/{}",
+                advance.events.len(),
+                advance.remaining.timestep_numerator(),
+                advance.remaining.timestep_denominator(),
+            );
+            for (index, event) in advance.events.iter().enumerate() {
+                let pairs = event
+                    .contacts
+                    .iter()
+                    .map(|contact| (contact.pair.left.0, contact.pair.right.0))
+                    .collect::<Vec<_>>();
+                eprintln!(
+                    "frame 38 event {}: time={}/{} pairs={pairs:?} response_passes={}",
+                    index + 1,
+                    event.time.numerator,
+                    event.time.denominator,
+                    event.response_passes,
+                );
+            }
+        }
+        Err(error) => eprintln!("frame 38 diagnostic still failed with 512 slots: {error:?}"),
     }
 }
 
