@@ -1,0 +1,39 @@
+name: Apply necessary-work performance slice
+
+on:
+  push:
+    branches:
+      - perf/necessary-work-stabilization-core
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/necessary-work-stabilization-core
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply precise-work changes
+        run: |
+          python3 scripts/apply-necessary-work-slice.py
+          python3 scripts/fix-necessary-work-tests.py
+      - name: Format
+        run: cargo fmt --all
+      - name: Rust tests
+        run: cargo test
+      - name: Performance log tests
+        run: node --test site/performance-log.test.mjs
+      - name: Commit verified implementation
+        run: |
+          git rm scripts/apply-necessary-work-slice.py scripts/fix-necessary-work-tests.py .github/workflows/apply-necessary-work-slice.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Compute only necessary physics work"
+          git push origin HEAD:perf/necessary-work-stabilization-core
