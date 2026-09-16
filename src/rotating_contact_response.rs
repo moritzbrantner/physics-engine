@@ -339,12 +339,18 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
                     let right_world = *indices.get(&contact.pair.right).ok_or(
                         RotatingContactResponseError3d::MissingBody(contact.pair.right),
                     )?;
-                    let left_index = island_world_indices
-                        .binary_search(&left_world)
-                        .map_err(|_| RotatingContactResponseError3d::MissingBody(contact.pair.left))?;
-                    let right_index = island_world_indices
-                        .binary_search(&right_world)
-                        .map_err(|_| RotatingContactResponseError3d::MissingBody(contact.pair.right))?;
+                    let left_index =
+                        island_world_indices
+                            .binary_search(&left_world)
+                            .map_err(|_| {
+                                RotatingContactResponseError3d::MissingBody(contact.pair.left)
+                            })?;
+                    let right_index =
+                        island_world_indices
+                            .binary_search(&right_world)
+                            .map_err(|_| {
+                                RotatingContactResponseError3d::MissingBody(contact.pair.right)
+                            })?;
                     let resolved = (left_index, right_index);
                     resolved_indices[contact_index] = Some(resolved);
                     resolved
@@ -460,18 +466,16 @@ fn stage_contact_island(
         .island_world_indices
         .reserve(frontier.contacts.len().saturating_mul(2));
     for contact in &frontier.contacts {
-        scratch.island_world_indices.push(
-            *scratch
-                .indices
-                .get(&contact.pair.left)
-                .ok_or(RotatingContactResponseError3d::MissingBody(contact.pair.left))?,
-        );
-        scratch.island_world_indices.push(
-            *scratch
-                .indices
-                .get(&contact.pair.right)
-                .ok_or(RotatingContactResponseError3d::MissingBody(contact.pair.right))?,
-        );
+        scratch
+            .island_world_indices
+            .push(*scratch.indices.get(&contact.pair.left).ok_or(
+                RotatingContactResponseError3d::MissingBody(contact.pair.left),
+            )?);
+        scratch
+            .island_world_indices
+            .push(*scratch.indices.get(&contact.pair.right).ok_or(
+                RotatingContactResponseError3d::MissingBody(contact.pair.right),
+            )?);
     }
     scratch.island_world_indices.sort_unstable();
     scratch.island_world_indices.dedup();
