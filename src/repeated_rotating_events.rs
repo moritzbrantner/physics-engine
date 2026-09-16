@@ -340,8 +340,7 @@ fn current_contact_frontier_for_bodies_with_broad_phase(
             .ok_or(RotatingContactFrontierError3d::MissingBody(*id))?;
         active_boxes.push(rigid_box);
     }
-    let candidates =
-        broad_phase.candidate_pairs_for_changed_current_bodies(active_boxes.into_iter())?;
+    let candidates = broad_phase.candidate_pairs_for_changed_current_bodies(active_boxes)?;
     let candidate_pairs = candidates.len();
     if candidates.is_empty() {
         return Ok(CurrentContactFrontierResult3d {
