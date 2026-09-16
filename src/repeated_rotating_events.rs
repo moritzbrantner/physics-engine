@@ -170,13 +170,14 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// selected with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize
 /// event discovery.
 ///
-/// If bounded response or current-contact stabilization still changes an island on its final configured
-/// pass, and the next reconstructed positive frontier contains no pair outside the contacts observed for
-/// that island, the positive frontier is treated as continuation rather than a fresh impact. The solver
-/// advances exactly to that sampled re-contact state and returns the contacted suffix to the world-level
+/// If bounded current-contact stabilization still changes an island on its final configured pass, and the
+/// next reconstructed positive frontier contains no pair outside the contacts observed for that island,
+/// the positive frontier is treated as continuation rather than a fresh impact. The solver advances
+/// exactly to that sampled re-contact state and returns the contacted suffix to the world-level
 /// persistent-tail solver. This prevents projection-created clear samples from manufacturing an unbounded
 /// sequence of new impact events without suppressing a genuinely new pair or changing the event cap,
-/// tolerances, or sampled search resolution.
+/// tolerances, or sampled search resolution. Exhausting only the ordinary impact-response pass budget is
+/// not sufficient to trigger this handoff; legitimate energetic impacts keep the established event path.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -247,7 +248,6 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        let response_exhausted = response_passes == config.solver_passes;
         work.event_response_passes = work
             .event_response_passes
             .saturating_add(u64::from(response_passes));
@@ -262,7 +262,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         )?;
         state = stabilization.boxes;
         let continuation_pairs = stabilization.observed_pairs;
-        let solver_exhausted = response_exhausted || stabilization.exhausted_with_changes;
+        let stabilization_exhausted = stabilization.exhausted_with_changes;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -278,7 +278,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         else {
             break;
         };
-        let continuing_island = solver_exhausted
+        let continuing_island = stabilization_exhausted
             && !next.contacts.is_empty()
             && next
                 .contacts
