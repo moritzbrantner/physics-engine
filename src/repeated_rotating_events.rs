@@ -255,8 +255,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             response.boxes,
             config.solver_passes,
             broad_phase,
-            &modified_body_ids,
-            &response_contacts,
+            (&modified_body_ids, &response_contacts),
             tracking_limit_island,
             &mut response_scratch,
             &mut work,
@@ -308,12 +307,12 @@ fn stabilize_current_contacts(
     mut boxes: Vec<RigidBox3d>,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
-    initial_active: &[crate::BodyId],
-    initial_contacts: &[RotatingContactSearchHit3d],
+    stabilization_seed: (&[crate::BodyId], &[RotatingContactSearchHit3d]),
     track_observed_pairs: bool,
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
 ) -> Result<CurrentContactStabilization3d, RepeatedRotatingEventError3d> {
+    let (initial_active, initial_contacts) = stabilization_seed;
     let mut active = initial_active.to_vec();
     active.sort_unstable();
     active.dedup();
