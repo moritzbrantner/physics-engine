@@ -174,11 +174,14 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// established response and re-contact semantics all the way through the last admitted slot. Only when a
 /// further positive frontier exists beyond that bound does the solver classify it: if the bounded impact
 /// response or current-contact stabilization was still exhausted, and every contact in the pending
-/// frontier belongs to the just-observed contact island, that frontier is continuation of an unresolved
-/// constraint rather than a new impact. The solver advances exactly to that already-proven contact state
-/// and returns the contacted suffix to the world-level persistent-tail solver. Otherwise the additional
-/// frontier remains a genuine event and [`RepeatedRotatingEventError3d::EventLimit`] is returned. This
-/// avoids raising the cap, adding retries, changing tolerances, or perturbing ordinary sub-cap event paths.
+/// frontier stays inside a previously observed multi-body contact component, that frontier is continuation
+/// of an unresolved constraint rather than a new impact. Internal component edges may change as quantized
+/// projection redistributes a resting stack; component connectivity, rather than exact edge identity, owns
+/// continuity. A two-body/single-edge component never qualifies. The solver advances exactly to that
+/// already-proven contact state and returns the contacted suffix to the world-level persistent-tail solver.
+/// Otherwise the additional frontier remains a genuine event and
+/// [`RepeatedRotatingEventError3d::EventLimit`] is returned. This avoids raising the cap, adding retries,
+/// changing tolerances, or perturbing ordinary sub-cap event paths.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -280,11 +283,10 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         };
         if events.len() >= usize::from(config.max_events) {
             let continuing_island = (response_exhausted || stabilization_exhausted)
-                && !next.contacts.is_empty()
-                && next
-                    .contacts
-                    .iter()
-                    .all(|contact| continuation_pairs.contains(&contact.pair));
+                && pending_frontier_stays_in_observed_components(
+                    &continuation_pairs,
+                    &next.contacts,
+                );
             if continuing_island {
                 remaining = scale_remaining_time(remaining, next.remaining_numerator, next.time)?;
                 state = next.boxes;
@@ -300,6 +302,40 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         events,
         remaining,
         work,
+    })
+}
+
+fn pending_frontier_stays_in_observed_components(
+    observed_pairs: &BTreeSet<RotationalSweepPair3d>,
+    pending_contacts: &[RotatingContactSearchHit3d],
+) -> bool {
+    if observed_pairs.len() < 2 || pending_contacts.is_empty() {
+        return false;
+    }
+
+    let mut adjacency = BTreeMap::<crate::BodyId, BTreeSet<crate::BodyId>>::new();
+    for pair in observed_pairs {
+        adjacency.entry(pair.left).or_default().insert(pair.right);
+        adjacency.entry(pair.right).or_default().insert(pair.left);
+    }
+
+    pending_contacts.iter().all(|contact| {
+        let pair = contact.pair;
+        if !adjacency.contains_key(&pair.left) || !adjacency.contains_key(&pair.right) {
+            return false;
+        }
+
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![pair.left];
+        while let Some(body) = pending.pop() {
+            if !visited.insert(body) {
+                continue;
+            }
+            if let Some(neighbors) = adjacency.get(&body) {
+                pending.extend(neighbors.iter().copied());
+            }
+        }
+        visited.len() > 2 && visited.contains(&pair.right)
     })
 }
 
