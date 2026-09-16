@@ -92,6 +92,36 @@ struct TailStepStats3d {
     candidate_pairs: u64,
 }
 
+#[derive(Debug)]
+struct TailMutationJournal3d {
+    originals: Vec<(usize, RigidBox3d)>,
+    recorded: Vec<bool>,
+}
+
+impl TailMutationJournal3d {
+    fn new(body_count: usize) -> Self {
+        Self {
+            originals: Vec::new(),
+            recorded: vec![false; body_count],
+        }
+    }
+
+    fn record(&mut self, world_index: usize, original: &RigidBox3d) {
+        if self.recorded[world_index] {
+            return;
+        }
+        self.recorded[world_index] = true;
+        self.originals.push((world_index, original.clone()));
+    }
+
+    fn rollback(&mut self, boxes: &mut [RigidBox3d]) {
+        for (world_index, original) in self.originals.drain(..) {
+            boxes[world_index] = original;
+            self.recorded[world_index] = false;
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RotatingWorldError3d {
     DuplicateBody(BodyId),
@@ -189,8 +219,9 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// be free-flown completely through before the next constraint solve. Tail slicing scales the canonical
 /// exact ratio directly, so repeated-event precision is preserved without forcing the tail back into a
 /// narrower integer pair. If an impulse makes the selected resolution too coarse, the exact tail is
-/// replayed from its starting state with a finer deterministic resolution; exceeding the hard bound fails
-/// closed.
+/// replayed from its starting state with a finer deterministic resolution. Replay rollback journals only
+/// bodies actually changed by the discarded attempt instead of cloning the complete world at every retry;
+/// exceeding the hard bound still fails closed.
 ///
 /// The world retains independent fat-AABB broad-phase trees for sampled sweeps and persistent-tail
 /// current-overlap queries. Exact conservative bounds remain candidate truth in both paths; retained tree
@@ -434,16 +465,23 @@ fn consume_tail(
     let mut stats = TailStepStats3d::default();
     let initial_contacts = contact_frontier(&boxes, broad_phase, &mut stats)?;
     if initial_contacts.is_empty() {
-        let (boxes, contacts) =
-            free_flight_and_stabilize(boxes, remaining, solver_passes, broad_phase, &mut stats)?;
+        let (boxes, contacts) = free_flight_and_stabilize(
+            &boxes,
+            remaining,
+            solver_passes,
+            broad_phase,
+            &mut stats,
+            None,
+        )?;
         stats.contacts = contacts;
         return Ok((boxes, stats));
     }
 
     let mut slice_count = persistent_tail_slice_count(&boxes, remaining, &initial_contacts)?;
+    let mut current = boxes;
+    let mut journal = TailMutationJournal3d::new(current.len());
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
-        let mut current = boxes.clone();
         let mut contact_count = 0_usize;
         let mut unsafe_body = None;
 
@@ -455,11 +493,12 @@ fn consume_tail(
                 break;
             }
             let (next, contacts) = free_flight_and_stabilize(
-                current,
+                &current,
                 slice_config,
                 solver_passes,
                 broad_phase,
                 &mut stats,
+                Some(&mut journal),
             )?;
             current = next;
             contact_count = contact_count.saturating_add(contacts);
@@ -478,25 +517,49 @@ fn consume_tail(
                 unsafe_body.expect("unsafe tail body was observed"),
             ));
         }
-        slice_count = next_representable_tail_slice_count(remaining, target)?;
+        let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
+        journal.rollback(&mut current);
+        slice_count = next_slice_count;
     }
 }
 
 fn free_flight_and_stabilize(
-    boxes: Vec<RigidBox3d>,
+    boxes: &[RigidBox3d],
     config: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     stats: &mut TailStepStats3d,
+    mut journal: Option<&mut TailMutationJournal3d>,
 ) -> Result<(Vec<RigidBox3d>, usize), RotatingWorldError3d> {
-    let mut sampled = boxes
-        .iter()
-        .map(|rigid_box| sample_rigid_box_free_flight(rigid_box, config, 1, 1))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut sampled = Vec::with_capacity(boxes.len());
+    for (world_index, rigid_box) in boxes.iter().enumerate() {
+        let next = sample_rigid_box_free_flight(rigid_box, config, 1, 1)?;
+        if next != *rigid_box {
+            if let Some(journal) = journal.as_deref_mut() {
+                journal.record(world_index, rigid_box);
+            }
+        }
+        sampled.push(next);
+    }
+
     let contacts = contact_frontier(&sampled, broad_phase, stats)?;
     let contact_count = contacts.len();
     if contacts.is_empty() {
         return Ok((sampled, 0));
+    }
+
+    if let Some(journal) = journal.as_deref_mut() {
+        for contact in &contacts {
+            for id in [contact.pair.left, contact.pair.right] {
+                let world_index = boxes
+                    .iter()
+                    .position(|rigid_box| rigid_box.body().id() == id)
+                    .expect("tail contact participant must exist in current world");
+                if boxes[world_index].body().kind() == BodyKind::Dynamic {
+                    journal.record(world_index, &boxes[world_index]);
+                }
+            }
+        }
     }
 
     let frontier = RotatingContactFrontier3d {
@@ -703,6 +766,8 @@ fn map_tail_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorld
 
 #[cfg(test)]
 mod tests {
+    use std::{hint::black_box, time::Instant};
+
     use crate::{
         ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d,
         OrientedBox3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, Vec3i,
@@ -710,7 +775,8 @@ mod tests {
 
     use super::{
         RotatingBroadPhase3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
-        TailStepStats3d, contact_frontier, tail_motion_within_extent, tail_slice_config,
+        TailMutationJournal3d, TailStepStats3d, contact_frontier, tail_motion_within_extent,
+        tail_slice_config,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
@@ -737,6 +803,100 @@ mod tests {
             solver_passes: 8,
             max_events: 16,
         })
+    }
+
+    #[test]
+    fn tail_mutation_journal_restores_exact_attempt_state() {
+        let baseline = (0..64)
+            .map(|index| {
+                dynamic(
+                    index + 1,
+                    Vec3i::new(index as i32 * 4, 0, 0),
+                    Vec3i::ZERO,
+                    Vec3i::new(1, 1, 1),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut current = baseline.clone();
+        let mut journal = TailMutationJournal3d::new(current.len());
+
+        for index in [3_usize, 17, 42] {
+            journal.record(index, &current[index]);
+            current[index].body.position.x = current[index].body.position.x.saturating_add(11);
+            journal.record(index, &current[index]);
+            current[index].body.velocity.y = current[index].body.velocity.y.saturating_sub(7);
+        }
+
+        assert_eq!(journal.originals.len(), 3);
+        assert_ne!(current, baseline);
+        journal.rollback(&mut current);
+        assert_eq!(current, baseline);
+        assert!(journal.originals.is_empty());
+        assert!(journal.recorded.iter().all(|recorded| !recorded));
+    }
+
+    #[test]
+    #[ignore = "release performance evidence"]
+    fn tail_mutation_journal_sparse_rollback_benchmark() {
+        const BODY_COUNT: usize = 4_096;
+        const TOUCHED: usize = 8;
+        const REPLAYS: usize = 256;
+
+        let baseline = (0..BODY_COUNT)
+            .map(|index| {
+                if index < TOUCHED {
+                    dynamic(
+                        index as u64 + 1,
+                        Vec3i::new(index as i32 * 4, 0, 0),
+                        Vec3i::ZERO,
+                        Vec3i::new(1, 1, 1),
+                    )
+                } else {
+                    fixed(
+                        index as u64 + 1,
+                        Vec3i::new(index as i32 * 4, 0, 0),
+                        Vec3i::new(1, 1, 1),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let snapshot_started = Instant::now();
+        let mut snapshot_checksum = 0_i64;
+        for replay in 0..REPLAYS {
+            let mut attempt = baseline.clone();
+            let delta = i32::try_from(replay % 17 + 1).expect("bounded benchmark delta");
+            for rigid_box in attempt.iter_mut().take(TOUCHED) {
+                rigid_box.body.position.x = rigid_box.body.position.x.saturating_add(delta);
+                snapshot_checksum = snapshot_checksum.saturating_add(i64::from(rigid_box.body.position.x));
+            }
+            black_box(&attempt);
+        }
+        let snapshot_elapsed = snapshot_started.elapsed();
+
+        let mut current = baseline.clone();
+        let mut journal = TailMutationJournal3d::new(current.len());
+        let journal_started = Instant::now();
+        let mut journal_checksum = 0_i64;
+        for replay in 0..REPLAYS {
+            let delta = i32::try_from(replay % 17 + 1).expect("bounded benchmark delta");
+            for index in 0..TOUCHED {
+                journal.record(index, &current[index]);
+                current[index].body.position.x = current[index].body.position.x.saturating_add(delta);
+                journal_checksum = journal_checksum.saturating_add(i64::from(current[index].body.position.x));
+            }
+            black_box(&current);
+            journal.rollback(&mut current);
+        }
+        let journal_elapsed = journal_started.elapsed();
+
+        assert_eq!(current, baseline);
+        assert_eq!(snapshot_checksum, journal_checksum);
+        let speedup = snapshot_elapsed.as_secs_f64() / journal_elapsed.as_secs_f64();
+        println!(
+            "persistent tail sparse rollback {BODY_COUNT}-body world × {REPLAYS}: full_world_snapshots={snapshot_elapsed:?}, mutation_journal={journal_elapsed:?}, speedup={speedup:.2}x, body_clone_reduction={}x",
+            BODY_COUNT / TOUCHED,
+        );
     }
 
     #[test]
