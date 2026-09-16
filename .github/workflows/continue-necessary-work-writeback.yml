@@ -30,18 +30,31 @@ jobs:
                   raise SystemExit(f"{path}: expected one occurrence, found {count}")
               p.write_text(text.replace(old, new, 1))
 
-          def replace_between(path, start_marker, end_marker, replacement):
+          def replace_function(path, marker, replacement):
               p = Path(path)
               text = p.read_text()
-              start = text.index(start_marker)
-              end = text.index(end_marker, start)
-              p.write_text(text[:start] + replacement + text[end:])
+              start = text.index(marker)
+              brace = text.index("{", start)
+              depth = 0
+              end = None
+              for index in range(brace, len(text)):
+                  char = text[index]
+                  if char == "{":
+                      depth += 1
+                  elif char == "}":
+                      depth -= 1
+                      if depth == 0:
+                          end = index + 1
+                          break
+              if end is None:
+                  raise SystemExit(f"{path}: unterminated function for {marker!r}")
+              p.write_text(text[:start] + replacement.rstrip() + text[end:])
 
-          # Raw solver: expose the exact observable body delta while reconstructing the authoritative map.
+          # Raw solver: produce the body delta while the full solver result is already in hand.
           replace_once(
               "src/rotating_world.rs",
               "pub struct RotatingWorldStepReport3d {\n    pub stats: RotatingWorldStepStats3d,\n}\n",
-              "pub struct RotatingWorldStepReport3d {\n    /// Stable `BodyId`-ordered bodies whose observable rigid-body or sleep state changed this step.\n    ///\n    /// Higher integration layers use this delta to avoid cloning every dynamic body merely because one\n    /// body moved. A zero timestep and a quiescent step return an empty list.\n    pub changed_body_ids: Vec<BodyId>,\n    pub stats: RotatingWorldStepStats3d,\n}\n",
+              "pub struct RotatingWorldStepReport3d {\n    /// Stable `BodyId`-ordered bodies whose observable rigid-body or sleep state changed this step.\n    ///\n    /// Higher integration layers consume this precise delta instead of cloning every dynamic body.\n    pub changed_body_ids: Vec<BodyId>,\n    pub stats: RotatingWorldStepStats3d,\n}\n",
           )
           replace_once(
               "src/rotating_world.rs",
@@ -59,103 +72,583 @@ jobs:
               "        Ok(RotatingWorldStepReport3d {\n            changed_body_ids,\n            stats: RotatingWorldStepStats3d {\n",
           )
 
-          # Strict stabilized world: union raw changes with wake/sleep transitions and post-step corrections.
-          strict_step = '''    pub fn step(\n        &mut self,\n        timestep_numerator: i32,\n        timestep_denominator: i32,\n    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {\n        if timestep_numerator <= 0 || timestep_denominator <= 0 {\n            return self.inner.step(timestep_numerator, timestep_denominator);\n        }\n\n        let sleep_time_increment =\n            sleep_time_increment_q64(timestep_numerator, timestep_denominator);\n        let mut changed_body_ids =\n            self.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;\n        self.freeze_sleeping_bodies()?;\n        let mut report = match self.inner.step(timestep_numerator, timestep_denominator) {\n            Ok(report) => report,\n            Err(error) => {\n                let _ = self.restore_sleeping_bodies();\n                return Err(error);\n            }\n        };\n        changed_body_ids.extend(report.changed_body_ids.iter().copied());\n        match self.stabilize_fixed_boundaries() {\n            Ok(stabilized) => changed_body_ids.extend(stabilized),\n            Err(error) => {\n                let _ = self.restore_sleeping_bodies();\n                return Err(error);\n            }\n        }\n        self.restore_sleeping_bodies()?;\n        changed_body_ids.extend(self.update_sleep_state(sleep_time_increment)?);\n        report.changed_body_ids = changed_body_ids.into_iter().collect();\n        Ok(report)\n    }\n\n'''
-          replace_between(
-              "src/stabilized_rotating_world.rs",
-              "    pub fn step(\n",
-              "    fn wake_sleepers_for_sweeps(\n",
-              strict_step,
-          )
+          strict_step = '''    pub fn step(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        if timestep_numerator <= 0 || timestep_denominator <= 0 {
+            return self.inner.step(timestep_numerator, timestep_denominator);
+        }
 
-          strict_wake = '''    fn wake_sleepers_for_sweeps(\n        &mut self,\n        timestep_numerator: i32,\n        timestep_denominator: i32,\n    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {\n        let mut awakened = BTreeSet::new();\n        if self.sleeping.is_empty() {\n            return Ok(awakened);\n        }\n\n        let awake_config = RigidBoxFreeFlightConfig3d::new(\n            self.config().gravity,\n            timestep_numerator,\n            timestep_denominator,\n        );\n        let stationary_config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);\n        let mut awake_bounds = Vec::new();\n        let mut sleeper_bounds = BTreeMap::new();\n\n        for rigid_box in self.inner.boxes() {\n            if rigid_box.body.kind != BodyKind::Dynamic {\n                continue;\n            }\n            let id = rigid_box.body.id;\n            if self.sleeping.contains(&id) {\n                sleeper_bounds.insert(\n                    id,\n                    rigid_box_free_flight_sweep_bounds(rigid_box, stationary_config)?,\n                );\n            } else {\n                awake_bounds.push((\n                    id,\n                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,\n                ));\n            }\n        }\n\n        loop {\n            let newly_awake = self\n                .sleeping\n                .iter()\n                .copied()\n                .filter(|id| {\n                    sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {\n                        awake_bounds.iter().any(|(awake_id, bounds)| {\n                            sweep_bounds_overlap(*bounds, *sleeping_bounds)\n                                && !self.inner.box_by_id(*awake_id).is_some_and(|awake| {\n                                    self.inner.box_by_id(*id).is_some_and(|sleeping| {\n                                        crate::linear_contact::sweep_is_passive_support(\n                                            awake, *bounds, sleeping,\n                                        )\n                                    })\n                                })\n                        })\n                    })\n                })\n                .collect::<Vec<_>>();\n            if newly_awake.is_empty() {\n                break;\n            }\n\n            for id in newly_awake {\n                self.sleeping.remove(&id);\n                self.sleep_stable_time_q64.remove(&id);\n                sleeper_bounds.remove(&id);\n                awakened.insert(id);\n                let rigid_box = self\n                    .inner\n                    .box_by_id(id)\n                    .ok_or(RotatingWorldError3d::MissingBody(id))?;\n                awake_bounds.push((\n                    id,\n                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,\n                ));\n            }\n        }\n\n        Ok(awakened)\n    }\n\n'''
-          replace_between(
+        let sleep_time_increment =
+            sleep_time_increment_q64(timestep_numerator, timestep_denominator);
+        let mut changed_body_ids =
+            self.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
+        self.freeze_sleeping_bodies()?;
+        let mut report = match self.inner.step(timestep_numerator, timestep_denominator) {
+            Ok(report) => report,
+            Err(error) => {
+                let _ = self.restore_sleeping_bodies();
+                return Err(error);
+            }
+        };
+        changed_body_ids.extend(report.changed_body_ids.iter().copied());
+        match self.stabilize_fixed_boundaries() {
+            Ok(stabilized) => changed_body_ids.extend(stabilized),
+            Err(error) => {
+                let _ = self.restore_sleeping_bodies();
+                return Err(error);
+            }
+        }
+        self.restore_sleeping_bodies()?;
+        changed_body_ids.extend(self.update_sleep_state(sleep_time_increment)?);
+        report.changed_body_ids = changed_body_ids.into_iter().collect();
+        Ok(report)
+    }'''
+          replace_function("src/stabilized_rotating_world.rs", "    pub fn step(\n", strict_step)
+
+          strict_wake = '''    fn wake_sleepers_for_sweeps(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let mut awakened = BTreeSet::new();
+        if self.sleeping.is_empty() {
+            return Ok(awakened);
+        }
+
+        let awake_config = RigidBoxFreeFlightConfig3d::new(
+            self.config().gravity,
+            timestep_numerator,
+            timestep_denominator,
+        );
+        let stationary_config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut awake_bounds = Vec::new();
+        let mut sleeper_bounds = BTreeMap::new();
+
+        for rigid_box in self.inner.boxes() {
+            if rigid_box.body.kind != BodyKind::Dynamic {
+                continue;
+            }
+            let id = rigid_box.body.id;
+            if self.sleeping.contains(&id) {
+                sleeper_bounds.insert(
+                    id,
+                    rigid_box_free_flight_sweep_bounds(rigid_box, stationary_config)?,
+                );
+            } else {
+                awake_bounds.push((
+                    id,
+                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
+                ));
+            }
+        }
+
+        loop {
+            let newly_awake = self
+                .sleeping
+                .iter()
+                .copied()
+                .filter(|id| {
+                    sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {
+                        awake_bounds.iter().any(|(awake_id, bounds)| {
+                            sweep_bounds_overlap(*bounds, *sleeping_bounds)
+                                && !self.inner.box_by_id(*awake_id).is_some_and(|awake| {
+                                    self.inner.box_by_id(*id).is_some_and(|sleeping| {
+                                        crate::linear_contact::sweep_is_passive_support(
+                                            awake, *bounds, sleeping,
+                                        )
+                                    })
+                                })
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            if newly_awake.is_empty() {
+                break;
+            }
+
+            for id in newly_awake {
+                self.sleeping.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
+                sleeper_bounds.remove(&id);
+                awakened.insert(id);
+                let rigid_box = self
+                    .inner
+                    .box_by_id(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
+                awake_bounds.push((
+                    id,
+                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
+                ));
+            }
+        }
+
+        Ok(awakened)
+    }'''
+          replace_function(
               "src/stabilized_rotating_world.rs",
               "    fn wake_sleepers_for_sweeps(\n",
-              "    fn freeze_sleeping_bodies(\n",
               strict_wake,
           )
 
-          strict_sleep = '''    fn update_sleep_state(\n        &mut self,\n        sleep_time_increment: u128,\n    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {\n        let motion = self\n            .inner\n            .boxes()\n            .filter(|rigid_box| {\n                rigid_box.body.kind == BodyKind::Dynamic\n                    && !self.sleeping.contains(&rigid_box.body.id)\n            })\n            .map(|rigid_box| {\n                (\n                    rigid_box.body.id,\n                    low_motion(rigid_box),\n                    motion_is_zero(rigid_box),\n                    rigid_box.clone(),\n                )\n            })\n            .collect::<Vec<_>>();\n        let mut seen = BTreeSet::new();\n        let mut direct_sleep = Vec::new();\n        let mut supported_sleep = BTreeSet::new();\n        let mut changed_body_ids = BTreeSet::new();\n\n        for (id, is_low_motion, is_stationary, rigid_box) in motion {\n            seen.insert(id);\n            let has_dissipative_contact = if is_low_motion && !is_stationary {\n                self.has_dissipative_sleep_contact(&rigid_box)?\n            } else {\n                false\n            };\n            if is_low_motion && (is_stationary || has_dissipative_contact) {\n                let stable_time = self.sleep_stable_time_q64.entry(id).or_default();\n                *stable_time = stable_time.saturating_add(sleep_time_increment);\n                if *stable_time >= SLEEP_STABLE_DURATION_Q64 {\n                    if self.has_gravity_support_chain(id)? {\n                        supported_sleep.insert(id);\n                    } else {\n                        direct_sleep.push(id);\n                    }\n                }\n            } else {\n                self.sleep_stable_time_q64.remove(&id);\n            }\n        }\n        self.sleep_stable_time_q64.retain(|id, _| seen.contains(id));\n\n        for id in direct_sleep {\n            self.put_body_to_sleep(id)?;\n            self.sleeping.insert(id);\n            self.sleep_stable_time_q64.remove(&id);\n            changed_body_ids.insert(id);\n        }\n\n        loop {\n            let mut ready = Vec::new();\n            for id in supported_sleep.iter().copied() {\n                let rigid_box = self\n                    .inner\n                    .box_by_id(id)\n                    .ok_or(RotatingWorldError3d::MissingBody(id))?;\n                if !self.direct_gravity_sleep_supports(rigid_box)?.is_empty() {\n                    ready.push(id);\n                }\n            }\n            if ready.is_empty() {\n                break;\n            }\n\n            for id in ready {\n                supported_sleep.remove(&id);\n                if !self.settle_body_on_sleep_supports(id)? {\n                    continue;\n                }\n                self.put_body_to_sleep(id)?;\n                self.sleeping.insert(id);\n                self.sleep_stable_time_q64.remove(&id);\n                changed_body_ids.insert(id);\n            }\n        }\n        Ok(changed_body_ids)\n    }\n\n'''
-          replace_between(
+          strict_sleep = '''    fn update_sleep_state(
+        &mut self,
+        sleep_time_increment: u128,
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let motion = self
+            .inner
+            .boxes()
+            .filter(|rigid_box| {
+                rigid_box.body.kind == BodyKind::Dynamic
+                    && !self.sleeping.contains(&rigid_box.body.id)
+            })
+            .map(|rigid_box| {
+                (
+                    rigid_box.body.id,
+                    low_motion(rigid_box),
+                    motion_is_zero(rigid_box),
+                    rigid_box.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut seen = BTreeSet::new();
+        let mut direct_sleep = Vec::new();
+        let mut supported_sleep = BTreeSet::new();
+        let mut changed_body_ids = BTreeSet::new();
+
+        for (id, is_low_motion, is_stationary, rigid_box) in motion {
+            seen.insert(id);
+            let has_dissipative_contact = if is_low_motion && !is_stationary {
+                self.has_dissipative_sleep_contact(&rigid_box)?
+            } else {
+                false
+            };
+            if is_low_motion && (is_stationary || has_dissipative_contact) {
+                let stable_time = self.sleep_stable_time_q64.entry(id).or_default();
+                *stable_time = stable_time.saturating_add(sleep_time_increment);
+                if *stable_time >= SLEEP_STABLE_DURATION_Q64 {
+                    if self.has_gravity_support_chain(id)? {
+                        supported_sleep.insert(id);
+                    } else {
+                        direct_sleep.push(id);
+                    }
+                }
+            } else {
+                self.sleep_stable_time_q64.remove(&id);
+            }
+        }
+        self.sleep_stable_time_q64.retain(|id, _| seen.contains(id));
+
+        for id in direct_sleep {
+            self.put_body_to_sleep(id)?;
+            self.sleeping.insert(id);
+            self.sleep_stable_time_q64.remove(&id);
+            changed_body_ids.insert(id);
+        }
+
+        loop {
+            let mut ready = Vec::new();
+            for id in supported_sleep.iter().copied() {
+                let rigid_box = self
+                    .inner
+                    .box_by_id(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
+                if !self.direct_gravity_sleep_supports(rigid_box)?.is_empty() {
+                    ready.push(id);
+                }
+            }
+            if ready.is_empty() {
+                break;
+            }
+
+            for id in ready {
+                supported_sleep.remove(&id);
+                if !self.settle_body_on_sleep_supports(id)? {
+                    continue;
+                }
+                self.put_body_to_sleep(id)?;
+                self.sleeping.insert(id);
+                self.sleep_stable_time_q64.remove(&id);
+                changed_body_ids.insert(id);
+            }
+        }
+        Ok(changed_body_ids)
+    }'''
+          replace_function(
               "src/stabilized_rotating_world.rs",
               "    fn update_sleep_state(\n",
-              "    fn has_dissipative_sleep_contact(\n",
               strict_sleep,
           )
 
-          strict_stabilize = '''    fn stabilize_fixed_boundaries(\n        &mut self,\n    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {\n        let mut boxes = self.inner.boxes().cloned().collect::<Vec<_>>();\n        if boxes.len() < 2 {\n            return Ok(BTreeSet::new());\n        }\n\n        let mut corrections = vec![PositionCorrectionAccumulator::default(); boxes.len()];\n        let mut converged = false;\n        let mut changed_body_ids = BTreeSet::new();\n        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n            let candidate_pairs =\n                fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;\n            if candidate_pairs.is_empty() {\n                converged = true;\n                break;\n            }\n\n            for correction in &mut corrections {\n                correction.clear();\n            }\n\n            let mut had_projection = false;\n            for &(left_index, right_index, dynamic_index) in &candidate_pairs {\n                let response = resolve_obb_contact(\n                    boxes[left_index].clone(),\n                    boxes[right_index].clone(),\n                    false,\n                )\n                .map_err(|error| {\n                    RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))\n                })?;\n                let projected = if dynamic_index == left_index {\n                    response.left.body.position\n                } else {\n                    response.right.body.position\n                };\n                let before = boxes[dynamic_index].body.position;\n                if projected != before {\n                    corrections[dynamic_index].accumulate(\n                        boxes[dynamic_index].body.id,\n                        before,\n                        projected,\n                    )?;\n                    had_projection = true;\n                }\n            }\n\n            if !had_projection {\n                converged = true;\n                break;\n            }\n\n            let mut changed = false;\n            for (index, correction) in corrections.iter().enumerate() {\n                if correction.is_empty() {\n                    continue;\n                }\n                let id = boxes[index].body.id;\n                let before = boxes[index].body.position;\n                let projected = correction.target_position(id, before)?;\n                if projected != before {\n                    boxes[index].body.position = projected;\n                    changed_body_ids.insert(id);\n                    changed = true;\n                }\n            }\n\n            if !changed {\n                break;\n            }\n        }\n\n        if !converged {\n            return Err(RotatingWorldError3d::PersistentTailResolutionLimit(\n                u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),\n            ));\n        }\n        if changed_body_ids.is_empty() {\n            return Ok(changed_body_ids);\n        }\n\n        let updates = boxes\n            .into_iter()\n            .filter(|rigid_box| changed_body_ids.contains(&rigid_box.body.id))\n            .collect::<Vec<_>>();\n        for rigid_box in updates {\n            let id = rigid_box.body.id;\n            let removed = self\n                .inner\n                .remove_box(id)\n                .ok_or(RotatingWorldError3d::MissingBody(id))?;\n            debug_assert_eq!(removed.body.id, id);\n            self.inner.add_box(rigid_box)?;\n        }\n        Ok(changed_body_ids)\n    }\n'''
-          replace_between(
+          strict_stabilize = '''    fn stabilize_fixed_boundaries(
+        &mut self,
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let mut boxes = self.inner.boxes().cloned().collect::<Vec<_>>();
+        if boxes.len() < 2 {
+            return Ok(BTreeSet::new());
+        }
+
+        let mut corrections = vec![PositionCorrectionAccumulator::default(); boxes.len()];
+        let mut converged = false;
+        let mut changed_body_ids = BTreeSet::new();
+        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+            let candidate_pairs =
+                fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;
+            if candidate_pairs.is_empty() {
+                converged = true;
+                break;
+            }
+
+            for correction in &mut corrections {
+                correction.clear();
+            }
+
+            let mut had_projection = false;
+            for &(left_index, right_index, dynamic_index) in &candidate_pairs {
+                let response = resolve_obb_contact(
+                    boxes[left_index].clone(),
+                    boxes[right_index].clone(),
+                    false,
+                )
+                .map_err(|error| {
+                    RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))
+                })?;
+                let projected = if dynamic_index == left_index {
+                    response.left.body.position
+                } else {
+                    response.right.body.position
+                };
+                let before = boxes[dynamic_index].body.position;
+                if projected != before {
+                    corrections[dynamic_index].accumulate(
+                        boxes[dynamic_index].body.id,
+                        before,
+                        projected,
+                    )?;
+                    had_projection = true;
+                }
+            }
+
+            if !had_projection {
+                converged = true;
+                break;
+            }
+
+            let mut changed = false;
+            for (index, correction) in corrections.iter().enumerate() {
+                if correction.is_empty() {
+                    continue;
+                }
+                let id = boxes[index].body.id;
+                let before = boxes[index].body.position;
+                let projected = correction.target_position(id, before)?;
+                if projected != before {
+                    boxes[index].body.position = projected;
+                    changed_body_ids.insert(id);
+                    changed = true;
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        if !converged {
+            return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
+                u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),
+            ));
+        }
+        if changed_body_ids.is_empty() {
+            return Ok(changed_body_ids);
+        }
+
+        let updates = boxes
+            .into_iter()
+            .filter(|rigid_box| changed_body_ids.contains(&rigid_box.body.id))
+            .collect::<Vec<_>>();
+        for rigid_box in updates {
+            let id = rigid_box.body.id;
+            let removed = self
+                .inner
+                .remove_box(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            debug_assert_eq!(removed.body.id, id);
+            self.inner.add_box(rigid_box)?;
+        }
+        Ok(changed_body_ids)
+    }'''
+          replace_function(
               "src/stabilized_rotating_world.rs",
               "    fn stabilize_fixed_boundaries(\n",
-              "\n}\n\n#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]\nstruct PositionCorrectionGroup",
               strict_stabilize,
           )
 
-          # Parked facade: consume the exact delta instead of cloning every active dynamic.
-          relaxed_step = '''    pub fn step(\n        &mut self,\n        timestep_numerator: i32,\n        timestep_denominator: i32,\n    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {\n        if timestep_numerator < 0 || timestep_denominator <= 0 {\n            return self.active.step(timestep_numerator, timestep_denominator);\n        }\n        if timestep_numerator == 0 || self.active_dynamic_count == 0 {\n            return Ok(self.quiescent_report());\n        }\n\n        let mut changed_body_ids =\n            self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;\n        if self.active_dynamic_count == 0 {\n            return Ok(self.quiescent_report());\n        }\n\n        let mut report = self.active.step(timestep_numerator, timestep_denominator)?;\n        changed_body_ids.extend(report.changed_body_ids.iter().copied());\n        self.park_new_sleepers(&changed_body_ids)?;\n        self.sync_active_boxes(&changed_body_ids)?;\n        report.changed_body_ids = changed_body_ids.into_iter().collect();\n        report.stats.body_count = self.boxes.len();\n        Ok(report)\n    }\n\n'''
-          replace_between(
-              "src/relaxed_rotating_world.rs",
-              "    pub fn step(\n",
-              "    fn quiescent_report(&self) -> RotatingWorldStepReport3d {\n",
-              relaxed_step,
-          )
+          relaxed_step = '''    pub fn step(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        if timestep_numerator < 0 || timestep_denominator <= 0 {
+            return self.active.step(timestep_numerator, timestep_denominator);
+        }
+        if timestep_numerator == 0 || self.active_dynamic_count == 0 {
+            return Ok(self.quiescent_report());
+        }
+
+        let mut changed_body_ids =
+            self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
+        if self.active_dynamic_count == 0 {
+            return Ok(self.quiescent_report());
+        }
+
+        let mut report = self.active.step(timestep_numerator, timestep_denominator)?;
+        changed_body_ids.extend(report.changed_body_ids.iter().copied());
+        self.park_new_sleepers(&changed_body_ids)?;
+        self.sync_active_boxes(&changed_body_ids)?;
+        report.changed_body_ids = changed_body_ids.into_iter().collect();
+        report.stats.body_count = self.boxes.len();
+        Ok(report)
+    }'''
+          replace_function("src/relaxed_rotating_world.rs", "    pub fn step(\n", relaxed_step)
           replace_once(
               "src/relaxed_rotating_world.rs",
               "        RotatingWorldStepReport3d {\n            stats: RotatingWorldStepStats3d {\n",
               "        RotatingWorldStepReport3d {\n            changed_body_ids: Vec::new(),\n            stats: RotatingWorldStepStats3d {\n",
           )
 
-          relaxed_park = '''    fn park_new_sleepers(\n        &mut self,\n        changed_body_ids: &BTreeSet<BodyId>,\n    ) -> Result<(), RotatingWorldError3d> {\n        let sleepers = changed_body_ids\n            .iter()\n            .copied()\n            .filter(|id| {\n                self.active.box_by_id(*id).is_some_and(|rigid_box| {\n                    rigid_box.body().kind() == BodyKind::Dynamic && self.active.is_sleeping(*id)\n                })\n            })\n            .collect::<Vec<_>>();\n\n        for id in sleepers {\n            let rigid_box = self\n                .active\n                .remove_box(id)\n                .ok_or(RotatingWorldError3d::MissingBody(id))?;\n            let proxy = fixed_sleep_proxy(rigid_box.clone());\n            self.active.add_box(proxy)?;\n            self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);\n            self.boxes.insert(id, rigid_box);\n            self.parked.insert(id);\n        }\n        Ok(())\n    }\n\n'''
-          replace_between(
+          relaxed_park = '''    fn park_new_sleepers(
+        &mut self,
+        changed_body_ids: &BTreeSet<BodyId>,
+    ) -> Result<(), RotatingWorldError3d> {
+        let sleepers = changed_body_ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.active.box_by_id(*id).is_some_and(|rigid_box| {
+                    rigid_box.body().kind() == BodyKind::Dynamic && self.active.is_sleeping(*id)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for id in sleepers {
+            let rigid_box = self
+                .active
+                .remove_box(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            let proxy = fixed_sleep_proxy(rigid_box.clone());
+            self.active.add_box(proxy)?;
+            self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
+            self.boxes.insert(id, rigid_box);
+            self.parked.insert(id);
+        }
+        Ok(())
+    }'''
+          replace_function(
               "src/relaxed_rotating_world.rs",
               "    fn park_new_sleepers(&mut self) -> Result<(), RotatingWorldError3d> {\n",
-              "    fn sync_active_boxes(&mut self) {\n",
               relaxed_park,
           )
 
-          relaxed_sync = '''    fn sync_active_boxes(\n        &mut self,\n        changed_body_ids: &BTreeSet<BodyId>,\n    ) -> Result<(), RotatingWorldError3d> {\n        for id in changed_body_ids.iter().copied() {\n            if self.parked.contains(&id) {\n                continue;\n            }\n            let rigid_box = self\n                .active\n                .box_by_id(id)\n                .ok_or(RotatingWorldError3d::MissingBody(id))?;\n            if rigid_box.body().kind() == BodyKind::Dynamic {\n                self.boxes.insert(id, rigid_box.clone());\n            }\n        }\n        Ok(())\n    }\n\n'''
-          replace_between(
+          relaxed_sync = '''    fn sync_active_boxes(
+        &mut self,
+        changed_body_ids: &BTreeSet<BodyId>,
+    ) -> Result<(), RotatingWorldError3d> {
+        for id in changed_body_ids.iter().copied() {
+            if self.parked.contains(&id) {
+                continue;
+            }
+            let rigid_box = self
+                .active
+                .box_by_id(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            if rigid_box.body().kind() == BodyKind::Dynamic {
+                self.boxes.insert(id, rigid_box.clone());
+            }
+        }
+        Ok(())
+    }'''
+          replace_function(
               "src/relaxed_rotating_world.rs",
               "    fn sync_active_boxes(&mut self) {\n",
-              "    fn unpark(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {\n",
               relaxed_sync,
           )
 
-          relaxed_wake = '''    fn wake_parked_for_sweeps(\n        &mut self,\n        timestep_numerator: i32,\n        timestep_denominator: i32,\n    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {\n        let mut awakened = BTreeSet::new();\n        if self.parked.is_empty() || self.active_dynamic_count == 0 {\n            return Ok(awakened);\n        }\n\n        let awake_config = RigidBoxFreeFlightConfig3d::new(\n            self.config().gravity,\n            timestep_numerator,\n            timestep_denominator,\n        );\n        let stationary_config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);\n        let mut awake_bounds = self\n            .active\n            .boxes()\n            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)\n            .map(|rigid_box| {\n                Ok((\n                    rigid_box.body().id(),\n                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,\n                ))\n            })\n            .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;\n        let mut parked_bounds = self\n            .parked\n            .iter()\n            .copied()\n            .map(|id| {\n                let rigid_box = self\n                    .boxes\n                    .get(&id)\n                    .ok_or(RotatingWorldError3d::MissingBody(id))?;\n                Ok((\n                    id,\n                    rigid_box_free_flight_sweep_bounds(rigid_box, stationary_config)?,\n                ))\n            })\n            .collect::<Result<BTreeMap<_, _>, RotatingWorldError3d>>()?;\n\n        loop {\n            let newly_awake = self\n                .parked\n                .iter()\n                .copied()\n                .filter(|parked_id| {\n                    let Some(parked_box) = self.boxes.get(parked_id) else {\n                        return true;\n                    };\n                    let Some(parked_bounds) = parked_bounds.get(parked_id) else {\n                        return true;\n                    };\n                    awake_bounds.iter().any(|(awake_id, awake_bounds)| {\n                        self.boxes.get(awake_id).is_some_and(|awake_box| {\n                            awake_box\n                                .collision_layers()\n                                .collides_with(parked_box.collision_layers())\n                                && sweep_bounds_overlap(*awake_bounds, *parked_bounds)\n                                && !crate::linear_contact::sweep_is_passive_support(\n                                    awake_box,\n                                    *awake_bounds,\n                                    parked_box,\n                                )\n                        })\n                    })\n                })\n                .collect::<Vec<_>>();\n            if newly_awake.is_empty() {\n                break;\n            }\n\n            for id in newly_awake {\n                self.unpark(id)?;\n                awakened.insert(id);\n                parked_bounds.remove(&id);\n                let rigid_box = self\n                    .boxes\n                    .get(&id)\n                    .ok_or(RotatingWorldError3d::MissingBody(id))?;\n                awake_bounds.push((\n                    id,\n                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,\n                ));\n            }\n        }\n        Ok(awakened)\n    }\n'''
-          replace_between(
+          relaxed_wake = '''    fn wake_parked_for_sweeps(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let mut awakened = BTreeSet::new();
+        if self.parked.is_empty() || self.active_dynamic_count == 0 {
+            return Ok(awakened);
+        }
+
+        let awake_config = RigidBoxFreeFlightConfig3d::new(
+            self.config().gravity,
+            timestep_numerator,
+            timestep_denominator,
+        );
+        let stationary_config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut awake_bounds = self
+            .active
+            .boxes()
+            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)
+            .map(|rigid_box| {
+                Ok((
+                    rigid_box.body().id(),
+                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;
+        let mut parked_bounds = self
+            .parked
+            .iter()
+            .copied()
+            .map(|id| {
+                let rigid_box = self
+                    .boxes
+                    .get(&id)
+                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
+                Ok((
+                    id,
+                    rigid_box_free_flight_sweep_bounds(rigid_box, stationary_config)?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, RotatingWorldError3d>>()?;
+
+        loop {
+            let newly_awake = self
+                .parked
+                .iter()
+                .copied()
+                .filter(|parked_id| {
+                    let Some(parked_box) = self.boxes.get(parked_id) else {
+                        return true;
+                    };
+                    let Some(parked_bounds) = parked_bounds.get(parked_id) else {
+                        return true;
+                    };
+                    awake_bounds.iter().any(|(awake_id, awake_bounds)| {
+                        self.boxes.get(awake_id).is_some_and(|awake_box| {
+                            awake_box
+                                .collision_layers()
+                                .collides_with(parked_box.collision_layers())
+                                && sweep_bounds_overlap(*awake_bounds, *parked_bounds)
+                                && !crate::linear_contact::sweep_is_passive_support(
+                                    awake_box,
+                                    *awake_bounds,
+                                    parked_box,
+                                )
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            if newly_awake.is_empty() {
+                break;
+            }
+
+            for id in newly_awake {
+                self.unpark(id)?;
+                awakened.insert(id);
+                parked_bounds.remove(&id);
+                let rigid_box = self
+                    .boxes
+                    .get(&id)
+                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
+                awake_bounds.push((
+                    id,
+                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
+                ));
+            }
+        }
+        Ok(awakened)
+    }'''
+          replace_function(
               "src/relaxed_rotating_world.rs",
               "    fn wake_parked_for_sweeps(\n",
-              "\n}\n\nfn fixed_sleep_proxy",
               relaxed_wake,
           )
 
-          # ECS: exact writeback from the report; no dynamic-world scan or component clone amplification.
           replace_once(
               "src/ecs_world.rs",
               "    BodyCurrentContact3d, BodyId, BodyKind, FixedGeometryPreparationMode3d,\n",
               "    BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d,\n",
           )
-          ecs_step = '''    /// Runs the physics system and writes back only bodies named by the authoritative step delta.\n    pub fn step(\n        &mut self,\n        timestep_numerator: i32,\n        timestep_denominator: i32,\n    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {\n        let prepared = self.fixed_geometry.clone();\n        let report = with_fixed_geometry_context(&prepared, || {\n            self.physics.step(timestep_numerator, timestep_denominator)\n        })?;\n        for entity in report.changed_body_ids.iter().copied() {\n            self.sync_entity_from_physics(entity);\n        }\n        debug_assert_eq!(self.rigid_boxes.len(), self.entities.len());\n        Ok(report)\n    }\n\n'''
-          replace_between(
+          ecs_step = '''    /// Runs the physics system and writes back only bodies named by the authoritative step delta.
+    pub fn step(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        let prepared = self.fixed_geometry.clone();
+        let report = with_fixed_geometry_context(&prepared, || {
+            self.physics.step(timestep_numerator, timestep_denominator)
+        })?;
+        for entity in report.changed_body_ids.iter().copied() {
+            self.sync_entity_from_physics(entity);
+        }
+        debug_assert_eq!(self.rigid_boxes.len(), self.entities.len());
+        Ok(report)
+    }'''
+          replace_function(
               "src/ecs_world.rs",
-              "    /// Runs the physics system and writes authoritative active results back to ECS components.\n    pub fn step(\n",
-              "    pub(crate) fn with_prepared_fixed_geometry<R>",
+              "    pub fn step(\n",
               ecs_step,
           )
           p = Path("src/ecs_world.rs")
           text = p.read_text()
-          start = text.find("    fn sync_all_from_physics(&mut self) {\n")
-          if start != -1:
-              end = text.index("\n    }\n}", start) + len("\n    }")
-              text = text[:start] + text[end:]
+          if "    fn sync_all_from_physics(&mut self) {\n" in text:
               p.write_text(text)
+              replace_function(
+                  "src/ecs_world.rs",
+                  "    fn sync_all_from_physics(&mut self) {\n",
+                  "",
+              )
 
-          # Focused deterministic proof: unrelated stationary dynamics must not enter the step delta.
           p = Path("src/ecs_world.rs")
           text = p.read_text()
           marker = "    #[test]\n    fn controlled_velocity_updates_solver_and_component_together() {\n"
-          test = '''    #[test]\n    fn step_delta_names_only_observably_changed_entities() {\n        let mut world = world();\n        world\n            .add_box(dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0)))\n            .expect("moving entity");\n        for id in 2..=66 {\n            world\n                .add_box(dynamic(\n                    id,\n                    Vec3i::new(i32::try_from(id).expect("small id") * 16, 0, 0),\n                    Vec3i::ZERO,\n                ))\n                .expect("unrelated stationary entity");\n        }\n\n        let report = world.step(1, 60).expect("precise writeback step");\n\n        assert_eq!(report.changed_body_ids, vec![BodyId(1)]);\n        assert_eq!(\n            world\n                .box_by_id(BodyId(1))\n                .expect("moving entity")\n                .body()\n                .position(),\n            Vec3i::new(1, 0, 0)\n        );\n        assert_eq!(\n            world\n                .box_by_id(BodyId(66))\n                .expect("stationary entity")\n                .body()\n                .position(),\n            Vec3i::new(66 * 16, 0, 0)\n        );\n    }\n\n'''
+          test = '''    #[test]
+    fn step_delta_names_only_observably_changed_entities() {
+        let mut world = world();
+        world
+            .add_box(dynamic(1, Vec3i::ZERO, Vec3i::new(60, 0, 0)))
+            .expect("moving entity");
+        for id in 2..=66 {
+            world
+                .add_box(dynamic(
+                    id,
+                    Vec3i::new(i32::try_from(id).expect("small id") * 16, 0, 0),
+                    Vec3i::ZERO,
+                ))
+                .expect("unrelated stationary entity");
+        }
+
+        let report = world.step(1, 60).expect("precise writeback step");
+
+        assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
+        assert_eq!(
+            world
+                .box_by_id(BodyId(1))
+                .expect("moving entity")
+                .body()
+                .position(),
+            Vec3i::new(1, 0, 0)
+        );
+        assert_eq!(
+            world
+                .box_by_id(BodyId(66))
+                .expect("stationary entity")
+                .body()
+                .position(),
+            Vec3i::new(66 * 16, 0, 0)
+        );
+    }
+
+'''
           if marker not in text:
               raise SystemExit("ecs_world test insertion marker missing")
           p.write_text(text.replace(marker, test + marker, 1))
