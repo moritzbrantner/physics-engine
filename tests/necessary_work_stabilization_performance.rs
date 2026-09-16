@@ -6,6 +6,7 @@ use physics_engine::{
 };
 
 const FAR_FIXED_BODIES: u64 = 64;
+const DYNAMIC_BODIES: u64 = 2;
 
 fn rotating_box(body: RigidBody) -> RigidBox3d {
     RigidBox3d::new(
@@ -75,9 +76,16 @@ fn stabilization_updates_only_the_active_contact_neighborhood() {
     let full_world_updates = stats
         .broad_phase_partial_queries
         .saturating_mul(u64::try_from(stats.body_count).expect("body count fits u64"));
+    let active_input_bound = stats
+        .broad_phase_partial_queries
+        .saturating_mul(DYNAMIC_BODIES);
     assert!(
         stats.broad_phase_partial_body_updates < full_world_updates,
         "stabilization regressed to full-world bound updates: {stats:?}"
+    );
+    assert!(
+        stats.broad_phase_partial_body_updates <= active_input_bound,
+        "unrelated fixed bodies leaked into changed-body update work: {stats:?}"
     );
     assert_eq!(
         stats.stabilization_active_bodies, stats.broad_phase_partial_body_updates,
@@ -119,4 +127,5 @@ fn benchmark_necessary_work_stabilization() {
     );
     assert!(partial_queries > 0);
     assert!(partial_body_updates < full_world_updates);
+    assert!(partial_body_updates <= partial_queries.saturating_mul(DYNAMIC_BODIES));
 }
