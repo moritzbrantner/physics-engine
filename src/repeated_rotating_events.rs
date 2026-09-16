@@ -304,6 +304,7 @@ fn stabilize_current_contacts(
             &active,
             &mut contacts,
             broad_phase,
+            response_scratch,
         )?;
         work.stabilization_candidate_pairs = work
             .stabilization_candidate_pairs
@@ -357,6 +358,7 @@ fn refresh_current_contacts_for_changed_bodies(
     active: &[crate::BodyId],
     contacts: &mut BTreeMap<crate::RotationalSweepPair3d, RotatingContactSearchHit3d>,
     broad_phase: &mut RotatingBroadPhase3d,
+    body_index: &RotatingContactResponseScratch3d,
 ) -> Result<CurrentContactFrontierResult3d, RotatingContactFrontierError3d> {
     let active_set = active.iter().copied().collect::<BTreeSet<_>>();
     contacts
@@ -364,9 +366,8 @@ fn refresh_current_contacts_for_changed_bodies(
 
     let mut active_boxes = Vec::with_capacity(active.len());
     for id in active {
-        let rigid_box = boxes
-            .iter()
-            .find(|rigid_box| rigid_box.body().id() == *id)
+        let rigid_box = body_index
+            .indexed_box(boxes, *id)
             .ok_or(RotatingContactFrontierError3d::MissingBody(*id))?;
         active_boxes.push(rigid_box);
     }
@@ -375,13 +376,11 @@ fn refresh_current_contacts_for_changed_bodies(
     let mut recomputed_contacts = 0_usize;
 
     for pair in candidates {
-        let left = boxes
-            .iter()
-            .find(|rigid_box| rigid_box.body().id() == pair.left)
+        let left = body_index
+            .indexed_box(boxes, pair.left)
             .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
-        let right = boxes
-            .iter()
-            .find(|rigid_box| rigid_box.body().id() == pair.right)
+        let right = body_index
+            .indexed_box(boxes, pair.right)
             .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
         let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
             continue;
@@ -426,11 +425,14 @@ fn current_contact_frontier(
         .map(|rigid_box| rigid_box.body().id())
         .collect::<Vec<_>>();
     let mut contacts = BTreeMap::new();
+    let mut body_index = RotatingContactResponseScratch3d::default();
+    body_index.ensure_body_index(boxes);
     Ok(refresh_current_contacts_for_changed_bodies(
         boxes,
         &active,
         &mut contacts,
         &mut broad_phase,
+        &body_index,
     )?
     .frontier)
 }

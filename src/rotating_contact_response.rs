@@ -177,11 +177,46 @@ impl BodyDeltaAccumulator3d {
 #[derive(Clone, Debug, Default)]
 pub struct RotatingContactResponseScratch3d {
     indices: BTreeMap<BodyId, usize>,
+    indexed_body_ids: Vec<BodyId>,
     resolved_indices: Vec<Option<(usize, usize)>>,
     snapshot: Vec<RigidBox3d>,
     deltas: Vec<BodyDeltaAccumulator3d>,
     combined: Vec<BodyDelta3d>,
     modified_body_ids: BTreeSet<BodyId>,
+}
+
+impl RotatingContactResponseScratch3d {
+    pub(crate) fn ensure_body_index(&mut self, boxes: &[RigidBox3d]) {
+        let layout_matches = self.indexed_body_ids.len() == boxes.len()
+            && self
+                .indexed_body_ids
+                .iter()
+                .zip(boxes)
+                .all(|(id, rigid_box)| *id == rigid_box.body().id());
+        if layout_matches {
+            return;
+        }
+
+        self.indices.clear();
+        self.indexed_body_ids.clear();
+        self.indexed_body_ids.reserve(boxes.len());
+        for (index, rigid_box) in boxes.iter().enumerate() {
+            let id = rigid_box.body().id();
+            self.indices.insert(id, index);
+            self.indexed_body_ids.push(id);
+        }
+    }
+
+    pub(crate) fn indexed_box<'a>(
+        &self,
+        boxes: &'a [RigidBox3d],
+        id: BodyId,
+    ) -> Option<&'a RigidBox3d> {
+        let index = *self.indices.get(&id)?;
+        boxes
+            .get(index)
+            .filter(|rigid_box| rigid_box.body().id() == id)
+    }
 }
 
 /// Resolves every contact in one shared sampled frontier with bounded simultaneous passes.
@@ -228,8 +263,10 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
 
+    scratch.ensure_body_index(&frontier.boxes);
     let RotatingContactResponseScratch3d {
         indices,
+        indexed_body_ids: _,
         resolved_indices,
         snapshot,
         deltas,
@@ -237,14 +274,6 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         modified_body_ids,
     } = scratch;
 
-    indices.clear();
-    indices.extend(
-        frontier
-            .boxes
-            .iter()
-            .enumerate()
-            .map(|(index, rigid_box)| (rigid_box.body.id, index)),
-    );
     let mut boxes = frontier.boxes;
     let mut passes_used = 0_u8;
     resolved_indices.clear();
@@ -254,7 +283,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
     deltas.resize_with(boxes.len(), BodyDeltaAccumulator3d::default);
     deltas.truncate(boxes.len());
     combined.clear();
-    combined.reserve(boxes.len().saturating_sub(combined.capacity()));
+    combined.reserve(boxes.len());
     modified_body_ids.clear();
 
     for pass in 0..solver_passes {
