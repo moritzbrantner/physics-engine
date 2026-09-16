@@ -72,13 +72,6 @@ pub struct RepeatedRotatingEventAdvance3d {
     pub boxes: Vec<RigidBox3d>,
     pub events: Vec<RotatingResolvedEvent3d>,
     /// Requested time that remains deliberately unconsumed.
-    ///
-    /// The ratio is preserved exactly in deterministic fixed-capacity limb storage. It is not rounded
-    /// back to the narrower public constructor inputs, so a collision in the suffix remains part of the
-    /// same requested interval and is still available to the world-level tail solver.
-    ///
-    /// The remaining segment is not automatically free-flown because it may contain persistent/resting
-    /// contacts that the world-level tail solver must stabilize.
     pub remaining: RigidBoxFreeFlightConfig3d,
     pub work: RepeatedRotatingEventWorkStats3d,
 }
@@ -152,37 +145,13 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// Advances through a bounded sequence of sampled rotating collision events while preserving the exact
 /// remaining requested interval.
 ///
-/// The first event is selected with [`crate::earliest_rotating_contact_frontier`]. After response, the
-/// remaining rational timestep becomes the next segment. Before that next segment is searched, the current
-/// contact frontier is stabilized through the configured bounded solver-pass budget. Each pass refreshes
-/// the current zero-time contact set and applies one simultaneous response pass. This keeps resting and
-/// newly-created support constraints in the authoritative solver without demanding exact global
-/// idempotence from quantized contact projection. Current-frontier discovery reuses the persistent
-/// conservative broad phase at a zero timestep, then exact-filters every candidate with the current OBB
-/// geometry; it deliberately does not re-enter the sampled temporal search. Later positive events are then
-/// selected with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize
-/// event discovery.
+/// The authoritative working state is allocated once at entry. Contact frontiers carry evidence only;
+/// each response advances and mutates that same state through compact motion updates and active-island
+/// deltas. Stabilization likewise reuses the same state and never materializes a full-world frontier copy.
 ///
-/// Every admitted frontier is resolved before the next segment is searched. Event times in
-/// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
-/// requested interval. Zero-time stabilization passes consume no requested time and are not counted as
-/// sampled events. Remaining-time composition canonicalizes each sampled remainder, cross-cancels it
-/// against the current exact ratio, and stores the reduced result in deterministic limb storage. No
-/// positive suffix is silently discarded merely because its reduced numerator or denominator exceeds
-/// `i128`.
-///
-/// This function is intentionally not yet a complete frame step. When no further positive sampled event
-/// is found, the final tail is returned in [`RepeatedRotatingEventAdvance3d::remaining`] rather than being
-/// free-flown through potentially persistent contacts. Persistent/resting-contact stabilization over that
-/// exact tail belongs to the world-level solver. The search itself remains sampled rotational collision
-/// handling, not analytic rotational CCD, so an event island wholly between adjacent coarse samples can
-/// still be missed.
-///
-/// # Errors
-///
-/// Returns [`RepeatedRotatingEventError3d`] for invalid bounds/timestep configuration, deterministic
-/// exact-ratio capacity exhaustion, frontier/response failures, or when an actual additional sampled
-/// event exists beyond `max_events`.
+/// Current-frontier discovery retains exact edges whose endpoints did not change. The broad phase may still
+/// contain conservative sweep bounds for those inactive bodies from event discovery; this can overproduce a
+/// candidate but cannot lose a current contact because exact OBB filtering remains authoritative.
 pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
@@ -201,22 +170,20 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     let mut work = RepeatedRotatingEventWorkStats3d::default();
     let mut response_scratch = RotatingContactResponseScratch3d::default();
     let mut remaining = config.search.free_flight;
+    let mut state = boxes.to_vec();
     let first_search = search_with_free_flight(config.search, remaining);
-    let Some(first_frontier) =
-        earliest_rotating_contact_frontier_with_broad_phase(boxes, first_search, broad_phase)?
+    let Some(mut frontier) =
+        earliest_rotating_contact_frontier_with_broad_phase(&state, first_search, broad_phase)?
     else {
         return Ok(RepeatedRotatingEventAdvance3d {
-            boxes: boxes.to_vec(),
+            boxes: state,
             events: Vec::new(),
             remaining,
             work,
         });
     };
 
-    let mut state;
     let mut events = Vec::new();
-    let mut frontier = first_frontier;
-
     loop {
         if events.len() >= usize::from(config.max_events) {
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
@@ -224,7 +191,8 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 
         let (response, modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
-                frontier,
+                &mut state,
+                &frontier,
                 config.solver_passes,
                 &mut response_scratch,
             )?;
@@ -235,8 +203,8 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         work.event_response_passes = work
             .event_response_passes
             .saturating_add(u64::from(response_passes));
-        state = stabilize_current_contacts(
-            response.boxes,
+        stabilize_current_contacts(
+            &mut state,
             config.solver_passes,
             broad_phase,
             &modified_body_ids,
@@ -271,14 +239,15 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 }
 
 fn stabilize_current_contacts(
-    mut boxes: Vec<RigidBox3d>,
+    boxes: &mut [RigidBox3d],
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     initial_active: &[crate::BodyId],
     initial_contacts: &[RotatingContactSearchHit3d],
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
-) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
+) -> Result<(), RepeatedRotatingEventError3d> {
+    response_scratch.ensure_body_index(boxes);
     let mut active = initial_active.to_vec();
     active.sort_unstable();
     active.dedup();
@@ -300,7 +269,7 @@ fn stabilize_current_contacts(
             .stabilization_active_bodies
             .saturating_add(u64::try_from(active.len()).unwrap_or(u64::MAX));
         let current = refresh_current_contacts_for_changed_bodies(
-            &boxes,
+            boxes,
             &active,
             &mut contacts,
             broad_phase,
@@ -317,13 +286,12 @@ fn stabilize_current_contacts(
             break;
         };
         work.stabilization_passes = work.stabilization_passes.saturating_add(1);
-        let (response, modified_body_ids) =
-            resolve_rotating_contact_frontier_with_activity_and_scratch(
-                frontier,
-                1,
-                response_scratch,
-            )?;
-        boxes = response.boxes;
+        let (_, modified_body_ids) = resolve_rotating_contact_frontier_with_activity_and_scratch(
+            boxes,
+            &frontier,
+            1,
+            response_scratch,
+        )?;
         active = modified_body_ids;
         if active.is_empty() {
             break;
@@ -336,7 +304,7 @@ fn stabilize_current_contacts(
     if exhausted_with_changes {
         work.stabilizations_hitting_limit = work.stabilizations_hitting_limit.saturating_add(1);
     }
-    Ok(boxes)
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -350,9 +318,9 @@ struct CurrentContactFrontierResult3d {
 ///
 /// Contacts whose two endpoints are unchanged are retained as authoritative exact evidence. Every cached
 /// edge touching an active body is discarded and revalidated from current geometry, while the targeted
-/// broad phase discovers any newly-created neighbors of those active bodies. The resulting frontier still
-/// contains *all* current contacts, preserving the simultaneous solver semantics of a full-world refresh
-/// without recomputing unchanged edges.
+/// broad phase discovers any newly-created neighbors of those active bodies. Unchanged retained broad-phase
+/// bounds are allowed to be conservative supersets from the preceding temporal search; false-positive pairs
+/// are harmless because current OBB geometry is exact-filtered before entering the frontier.
 fn refresh_current_contacts_for_changed_bodies(
     boxes: &[RigidBox3d],
     active: &[crate::BodyId],
@@ -400,7 +368,7 @@ fn refresh_current_contacts_for_changed_bodies(
         None
     } else {
         Some(RotatingContactFrontier3d {
-            boxes: boxes.to_vec(),
+            free_flight: RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1),
             time: SampledContactTime3d::ZERO,
             contacts: contacts.values().cloned().collect(),
             remaining_numerator: 1,
