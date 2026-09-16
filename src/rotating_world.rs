@@ -9,7 +9,9 @@ use crate::{
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
-    current_contact_query::body_current_overlap_ids,
+    current_contact_query::{
+        BodyCurrentContact3d, body_current_contacts_for_body, body_current_overlap_ids,
+    },
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
 };
@@ -233,6 +235,15 @@ impl RotatingWorld3d {
 
     pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {
         self.boxes.values()
+    }
+
+    /// Returns exact current contacts for one known body without discovering that body from query geometry
+    /// or constructing the full-world contact graph.
+    pub fn body_contacts(
+        &self,
+        body: BodyId,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        body_current_contacts_for_body(&self.boxes, body)
     }
 
     /// Replaces one dynamic body's linear velocity while preserving its rotational state.

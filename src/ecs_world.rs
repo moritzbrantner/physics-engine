@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
-    BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d, OrientedBox3d,
-    RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
+    BodyCurrentContact3d, BodyId, BodyKind, FixedGeometryPreparationMode3d,
+    FixedGeometryPreparationStats3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -171,6 +172,18 @@ impl EcsRotatingWorld3d {
         self.with_prepared_fixed_geometry(|| self.physics.overlap_query(query))
     }
 
+    /// Returns exact current contacts for one known entity.
+    ///
+    /// Unlike the arbitrary-geometry overlap API, this preserves the caller's known body identity all the way
+    /// into the physics query and therefore does not materialize a complete contact graph merely to extract one
+    /// subject's contacts.
+    pub fn body_contacts(
+        &self,
+        body: BodyId,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        self.with_prepared_fixed_geometry(|| self.physics.body_contacts(body))
+    }
+
     /// Runs the physics system and writes authoritative active results back to ECS components.
     pub fn step(
         &mut self,
@@ -204,7 +217,11 @@ impl EcsRotatingWorld3d {
     }
 
     fn sync_all_from_physics(&mut self) {
-        for rigid_box in self.physics.boxes() {
+        for rigid_box in self
+            .physics
+            .boxes()
+            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)
+        {
             let entity = rigid_box.body().id();
             let component = self
                 .rigid_boxes

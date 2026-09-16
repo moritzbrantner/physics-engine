@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, rigid_box_free_flight_sweep_bounds,
+    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i,
+    rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -135,6 +136,13 @@ impl RotatingWorld3d {
         self.active.overlap_query(query)
     }
 
+    pub fn body_contacts(
+        &self,
+        body: BodyId,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        self.active.body_contacts(body)
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
@@ -197,7 +205,10 @@ impl RotatingWorld3d {
         let updates = self
             .active
             .boxes()
-            .filter(|rigid_box| !self.parked.contains(&rigid_box.body().id()))
+            .filter(|rigid_box| {
+                rigid_box.body().kind() == BodyKind::Dynamic
+                    && !self.parked.contains(&rigid_box.body().id())
+            })
             .map(|rigid_box| (rigid_box.body().id(), rigid_box.clone()))
             .collect::<Vec<_>>();
         for (id, rigid_box) in updates {

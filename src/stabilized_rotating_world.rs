@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
+    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
+    obb_contact_seed,
     obb_response::resolve_obb_contact,
     rigid_box_free_flight_sweep_bounds,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
@@ -129,6 +130,13 @@ impl RotatingWorld3d {
 
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
         self.inner.overlap_query(query)
+    }
+
+    pub fn body_contacts(
+        &self,
+        body: BodyId,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        self.inner.body_contacts(body)
     }
 
     pub fn step(
