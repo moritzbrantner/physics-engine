@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "suite": "physics-engine/sandbox-projectiles-v4",
+  "description": "Representative WASM physics work contract. Correctness/replay remains authoritative; deterministic work counters block architectural regressions while wall-clock timing remains advisory on shared runners.",
+  "scenarios": [
+    {
+      "id": "settled-idle",
+      "kind": "idle",
+      "description": "Fully settled sandbox remains quiescent for 180 ticks without performing physics work.",
+      "dimensions": {
+        "ticks": 180,
+        "input": "none",
+        "projectiles": 0
+      },
+      "correctnessEvidence": [
+        "within-build replay fingerprint",
+        "zero collision events",
+        "sandbox remains quiescent"
+      ],
+      "metrics": [
+        {
+          "name": "sampled_events",
+          "unit": "events",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "max": 0 }
+        },
+        {
+          "name": "tail_slices",
+          "unit": "slices",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "max": 0 }
+        },
+        {
+          "name": "broad_phase_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "max": 0 }
+        },
+        {
+          "name": "mean_step_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "walking-no-shots",
+      "kind": "common",
+      "description": "Active character movement without projectiles exercises ordinary stepping, grounding, contacts and retained broad-phase reuse.",
+      "dimensions": {
+        "ticks": 180,
+        "projectiles": 0,
+        "character": "walking"
+      },
+      "correctnessEvidence": [
+        "within-build replay fingerprint",
+        "body-count validity",
+        "no fail-closed physics error"
+      ],
+      "metrics": [
+        {
+          "name": "broad_phase_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "broad_phase_rebuilds",
+          "unit": "rebuilds",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "mean_step_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "three-shots-walking",
+      "kind": "journey",
+      "description": "Representative interactive projectile workload combining movement, repeated sampled events, re-contact and stabilization.",
+      "dimensions": {
+        "ticks": 180,
+        "projectiles": 3,
+        "character": "walking"
+      },
+      "correctnessEvidence": [
+        "within-build replay fingerprint",
+        "body-count validity",
+        "collision/event evidence",
+        "no fail-closed physics error"
+      ],
+      "metrics": [
+        {
+          "name": "sampled_events",
+          "unit": "events",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "tail_slices",
+          "unit": "slices",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "broad_phase_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "p95_step_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "six-shots-idle",
+      "kind": "scaling",
+      "description": "Higher projectile population exposes candidate/sample/event scaling without changing the representative sandbox domain.",
+      "dimensions": {
+        "ticks": 180,
+        "projectiles": 6,
+        "character": "idle"
+      },
+      "correctnessEvidence": [
+        "within-build replay fingerprint",
+        "body-count validity",
+        "no fail-closed physics error"
+      ],
+      "metrics": [
+        {
+          "name": "broad_phase_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "tail_candidate_pairs",
+          "unit": "pairs",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": { "relativeRegressionPercent": 10 }
+        },
+        {
+          "name": "p95_step_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    }
+  ]
+}
