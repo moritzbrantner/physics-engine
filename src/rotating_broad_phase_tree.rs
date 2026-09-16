@@ -101,6 +101,54 @@ impl IndexedBvh3d {
         self.visit_pairs_within(root, &mut visit);
     }
 
+    pub(super) fn for_each_candidate_pair_for_body(
+        &self,
+        id: BodyId,
+        mut visit: impl FnMut(BodyId, BodyId),
+    ) {
+        let Some(&leaf) = self.leaf_by_id.get(&id) else {
+            return;
+        };
+        let ArenaNodeKind3d::Leaf(body) = self.node(leaf).kind else {
+            return;
+        };
+        let Some(root) = self.root else {
+            return;
+        };
+        self.visit_body_against(body, root, &mut visit);
+    }
+
+    fn visit_body_against(
+        &self,
+        body: BoundedBody3d,
+        index: NodeIndex,
+        visit: &mut impl FnMut(BodyId, BodyId),
+    ) {
+        let node = *self.node(index);
+        if !bounds_overlap(body.bounds, node.bounds) {
+            return;
+        }
+        match node.kind {
+            ArenaNodeKind3d::Leaf(other) => {
+                if body.id == other.id
+                    || (body.kind == BodyKind::Fixed && other.kind == BodyKind::Fixed)
+                {
+                    return;
+                }
+                let (left, right) = if body.id < other.id {
+                    (body.id, other.id)
+                } else {
+                    (other.id, body.id)
+                };
+                visit(left, right);
+            }
+            ArenaNodeKind3d::Branch { left, right } => {
+                self.visit_body_against(body, left, visit);
+                self.visit_body_against(body, right, visit);
+            }
+        }
+    }
+
     fn node(&self, index: NodeIndex) -> &ArenaNode3d {
         self.nodes[index]
             .as_ref()

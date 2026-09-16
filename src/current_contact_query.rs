@@ -228,6 +228,9 @@ fn contact_overflow(body: BodyId) -> RotatingWorldError3d {
 fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
     match error {
         RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(id) => {
+            RotatingWorldError3d::MissingBody(id)
+        }
         RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
     }
 }

@@ -1,16 +1,19 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{error::Error, fmt};
 
 use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
     RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
-    resolve_rotating_contact_frontier,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
     rotating_contact_frontier::{
         earliest_rotating_contact_frontier_with_broad_phase,
         next_rotating_contact_frontier_with_broad_phase,
+    },
+    rotating_contact_response::{
+        RotatingContactResponseScratch3d,
+        resolve_rotating_contact_frontier_with_activity_and_scratch,
     },
 };
 
@@ -47,6 +50,16 @@ pub struct RotatingResolvedEvent3d {
     pub response_passes: u8,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RepeatedRotatingEventWorkStats3d {
+    pub event_response_passes: u64,
+    pub stabilization_passes: u64,
+    pub stabilizations_hitting_limit: u64,
+    pub stabilization_candidate_pairs: u64,
+    pub stabilization_exact_contacts: u64,
+    pub stabilization_active_bodies: u64,
+}
+
 /// Result of consuming every sampled rotating event admitted before the first unresolved tail.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RepeatedRotatingEventAdvance3d {
@@ -63,6 +76,7 @@ pub struct RepeatedRotatingEventAdvance3d {
     /// The remaining segment is not automatically free-flown because it may contain persistent/resting
     /// contacts that the world-level tail solver must stabilize.
     pub remaining: RigidBoxFreeFlightConfig3d,
+    pub work: RepeatedRotatingEventWorkStats3d,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -180,6 +194,8 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 ) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
+    let mut work = RepeatedRotatingEventWorkStats3d::default();
+    let mut response_scratch = RotatingContactResponseScratch3d::default();
     let mut remaining = config.search.free_flight;
     let first_search = search_with_free_flight(config.search, remaining);
     let Some(first_frontier) =
@@ -189,6 +205,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             boxes: boxes.to_vec(),
             events: Vec::new(),
             remaining,
+            work,
         });
     };
 
@@ -201,12 +218,27 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
-        let response = resolve_rotating_contact_frontier(frontier, config.solver_passes)?;
+        let (response, modified_body_ids) =
+            resolve_rotating_contact_frontier_with_activity_and_scratch(
+                frontier,
+                config.solver_passes,
+                &mut response_scratch,
+            )?;
         remaining = scale_remaining_time(remaining, response.remaining_numerator, response.time)?;
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        state = stabilize_current_contacts(response.boxes, config.solver_passes, broad_phase)?;
+        work.event_response_passes = work
+            .event_response_passes
+            .saturating_add(u64::from(response_passes));
+        state = stabilize_current_contacts(
+            response.boxes,
+            config.solver_passes,
+            broad_phase,
+            &modified_body_ids,
+            &mut response_scratch,
+            &mut work,
+        )?;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
@@ -229,6 +261,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         boxes: state,
         events,
         remaining,
+        work,
     })
 }
 
@@ -236,48 +269,99 @@ fn stabilize_current_contacts(
     mut boxes: Vec<RigidBox3d>,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
+    initial_active: &[crate::BodyId],
+    response_scratch: &mut RotatingContactResponseScratch3d,
+    work: &mut RepeatedRotatingEventWorkStats3d,
 ) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
-    for _ in 0..solver_passes {
-        let Some(frontier) = current_contact_frontier_with_broad_phase(&boxes, broad_phase)? else {
-            break;
-        };
-        let response = resolve_rotating_contact_frontier(frontier, 1)?;
-        if response.boxes == boxes {
+    let mut active = initial_active.to_vec();
+    active.sort_unstable();
+    active.dedup();
+    let mut exhausted_with_changes = false;
+
+    for pass in 0..solver_passes {
+        if active.is_empty() {
             break;
         }
+        work.stabilization_active_bodies = work
+            .stabilization_active_bodies
+            .saturating_add(u64::try_from(active.len()).unwrap_or(u64::MAX));
+        let current =
+            current_contact_frontier_for_bodies_with_broad_phase(&boxes, &active, broad_phase)?;
+        work.stabilization_candidate_pairs = work
+            .stabilization_candidate_pairs
+            .saturating_add(u64::try_from(current.candidate_pairs).unwrap_or(u64::MAX));
+        work.stabilization_exact_contacts = work
+            .stabilization_exact_contacts
+            .saturating_add(u64::try_from(current.exact_contacts).unwrap_or(u64::MAX));
+        let Some(frontier) = current.frontier else {
+            active.clear();
+            break;
+        };
+        work.stabilization_passes = work.stabilization_passes.saturating_add(1);
+        let (response, modified_body_ids) =
+            resolve_rotating_contact_frontier_with_activity_and_scratch(
+                frontier,
+                1,
+                response_scratch,
+            )?;
         boxes = response.boxes;
+        active = modified_body_ids;
+        if active.is_empty() {
+            break;
+        }
+        if pass.saturating_add(1) == solver_passes {
+            exhausted_with_changes = true;
+        }
+    }
+
+    if exhausted_with_changes {
+        work.stabilizations_hitting_limit = work.stabilizations_hitting_limit.saturating_add(1);
     }
     Ok(boxes)
 }
 
-fn current_contact_frontier_with_broad_phase(
+#[derive(Clone, Debug)]
+struct CurrentContactFrontierResult3d {
+    frontier: Option<RotatingContactFrontier3d>,
+    candidate_pairs: usize,
+    exact_contacts: usize,
+}
+
+fn current_contact_frontier_for_bodies_with_broad_phase(
     boxes: &[RigidBox3d],
+    active: &[crate::BodyId],
     broad_phase: &mut RotatingBroadPhase3d,
-) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
-    let zero_time = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
-    let candidates = broad_phase.candidate_pairs(boxes, zero_time)?;
+) -> Result<CurrentContactFrontierResult3d, RotatingContactFrontierError3d> {
+    let mut active_boxes = Vec::with_capacity(active.len());
+    for id in active {
+        let rigid_box = boxes
+            .iter()
+            .find(|rigid_box| rigid_box.body().id() == *id)
+            .ok_or(RotatingContactFrontierError3d::MissingBody(*id))?;
+        active_boxes.push(rigid_box);
+    }
+    let candidates =
+        broad_phase.candidate_pairs_for_changed_current_bodies(active_boxes.into_iter())?;
+    let candidate_pairs = candidates.len();
     if candidates.is_empty() {
-        return Ok(None);
+        return Ok(CurrentContactFrontierResult3d {
+            frontier: None,
+            candidate_pairs,
+            exact_contacts: 0,
+        });
     }
 
-    let indices = boxes
-        .iter()
-        .enumerate()
-        .map(|(index, rigid_box)| (rigid_box.body().id(), index))
-        .collect::<BTreeMap<_, _>>();
     let mut contacts = Vec::new();
     for pair in candidates {
-        let left_index = *indices
-            .get(&pair.left)
+        let left = boxes
+            .iter()
+            .find(|rigid_box| rigid_box.body().id() == pair.left)
             .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
-        let right_index = *indices
-            .get(&pair.right)
+        let right = boxes
+            .iter()
+            .find(|rigid_box| rigid_box.body().id() == pair.right)
             .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
-        let Some(contact) = obb_contact_seed(
-            boxes[left_index].oriented_box(),
-            boxes[right_index].oriented_box(),
-        )?
-        else {
+        let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
             continue;
         };
         contacts.push(RotatingContactSearchHit3d {
@@ -286,17 +370,22 @@ fn current_contact_frontier_with_broad_phase(
             contact,
         });
     }
-
-    if contacts.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(RotatingContactFrontier3d {
-        boxes: boxes.to_vec(),
-        time: SampledContactTime3d::ZERO,
-        contacts,
-        remaining_numerator: 1,
-    }))
+    let exact_contacts = contacts.len();
+    let frontier = if contacts.is_empty() {
+        None
+    } else {
+        Some(RotatingContactFrontier3d {
+            boxes: boxes.to_vec(),
+            time: SampledContactTime3d::ZERO,
+            contacts,
+            remaining_numerator: 1,
+        })
+    };
+    Ok(CurrentContactFrontierResult3d {
+        frontier,
+        candidate_pairs,
+        exact_contacts,
+    })
 }
 
 #[cfg(test)]
@@ -304,7 +393,16 @@ fn current_contact_frontier(
     boxes: &[RigidBox3d],
 ) -> Result<Option<RotatingContactFrontier3d>, RotatingContactFrontierError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
-    current_contact_frontier_with_broad_phase(boxes, &mut broad_phase)
+    let zero_time = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+    broad_phase.candidate_pairs(boxes, zero_time)?;
+    let active = boxes
+        .iter()
+        .map(|rigid_box| rigid_box.body().id())
+        .collect::<Vec<_>>();
+    Ok(
+        current_contact_frontier_for_bodies_with_broad_phase(boxes, &active, &mut broad_phase)?
+            .frontier,
+    )
 }
 
 fn validate_config(

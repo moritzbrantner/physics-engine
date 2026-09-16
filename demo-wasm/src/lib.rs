@@ -571,6 +571,61 @@ pub extern "C" fn sandbox_last_broad_phase_reuses() -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_incremental_updates() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_incremental_updates))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_reinserts() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_reinserts))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_rotations() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_rotations))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_partial_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_partial_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_broad_phase_partial_body_updates() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.broad_phase_partial_body_updates))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_event_response_passes() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.event_response_passes))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_stabilization_passes() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilization_passes))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_stabilizations_hitting_limit() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilizations_hitting_limit))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_stabilization_candidate_pairs() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilization_candidate_pairs))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_stabilization_exact_contacts() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilization_exact_contacts))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_stabilization_active_bodies() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilization_active_bodies))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_total_collisions() -> u32 {
     with_sandbox(|sandbox| sandbox.total_collisions)
 }
