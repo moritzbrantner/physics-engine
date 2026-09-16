@@ -83,6 +83,10 @@ fn stabilization_updates_only_the_active_contact_neighborhood() {
         stats.stabilization_active_bodies, stats.broad_phase_partial_body_updates,
         "the work log must account for exactly the bodies supplied to precise stabilization queries"
     );
+    assert!(
+        stats.stabilization_exact_contacts <= stats.stabilization_candidate_pairs,
+        "exact contact recomputation must be bounded by the changed-neighborhood candidates: {stats:?}"
+    );
 }
 
 #[test]
