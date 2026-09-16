@@ -1,0 +1,136 @@
+name: Verify precise body-contact query slice
+
+on:
+  push:
+    branches:
+      - perf/necessary-work-stabilization-core
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/necessary-work-stabilization-core
+          fetch-depth: 0
+
+      - name: Implement precise body-contact queries
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f"{path}: expected one occurrence, found {text.count(old)}")
+              p.write_text(text.replace(old, new, 1))
+
+          # current_contact_query: add a subject-only query that does not build the full contact graph.
+          replace_once(
+              "src/current_contact_query.rs",
+              "    RotatingBroadPhaseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,\n    rotational_sweep_candidate_pairs,\n",
+              "    RotatingBroadPhaseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,\n    rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,\n",
+          )
+          replace_once(
+              "src/current_contact_query.rs",
+              "pub(crate) struct BodyCurrentContact3d {",
+              "pub struct BodyCurrentContact3d {",
+          )
+          marker = "/// Fast path for an existing dynamic body's exact overlap query.\n"
+          precise = '''/// Computes exact current contacts for one known body without materializing the full-world contact graph.\n///\n/// The subject is looked up directly by `BodyId`. Every unrelated body pays only for its current conservative\n/// bound; exact OBB contact work is performed only for collision-enabled bodies whose current bounds overlap\n/// the subject. This is the precise single-subject counterpart to the cached full contact graph.\npub(crate) fn body_current_contacts_for_body(\n    boxes: &BTreeMap<BodyId, RigidBox3d>,\n    body: BodyId,\n) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {\n    let subject = boxes\n        .get(&body)\n        .ok_or(RotatingWorldError3d::MissingBody(body))?;\n    let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);\n    let subject_bounds = rigid_box_free_flight_sweep_bounds(subject, zero_time)?;\n    let mut contacts = Vec::new();\n\n    for (other_id, other) in boxes {\n        if *other_id == body\n            || !subject\n                .collision_layers()\n                .collides_with(other.collision_layers())\n        {\n            continue;\n        }\n        let other_bounds = rigid_box_free_flight_sweep_bounds(other, zero_time)?;\n        if !(0..3).all(|axis| {\n            subject_bounds.minimum[axis] <= other_bounds.maximum[axis]\n                && other_bounds.minimum[axis] <= subject_bounds.maximum[axis]\n        }) {\n            continue;\n        }\n        let Some(contact) = obb_contact_seed(subject.oriented_box(), other.oriented_box())? else {\n            continue;\n        };\n        contacts.push(BodyCurrentContact3d {\n            other: *other_id,\n            axis: contact.axis,\n        });\n    }\n\n    Ok(contacts)\n}\n\n'''
+          p = Path("src/current_contact_query.rs")
+          text = p.read_text()
+          if marker not in text:
+              raise SystemExit("current_contact_query: insertion marker missing")
+          p.write_text(text.replace(marker, precise + marker, 1))
+
+          # Raw rotating world exposes the precise query directly.
+          replace_once(
+              "src/rotating_world.rs",
+              "    current_contact_query::body_current_overlap_ids,\n",
+              "    current_contact_query::{\n        BodyCurrentContact3d, body_current_contacts_for_body, body_current_overlap_ids,\n    },\n",
+          )
+          marker = "    pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {\n        self.boxes.values()\n    }\n\n"
+          addition = marker + '''    /// Returns exact current contacts for one known body without discovering that body from query geometry\n    /// or constructing the full-world contact graph.\n    pub fn body_contacts(\n        &self,\n        body: BodyId,\n    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {\n        body_current_contacts_for_body(&self.boxes, body)\n    }\n\n'''
+          replace_once("src/rotating_world.rs", marker, addition)
+
+          # Forward the precise API through the stabilized/parked/ECS layers.
+          replace_once(
+              "src/stabilized_rotating_world.rs",
+              "    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,\n",
+              "    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,\n    RigidBoxFreeFlightConfig3d,\n",
+          )
+          marker = '''    pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {\n        self.inner.overlap_query(query)\n    }\n\n'''
+          addition = marker + '''    pub fn body_contacts(\n        &self,\n        body: BodyId,\n    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {\n        self.inner.body_contacts(body)\n    }\n\n'''
+          replace_once("src/stabilized_rotating_world.rs", marker, addition)
+
+          replace_once(
+              "src/relaxed_rotating_world.rs",
+              "    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,\n",
+              "    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,\n    RigidBoxFreeFlightConfig3d,\n",
+          )
+          marker = '''    pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {\n        self.active.overlap_query(query)\n    }\n\n'''
+          addition = marker + '''    pub fn body_contacts(\n        &self,\n        body: BodyId,\n    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {\n        self.active.body_contacts(body)\n    }\n\n'''
+          replace_once("src/relaxed_rotating_world.rs", marker, addition)
+          replace_once(
+              "src/relaxed_rotating_world.rs",
+              "            .filter(|rigid_box| !self.parked.contains(&rigid_box.body().id()))\n",
+              "            .filter(|rigid_box| {\n                rigid_box.body().kind() == BodyKind::Dynamic\n                    && !self.parked.contains(&rigid_box.body().id())\n            })\n",
+          )
+
+          replace_once(
+              "src/ecs_world.rs",
+              "    BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d, OrientedBox3d,\n",
+              "    BodyCurrentContact3d, BodyId, BodyKind, FixedGeometryPreparationMode3d,\n    FixedGeometryPreparationStats3d, OrientedBox3d,\n",
+          )
+          marker = '''    pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {\n        self.with_prepared_fixed_geometry(|| self.physics.overlap_query(query))\n    }\n\n'''
+          addition = marker + '''    /// Returns exact current contacts for one known entity.\n    ///\n    /// Unlike the arbitrary-geometry overlap API, this preserves the caller's known body identity all the way\n    /// into the physics query and therefore does not materialize a complete contact graph merely to extract one\n    /// subject's contacts.\n    pub fn body_contacts(\n        &self,\n        body: BodyId,\n    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {\n        self.with_prepared_fixed_geometry(|| self.physics.body_contacts(body))\n    }\n\n'''
+          replace_once("src/ecs_world.rs", marker, addition)
+          replace_once(
+              "src/ecs_world.rs",
+              "        for rigid_box in self.physics.boxes() {\n",
+              "        for rigid_box in self\n            .physics\n            .boxes()\n            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)\n        {\n",
+          )
+
+          # Support is a single-body question: call the single-body API rather than cloning all bodies.
+          replace_once(
+              "src/support_query.rs",
+              "use crate::current_contact_query::body_current_contacts;\n",
+              "",
+          )
+          old = '''    world.with_prepared_fixed_geometry(|| {\n        let boxes = world.boxes().cloned().collect::<Vec<_>>();\n        for current in body_current_contacts(&boxes, body)? {\n            if checked_dot(acceleration, current.axis, body)? > 0 {\n                return Ok(true);\n            }\n        }\n        Ok(false)\n    })\n'''
+          new = '''    for current in world.body_contacts(body)? {\n        if checked_dot(acceleration, current.axis, body)? > 0 {\n            return Ok(true);\n        }\n    }\n    Ok(false)\n'''
+          replace_once("src/support_query.rs", old, new)
+
+          # Export the precise contact result type.
+          replace_once(
+              "src/lib.rs",
+              "pub use collision::{\n    ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,\n};\n",
+              "pub use collision::{\n    ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,\n};\npub use current_contact_query::BodyCurrentContact3d;\n",
+          )
+          PY
+
+      - name: Format and lint
+        run: |
+          cargo fmt --all
+          cargo fmt --all --check
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --locked
+
+      - name: Performance log tests
+        run: node --test site/performance-log.test.mjs
+
+      - name: Commit verified slice
+        run: |
+          git rm .github/workflows/continue-necessary-work-body-queries.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add precise single-body contact queries"
+          git push origin HEAD:perf/necessary-work-stabilization-core
