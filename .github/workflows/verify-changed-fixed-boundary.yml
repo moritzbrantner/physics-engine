@@ -47,10 +47,7 @@ jobs:
           if text.count(old_import) != 1:
               raise SystemExit('test import not found exactly once')
           text = text.replace(old_import, new_import, 1)
-          old_clear = '''    fn clear(&mut self) {
-        self.groups.clear();
-    }
-'''
+          old_clear = "    fn clear(&mut self) {\n        self.groups.clear();\n    }\n"
           if text.count(old_clear) != 1:
               raise SystemExit('obsolete accumulator clear method not found exactly once')
           path.write_text(text.replace(old_clear, '', 1))
