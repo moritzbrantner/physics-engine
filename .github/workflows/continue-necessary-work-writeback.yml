@@ -16,6 +16,18 @@ jobs:
         with:
           ref: perf/necessary-work-stabilization-core
           fetch-depth: 0
+      - name: Align patch driver with current signature
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/changed_body_writeback.py')
+          text = path.read_text()
+          old = '    "    fn stabilize_fixed_boundaries(\\n",\n'
+          new = '    "    fn stabilize_fixed_boundaries(&mut self) -> Result<(), RotatingWorldError3d> {\\n",\n'
+          if text.count(old) != 1:
+              raise SystemExit('stabilizer marker not found exactly once')
+          path.write_text(text.replace(old, new, 1))
+          PY
       - name: Implement changed-body step deltas
         run: python3 .github/scripts/changed_body_writeback.py
       - name: Format and lint
