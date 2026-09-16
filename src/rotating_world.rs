@@ -868,7 +868,8 @@ mod tests {
             let delta = i32::try_from(replay % 17 + 1).expect("bounded benchmark delta");
             for rigid_box in attempt.iter_mut().take(TOUCHED) {
                 rigid_box.body.position.x = rigid_box.body.position.x.saturating_add(delta);
-                snapshot_checksum = snapshot_checksum.saturating_add(i64::from(rigid_box.body.position.x));
+                snapshot_checksum =
+                    snapshot_checksum.saturating_add(i64::from(rigid_box.body.position.x));
             }
             black_box(&attempt);
         }
@@ -882,8 +883,10 @@ mod tests {
             let delta = i32::try_from(replay % 17 + 1).expect("bounded benchmark delta");
             for index in 0..TOUCHED {
                 journal.record(index, &current[index]);
-                current[index].body.position.x = current[index].body.position.x.saturating_add(delta);
-                journal_checksum = journal_checksum.saturating_add(i64::from(current[index].body.position.x));
+                current[index].body.position.x =
+                    current[index].body.position.x.saturating_add(delta);
+                journal_checksum =
+                    journal_checksum.saturating_add(i64::from(current[index].body.position.x));
             }
             black_box(&current);
             journal.rollback(&mut current);
