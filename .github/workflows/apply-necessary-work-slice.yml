@@ -23,6 +23,7 @@ jobs:
         run: |
           python3 scripts/apply-necessary-work-slice.py
           python3 scripts/fix-necessary-work-tests.py
+          python3 scripts/finalize-necessary-work-slice.py
       - name: Format
         run: cargo fmt --all
       - name: Rust tests
@@ -31,7 +32,7 @@ jobs:
         run: node --test site/performance-log.test.mjs
       - name: Commit verified implementation
         run: |
-          git rm scripts/apply-necessary-work-slice.py scripts/fix-necessary-work-tests.py .github/workflows/apply-necessary-work-slice.yml
+          git rm scripts/apply-necessary-work-slice.py scripts/fix-necessary-work-tests.py scripts/finalize-necessary-work-slice.py .github/workflows/apply-necessary-work-slice.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
