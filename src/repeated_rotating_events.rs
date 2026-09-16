@@ -7,7 +7,7 @@ use std::{
 use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
+    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
@@ -62,6 +62,13 @@ pub struct RepeatedRotatingEventWorkStats3d {
     pub stabilization_candidate_pairs: u64,
     pub stabilization_exact_contacts: u64,
     pub stabilization_active_bodies: u64,
+}
+
+#[derive(Clone, Debug)]
+struct CurrentContactStabilization3d {
+    boxes: Vec<RigidBox3d>,
+    observed_pairs: BTreeSet<RotationalSweepPair3d>,
+    exhausted_with_changes: bool,
 }
 
 /// Result of consuming every sampled rotating event admitted before the first unresolved tail.
@@ -163,6 +170,14 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// selected with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize
 /// event discovery.
 ///
+/// If bounded response or current-contact stabilization still changes an island on its final configured
+/// pass, and the next reconstructed positive frontier contains no pair outside the contacts observed for
+/// that island, the positive frontier is treated as continuation rather than a fresh impact. The solver
+/// advances exactly to that sampled re-contact state and returns the contacted suffix to the world-level
+/// persistent-tail solver. This prevents projection-created clear samples from manufacturing an unbounded
+/// sequence of new impact events without suppressing a genuinely new pair or changing the event cap,
+/// tolerances, or sampled search resolution.
+///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
 /// requested interval. Zero-time stabilization passes consume no requested time and are not counted as
@@ -219,17 +234,6 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 
     loop {
         if events.len() >= usize::from(config.max_events) {
-            let pending_pairs = frontier
-                .contacts
-                .iter()
-                .map(|contact| (contact.pair.left.0, contact.pair.right.0))
-                .collect::<Vec<_>>();
-            eprintln!(
-                "repeated-event trace pending {}: time={}/{} pairs={pending_pairs:?} remaining={remaining:?}",
-                events.len() + 1,
-                frontier.time.numerator,
-                frontier.time.denominator,
-            );
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
@@ -243,10 +247,11 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
+        let response_exhausted = response_passes == config.solver_passes;
         work.event_response_passes = work
             .event_response_passes
             .saturating_add(u64::from(response_passes));
-        state = stabilize_current_contacts(
+        let stabilization = stabilize_current_contacts(
             response.boxes,
             config.solver_passes,
             broad_phase,
@@ -255,25 +260,14 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             &mut response_scratch,
             &mut work,
         )?;
+        state = stabilization.boxes;
+        let continuation_pairs = stabilization.observed_pairs;
+        let solver_exhausted = response_exhausted || stabilization.exhausted_with_changes;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
             contacts: response_contacts,
             response_passes,
         });
-
-        let traced = events.last().expect("just pushed repeated event");
-        let traced_pairs = traced
-            .contacts
-            .iter()
-            .map(|contact| (contact.pair.left.0, contact.pair.right.0))
-            .collect::<Vec<_>>();
-        eprintln!(
-            "repeated-event trace {}: time={}/{} pairs={traced_pairs:?} response_passes={} remaining={remaining:?}",
-            events.len(),
-            traced.time.numerator,
-            traced.time.denominator,
-            traced.response_passes,
-        );
 
         if remaining.timestep_is_zero() {
             break;
@@ -284,6 +278,17 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         else {
             break;
         };
+        let continuing_island = solver_exhausted
+            && !next.contacts.is_empty()
+            && next
+                .contacts
+                .iter()
+                .all(|contact| continuation_pairs.contains(&contact.pair));
+        if continuing_island {
+            remaining = scale_remaining_time(remaining, next.remaining_numerator, next.time)?;
+            state = next.boxes;
+            break;
+        }
         frontier = next;
     }
 
@@ -303,10 +308,14 @@ fn stabilize_current_contacts(
     initial_contacts: &[RotatingContactSearchHit3d],
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
-) -> Result<Vec<RigidBox3d>, RepeatedRotatingEventError3d> {
+) -> Result<CurrentContactStabilization3d, RepeatedRotatingEventError3d> {
     let mut active = initial_active.to_vec();
     active.sort_unstable();
     active.dedup();
+    let mut observed_pairs = initial_contacts
+        .iter()
+        .map(|contact| contact.pair)
+        .collect::<BTreeSet<_>>();
     let mut contacts = initial_contacts
         .iter()
         .cloned()
@@ -341,6 +350,7 @@ fn stabilize_current_contacts(
             active.clear();
             break;
         };
+        observed_pairs.extend(frontier.contacts.iter().map(|contact| contact.pair));
         work.stabilization_passes = work.stabilization_passes.saturating_add(1);
         let (response, modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
@@ -361,7 +371,11 @@ fn stabilize_current_contacts(
     if exhausted_with_changes {
         work.stabilizations_hitting_limit = work.stabilizations_hitting_limit.saturating_add(1);
     }
-    Ok(boxes)
+    Ok(CurrentContactStabilization3d {
+        boxes,
+        observed_pairs,
+        exhausted_with_changes,
+    })
 }
 
 #[derive(Clone, Debug)]
