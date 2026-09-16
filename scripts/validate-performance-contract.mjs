@@ -13,7 +13,9 @@ const results = JSON.parse(readFileSync(resultsPath, "utf8"));
 if (contract.schemaVersion !== 1) {
   throw new Error(`unsupported performance contract schema ${contract.schemaVersion}`);
 }
-if (contract.suite !== results.workload) {
+const workloadMatches =
+  contract.suite === results.workload || contract.suite.endsWith(`/${results.workload}`);
+if (!workloadMatches) {
   throw new Error(
     `performance contract suite ${contract.suite} does not match workload ${results.workload}`,
   );
