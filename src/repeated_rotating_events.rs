@@ -219,6 +219,17 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 
     loop {
         if events.len() >= usize::from(config.max_events) {
+            let pending_pairs = frontier
+                .contacts
+                .iter()
+                .map(|contact| (contact.pair.left.0, contact.pair.right.0))
+                .collect::<Vec<_>>();
+            eprintln!(
+                "repeated-event trace pending {}: time={}/{} pairs={pending_pairs:?} remaining={remaining:?}",
+                events.len() + 1,
+                frontier.time.numerator,
+                frontier.time.denominator,
+            );
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
@@ -249,6 +260,20 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             contacts: response_contacts,
             response_passes,
         });
+
+        let traced = events.last().expect("just pushed repeated event");
+        let traced_pairs = traced
+            .contacts
+            .iter()
+            .map(|contact| (contact.pair.left.0, contact.pair.right.0))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "repeated-event trace {}: time={}/{} pairs={traced_pairs:?} response_passes={} remaining={remaining:?}",
+            events.len(),
+            traced.time.numerator,
+            traced.time.denominator,
+            traced.response_passes,
+        );
 
         if remaining.timestep_is_zero() {
             break;
