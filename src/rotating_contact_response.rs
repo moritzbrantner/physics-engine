@@ -225,8 +225,12 @@ impl RotatingContactResponseScratch3d {
 /// through the same primitive constraint direction are coupled into one averaged response budget before
 /// commit; this prevents duplicate coplanar contacts from multiplying a complete stopping impulse merely
 /// because one wall was partitioned into several bodies. Distinct or opposing normal directions remain
-/// independent and are summed. Material restitution is admitted on the first pass only; later passes use
-/// inelastic correction so numerical convergence cannot repeatedly inject bounce energy.
+/// independent and are summed. Material restitution is admitted on the first pass only for an actual
+/// temporal impact frontier; later passes use inelastic correction so numerical convergence cannot
+/// repeatedly inject bounce energy. A zero-time frontier with no remaining interval is terminal
+/// current-contact stabilization rather than a newly admitted impact, so it is inelastic from its first
+/// pass. This keeps persistent-tail projection from manufacturing a new restitution impulse on every
+/// deterministic slice or frame.
 ///
 /// Orientation is deliberately frozen at the frontier while position, linear velocity and angular velocity
 /// converge. Remaining-time integration belongs to the repeated-event step that consumes this response.
@@ -263,6 +267,8 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
 
+    let admit_first_pass_restitution =
+        frontier.time != SampledContactTime3d::ZERO || frontier.remaining_numerator != 0;
     scratch.ensure_body_index(&frontier.boxes);
     let RotatingContactResponseScratch3d {
         indices,
@@ -312,7 +318,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
             let response = resolve_obb_contact(
                 snapshot[left_index].clone(),
                 snapshot[right_index].clone(),
-                pass == 0,
+                admit_first_pass_restitution && pass == 0,
             )?;
             let Some(resolved_contact) = response.contact else {
                 continue;
@@ -491,9 +497,9 @@ fn add_i32(current: i32, delta: i128, id: BodyId) -> Result<i32, RotatingContact
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
-        earliest_rotating_contact_frontier,
+        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
+        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d,
+        SampledContactTime3d, Vec3i, earliest_rotating_contact_frontier,
     };
 
     use super::resolve_rotating_contact_frontier;
@@ -534,6 +540,40 @@ mod tests {
         assert_eq!(response.boxes[0].body.velocity.x, 0);
         assert_eq!(response.boxes[1], boxes[1]);
         assert_eq!(response.remaining_numerator, 1);
+    }
+
+    #[test]
+    fn terminal_zero_time_frontier_does_not_reapply_restitution() {
+        let extent = Vec3i::new(10, 10, 10);
+        let elastic = Material::new(MATERIAL_SCALE);
+        let boxes = [
+            RigidBox3d::new(
+                RigidBody::dynamic(BodyId(1), Vec3i::ZERO, Vec3i::new(60, 0, 0), extent)
+                    .with_material(elastic),
+                AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+            )
+            .expect("valid dynamic box"),
+            RigidBox3d::new(
+                RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), extent).with_material(elastic),
+                AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+            )
+            .expect("valid fixed box"),
+        ];
+        let frontier = earliest_rotating_contact_frontier(&boxes, config())
+            .expect("valid frontier")
+            .expect("time-zero impact frontier");
+        assert_eq!(frontier.time, SampledContactTime3d::ZERO);
+        assert_ne!(frontier.remaining_numerator, 0);
+
+        let impact = resolve_rotating_contact_frontier(frontier.clone(), 4)
+            .expect("impact response keeps restitution");
+        assert!(impact.boxes[0].body.velocity.x < 0);
+
+        let mut terminal = frontier;
+        terminal.remaining_numerator = 0;
+        let stabilized = resolve_rotating_contact_frontier(terminal, 4)
+            .expect("terminal stabilization is valid");
+        assert_eq!(stabilized.boxes[0].body.velocity.x, 0);
     }
 
     #[test]
