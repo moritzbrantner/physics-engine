@@ -554,8 +554,7 @@ mod tests {
             )
             .expect("valid dynamic box"),
             RigidBox3d::new(
-                RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), extent)
-                    .with_material(elastic),
+                RigidBody::fixed(BodyId(2), Vec3i::new(19, 0, 0), extent).with_material(elastic),
                 AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
             )
             .expect("valid fixed box"),
