@@ -58,7 +58,10 @@ fn precise_body_contacts_match_existing_body_overlap_neighbors() {
     let world = world(0);
     let contacts = world.body_contacts(BodyId(1)).expect("precise contacts");
     assert_eq!(
-        contacts.iter().map(|contact| contact.other).collect::<Vec<_>>(),
+        contacts
+            .iter()
+            .map(|contact| contact.other)
+            .collect::<Vec<_>>(),
         vec![BodyId(2)],
         "unrelated scene bodies must not enter the subject contact answer"
     );
@@ -67,11 +70,16 @@ fn precise_body_contacts_match_existing_body_overlap_neighbors() {
         .box_by_id(BodyId(1))
         .expect("subject remains")
         .oriented_box();
-    let mut broad_neighbors = world.overlap_query(query).expect("existing-body overlap query");
+    let mut broad_neighbors = world
+        .overlap_query(query)
+        .expect("existing-body overlap query");
     broad_neighbors.retain(|id| *id != BodyId(1));
     assert_eq!(
         broad_neighbors,
-        contacts.iter().map(|contact| contact.other).collect::<Vec<_>>(),
+        contacts
+            .iter()
+            .map(|contact| contact.other)
+            .collect::<Vec<_>>(),
         "the precise API must preserve the exact neighbor semantics of the broader existing-body query"
     );
 }
@@ -98,16 +106,20 @@ fn benchmark_precise_single_body_contact_query() {
             .box_by_id(BodyId(1))
             .expect("subject remains")
             .oriented_box();
-        let hits = black_box(world.overlap_query(black_box(query)).expect("broad overlap"));
-        broad_contacts = broad_contacts.saturating_add(
-            hits.into_iter()
-                .filter(|id| *id != BodyId(1))
-                .count(),
+        let hits = black_box(
+            world
+                .overlap_query(black_box(query))
+                .expect("broad overlap"),
         );
+        broad_contacts =
+            broad_contacts.saturating_add(hits.into_iter().filter(|id| *id != BodyId(1)).count());
     }
     let broad_elapsed = broad_started.elapsed();
 
-    assert_eq!(precise_contacts, usize::try_from(SAMPLES).expect("small samples"));
+    assert_eq!(
+        precise_contacts,
+        usize::try_from(SAMPLES).expect("small samples")
+    );
     assert_eq!(broad_contacts, precise_contacts);
     eprintln!(
         "single-body current contacts: worlds={SAMPLES}, bodies_per_world={}, precise={precise_elapsed:?}, full_graph_existing_body_query={broad_elapsed:?}",
