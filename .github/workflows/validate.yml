@@ -27,6 +27,9 @@ jobs:
           tier: fast
           install-mode: none
 
+      - name: Run long ECS tower acceptance
+        run: cargo test --release --locked --test ecs_tower_regression -- --ignored --nocapture
+
       - name: Test Pages sandbox adapter replay
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
 
