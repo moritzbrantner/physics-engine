@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d};
+
 use crate::{
     AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
-    obb_contact_seed,
-    obb_response::resolve_obb_contact,
-    rigid_box_free_flight_sweep_bounds,
-    rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
+    obb_contact_seed, obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
@@ -27,9 +27,9 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// every constraint from one shared snapshot and commits at most one combined positional correction per
 /// dynamic body per pass, so adjacent or duplicated fixed surfaces cannot sequentially move the same body
 /// several times inside one stabilization pass. Every velocity and orientation result from the simultaneous
-/// solver is preserved. A retained zero-time broad phase prunes separated fixed/dynamic pairs before exact
-/// OBB response work; it is refreshed after every position-correction pass, so a newly introduced contact
-/// is visible on the next pass without returning to an all-pairs world scan.
+/// solver is preserved. Fixed-boundary stabilization consumes the exact changed-body set from the step
+/// contract: each changed dynamic queries only its own current overlap neighborhood, and iterative projection
+/// re-queries only that candidate geometry. Unchanged dynamics are not cloned, indexed, or traversed.
 ///
 /// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
 /// continuous simulated duration are put to sleep only when they are already motionless or a current
@@ -64,7 +64,7 @@ pub struct RotatingWorld3d {
     inner: InnerRotatingWorld3d,
     sleeping: BTreeSet<BodyId>,
     sleep_stable_time_q64: BTreeMap<BodyId, u128>,
-    fixed_boundary_broad_phase: RotatingBroadPhase3d,
+    pending_fixed_boundary_body_ids: BTreeSet<BodyId>,
 }
 
 impl RotatingWorld3d {
@@ -74,7 +74,7 @@ impl RotatingWorld3d {
             inner: InnerRotatingWorld3d::new(config),
             sleeping: BTreeSet::new(),
             sleep_stable_time_q64: BTreeMap::new(),
-            fixed_boundary_broad_phase: RotatingBroadPhase3d::default(),
+            pending_fixed_boundary_body_ids: BTreeSet::new(),
         }
     }
 
@@ -84,9 +84,30 @@ impl RotatingWorld3d {
     }
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
-        let invalidates_sleep = rigid_box.body.kind == BodyKind::Fixed;
+        let id = rigid_box.body.id;
+        let kind = rigid_box.body.kind;
+        let affected_dynamic_ids = if kind == BodyKind::Fixed {
+            let layers = rigid_box.collision_layers();
+            self.inner
+                .overlap_query(rigid_box.oriented_box())?
+                .into_iter()
+                .filter(|other_id| {
+                    self.inner.box_by_id(*other_id).is_some_and(|other| {
+                        other.body.kind == BodyKind::Dynamic
+                            && layers.collides_with(other.collision_layers())
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
         self.inner.add_box(rigid_box)?;
-        if invalidates_sleep {
+        if kind == BodyKind::Dynamic {
+            self.pending_fixed_boundary_body_ids.insert(id);
+        } else {
+            self.pending_fixed_boundary_body_ids
+                .extend(affected_dynamic_ids);
             self.wake_all_sleepers();
         }
         Ok(())
@@ -94,6 +115,7 @@ impl RotatingWorld3d {
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
         let removed = self.inner.remove_box(id)?;
+        self.pending_fixed_boundary_body_ids.remove(&id);
         self.wake_all_sleepers();
         Some(removed)
     }
@@ -125,6 +147,7 @@ impl RotatingWorld3d {
         self.inner.set_linear_velocity(id, velocity)?;
         self.sleeping.remove(&id);
         self.sleep_stable_time_q64.remove(&id);
+        self.pending_fixed_boundary_body_ids.insert(id);
         Ok(())
     }
 
@@ -152,6 +175,8 @@ impl RotatingWorld3d {
             sleep_time_increment_q64(timestep_numerator, timestep_denominator);
         let mut changed_body_ids =
             self.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
+        let mut fixed_boundary_subjects = changed_body_ids.clone();
+        fixed_boundary_subjects.extend(self.pending_fixed_boundary_body_ids.iter().copied());
         self.freeze_sleeping_bodies()?;
         let mut report = match self.inner.step(timestep_numerator, timestep_denominator) {
             Ok(report) => report,
@@ -161,8 +186,12 @@ impl RotatingWorld3d {
             }
         };
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
-        match self.stabilize_fixed_boundaries() {
-            Ok(stabilized) => changed_body_ids.extend(stabilized),
+        fixed_boundary_subjects.extend(changed_body_ids.iter().copied());
+        match self.stabilize_fixed_boundaries(&fixed_boundary_subjects) {
+            Ok(stabilized) => {
+                changed_body_ids.extend(stabilized);
+                self.pending_fixed_boundary_body_ids.clear();
+            }
             Err(error) => {
                 let _ = self.restore_sleeping_bodies();
                 return Err(error);
@@ -647,100 +676,91 @@ impl RotatingWorld3d {
         self.sleep_stable_time_q64.clear();
     }
 
-    fn stabilize_fixed_boundaries(&mut self) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
-        let mut boxes = self.inner.boxes().cloned().collect::<Vec<_>>();
-        if boxes.len() < 2 {
-            return Ok(BTreeSet::new());
-        }
-
-        let mut corrections = vec![PositionCorrectionAccumulator::default(); boxes.len()];
-        let mut converged = false;
+    fn stabilize_fixed_boundaries(
+        &mut self,
+        subjects: &BTreeSet<BodyId>,
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
         let mut changed_body_ids = BTreeSet::new();
-        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
-            let candidate_pairs =
-                fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;
-            if candidate_pairs.is_empty() {
-                converged = true;
-                break;
+
+        for id in subjects.iter().copied() {
+            let Some(current) = self.inner.box_by_id(id) else {
+                return Err(RotatingWorldError3d::MissingBody(id));
+            };
+            if current.body.kind != BodyKind::Dynamic {
+                continue;
             }
 
-            for correction in &mut corrections {
-                correction.clear();
-            }
+            let mut candidate = current.clone();
+            let original_position = candidate.body.position;
+            let mut converged = false;
 
-            let mut had_projection = false;
-            for &(left_index, right_index, dynamic_index) in &candidate_pairs {
-                let response = resolve_obb_contact(
-                    boxes[left_index].clone(),
-                    boxes[right_index].clone(),
-                    false,
-                )
-                .map_err(|error| {
-                    RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))
-                })?;
-                let projected = if dynamic_index == left_index {
-                    response.left.body.position
-                } else {
-                    response.right.body.position
-                };
-                let before = boxes[dynamic_index].body.position;
-                if projected != before {
-                    corrections[dynamic_index].accumulate(
-                        boxes[dynamic_index].body.id,
-                        before,
-                        projected,
-                    )?;
-                    had_projection = true;
+            for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+                let before = candidate.body.position;
+                let mut corrections = PositionCorrectionAccumulator::default();
+
+                for fixed_id in self.inner.overlap_query(candidate.oriented_box())? {
+                    if fixed_id == id {
+                        continue;
+                    }
+                    let fixed = self
+                        .inner
+                        .box_by_id(fixed_id)
+                        .ok_or(RotatingWorldError3d::MissingBody(fixed_id))?;
+                    if fixed.body.kind != BodyKind::Fixed
+                        || !candidate
+                            .collision_layers()
+                            .collides_with(fixed.collision_layers())
+                    {
+                        continue;
+                    }
+
+                    let response = if id < fixed_id {
+                        resolve_obb_contact(candidate.clone(), fixed.clone(), false)
+                    } else {
+                        resolve_obb_contact(fixed.clone(), candidate.clone(), false)
+                    }
+                    .map_err(|error| {
+                        RotatingWorldError3d::Response(RotatingContactResponseError3d::Pair(error))
+                    })?;
+                    let projected = if id < fixed_id {
+                        response.left.body.position
+                    } else {
+                        response.right.body.position
+                    };
+                    if projected != before {
+                        corrections.accumulate(id, before, projected)?;
+                    }
                 }
-            }
 
-            if !had_projection {
-                converged = true;
-                break;
-            }
-
-            let mut changed = false;
-            for (index, correction) in corrections.iter().enumerate() {
-                if correction.is_empty() {
-                    continue;
+                if corrections.is_empty() {
+                    converged = true;
+                    break;
                 }
-                let id = boxes[index].body.id;
-                let before = boxes[index].body.position;
-                let projected = correction.target_position(id, before)?;
-                if projected != before {
-                    boxes[index].body.position = projected;
-                    changed_body_ids.insert(id);
-                    changed = true;
+                let projected = corrections.target_position(id, before)?;
+                if projected == before {
+                    break;
                 }
+                candidate.body.position = projected;
             }
 
-            if !changed {
-                break;
+            if !converged {
+                return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
+                    u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),
+                ));
             }
-        }
+            if candidate.body.position == original_position {
+                continue;
+            }
 
-        if !converged {
-            return Err(RotatingWorldError3d::PersistentTailResolutionLimit(
-                u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),
-            ));
-        }
-        if changed_body_ids.is_empty() {
-            return Ok(changed_body_ids);
-        }
-
-        let updates = boxes
-            .into_iter()
-            .filter(|rigid_box| changed_body_ids.contains(&rigid_box.body.id))
-            .collect::<Vec<_>>();
-        for rigid_box in updates {
-            let id = rigid_box.body.id;
-            let removed = self
+            let mut rigid_box = self
                 .inner
                 .remove_box(id)
                 .ok_or(RotatingWorldError3d::MissingBody(id))?;
-            debug_assert_eq!(removed.body.id, id);
+            rigid_box.body.position = candidate.body.position;
             self.inner.add_box(rigid_box)?;
+            changed_body_ids.insert(id);
         }
+
         Ok(changed_body_ids)
     }
 }
@@ -806,10 +826,6 @@ impl PositionCorrectionAccumulator {
 
     fn is_empty(&self) -> bool {
         self.groups.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.groups.clear();
     }
 }
 
@@ -918,6 +934,7 @@ fn sweep_bounds_overlap(left: RotationalSweepBounds3d, right: RotationalSweepBou
     })
 }
 
+#[cfg(test)]
 fn fixed_dynamic_pairs(
     boxes: &[RigidBox3d],
     broad_phase: &mut RotatingBroadPhase3d,
@@ -950,6 +967,7 @@ fn fixed_dynamic_pairs(
     Ok(pairs)
 }
 
+#[cfg(test)]
 fn map_fixed_boundary_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
     match error {
         RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
@@ -984,7 +1002,7 @@ fn fixed_dynamic_pairs_reference(boxes: &[RigidBox3d]) -> Vec<(usize, usize, usi
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{collections::BTreeSet, hint::black_box, time::Instant};
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
@@ -1143,6 +1161,79 @@ mod tests {
                 "fixed-boundary candidates: pairs={pair_count}, iterations={iterations}, all_pairs={}, broad_phase={}, all_pairs_elapsed={reference_elapsed:?}, broad_phase_elapsed={broad_elapsed:?}",
                 reference_candidates / iterations,
                 broad_candidates / iterations,
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_boundary_stabilization_consumes_only_named_dynamic_subjects() {
+        let target = BodyId(1);
+        let mut world = zero_gravity_world();
+        world
+            .add_box(fixed(1000, Vec3i::ZERO))
+            .expect("fixed obstacle");
+        world
+            .add_box(dynamic(target.0, Vec3i::ZERO, Vec3i::ZERO))
+            .expect("overlapping target");
+        for id in 2..=66 {
+            world
+                .add_box(dynamic(
+                    id,
+                    Vec3i::new(i32::try_from(id).expect("small id") * 32, 0, 0),
+                    Vec3i::ZERO,
+                ))
+                .expect("unrelated dynamic");
+        }
+
+        let before_unrelated = world.box_by_id(BodyId(66)).expect("unrelated body").clone();
+        let changed = world
+            .stabilize_fixed_boundaries(&BTreeSet::from([target]))
+            .expect("precise fixed-boundary stabilization");
+
+        assert_eq!(changed, BTreeSet::from([target]));
+        assert_ne!(
+            world
+                .box_by_id(target)
+                .expect("target remains")
+                .body
+                .position,
+            Vec3i::ZERO
+        );
+        assert_eq!(world.box_by_id(BodyId(66)), Some(&before_unrelated));
+    }
+
+    #[test]
+    #[ignore = "release-mode evidence that fixed-boundary work follows changed subjects"]
+    fn fixed_boundary_changed_subject_scaling_benchmark() {
+        for unrelated in [32_u64, 128, 512] {
+            let target = BodyId(1);
+            let mut world = zero_gravity_world();
+            world
+                .add_box(fixed(1000, Vec3i::ZERO))
+                .expect("fixed obstacle");
+            world
+                .add_box(dynamic(target.0, Vec3i::ZERO, Vec3i::ZERO))
+                .expect("overlapping target");
+            for id in 2..=(unrelated + 1) {
+                world
+                    .add_box(dynamic(
+                        id,
+                        Vec3i::new(i32::try_from(id).expect("small id") * 32, 0, 0),
+                        Vec3i::ZERO,
+                    ))
+                    .expect("unrelated dynamic");
+            }
+
+            let started = Instant::now();
+            let changed = black_box(
+                world
+                    .stabilize_fixed_boundaries(&BTreeSet::from([target]))
+                    .expect("precise stabilization"),
+            );
+            let elapsed = started.elapsed();
+            assert_eq!(changed, BTreeSet::from([target]));
+            println!(
+                "precise fixed-boundary stabilization: unrelated_dynamics={unrelated}, subjects=1, elapsed={elapsed:?}"
             );
         }
     }
