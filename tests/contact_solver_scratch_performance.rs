@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, hint::black_box, time::Instant};
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, BodyKind, Orientation3d, RigidBody, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RotatingContactFrontier3d, RotatingContactResponse3d,
-    RotatingContactResponseError3d, RotatingContactSearchConfig3d, Vec3i,
+    RotatingContactResponseError3d, RotatingContactSearchConfig3d, SampledContactTime3d, Vec3i,
     earliest_rotating_contact_frontier, resolve_obb_contact, resolve_rotating_contact_frontier,
 };
 
@@ -108,21 +108,26 @@ impl BodyDeltaAccumulator3d {
     }
 }
 
-fn legacy_resolve_rotating_contact_frontier(
-    frontier: RotatingContactFrontier3d,
+/// Local reproduction of the pre-island solver architecture for performance comparison.
+///
+/// The benchmark frontier is intentionally time-zero so this isolates the old per-pass full-world snapshot
+/// from the new active-island staging. Pair response arithmetic and simultaneous delta semantics are the
+/// same on both sides.
+fn legacy_full_world_snapshot_response(
+    mut boxes: Vec<RigidBox3d>,
+    frontier: &RotatingContactFrontier3d,
     solver_passes: u8,
-) -> Result<RotatingContactResponse3d, RotatingContactResponseError3d> {
+) -> Result<(Vec<RigidBox3d>, RotatingContactResponse3d), RotatingContactResponseError3d> {
     if solver_passes == 0 {
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
+    assert_eq!(frontier.time, SampledContactTime3d::ZERO);
 
-    let indices = frontier
-        .boxes
+    let indices = boxes
         .iter()
         .enumerate()
         .map(|(index, rigid_box)| (rigid_box.body().id(), index))
         .collect::<BTreeMap<_, _>>();
-    let mut boxes = frontier.boxes;
     let mut passes_used = 0_u8;
 
     for pass in 0..solver_passes {
@@ -175,13 +180,15 @@ fn legacy_resolve_rotating_contact_frontier(
         )?;
     }
 
-    Ok(RotatingContactResponse3d {
+    Ok((
         boxes,
-        time: frontier.time,
-        contacts: frontier.contacts,
-        remaining_numerator: frontier.remaining_numerator,
-        passes_used,
-    })
+        RotatingContactResponse3d {
+            time: frontier.time,
+            contacts: frontier.contacts.clone(),
+            remaining_numerator: frontier.remaining_numerator,
+            passes_used,
+        },
+    ))
 }
 
 fn primitive_axis(
@@ -316,7 +323,7 @@ fn add_i32(current: i32, delta: i128, id: BodyId) -> Result<i32, RotatingContact
     i32::try_from(next).map_err(|_| RotatingContactResponseError3d::ArithmeticOverflow(id))
 }
 
-fn chain_frontier(count: u64) -> RotatingContactFrontier3d {
+fn chain_case(count: u64) -> (Vec<RigidBox3d>, RotatingContactFrontier3d) {
     let boxes = (0..count)
         .map(|id| {
             RigidBox3d::new(
@@ -331,7 +338,7 @@ fn chain_frontier(count: u64) -> RotatingContactFrontier3d {
             .expect("valid chain body")
         })
         .collect::<Vec<_>>();
-    earliest_rotating_contact_frontier(
+    let frontier = earliest_rotating_contact_frontier(
         &boxes,
         RotatingContactSearchConfig3d::new(
             RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
@@ -340,12 +347,13 @@ fn chain_frontier(count: u64) -> RotatingContactFrontier3d {
         ),
     )
     .expect("valid chain frontier search")
-    .expect("overlapping chain has a frontier")
+    .expect("overlapping chain has a frontier");
+    assert_eq!(frontier.time, SampledContactTime3d::ZERO);
+    (boxes, frontier)
 }
 
-fn large_sparse_frontier(body_count: u64) -> RotatingContactFrontier3d {
-    let base = chain_frontier(12);
-    let mut boxes = base.boxes;
+fn large_sparse_case(body_count: u64) -> (Vec<RigidBox3d>, RotatingContactFrontier3d) {
+    let (mut boxes, _) = chain_case(12);
     for id in 12..body_count {
         boxes.push(
             RigidBox3d::new(
@@ -363,76 +371,85 @@ fn large_sparse_frontier(body_count: u64) -> RotatingContactFrontier3d {
             .expect("valid unrelated benchmark body"),
         );
     }
-    RotatingContactFrontier3d {
-        boxes,
-        time: base.time,
-        contacts: base.contacts,
-        remaining_numerator: base.remaining_numerator,
-    }
+    let frontier = earliest_rotating_contact_frontier(
+        &boxes,
+        RotatingContactSearchConfig3d::new(
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1),
+            4,
+            2,
+        ),
+    )
+    .expect("valid sparse frontier search")
+    .expect("overlapping sparse world has a frontier");
+    assert_eq!(frontier.time, SampledContactTime3d::ZERO);
+    (boxes, frontier)
 }
 
 #[test]
-fn reused_solver_scratch_matches_the_prior_per_pass_allocation_algorithm() {
-    let frontier = chain_frontier(24);
-    let optimized =
-        resolve_rotating_contact_frontier(frontier.clone(), 8).expect("optimized solver");
-    let prior = legacy_resolve_rotating_contact_frontier(frontier, 8).expect("legacy solver");
+fn active_island_solver_matches_full_world_snapshot_semantics() {
+    let (boxes, frontier) = chain_case(24);
+    let (prior_boxes, prior) =
+        legacy_full_world_snapshot_response(boxes.clone(), &frontier, 8).expect("legacy solver");
+    let mut optimized_boxes = boxes;
+    let optimized = resolve_rotating_contact_frontier(&mut optimized_boxes, &frontier, 8)
+        .expect("active-island solver");
+
     assert_eq!(optimized, prior);
+    assert_eq!(optimized_boxes, prior_boxes);
 }
 
 #[test]
 #[ignore = "microbenchmark; run explicitly in release mode"]
-fn contact_solver_scratch_reuse_benchmark() {
-    let frontier = large_sparse_frontier(4_096);
+fn contact_solver_active_island_benchmark() {
+    let (boxes, frontier) = large_sparse_case(4_096);
     let passes = 8;
     let iterations = 24;
 
-    let prior = legacy_resolve_rotating_contact_frontier(frontier.clone(), passes)
-        .expect("legacy correctness run");
-    let optimized = resolve_rotating_contact_frontier(frontier.clone(), passes)
-        .expect("optimized correctness run");
+    let (prior_boxes, prior) =
+        legacy_full_world_snapshot_response(boxes.clone(), &frontier, passes)
+            .expect("legacy correctness run");
+    let mut optimized_boxes = boxes.clone();
+    let optimized = resolve_rotating_contact_frontier(&mut optimized_boxes, &frontier, passes)
+        .expect("active-island correctness run");
     assert_eq!(optimized, prior);
+    assert_eq!(optimized_boxes, prior_boxes);
     assert!(
         optimized.passes_used > 1,
         "benchmark must exercise repeated solver passes"
     );
 
     black_box(
-        legacy_resolve_rotating_contact_frontier(black_box(frontier.clone()), passes)
+        legacy_full_world_snapshot_response(black_box(boxes.clone()), &frontier, passes)
             .expect("legacy warmup"),
     );
+    let mut warmup = boxes.clone();
     black_box(
-        resolve_rotating_contact_frontier(black_box(frontier.clone()), passes)
-            .expect("optimized warmup"),
+        resolve_rotating_contact_frontier(&mut warmup, &frontier, passes)
+            .expect("active-island warmup"),
     );
 
-    let legacy_inputs = (0..iterations)
-        .map(|_| frontier.clone())
-        .collect::<Vec<_>>();
-    let optimized_inputs = (0..iterations)
-        .map(|_| frontier.clone())
-        .collect::<Vec<_>>();
-
     let legacy_start = Instant::now();
-    for input in legacy_inputs {
+    for _ in 0..iterations {
         black_box(
-            legacy_resolve_rotating_contact_frontier(black_box(input), passes)
+            legacy_full_world_snapshot_response(black_box(boxes.clone()), &frontier, passes)
                 .expect("legacy benchmark"),
         );
     }
     let legacy_elapsed = legacy_start.elapsed();
 
     let optimized_start = Instant::now();
-    for input in optimized_inputs {
+    for _ in 0..iterations {
+        let mut input = boxes.clone();
         black_box(
-            resolve_rotating_contact_frontier(black_box(input), passes)
-                .expect("optimized benchmark"),
+            resolve_rotating_contact_frontier(black_box(&mut input), &frontier, passes)
+                .expect("active-island benchmark"),
         );
+        black_box(input);
     }
     let optimized_elapsed = optimized_start.elapsed();
     let speedup = legacy_elapsed.as_secs_f64() / optimized_elapsed.as_secs_f64();
 
     eprintln!(
-        "contact solver scratch reuse 4096-body frontier × {iterations}: prior_per_pass_alloc={legacy_elapsed:?}, reused_scratch={optimized_elapsed:?}, speedup={speedup:.2}x"
+        "contact solver active island 4096-body world × {iterations}: full_world_snapshots={legacy_elapsed:?}, active_island={optimized_elapsed:?}, speedup={speedup:.2}x"
     );
 }

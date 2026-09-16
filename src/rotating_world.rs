@@ -489,7 +489,7 @@ fn free_flight_and_stabilize(
     broad_phase: &mut RotatingBroadPhase3d,
     stats: &mut TailStepStats3d,
 ) -> Result<(Vec<RigidBox3d>, usize), RotatingWorldError3d> {
-    let sampled = boxes
+    let mut sampled = boxes
         .iter()
         .map(|rigid_box| sample_rigid_box_free_flight(rigid_box, config, 1, 1))
         .collect::<Result<Vec<_>, _>>()?;
@@ -499,16 +499,14 @@ fn free_flight_and_stabilize(
         return Ok((sampled, 0));
     }
 
-    let response = resolve_rotating_contact_frontier(
-        RotatingContactFrontier3d {
-            boxes: sampled,
-            time: SampledContactTime3d::ZERO,
-            contacts,
-            remaining_numerator: 0,
-        },
-        solver_passes,
-    )?;
-    Ok((response.boxes, contact_count))
+    let frontier = RotatingContactFrontier3d {
+        free_flight: RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+        time: SampledContactTime3d::ZERO,
+        contacts,
+        remaining_numerator: 0,
+    };
+    resolve_rotating_contact_frontier(&mut sampled, &frontier, solver_passes)?;
+    Ok((sampled, contact_count))
 }
 
 fn persistent_tail_slice_count(
