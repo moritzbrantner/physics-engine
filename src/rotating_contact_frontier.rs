@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
-    SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
+    BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
+    RotatingBroadPhaseError3d, RotatingContactSearchConfig3d, RotatingContactSearchError3d,
+    RotatingContactSearchHit3d, RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed,
+    sample_rigid_box_free_flight,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
@@ -382,7 +382,10 @@ mod tests {
         );
         assert_eq!(frontier.remaining_numerator, 5);
         assert_eq!(frontier.contacts.len(), 1);
-        assert_eq!(boxes, before, "frontier discovery must not mutate world state");
+        assert_eq!(
+            boxes, before,
+            "frontier discovery must not mutate world state"
+        );
     }
 
     #[test]
