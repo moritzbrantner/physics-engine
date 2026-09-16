@@ -40,6 +40,11 @@ jobs:
               "pub(crate) struct BodyCurrentContact3d {",
               "pub struct BodyCurrentContact3d {",
           )
+          replace_once(
+              "src/current_contact_query.rs",
+              "pub(crate) fn body_current_contacts(\n",
+              "#[cfg(test)]\npub(crate) fn body_current_contacts(\n",
+          )
           marker = "/// Fast path for an existing dynamic body's exact overlap query.\n"
           precise = '''/// Computes exact current contacts for one known body without materializing the full-world contact graph.\n///\n/// The subject is looked up directly by `BodyId`. Every unrelated body pays only for its current conservative\n/// bound; exact OBB contact work is performed only for collision-enabled bodies whose current bounds overlap\n/// the subject. This is the precise single-subject counterpart to the cached full contact graph.\npub(crate) fn body_current_contacts_for_body(\n    boxes: &BTreeMap<BodyId, RigidBox3d>,\n    body: BodyId,\n) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {\n    let subject = boxes\n        .get(&body)\n        .ok_or(RotatingWorldError3d::MissingBody(body))?;\n    let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);\n    let subject_bounds = rigid_box_free_flight_sweep_bounds(subject, zero_time)?;\n    let mut contacts = Vec::new();\n\n    for (other_id, other) in boxes {\n        if *other_id == body\n            || !subject\n                .collision_layers()\n                .collides_with(other.collision_layers())\n        {\n            continue;\n        }\n        let other_bounds = rigid_box_free_flight_sweep_bounds(other, zero_time)?;\n        if !(0..3).all(|axis| {\n            subject_bounds.minimum[axis] <= other_bounds.maximum[axis]\n                && other_bounds.minimum[axis] <= subject_bounds.maximum[axis]\n        }) {\n            continue;\n        }\n        let Some(contact) = obb_contact_seed(subject.oriented_box(), other.oriented_box())? else {\n            continue;\n        };\n        contacts.push(BodyCurrentContact3d {\n            other: *other_id,\n            axis: contact.axis,\n        });\n    }\n\n    Ok(contacts)\n}\n\n'''
           p = Path("src/current_contact_query.rs")
