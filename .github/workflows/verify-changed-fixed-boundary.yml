@@ -1,0 +1,38 @@
+name: Verify precise fixed-boundary stabilization
+
+on:
+  push:
+    branches:
+      - perf/changed-fixed-boundary-stabilization
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/changed-fixed-boundary-stabilization
+          fetch-depth: 0
+      - name: Apply precise fixed-boundary slice
+        run: python3 .github/scripts/changed_fixed_boundary.py
+      - name: Format and lint
+        run: |
+          cargo fmt --all
+          cargo fmt --all --check
+          cargo clippy --all-targets --all-features -- -D warnings
+      - name: Rust tests
+        run: cargo test --locked
+      - name: Performance log tests
+        run: node --test site/performance-log.test.mjs
+      - name: Commit verified slice
+        run: |
+          git rm .github/workflows/verify-changed-fixed-boundary.yml
+          git rm .github/scripts/changed_fixed_boundary.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Stabilize only changed fixed-boundary subjects"
+          git push origin HEAD:perf/changed-fixed-boundary-stabilization
