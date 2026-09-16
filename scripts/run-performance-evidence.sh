@@ -44,6 +44,10 @@ if grep -Eq '(^|/)(current_contact_query\.rs|rotating_world\.rs|stabilized_rotat
   run_integration precise_body_contact_query
 fi
 
+if grep -Eq '(^|/)(ecs_world\.rs|rotating_world\.rs|stabilized_rotating_world\.rs|relaxed_rotating_world\.rs|precise_step_writeback\.rs)$' <<<"$changed"; then
+  run_integration precise_step_writeback
+fi
+
 if grep -Eq '(^|/)(stabilized_rotating_world\.rs|relaxed_rotating_world\.rs|sleep_parking_performance\.rs)$' <<<"$changed"; then
   run_integration sleep_parking_performance
 fi
