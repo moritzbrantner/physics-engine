@@ -210,12 +210,9 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     response_scratch.ensure_body_index(&state);
 
     let first_search = search_with_free_flight(config.search, remaining);
-    let Some(first_hit) = sampled_rotating_contact_search_with_broad_phase(
-        &state,
-        first_search,
-        broad_phase,
-    )
-    .map_err(RotatingContactFrontierError3d::from)?
+    let Some(first_hit) =
+        sampled_rotating_contact_search_with_broad_phase(&state, first_search, broad_phase)
+            .map_err(RotatingContactFrontierError3d::from)?
     else {
         return Ok(RepeatedRotatingEventAdvance3d {
             boxes: state,
@@ -226,12 +223,8 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     };
     advance_state_to_time(&mut state, first_search.free_flight, first_hit.time)?;
     let mut event_time = first_hit.time;
-    let mut frontier = current_frontier_from_admitted_hit(
-        &state,
-        first_hit,
-        broad_phase,
-        &response_scratch,
-    )?;
+    let mut frontier =
+        current_frontier_from_admitted_hit(&state, first_hit, broad_phase, &response_scratch)?;
 
     let mut events = Vec::new();
     loop {
@@ -276,23 +269,16 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         }
 
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next_hit) = sampled_rotating_recontact_search_with_broad_phase(
-            &state,
-            next_search,
-            broad_phase,
-        )
-        .map_err(RotatingContactFrontierError3d::from)?
+        let Some(next_hit) =
+            sampled_rotating_recontact_search_with_broad_phase(&state, next_search, broad_phase)
+                .map_err(RotatingContactFrontierError3d::from)?
         else {
             break;
         };
         advance_state_to_time(&mut state, next_search.free_flight, next_hit.time)?;
         event_time = next_hit.time;
-        frontier = current_frontier_from_admitted_hit(
-            &state,
-            next_hit,
-            broad_phase,
-            &response_scratch,
-        )?;
+        frontier =
+            current_frontier_from_admitted_hit(&state, next_hit, broad_phase, &response_scratch)?;
     }
 
     Ok(RepeatedRotatingEventAdvance3d {
@@ -314,13 +300,9 @@ fn advance_state_to_time(
 
     let mut deltas = Vec::new();
     for (world_index, rigid_box) in boxes.iter().enumerate() {
-        let sampled = sample_rigid_box_free_flight(
-            rigid_box,
-            free_flight,
-            time.numerator,
-            time.denominator,
-        )
-        .map_err(RotatingContactFrontierError3d::from)?;
+        let sampled =
+            sample_rigid_box_free_flight(rigid_box, free_flight, time.numerator, time.denominator)
+                .map_err(RotatingContactFrontierError3d::from)?;
         if let Some(delta) = BodyMotionDelta3d::between(world_index, rigid_box, &sampled) {
             deltas.push(delta);
         }
