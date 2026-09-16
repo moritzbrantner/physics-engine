@@ -36,6 +36,25 @@ jobs:
           PY
       - name: Apply precise fixed-boundary slice
         run: python3 .github/scripts/changed_fixed_boundary.py
+      - name: Clean generated test helpers
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/stabilized_rotating_world.rs')
+          text = path.read_text()
+          old_import = '    use std::{hint::black_box, time::Instant};\n'
+          new_import = '    use std::{collections::BTreeSet, hint::black_box, time::Instant};\n'
+          if text.count(old_import) != 1:
+              raise SystemExit('test import not found exactly once')
+          text = text.replace(old_import, new_import, 1)
+          old_clear = '''    fn clear(&mut self) {
+        self.groups.clear();
+    }
+'''
+          if text.count(old_clear) != 1:
+              raise SystemExit('obsolete accumulator clear method not found exactly once')
+          path.write_text(text.replace(old_clear, '', 1))
+          PY
       - name: Format and lint
         run: |
           cargo fmt --all
