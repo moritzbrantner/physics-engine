@@ -534,10 +534,10 @@ fn free_flight_and_stabilize(
     let mut sampled = Vec::with_capacity(boxes.len());
     for (world_index, rigid_box) in boxes.iter().enumerate() {
         let next = sample_rigid_box_free_flight(rigid_box, config, 1, 1)?;
-        if next != *rigid_box {
-            if let Some(journal) = journal.as_deref_mut() {
-                journal.record(world_index, rigid_box);
-            }
+        if next != *rigid_box
+            && let Some(journal) = journal.as_deref_mut()
+        {
+            journal.record(world_index, rigid_box);
         }
         sampled.push(next);
     }
@@ -548,7 +548,7 @@ fn free_flight_and_stabilize(
         return Ok((sampled, 0));
     }
 
-    if let Some(journal) = journal.as_deref_mut() {
+    if let Some(journal) = journal {
         for contact in &contacts {
             for id in [contact.pair.left, contact.pair.right] {
                 let world_index = boxes
@@ -881,12 +881,11 @@ mod tests {
         let mut journal_checksum = 0_i64;
         for replay in 0..REPLAYS {
             let delta = i32::try_from(replay % 17 + 1).expect("bounded benchmark delta");
-            for index in 0..TOUCHED {
-                journal.record(index, &current[index]);
-                current[index].body.position.x =
-                    current[index].body.position.x.saturating_add(delta);
+            for (index, rigid_box) in current.iter_mut().enumerate().take(TOUCHED) {
+                journal.record(index, rigid_box);
+                rigid_box.body.position.x = rigid_box.body.position.x.saturating_add(delta);
                 journal_checksum =
-                    journal_checksum.saturating_add(i64::from(current[index].body.position.x));
+                    journal_checksum.saturating_add(i64::from(rigid_box.body.position.x));
             }
             black_box(&current);
             journal.rollback(&mut current);
