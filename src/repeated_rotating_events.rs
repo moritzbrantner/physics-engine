@@ -172,16 +172,17 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 ///
 /// The event cap remains a fail-closed bound on genuine impact progression. Ordinary frontiers keep their
 /// established response and re-contact semantics all the way through the last admitted slot. Only when a
-/// further positive frontier exists beyond that bound does the solver classify it: if the bounded impact
-/// response or current-contact stabilization was still exhausted, and every contact in the pending
-/// frontier stays inside a previously observed multi-body contact component, that frontier is continuation
-/// of an unresolved constraint rather than a new impact. Internal component edges may change as quantized
-/// projection redistributes a resting stack; component connectivity, rather than exact edge identity, owns
-/// continuity. A two-body/single-edge component never qualifies. The solver advances exactly to that
-/// already-proven contact state and returns the contacted suffix to the world-level persistent-tail solver.
-/// Otherwise the additional frontier remains a genuine event and
-/// [`RepeatedRotatingEventError3d::EventLimit`] is returned. This avoids raising the cap, adding retries,
-/// changing tolerances, or perturbing ordinary sub-cap event paths.
+/// further positive frontier exists beyond that bound does the solver classify it. If current-contact
+/// stabilization is still changing on its final configured pass, the solver reconstructs the contact
+/// component from the already-admitted event sequence plus the final stabilization contacts. A pending
+/// frontier whose contacts all stay inside one of those previously observed multi-body components is a
+/// continuation of the unresolved constraint rather than a new impact. Internal component edges may change
+/// as quantized projection redistributes a resting stack; component connectivity across the admitted event
+/// sequence, rather than exact final-edge identity, owns continuity. A two-body/single-edge component never
+/// qualifies. The solver advances exactly to that already-proven contact state and returns the contacted
+/// suffix to the world-level persistent-tail solver. Otherwise the additional frontier remains a genuine
+/// event and [`RepeatedRotatingEventError3d::EventLimit`] is returned. This avoids raising the cap, adding
+/// retries, changing tolerances, or perturbing ordinary sub-cap event paths.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -250,7 +251,6 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        let response_exhausted = response_passes == config.solver_passes;
         work.event_response_passes = work
             .event_response_passes
             .saturating_add(u64::from(response_passes));
@@ -264,7 +264,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             &mut work,
         )?;
         state = stabilization.boxes;
-        let continuation_pairs = stabilization.observed_pairs;
+        let mut continuation_pairs = stabilization.observed_pairs;
         let stabilization_exhausted = stabilization.exhausted_with_changes;
         events.push(RotatingResolvedEvent3d {
             time: response_time,
@@ -282,7 +282,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             break;
         };
         if events.len() >= usize::from(config.max_events) {
-            let continuing_island = (response_exhausted || stabilization_exhausted)
+            continuation_pairs.extend(
+                events
+                    .iter()
+                    .flat_map(|event| event.contacts.iter().map(|contact| contact.pair)),
+            );
+            let continuing_island = stabilization_exhausted
                 && pending_frontier_stays_in_observed_components(
                     &continuation_pairs,
                     &next.contacts,
