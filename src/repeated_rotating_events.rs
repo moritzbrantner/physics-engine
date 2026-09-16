@@ -170,14 +170,15 @@ impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
 /// selected with [`crate::next_rotating_contact_frontier`], so a persistent time-zero pair cannot monopolize
 /// event discovery.
 ///
-/// If bounded current-contact stabilization still changes an island on its final configured pass, and the
-/// next reconstructed positive frontier contains no pair outside the contacts observed for that island,
-/// the positive frontier is treated as continuation rather than a fresh impact. The solver advances
-/// exactly to that sampled re-contact state and returns the contacted suffix to the world-level
-/// persistent-tail solver. This prevents projection-created clear samples from manufacturing an unbounded
-/// sequence of new impact events without suppressing a genuinely new pair or changing the event cap,
-/// tolerances, or sampled search resolution. Exhausting only the ordinary impact-response pass budget is
-/// not sufficient to trigger this handoff; legitimate energetic impacts keep the established event path.
+/// The event cap remains a fail-closed bound on genuine impact progression. Ordinary frontiers keep their
+/// established response and re-contact semantics all the way through the last admitted slot. Only when a
+/// further positive frontier exists beyond that bound does the solver classify it: if the bounded impact
+/// response or current-contact stabilization was still exhausted, and every contact in the pending
+/// frontier belongs to the just-observed contact island, that frontier is continuation of an unresolved
+/// constraint rather than a new impact. The solver advances exactly to that already-proven contact state
+/// and returns the contacted suffix to the world-level persistent-tail solver. Otherwise the additional
+/// frontier remains a genuine event and [`RepeatedRotatingEventError3d::EventLimit`] is returned. This
+/// avoids raising the cap, adding retries, changing tolerances, or perturbing ordinary sub-cap event paths.
 ///
 /// Every admitted frontier is resolved before the next segment is searched. Event times in
 /// [`RotatingResolvedEvent3d`] are therefore **segment-relative**, not absolute fractions of the original
@@ -234,10 +235,8 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     let mut frontier = first_frontier;
 
     loop {
-        if events.len() >= usize::from(config.max_events) {
-            return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
-        }
-
+        let tracking_limit_island =
+            events.len().saturating_add(1) >= usize::from(config.max_events);
         let (response, modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
                 frontier,
@@ -248,6 +247,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         let response_time = response.time;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
+        let response_exhausted = response_passes == config.solver_passes;
         work.event_response_passes = work
             .event_response_passes
             .saturating_add(u64::from(response_passes));
@@ -257,6 +257,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             broad_phase,
             &modified_body_ids,
             &response_contacts,
+            tracking_limit_island,
             &mut response_scratch,
             &mut work,
         )?;
@@ -278,16 +279,19 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         else {
             break;
         };
-        let continuing_island = stabilization_exhausted
-            && !next.contacts.is_empty()
-            && next
-                .contacts
-                .iter()
-                .all(|contact| continuation_pairs.contains(&contact.pair));
-        if continuing_island {
-            remaining = scale_remaining_time(remaining, next.remaining_numerator, next.time)?;
-            state = next.boxes;
-            break;
+        if events.len() >= usize::from(config.max_events) {
+            let continuing_island = (response_exhausted || stabilization_exhausted)
+                && !next.contacts.is_empty()
+                && next
+                    .contacts
+                    .iter()
+                    .all(|contact| continuation_pairs.contains(&contact.pair));
+            if continuing_island {
+                remaining = scale_remaining_time(remaining, next.remaining_numerator, next.time)?;
+                state = next.boxes;
+                break;
+            }
+            return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
         frontier = next;
     }
@@ -306,16 +310,21 @@ fn stabilize_current_contacts(
     broad_phase: &mut RotatingBroadPhase3d,
     initial_active: &[crate::BodyId],
     initial_contacts: &[RotatingContactSearchHit3d],
+    track_observed_pairs: bool,
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
 ) -> Result<CurrentContactStabilization3d, RepeatedRotatingEventError3d> {
     let mut active = initial_active.to_vec();
     active.sort_unstable();
     active.dedup();
-    let mut observed_pairs = initial_contacts
-        .iter()
-        .map(|contact| contact.pair)
-        .collect::<BTreeSet<_>>();
+    let mut observed_pairs = if track_observed_pairs {
+        initial_contacts
+            .iter()
+            .map(|contact| contact.pair)
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
     let mut contacts = initial_contacts
         .iter()
         .cloned()
@@ -350,7 +359,9 @@ fn stabilize_current_contacts(
             active.clear();
             break;
         };
-        observed_pairs.extend(frontier.contacts.iter().map(|contact| contact.pair));
+        if track_observed_pairs {
+            observed_pairs.extend(frontier.contacts.iter().map(|contact| contact.pair));
+        }
         work.stabilization_passes = work.stabilization_passes.saturating_add(1);
         let (response, modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
