@@ -493,7 +493,9 @@ fn stage_contact_island(
             .motion_updates
             .binary_search_by_key(&world_index, |update| update.world_index)
         {
-            scratch.motion_updates[update_index].state.apply(&mut staged);
+            scratch.motion_updates[update_index]
+                .state
+                .apply(&mut staged);
         }
         let island_index = scratch.island.len();
         scratch.island_indices.insert(id, island_index);
@@ -835,8 +837,8 @@ mod scratch_reuse_tests {
         };
         let original = vec![left, right];
         let mut expected_boxes = original.clone();
-        let expected = resolve_rotating_contact_frontier(&mut expected_boxes, &frontier, 4)
-            .expect("response");
+        let expected =
+            resolve_rotating_contact_frontier(&mut expected_boxes, &frontier, 4).expect("response");
         let mut scratch = RotatingContactResponseScratch3d::default();
         let mut first_boxes = original.clone();
         let first = resolve_rotating_contact_frontier_with_scratch(
