@@ -3,9 +3,15 @@
   "profile": "repository-foundation-v1",
   "tiers": {
     "fast": ["format:check", "lint", "build", "test"],
-    "standard": ["format:check", "lint", "build", "test"]
+    "standard": ["format:check", "lint", "build", "test"],
+    "performance": ["benchmark:smoke"]
   },
-  "requiredCapabilities": ["format:check", "lint", "build", "test"],
+  "capabilityCommands": {
+    ".": {
+      "benchmark:smoke": ["bash", "scripts/run-sandbox-performance.sh"]
+    }
+  },
+  "requiredCapabilities": ["format:check", "lint", "build", "test", "benchmark:smoke"],
   "merge": {
     "authority": "hosted",
     "requiredChecks": ["validate"]
