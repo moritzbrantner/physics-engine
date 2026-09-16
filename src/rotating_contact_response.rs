@@ -498,8 +498,8 @@ fn add_i32(current: i32, delta: i128, id: BodyId) -> Result<i32, RotatingContact
 mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
-        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
-        earliest_rotating_contact_frontier,
+        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d,
+        SampledContactTime3d, Vec3i, earliest_rotating_contact_frontier,
     };
 
     use super::resolve_rotating_contact_frontier;
