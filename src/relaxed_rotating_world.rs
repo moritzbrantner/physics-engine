@@ -10,13 +10,9 @@ use crate::{
 
 /// Performance-oriented rotating world that parks settled dynamics as persistent fixed proxies.
 ///
-/// The strict stabilized world remains responsible while a body is awake: collision discovery, contact
-/// response, stabilization, and the existing deterministic sleep admission policy are unchanged. Once that
-/// world declares a dynamic body sleeping, this facade retains its public dynamic state separately and
-/// replaces it in the active solver with one persistent fixed proxy. The proxy remains ordinary collision
-/// geometry, but gravity, dynamic response, persistent dynamic contact tails, and sleep bookkeeping no
-/// longer act on the parked body. Unlike the previous sleep path, the body kind is not toggled fixed and
-/// dynamic on every frame; conversion occurs only at sleep and disruptive wake boundaries.
+/// The strict stabilized world is the sole authority for every awake body. This layer retains original
+/// body state only for deliberately parked dynamics, because the active solver currently represents those
+/// bodies with fixed collision proxies. Awake bodies are never mirrored into a second full-world map.
 ///
 /// Before an active step, a conservative free-flight sweep of every awake dynamic is checked against parked
 /// bodies. A parked body whose collision-enabled bounds may be reached is restored to dynamic simulation,
@@ -26,16 +22,14 @@ use crate::{
 /// island. Fixed geometry additions and any removals wake every parked body conservatively because support
 /// topology may have changed.
 ///
-/// This deliberately treats quiescence as an optimization boundary. It preserves active-world physics but
-/// no longer promises invisible sleep bookkeeping is bit-identical to the strict implementation. In
-/// particular, if an active step fails after a conservative wake, that body may remain awake on the next
-/// attempt even though physical state is unchanged. That tradeoff avoids cloning the complete parked scene
-/// on every active frame.
+/// Parking is a bounded representation transition, not a world snapshot. Only the bodies actually parked
+/// have retained original state, and each wake/sleep transition copies at most that body when needed to
+/// preserve the existing fail-closed proxy swap. Ordinary active stepping performs no wrapper-level body
+/// synchronization pass.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     active: StrictRotatingWorld3d,
-    boxes: BTreeMap<BodyId, RigidBox3d>,
-    parked: BTreeSet<BodyId>,
+    parked: BTreeMap<BodyId, RigidBox3d>,
     active_dynamic_count: usize,
 }
 
@@ -44,8 +38,7 @@ impl RotatingWorld3d {
     pub fn new(config: RotatingWorldConfig3d) -> Self {
         Self {
             active: StrictRotatingWorld3d::new(config),
-            boxes: BTreeMap::new(),
-            parked: BTreeSet::new(),
+            parked: BTreeMap::new(),
             active_dynamic_count: 0,
         }
     }
@@ -57,31 +50,30 @@ impl RotatingWorld3d {
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
         let id = rigid_box.body().id();
-        if self.boxes.contains_key(&id) {
+        if self.active.box_by_id(id).is_some() {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
 
         if rigid_box.body().kind() == BodyKind::Fixed {
             self.unpark_all()?;
         }
-        self.active.add_box(rigid_box.clone())?;
-        if rigid_box.body().kind() == BodyKind::Dynamic {
+        let dynamic = rigid_box.body().kind() == BodyKind::Dynamic;
+        self.active.add_box(rigid_box)?;
+        if dynamic {
             self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
         }
-        self.boxes.insert(id, rigid_box);
         Ok(())
     }
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
-        let removed = if self.parked.remove(&id) {
+        let removed = if self.parked.contains_key(&id) {
             self.active.remove_box(id)?;
-            self.boxes.remove(&id)?
+            self.parked.remove(&id)?
         } else {
             let removed = self.active.remove_box(id)?;
             if removed.body().kind() == BodyKind::Dynamic {
                 self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
             }
-            self.boxes.remove(&id);
             removed
         };
 
@@ -92,16 +84,23 @@ impl RotatingWorld3d {
 
     #[must_use]
     pub fn box_by_id(&self, id: BodyId) -> Option<&RigidBox3d> {
-        self.boxes.get(&id)
+        self.parked.get(&id).or_else(|| self.active.box_by_id(id))
     }
 
+    /// Iterates bodies in the active solver's stable `BodyId` order, substituting the retained original
+    /// dynamic state for parked fixed proxies without materializing a second world collection.
     pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {
-        self.boxes.values()
+        let parked = &self.parked;
+        self.active.boxes().map(move |rigid_box| {
+            parked
+                .get(&rigid_box.body().id())
+                .unwrap_or(rigid_box)
+        })
     }
 
     #[must_use]
     pub fn is_sleeping(&self, id: BodyId) -> bool {
-        self.parked.contains(&id) || self.active.is_sleeping(id)
+        self.parked.contains_key(&id) || self.active.is_sleeping(id)
     }
 
     #[must_use]
@@ -117,14 +116,7 @@ impl RotatingWorld3d {
         velocity: Vec3i,
     ) -> Result<(), RotatingWorldError3d> {
         self.unpark(id)?;
-        self.active.set_linear_velocity(id, velocity)?;
-        let updated = self
-            .active
-            .box_by_id(id)
-            .cloned()
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        self.boxes.insert(id, updated);
-        Ok(())
+        self.active.set_linear_velocity(id, velocity)
     }
 
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
@@ -159,9 +151,8 @@ impl RotatingWorld3d {
         let mut report = self.active.step(timestep_numerator, timestep_denominator)?;
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         self.park_new_sleepers(&changed_body_ids)?;
-        self.sync_active_boxes(&changed_body_ids)?;
         report.changed_body_ids = changed_body_ids.into_iter().collect();
-        report.stats.body_count = self.boxes.len();
+        report.stats.body_count = self.active.boxes().count();
         Ok(report)
     }
 
@@ -169,7 +160,7 @@ impl RotatingWorld3d {
         RotatingWorldStepReport3d {
             changed_body_ids: Vec::new(),
             stats: RotatingWorldStepStats3d {
-                body_count: self.boxes.len(),
+                body_count: self.active.boxes().count(),
                 ..RotatingWorldStepStats3d::default()
             },
         }
@@ -197,40 +188,15 @@ impl RotatingWorld3d {
             let proxy = fixed_sleep_proxy(rigid_box.clone());
             self.active.add_box(proxy)?;
             self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
-            self.boxes.insert(id, rigid_box);
-            self.parked.insert(id);
-        }
-        Ok(())
-    }
-
-    fn sync_active_boxes(
-        &mut self,
-        changed_body_ids: &BTreeSet<BodyId>,
-    ) -> Result<(), RotatingWorldError3d> {
-        for id in changed_body_ids.iter().copied() {
-            if self.parked.contains(&id) {
-                continue;
-            }
-            let rigid_box = self
-                .active
-                .box_by_id(id)
-                .ok_or(RotatingWorldError3d::MissingBody(id))?;
-            if rigid_box.body().kind() == BodyKind::Dynamic {
-                self.boxes.insert(id, rigid_box.clone());
-            }
+            self.parked.insert(id, rigid_box);
         }
         Ok(())
     }
 
     fn unpark(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
-        if !self.parked.remove(&id) {
+        let Some(original) = self.parked.get(&id).cloned() else {
             return Ok(());
-        }
-        let original = self
-            .boxes
-            .get(&id)
-            .cloned()
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        };
         let proxy = self
             .active
             .remove_box(id)
@@ -239,15 +205,15 @@ impl RotatingWorld3d {
             self.active
                 .add_box(proxy)
                 .expect("restoring a previously valid fixed sleep proxy cannot fail");
-            self.parked.insert(id);
             return Err(error);
         }
+        self.parked.remove(&id);
         self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
         Ok(())
     }
 
     fn unpark_all(&mut self) -> Result<(), RotatingWorldError3d> {
-        let ids = self.parked.iter().copied().collect::<Vec<_>>();
+        let ids = self.parked.keys().copied().collect::<Vec<_>>();
         for id in ids {
             self.unpark(id)?;
         }
@@ -284,14 +250,9 @@ impl RotatingWorld3d {
         let mut parked_bounds = self
             .parked
             .iter()
-            .copied()
-            .map(|id| {
-                let rigid_box = self
-                    .boxes
-                    .get(&id)
-                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            .map(|(id, rigid_box)| {
                 Ok((
-                    id,
+                    *id,
                     rigid_box_free_flight_sweep_bounds(rigid_box, stationary_config)?,
                 ))
             })
@@ -301,27 +262,24 @@ impl RotatingWorld3d {
             let newly_awake = self
                 .parked
                 .iter()
-                .copied()
-                .filter(|parked_id| {
-                    let Some(parked_box) = self.boxes.get(parked_id) else {
-                        return true;
-                    };
-                    let Some(parked_bounds) = parked_bounds.get(parked_id) else {
-                        return true;
-                    };
-                    awake_bounds.iter().any(|(awake_id, awake_bounds)| {
-                        self.boxes.get(awake_id).is_some_and(|awake_box| {
-                            awake_box
-                                .collision_layers()
-                                .collides_with(parked_box.collision_layers())
-                                && sweep_bounds_overlap(*awake_bounds, *parked_bounds)
-                                && !crate::linear_contact::sweep_is_passive_support(
-                                    awake_box,
-                                    *awake_bounds,
-                                    parked_box,
-                                )
+                .filter_map(|(parked_id, parked_box)| {
+                    let parked_bounds = parked_bounds.get(parked_id)?;
+                    awake_bounds
+                        .iter()
+                        .any(|(awake_id, awake_bounds)| {
+                            self.active.box_by_id(*awake_id).is_some_and(|awake_box| {
+                                awake_box
+                                    .collision_layers()
+                                    .collides_with(parked_box.collision_layers())
+                                    && sweep_bounds_overlap(*awake_bounds, *parked_bounds)
+                                    && !crate::linear_contact::sweep_is_passive_support(
+                                        awake_box,
+                                        *awake_bounds,
+                                        parked_box,
+                                    )
+                            })
                         })
-                    })
+                        .then_some(*parked_id)
                 })
                 .collect::<Vec<_>>();
             if newly_awake.is_empty() {
@@ -333,8 +291,8 @@ impl RotatingWorld3d {
                 awakened.insert(id);
                 parked_bounds.remove(&id);
                 let rigid_box = self
-                    .boxes
-                    .get(&id)
+                    .active
+                    .box_by_id(id)
                     .ok_or(RotatingWorldError3d::MissingBody(id))?;
                 awake_bounds.push((
                     id,
@@ -488,5 +446,17 @@ mod tests {
             .add_box(fixed(7, Vec3i::new(100, 0, 0)))
             .expect("add fixed geometry");
         assert!(!world.is_sleeping(sleeper));
+    }
+
+    #[test]
+    fn awake_bodies_are_not_retained_in_a_second_state_store() {
+        let mut world = world();
+        world
+            .add_box(dynamic(9, Vec3i::ZERO, Vec3i::new(1, 0, 0)))
+            .expect("add awake body");
+
+        assert!(world.parked.is_empty());
+        assert!(world.active.box_by_id(BodyId(9)).is_some());
+        assert_eq!(world.boxes().count(), 1);
     }
 }
