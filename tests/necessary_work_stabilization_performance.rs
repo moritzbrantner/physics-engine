@@ -59,7 +59,10 @@ fn stabilization_updates_only_the_active_contact_neighborhood() {
     let report = world.step(1, 60).expect("impact step");
     let stats = report.stats;
 
-    assert!(stats.sampled_events > 0, "fixture must exercise sampled contact work");
+    assert!(
+        stats.sampled_events > 0,
+        "fixture must exercise sampled contact work"
+    );
     assert!(
         stats.broad_phase_partial_queries > 0,
         "impact response must exercise the precise current-contact query"
