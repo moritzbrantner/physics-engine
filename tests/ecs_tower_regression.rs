@@ -186,10 +186,9 @@ fn diagnose_frame_38_repeated_event_sequence() {
     match diagnostic {
         Ok(advance) => {
             eprintln!(
-                "frame 38 diagnostic completed with {} sampled events; remaining={}/{}",
+                "frame 38 diagnostic completed with {} sampled events; remaining={:?}",
                 advance.events.len(),
-                advance.remaining.timestep_numerator(),
-                advance.remaining.timestep_denominator(),
+                advance.remaining,
             );
             for (index, event) in advance.events.iter().enumerate() {
                 let pairs = event
