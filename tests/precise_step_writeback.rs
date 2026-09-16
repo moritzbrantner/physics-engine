@@ -35,9 +35,7 @@ fn world(sample: u64) -> RotatingWorld3d {
     let sample_offset = i32::try_from(sample).expect("small sample");
     for offset in 0..UNRELATED_DYNAMIC_BODIES {
         let id = BodyId(100 + offset);
-        let x = 10_000
-            + i32::try_from(offset).expect("small body index") * 16
-            + sample_offset;
+        let x = 10_000 + i32::try_from(offset).expect("small body index") * 16 + sample_offset;
         world
             .add_box(rotating(RigidBody::dynamic(
                 id,
@@ -57,7 +55,10 @@ fn step_delta_scales_with_changed_bodies_not_world_size() {
 
     let report = world.step(1, 60).expect("precise writeback step");
 
-    assert_eq!(body_count, 1 + usize::try_from(UNRELATED_DYNAMIC_BODIES).unwrap());
+    assert_eq!(
+        body_count,
+        1 + usize::try_from(UNRELATED_DYNAMIC_BODIES).unwrap()
+    );
     assert_eq!(
         report.changed_body_ids,
         vec![BodyId(1)],
