@@ -132,9 +132,16 @@ fn step_frame(boxes: &[RigidBox3d], frame: u32) -> Vec<RigidBox3d> {
             .add_box(rigid_box.clone())
             .expect("tower body should enter engine world");
     }
-    world
+    let report = world
         .step(1, 60)
         .unwrap_or_else(|error| panic!("ECS tower frame {frame} failed: {error:?}"));
+    eprintln!(
+        "ECS tower frame {frame}: sampled_events={}, tail_contacts={}, tail_slices={}, tail_replays={}",
+        report.stats.sampled_events,
+        report.stats.tail_contacts,
+        report.stats.tail_slices,
+        report.stats.tail_replays,
+    );
     world.boxes().map(damped_box).collect()
 }
 
