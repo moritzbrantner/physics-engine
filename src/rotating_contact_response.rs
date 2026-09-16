@@ -136,7 +136,6 @@ struct DeltaGroup3d {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct BodyDeltaAccumulator3d {
-    /// Parallel constraints that push the same body in the same direction share one response budget.
     groups: Vec<([i128; 3], DeltaGroup3d)>,
 }
 
@@ -181,10 +180,6 @@ impl BodyDeltaAccumulator3d {
     }
 }
 
-/// Compact motion state used as the commit payload for one body.
-///
-/// It intentionally excludes immutable shape/material/policy data, so advancing a frontier never stages a
-/// complete `RigidBox3d` for every world body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MotionState3d {
     position: crate::Vec3i,
@@ -219,15 +214,15 @@ struct MotionUpdate3d {
 
 /// Reusable allocation/index storage for repeated frontier responses.
 ///
-/// The scratch owns only compact motion updates and the bodies participating in the active contact island.
-/// It never snapshots the full world. Within one solver pass, the island itself is the immutable read state
-/// until every constraint delta has been accumulated; the batch is then applied in place before the next
-/// pass.
+/// Active islands are represented by sorted world indices rather than an ordered map. Contact IDs are
+/// resolved to world indices once, the small island index is found by binary search, and that resolution is
+/// cached for subsequent solver passes. This keeps the active-island architecture from replacing world-copy
+/// cost with per-response tree allocation/churn.
 #[derive(Clone, Debug, Default)]
 pub struct RotatingContactResponseScratch3d {
     indices: BTreeMap<BodyId, usize>,
     indexed_body_ids: Vec<BodyId>,
-    island_indices: BTreeMap<BodyId, usize>,
+    island_world_indices: Vec<usize>,
     resolved_indices: Vec<Option<(usize, usize)>>,
     motion_updates: Vec<MotionUpdate3d>,
     island: Vec<RigidBox3d>,
@@ -270,19 +265,6 @@ impl RotatingContactResponseScratch3d {
     }
 }
 
-/// Advances to and resolves one shared sampled frontier against mutable authoritative world state.
-///
-/// Free-flight is first evaluated transactionally into compact motion updates. Only bodies named by the
-/// frontier contacts are cloned into the active solver island. Each solver pass reads one stable island
-/// state, accumulates simultaneous deltas, and mutates that island only after all contacts have been
-/// evaluated. Once every pass succeeds, compact free-flight updates and final island motion are committed to
-/// the supplied world. A failed response therefore does not partially mutate authoritative state.
-///
-/// # Errors
-///
-/// Returns [`RotatingContactResponseError3d`] for zero solver passes, malformed frontier free flight,
-/// missing body identities, pair-response failures, invalid constraint axes, or checked accumulation
-/// overflow.
 pub fn resolve_rotating_contact_frontier(
     boxes: &mut [RigidBox3d],
     frontier: &RotatingContactFrontier3d,
@@ -324,7 +306,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
     let RotatingContactResponseScratch3d {
         indices,
         indexed_body_ids: _,
-        island_indices,
+        island_world_indices,
         resolved_indices,
         motion_updates,
         island,
@@ -351,12 +333,18 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
             let (left_index, right_index) = match resolved_indices[contact_index] {
                 Some(indices) => indices,
                 None => {
-                    let left_index = *island_indices.get(&contact.pair.left).ok_or(
+                    let left_world = *indices.get(&contact.pair.left).ok_or(
                         RotatingContactResponseError3d::MissingBody(contact.pair.left),
                     )?;
-                    let right_index = *island_indices.get(&contact.pair.right).ok_or(
+                    let right_world = *indices.get(&contact.pair.right).ok_or(
                         RotatingContactResponseError3d::MissingBody(contact.pair.right),
                     )?;
+                    let left_index = island_world_indices
+                        .binary_search(&left_world)
+                        .map_err(|_| RotatingContactResponseError3d::MissingBody(contact.pair.left))?;
+                    let right_index = island_world_indices
+                        .binary_search(&right_world)
+                        .map_err(|_| RotatingContactResponseError3d::MissingBody(contact.pair.right))?;
                     let resolved = (left_index, right_index);
                     resolved_indices[contact_index] = Some(resolved);
                     resolved
@@ -404,7 +392,6 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         )?;
     }
 
-    // Commit only after free-flight sampling and every solver pass have succeeded.
     for update in motion_updates.iter().copied() {
         update.state.apply(
             boxes
@@ -412,11 +399,8 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
                 .expect("staged world index remains valid during one response"),
         );
     }
-    for rigid_box in island.iter() {
-        let id = rigid_box.body.id;
-        let world_index = *indices
-            .get(&id)
-            .ok_or(RotatingContactResponseError3d::MissingBody(id))?;
+    for (island_index, rigid_box) in island.iter().enumerate() {
+        let world_index = island_world_indices[island_index];
         MotionState3d::from_box(rigid_box).apply(
             boxes
                 .get_mut(world_index)
@@ -471,24 +455,34 @@ fn stage_contact_island(
     frontier: &RotatingContactFrontier3d,
     scratch: &mut RotatingContactResponseScratch3d,
 ) -> Result<(), RotatingContactResponseError3d> {
-    let mut active = BTreeSet::new();
+    scratch.island_world_indices.clear();
+    scratch
+        .island_world_indices
+        .reserve(frontier.contacts.len().saturating_mul(2));
     for contact in &frontier.contacts {
-        active.insert(contact.pair.left);
-        active.insert(contact.pair.right);
+        scratch.island_world_indices.push(
+            *scratch
+                .indices
+                .get(&contact.pair.left)
+                .ok_or(RotatingContactResponseError3d::MissingBody(contact.pair.left))?,
+        );
+        scratch.island_world_indices.push(
+            *scratch
+                .indices
+                .get(&contact.pair.right)
+                .ok_or(RotatingContactResponseError3d::MissingBody(contact.pair.right))?,
+        );
     }
+    scratch.island_world_indices.sort_unstable();
+    scratch.island_world_indices.dedup();
 
     scratch.island.clear();
-    scratch.island_indices.clear();
-    scratch.island.reserve(active.len());
-    for id in active {
-        let world_index = *scratch
-            .indices
-            .get(&id)
-            .ok_or(RotatingContactResponseError3d::MissingBody(id))?;
+    scratch.island.reserve(scratch.island_world_indices.len());
+    for &world_index in &scratch.island_world_indices {
         let mut staged = boxes
             .get(world_index)
             .cloned()
-            .ok_or(RotatingContactResponseError3d::MissingBody(id))?;
+            .expect("island world index came from current body index");
         if let Ok(update_index) = scratch
             .motion_updates
             .binary_search_by_key(&world_index, |update| update.world_index)
@@ -497,8 +491,6 @@ fn stage_contact_island(
                 .state
                 .apply(&mut staged);
         }
-        let island_index = scratch.island.len();
-        scratch.island_indices.insert(id, island_index);
         scratch.island.push(staged);
     }
     Ok(())
