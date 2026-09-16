@@ -1,9 +1,10 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use crate::{
-    BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d,
-    RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
-    RotationalSweepPair3d, SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
+    BodyId, OrientedBoxError3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RigidBoxFreeFlightError3d, RotatingBroadPhaseError3d, RotatingContactSearchConfig3d,
+    RotatingContactSearchError3d, RotatingContactSearchHit3d, RotationalSweepPair3d,
+    SampledContactTime3d, obb_contact_seed, sample_rigid_box_free_flight,
 };
 use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
@@ -11,14 +12,19 @@ use crate::{
     rotating_recontact_search::sampled_rotating_recontact_search_with_broad_phase,
 };
 
-/// One shared pre-response world reconstructed at an admitted sampled rotating contact time.
+/// Contact/time evidence for one admitted sampled rotating frontier.
+///
+/// The frontier deliberately does not own world state. `free_flight` and `time` identify the exact
+/// collision-free advance from the authoritative interval start, while `contacts` records every exact
+/// OBB contact reconstructed at that admitted time. Response code borrows the authoritative world,
+/// stages only the motion/contact island it needs, and commits deltas after a successful solve.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RotatingContactFrontier3d {
-    /// Every rotating body sampled directly from the common interval start at [`Self::time`].
-    pub boxes: Vec<RigidBox3d>,
+    /// Exact free-flight interval whose sampled fraction selected this frontier.
+    pub free_flight: RigidBoxFreeFlightConfig3d,
     /// Sampled contact fraction admitted by the search policy that selected this frontier.
     pub time: SampledContactTime3d,
-    /// Every broad-phase candidate that is in OBB contact in the shared frontier state.
+    /// Every conservative sweep candidate that is in exact OBB contact at [`Self::time`].
     pub contacts: Vec<RotatingContactSearchHit3d>,
     /// Remaining numerator of the requested interval over [`Self::time`]'s denominator.
     pub remaining_numerator: u32,
@@ -46,7 +52,7 @@ impl fmt::Display for RotatingContactFrontierError3d {
             ),
             Self::MissingBody(id) => write!(
                 formatter,
-                "rotating contact frontier cannot find body {} in the sampled world",
+                "rotating contact frontier cannot find body {} in the interval start",
                 id.0
             ),
             Self::EarliestContactMissing(pair) => write!(
@@ -111,18 +117,17 @@ impl From<OrientedBoxError3d> for RotatingContactFrontierError3d {
     }
 }
 
-/// Reconstructs the globally earliest sampled rotating-contact frontier from one common interval start.
+/// Reconstructs the globally earliest sampled rotating-contact frontier without materializing a world
+/// snapshot.
 ///
 /// [`crate::sampled_rotating_contact_search`] supplies the earliest admitted sampled contact fraction.
-/// Every body is then sampled directly from the original state at exactly that rational fraction. The
-/// frontier runs a conservative zero-time broad phase over that shared sampled state and exact-filters
-/// every candidate with OBB geometry, retaining all equal-time contacts. Response therefore consumes one
-/// deterministic contact set rather than independently sampled pairs in discovery order, without repeating
-/// full-interval rotational sweep-bound work after the event time is already known.
+/// The conservative sweep candidate set is then exact-filtered at that common fraction. Bodies are sampled
+/// lazily and cached only when a candidate pair touches them, so unrelated world state is never copied into
+/// the frontier. The original earliest hit must still exist with identical contact evidence; drift fails
+/// closed.
 ///
-/// The original earliest hit must still exist with identical contact evidence in the reconstructed state;
-/// drift fails closed. This remains **sampled rotational collision handling, not analytic rotational CCD**:
-/// contact or separation islands that exist wholly between coarse samples can still be missed.
+/// This remains **sampled rotational collision handling, not analytic rotational CCD**: contact or
+/// separation islands that exist wholly between coarse samples can still be missed.
 ///
 /// # Errors
 ///
@@ -158,13 +163,9 @@ pub(crate) fn earliest_rotating_contact_frontier_with_broad_phase(
 ///
 /// [`crate::sampled_rotating_recontact_search`] ignores a pair already touching at time zero until the
 /// coarse grid observes a clear sample and a later contact. Once that positive hit is selected, this
-/// function uses the same reconstruction authority as [`earliest_rotating_contact_frontier`]: all bodies
-/// are sampled from the same interval start and **all** contacts present at that shared state are retained,
-/// including persistent contacts that were intentionally not eligible to select the next event.
-///
-/// This split is important for repeated-event stepping. Persistent contacts cannot monopolize event
-/// discovery, but they re-enter the shared frontier when a genuine later sampled event occurs and therefore
-/// remain available to the simultaneous response solver. The result is still sampled, not analytic CCD.
+/// function reconstructs every contact present at the same sampled time from conservative sweep candidates,
+/// including persistent contacts that were intentionally ineligible to select the event. No complete sampled
+/// world is retained or transferred to response.
 ///
 /// # Errors
 ///
@@ -213,38 +214,27 @@ fn reconstruct_frontier(
         ));
     }
 
-    let sampled = boxes
+    // The temporal search leaves the broad phase synchronized to the conservative full-interval sweep.
+    // Re-querying that same interval is still cheaper than constructing a complete sampled world and keeps
+    // the candidate set a conservative superset of every pair that can overlap at `earliest.time`.
+    let candidates = broad_phase.candidate_pairs(boxes, config.free_flight)?;
+    let by_id = boxes
         .iter()
-        .map(|rigid_box| {
-            sample_rigid_box_free_flight(
-                rigid_box,
-                config.free_flight,
-                earliest.time.numerator,
-                earliest.time.denominator,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let indices = sampled
-        .iter()
-        .enumerate()
-        .map(|(index, rigid_box)| (rigid_box.body().id(), index))
+        .map(|rigid_box| (rigid_box.body().id(), rigid_box))
         .collect::<BTreeMap<_, _>>();
-    let current = crate::RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
-    let candidates = broad_phase.candidate_pairs(&sampled, current)?;
+    let mut sampled = BTreeMap::<BodyId, RigidBox3d>::new();
     let mut contacts = Vec::new();
 
     for pair in candidates {
-        let left_index = *indices
+        cache_sampled_body(pair.left, &by_id, &mut sampled, config, earliest.time)?;
+        cache_sampled_body(pair.right, &by_id, &mut sampled, config, earliest.time)?;
+        let left = sampled
             .get(&pair.left)
             .ok_or(RotatingContactFrontierError3d::MissingBody(pair.left))?;
-        let right_index = *indices
+        let right = sampled
             .get(&pair.right)
             .ok_or(RotatingContactFrontierError3d::MissingBody(pair.right))?;
-        let Some(contact) = obb_contact_seed(
-            sampled[left_index].oriented_box(),
-            sampled[right_index].oriented_box(),
-        )?
-        else {
+        let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
             continue;
         };
         contacts.push(RotatingContactSearchHit3d {
@@ -275,11 +265,35 @@ fn reconstruct_frontier(
         ))?;
 
     Ok(RotatingContactFrontier3d {
-        boxes: sampled,
+        free_flight: config.free_flight,
         time: earliest.time,
         contacts,
         remaining_numerator,
     })
+}
+
+fn cache_sampled_body(
+    id: BodyId,
+    by_id: &BTreeMap<BodyId, &RigidBox3d>,
+    sampled: &mut BTreeMap<BodyId, RigidBox3d>,
+    config: RotatingContactSearchConfig3d,
+    time: SampledContactTime3d,
+) -> Result<(), RotatingContactFrontierError3d> {
+    if sampled.contains_key(&id) {
+        return Ok(());
+    }
+    let rigid_box = by_id
+        .get(&id)
+        .copied()
+        .ok_or(RotatingContactFrontierError3d::MissingBody(id))?;
+    let sample = sample_rigid_box_free_flight(
+        rigid_box,
+        config.free_flight,
+        time.numerator,
+        time.denominator,
+    )?;
+    sampled.insert(id, sample);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -325,7 +339,7 @@ mod tests {
 
         assert_eq!(frontier.time, SampledContactTime3d::ZERO);
         assert_eq!(frontier.remaining_numerator, 1);
-        assert_eq!(frontier.boxes, boxes);
+        assert_eq!(frontier.free_flight, config().free_flight);
         assert_eq!(frontier.contacts.len(), 2);
         assert_eq!(
             frontier.contacts[0].pair,
@@ -344,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn nonzero_search_hit_advances_the_entire_world_to_one_fraction() {
+    fn nonzero_frontier_is_evidence_only() {
         let boxes = [
             dynamic(
                 2,
@@ -354,6 +368,7 @@ mod tests {
             ),
             fixed(8, Vec3i::ZERO),
         ];
+        let before = boxes.clone();
         let frontier = earliest_rotating_contact_frontier(&boxes, config())
             .expect("valid frontier")
             .expect("sampled contact");
@@ -367,14 +382,11 @@ mod tests {
         );
         assert_eq!(frontier.remaining_numerator, 5);
         assert_eq!(frontier.contacts.len(), 1);
-        assert_ne!(
-            frontier.boxes[0].body().position(),
-            boxes[0].body().position()
-        );
+        assert_eq!(boxes, before, "frontier discovery must not mutate world state");
     }
 
     #[test]
-    fn positive_frontier_skips_persistent_selector_but_retains_it_in_shared_state() {
+    fn positive_frontier_skips_persistent_selector_but_retains_it_in_shared_evidence() {
         let boxes = [
             dynamic(1, Vec3i::new(-2, 0, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
             fixed(2, Vec3i::ZERO),
