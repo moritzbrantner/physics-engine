@@ -82,8 +82,14 @@ struct ContactContinuationGraph3d {
 
 impl ContactContinuationGraph3d {
     fn add_edge(&mut self, pair: RotationalSweepPair3d, projected_clear: bool) {
-        self.adjacency.entry(pair.left).or_default().insert(pair.right);
-        self.adjacency.entry(pair.right).or_default().insert(pair.left);
+        self.adjacency
+            .entry(pair.left)
+            .or_default()
+            .insert(pair.right);
+        self.adjacency
+            .entry(pair.right)
+            .or_default()
+            .insert(pair.left);
         if projected_clear {
             self.projected_clear_pairs.insert(pair);
         }
@@ -112,9 +118,9 @@ impl ContactContinuationGraph3d {
             return false;
         }
 
-        self.projected_clear_pairs
-            .iter()
-            .any(|projected| visited.contains(&projected.left) && visited.contains(&projected.right))
+        self.projected_clear_pairs.iter().any(|projected| {
+            visited.contains(&projected.left) && visited.contains(&projected.right)
+        })
     }
 }
 
@@ -375,20 +381,21 @@ fn build_contact_continuation_graph(
     let mut graph = ContactContinuationGraph3d::default();
 
     for (pair, observed_seed) in observed_contacts {
-        let left = body_index.indexed_box(boxes, pair.left).ok_or(
-            RotatingContactResponseError3d::MissingBody(pair.left),
-        )?;
-        let right = body_index.indexed_box(boxes, pair.right).ok_or(
-            RotatingContactResponseError3d::MissingBody(pair.right),
-        )?;
+        let left = body_index
+            .indexed_box(boxes, pair.left)
+            .ok_or(RotatingContactResponseError3d::MissingBody(pair.left))?;
+        let right = body_index
+            .indexed_box(boxes, pair.right)
+            .ok_or(RotatingContactResponseError3d::MissingBody(pair.right))?;
         let current_seed = obb_contact_seed(left.oriented_box(), right.oriented_box())
             .map_err(RotatingContactFrontierError3d::Geometry)?;
         let projected_clear = current_seed.is_none();
         let seed = current_seed.unwrap_or(*observed_seed);
         let normal_velocity = progression_contact_normal_velocity(left, right, seed)
             .map_err(RotatingContactResponseError3d::from)?;
-        let normal_acceleration = progression_relative_normal_acceleration(left, right, gravity, seed)
-            .map_err(RotatingContactResponseError3d::from)?;
+        let normal_acceleration =
+            progression_relative_normal_acceleration(left, right, gravity, seed)
+                .map_err(RotatingContactResponseError3d::from)?;
         if normal_velocity <= 0 && normal_acceleration <= 0 {
             graph.add_edge(*pair, projected_clear);
         }
@@ -458,18 +465,9 @@ fn progression_contact_normal_velocity(
     let right_velocity = progression_contact_velocity(right, right_offset)?;
     progression_checked_dot(
         [
-            progression_checked_sub(
-                i128::from(right_velocity[0]),
-                i128::from(left_velocity[0]),
-            )?,
-            progression_checked_sub(
-                i128::from(right_velocity[1]),
-                i128::from(left_velocity[1]),
-            )?,
-            progression_checked_sub(
-                i128::from(right_velocity[2]),
-                i128::from(left_velocity[2]),
-            )?,
+            progression_checked_sub(i128::from(right_velocity[0]), i128::from(left_velocity[0]))?,
+            progression_checked_sub(i128::from(right_velocity[1]), i128::from(left_velocity[1]))?,
+            progression_checked_sub(i128::from(right_velocity[2]), i128::from(left_velocity[2]))?,
         ],
         seed.axis,
     )
@@ -525,7 +523,8 @@ fn progression_reduced_contact_point(
     }
 
     let left_spread = progression_support_spread_squared(left_vertices, left_mask, left_support)?;
-    let right_spread = progression_support_spread_squared(right_vertices, right_mask, right_support)?;
+    let right_spread =
+        progression_support_spread_squared(right_vertices, right_mask, right_support)?;
     let anchor = match left_spread.cmp(&right_spread) {
         std::cmp::Ordering::Less => left_support,
         std::cmp::Ordering::Greater => right_support,
@@ -588,8 +587,7 @@ fn progression_axis_aligned_face_overlap_centroid(
         if overlap_minimum > overlap_maximum {
             return Ok(None);
         }
-        coordinate[tangent_axis] =
-            progression_midpoint_axis(overlap_minimum, overlap_maximum)?;
+        coordinate[tangent_axis] = progression_midpoint_axis(overlap_minimum, overlap_maximum)?;
     }
     Ok(Some(Vec3i::new(
         coordinate[0],
@@ -736,10 +734,7 @@ fn progression_project_to_support_midplane(
     ))
 }
 
-fn progression_midpoint_axis(
-    left: i32,
-    right: i32,
-) -> Result<i32, ObbContactResponseError3d> {
+fn progression_midpoint_axis(left: i32, right: i32) -> Result<i32, ObbContactResponseError3d> {
     progression_to_i32(progression_div_round_nearest(
         progression_checked_add(i128::from(left), i128::from(right))?,
         2,
@@ -804,10 +799,7 @@ fn progression_component(vector: Vec3i, axis: usize) -> i32 {
     }
 }
 
-fn progression_dot_vec(
-    vector: Vec3i,
-    axis: [i128; 3],
-) -> Result<i128, ObbContactResponseError3d> {
+fn progression_dot_vec(vector: Vec3i, axis: [i128; 3]) -> Result<i128, ObbContactResponseError3d> {
     progression_checked_dot(
         [
             i128::from(vector.x),
@@ -831,26 +823,17 @@ fn progression_checked_dot(
     )
 }
 
-fn progression_checked_mul(
-    left: i128,
-    right: i128,
-) -> Result<i128, ObbContactResponseError3d> {
+fn progression_checked_mul(left: i128, right: i128) -> Result<i128, ObbContactResponseError3d> {
     left.checked_mul(right)
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)
 }
 
-fn progression_checked_add(
-    left: i128,
-    right: i128,
-) -> Result<i128, ObbContactResponseError3d> {
+fn progression_checked_add(left: i128, right: i128) -> Result<i128, ObbContactResponseError3d> {
     left.checked_add(right)
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)
 }
 
-fn progression_checked_sub(
-    left: i128,
-    right: i128,
-) -> Result<i128, ObbContactResponseError3d> {
+fn progression_checked_sub(left: i128, right: i128) -> Result<i128, ObbContactResponseError3d> {
     left.checked_sub(right)
         .ok_or(ObbContactResponseError3d::ArithmeticOverflow)
 }
