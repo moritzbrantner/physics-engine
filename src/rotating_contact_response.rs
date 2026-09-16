@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     BodyId, ObbContactResponseError3d, RigidBox3d, RotatingContactFrontier3d,
@@ -166,6 +170,55 @@ impl BodyDeltaAccumulator3d {
     }
 }
 
+/// Reusable allocation/index storage for repeated frontier responses.
+///
+/// The default response function remains convenient, while hot loops can opt into this precise API
+/// instead of rebuilding maps and vectors for every event/pass.
+#[derive(Clone, Debug, Default)]
+pub struct RotatingContactResponseScratch3d {
+    indices: BTreeMap<BodyId, usize>,
+    indexed_body_ids: Vec<BodyId>,
+    resolved_indices: Vec<Option<(usize, usize)>>,
+    snapshot: Vec<RigidBox3d>,
+    deltas: Vec<BodyDeltaAccumulator3d>,
+    combined: Vec<BodyDelta3d>,
+    modified_body_ids: BTreeSet<BodyId>,
+}
+
+impl RotatingContactResponseScratch3d {
+    pub(crate) fn ensure_body_index(&mut self, boxes: &[RigidBox3d]) {
+        let layout_matches = self.indexed_body_ids.len() == boxes.len()
+            && self
+                .indexed_body_ids
+                .iter()
+                .zip(boxes)
+                .all(|(id, rigid_box)| *id == rigid_box.body().id());
+        if layout_matches {
+            return;
+        }
+
+        self.indices.clear();
+        self.indexed_body_ids.clear();
+        self.indexed_body_ids.reserve(boxes.len());
+        for (index, rigid_box) in boxes.iter().enumerate() {
+            let id = rigid_box.body().id();
+            self.indices.insert(id, index);
+            self.indexed_body_ids.push(id);
+        }
+    }
+
+    pub(crate) fn indexed_box<'a>(
+        &self,
+        boxes: &'a [RigidBox3d],
+        id: BodyId,
+    ) -> Option<&'a RigidBox3d> {
+        let index = *self.indices.get(&id)?;
+        boxes
+            .get(index)
+            .filter(|rigid_box| rigid_box.body().id() == id)
+    }
+}
+
 /// Resolves every contact in one shared sampled frontier with bounded simultaneous passes.
 ///
 /// Every pair is evaluated from the same snapshot within a pass. Pair deltas that act on the same body
@@ -188,28 +241,56 @@ pub fn resolve_rotating_contact_frontier(
     frontier: RotatingContactFrontier3d,
     solver_passes: u8,
 ) -> Result<RotatingContactResponse3d, RotatingContactResponseError3d> {
+    let mut scratch = RotatingContactResponseScratch3d::default();
+    resolve_rotating_contact_frontier_with_scratch(frontier, solver_passes, &mut scratch)
+}
+
+pub fn resolve_rotating_contact_frontier_with_scratch(
+    frontier: RotatingContactFrontier3d,
+    solver_passes: u8,
+    scratch: &mut RotatingContactResponseScratch3d,
+) -> Result<RotatingContactResponse3d, RotatingContactResponseError3d> {
+    resolve_rotating_contact_frontier_with_activity_and_scratch(frontier, solver_passes, scratch)
+        .map(|(response, _)| response)
+}
+
+pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
+    frontier: RotatingContactFrontier3d,
+    solver_passes: u8,
+    scratch: &mut RotatingContactResponseScratch3d,
+) -> Result<(RotatingContactResponse3d, Vec<BodyId>), RotatingContactResponseError3d> {
     if solver_passes == 0 {
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
 
-    let indices = frontier
-        .boxes
-        .iter()
-        .enumerate()
-        .map(|(index, rigid_box)| (rigid_box.body.id, index))
-        .collect::<BTreeMap<_, _>>();
+    scratch.ensure_body_index(&frontier.boxes);
+    let RotatingContactResponseScratch3d {
+        indices,
+        indexed_body_ids: _,
+        resolved_indices,
+        snapshot,
+        deltas,
+        combined,
+        modified_body_ids,
+    } = scratch;
+
     let mut boxes = frontier.boxes;
     let mut passes_used = 0_u8;
-    let mut resolved_indices = vec![None; frontier.contacts.len()];
-    let mut snapshot = boxes.clone();
-    let mut deltas = vec![BodyDeltaAccumulator3d::default(); boxes.len()];
-    let mut combined = Vec::with_capacity(boxes.len());
+    resolved_indices.clear();
+    resolved_indices.resize(frontier.contacts.len(), None);
+    snapshot.clear();
+    snapshot.extend(boxes.iter().cloned());
+    deltas.resize_with(boxes.len(), BodyDeltaAccumulator3d::default);
+    deltas.truncate(boxes.len());
+    combined.clear();
+    combined.reserve(boxes.len());
+    modified_body_ids.clear();
 
     for pass in 0..solver_passes {
         if pass > 0 {
             snapshot.clone_from(&boxes);
         }
-        for accumulator in &mut deltas {
+        for accumulator in deltas.iter_mut() {
             accumulator.clear();
         }
 
@@ -249,14 +330,17 @@ pub fn resolve_rotating_contact_frontier(
         }
 
         combined.clear();
-        for (rigid_box, accumulator) in snapshot.iter().zip(&deltas) {
+        for (rigid_box, accumulator) in snapshot.iter().zip(deltas.iter()) {
             combined.push(accumulator.combined(rigid_box.body.id)?);
         }
         if combined.iter().copied().all(BodyDelta3d::is_zero) {
             break;
         }
         for (rigid_box, delta) in boxes.iter_mut().zip(combined.iter().copied()) {
-            apply_delta(rigid_box, delta)?;
+            if !delta.is_zero() {
+                modified_body_ids.insert(rigid_box.body.id);
+                apply_delta(rigid_box, delta)?;
+            }
         }
         passes_used = passes_used.checked_add(1).ok_or(
             RotatingContactResponseError3d::ArithmeticOverflow(
@@ -267,13 +351,17 @@ pub fn resolve_rotating_contact_frontier(
         )?;
     }
 
-    Ok(RotatingContactResponse3d {
-        boxes,
-        time: frontier.time,
-        contacts: frontier.contacts,
-        remaining_numerator: frontier.remaining_numerator,
-        passes_used,
-    })
+    let modified = modified_body_ids.iter().copied().collect();
+    Ok((
+        RotatingContactResponse3d {
+            boxes,
+            time: frontier.time,
+            contacts: frontier.contacts,
+            remaining_numerator: frontier.remaining_numerator,
+            passes_used,
+        },
+        modified,
+    ))
 }
 
 fn primitive_axis(
@@ -498,5 +586,67 @@ mod tests {
         let first = resolve_rotating_contact_frontier(frontier.clone(), 4).expect("first response");
         let second = resolve_rotating_contact_frontier(frontier, 4).expect("second response");
         assert_eq!(first, second);
+    }
+}
+
+#[cfg(test)]
+mod scratch_reuse_tests {
+    use crate::{
+        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
+        RotatingContactFrontier3d, RotatingContactSearchHit3d, SampledContactTime3d, Vec3i,
+        obb_contact_seed,
+    };
+
+    use super::{
+        RotatingContactResponseScratch3d, resolve_rotating_contact_frontier,
+        resolve_rotating_contact_frontier_with_scratch,
+    };
+
+    fn box3d(body: RigidBody) -> RigidBox3d {
+        RigidBox3d::new(
+            body,
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid box")
+    }
+
+    #[test]
+    fn reusable_scratch_preserves_response_semantics() {
+        let left = box3d(RigidBody::dynamic(
+            BodyId(1),
+            Vec3i::ZERO,
+            Vec3i::new(10, 0, 0),
+            Vec3i::new(5, 5, 5),
+        ));
+        let right = box3d(RigidBody::fixed(
+            BodyId(2),
+            Vec3i::new(9, 0, 0),
+            Vec3i::new(5, 5, 5),
+        ));
+        let contact = obb_contact_seed(left.oriented_box(), right.oriented_box())
+            .expect("valid boxes")
+            .expect("overlap");
+        let frontier = RotatingContactFrontier3d {
+            boxes: vec![left, right],
+            time: SampledContactTime3d::ZERO,
+            contacts: vec![RotatingContactSearchHit3d {
+                time: SampledContactTime3d::ZERO,
+                pair: crate::RotationalSweepPair3d {
+                    left: BodyId(1),
+                    right: BodyId(2),
+                },
+                contact,
+            }],
+            remaining_numerator: 0,
+        };
+        let expected = resolve_rotating_contact_frontier(frontier.clone(), 4).expect("response");
+        let mut scratch = RotatingContactResponseScratch3d::default();
+        let first =
+            resolve_rotating_contact_frontier_with_scratch(frontier.clone(), 4, &mut scratch)
+                .expect("scratch response");
+        let second = resolve_rotating_contact_frontier_with_scratch(frontier, 4, &mut scratch)
+            .expect("reused scratch response");
+        assert_eq!(first, expected);
+        assert_eq!(second, expected);
     }
 }

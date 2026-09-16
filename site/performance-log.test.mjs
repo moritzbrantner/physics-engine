@@ -75,6 +75,17 @@ test("session output keeps raw timings and derives stable summaries", () => {
     broad_phase_queries: 13,
     broad_phase_rebuilds: 1,
     broad_phase_reuses: 12,
+    broad_phase_incremental_updates: 0,
+    broad_phase_reinserts: 0,
+    broad_phase_rotations: 0,
+    broad_phase_partial_queries: 0,
+    broad_phase_partial_body_updates: 0,
+    event_response_passes: 0,
+    stabilization_passes: 0,
+    stabilizations_hitting_limit: 0,
+    stabilization_candidate_pairs: 0,
+    stabilization_exact_contacts: 0,
+    stabilization_active_bodies: 0,
   });
   assert.equal(result.raw.frames[0].physics_step_stats.length, 2);
   assert.equal(result.raw.frames[0].body_count, 12);

@@ -9,7 +9,9 @@ use crate::{
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
-    current_contact_query::body_current_overlap_ids,
+    current_contact_query::{
+        BodyCurrentContact3d, body_current_contacts_for_body, body_current_overlap_ids,
+    },
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
 };
@@ -60,10 +62,25 @@ pub struct RotatingWorldStepStats3d {
     pub broad_phase_rebuilds: u64,
     /// Sampled-event queries that reused the existing fat-AABB topology and exact-filtered its candidate leaves.
     pub broad_phase_reuses: u64,
+    pub broad_phase_incremental_updates: u64,
+    pub broad_phase_reinserts: u64,
+    pub broad_phase_rotations: u64,
+    pub broad_phase_partial_queries: u64,
+    pub broad_phase_partial_body_updates: u64,
+    pub event_response_passes: u64,
+    pub stabilization_passes: u64,
+    pub stabilizations_hitting_limit: u64,
+    pub stabilization_candidate_pairs: u64,
+    pub stabilization_exact_contacts: u64,
+    pub stabilization_active_bodies: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RotatingWorldStepReport3d {
+    /// Stable `BodyId`-ordered bodies whose observable rigid-body or sleep state changed this step.
+    ///
+    /// Higher integration layers consume this precise delta instead of cloning every dynamic body.
+    pub changed_body_ids: Vec<BodyId>,
     pub stats: RotatingWorldStepStats3d,
 }
 
@@ -224,6 +241,15 @@ impl RotatingWorld3d {
         self.boxes.values()
     }
 
+    /// Returns exact current contacts for one known body without discovering that body from query geometry
+    /// or constructing the full-world contact graph.
+    pub fn body_contacts(
+        &self,
+        body: BodyId,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        body_current_contacts_for_body(&self.boxes, body)
+    }
+
     /// Replaces one dynamic body's linear velocity while preserving its rotational state.
     ///
     /// This is intended for controlled bodies and external impulses that are already expressed in the
@@ -291,6 +317,7 @@ impl RotatingWorld3d {
         }
         if timestep_numerator == 0 {
             return Ok(RotatingWorldStepReport3d {
+                changed_body_ids: Vec::new(),
                 stats: RotatingWorldStepStats3d {
                     body_count: self.boxes.len(),
                     ..RotatingWorldStepStats3d::default()
@@ -331,6 +358,13 @@ impl RotatingWorld3d {
                 &mut self.tail_broad_phase,
             )?
         };
+        let changed_body_ids = boxes
+            .iter()
+            .filter_map(|rigid_box| {
+                let id = rigid_box.body().id();
+                (self.boxes.get(&id) != Some(rigid_box)).then_some(id)
+            })
+            .collect::<Vec<_>>();
         self.boxes = boxes
             .into_iter()
             .map(|rigid_box| (rigid_box.body().id(), rigid_box))
@@ -339,6 +373,7 @@ impl RotatingWorld3d {
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
+            changed_body_ids,
             stats: RotatingWorldStepStats3d {
                 body_count: self.boxes.len(),
                 sampled_events,
@@ -364,6 +399,27 @@ impl RotatingWorld3d {
                 broad_phase_reuses: broad_phase_after
                     .reuses
                     .saturating_sub(broad_phase_before.reuses),
+                broad_phase_incremental_updates: broad_phase_after
+                    .incremental_updates
+                    .saturating_sub(broad_phase_before.incremental_updates),
+                broad_phase_reinserts: broad_phase_after
+                    .reinserts
+                    .saturating_sub(broad_phase_before.reinserts),
+                broad_phase_rotations: broad_phase_after
+                    .rotations
+                    .saturating_sub(broad_phase_before.rotations),
+                broad_phase_partial_queries: broad_phase_after
+                    .partial_queries
+                    .saturating_sub(broad_phase_before.partial_queries),
+                broad_phase_partial_body_updates: broad_phase_after
+                    .partial_body_updates
+                    .saturating_sub(broad_phase_before.partial_body_updates),
+                event_response_passes: advance.work.event_response_passes,
+                stabilization_passes: advance.work.stabilization_passes,
+                stabilizations_hitting_limit: advance.work.stabilizations_hitting_limit,
+                stabilization_candidate_pairs: advance.work.stabilization_candidate_pairs,
+                stabilization_exact_contacts: advance.work.stabilization_exact_contacts,
+                stabilization_active_bodies: advance.work.stabilization_active_bodies,
             },
         })
     }
@@ -640,6 +696,9 @@ fn contact_frontier(
 fn map_tail_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
     match error {
         RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(id) => {
+            RotatingWorldError3d::MissingBody(id)
+        }
         RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
     }
 }

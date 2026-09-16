@@ -3,11 +3,11 @@ use std::{cell::RefCell, collections::BTreeMap};
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RotatingBroadPhaseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,
-    rotational_sweep_candidate_pairs,
+    rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct BodyCurrentContact3d {
+pub struct BodyCurrentContact3d {
     pub other: BodyId,
     /// Exact SAT contact axis oriented from the queried subject toward `other`.
     pub axis: [i128; 3],
@@ -42,6 +42,7 @@ std::thread_local! {
 /// scan for every subject. Velocity changes do not invalidate the graph; pose, membership, or body-kind
 /// changes do. The graph stores both subject directions with contact axes oriented from each subject toward
 /// its neighbor.
+#[cfg(test)]
 pub(crate) fn body_current_contacts(
     boxes: &[RigidBox3d],
     body: BodyId,
@@ -58,6 +59,49 @@ pub(crate) fn body_current_contacts(
         .get(&body)
         .cloned()
         .ok_or(RotatingWorldError3d::MissingBody(body))
+}
+
+/// Computes exact current contacts for one known body without materializing the full-world contact graph.
+///
+/// The subject is looked up directly by `BodyId`. Every unrelated body pays only for its current conservative
+/// bound; exact OBB contact work is performed only for collision-enabled bodies whose current bounds overlap
+/// the subject. This is the precise single-subject counterpart to the cached full contact graph.
+pub(crate) fn body_current_contacts_for_body(
+    boxes: &BTreeMap<BodyId, RigidBox3d>,
+    body: BodyId,
+) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+    let subject = boxes
+        .get(&body)
+        .ok_or(RotatingWorldError3d::MissingBody(body))?;
+    let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+    let subject_bounds = rigid_box_free_flight_sweep_bounds(subject, zero_time)?;
+    let mut contacts = Vec::new();
+
+    for (other_id, other) in boxes {
+        if *other_id == body
+            || !subject
+                .collision_layers()
+                .collides_with(other.collision_layers())
+        {
+            continue;
+        }
+        let other_bounds = rigid_box_free_flight_sweep_bounds(other, zero_time)?;
+        if !(0..3).all(|axis| {
+            subject_bounds.minimum[axis] <= other_bounds.maximum[axis]
+                && other_bounds.minimum[axis] <= subject_bounds.maximum[axis]
+        }) {
+            continue;
+        }
+        let Some(contact) = obb_contact_seed(subject.oriented_box(), other.oriented_box())? else {
+            continue;
+        };
+        contacts.push(BodyCurrentContact3d {
+            other: *other_id,
+            axis: contact.axis,
+        });
+    }
+
+    Ok(contacts)
 }
 
 /// Fast path for an existing dynamic body's exact overlap query.
@@ -228,6 +272,9 @@ fn contact_overflow(body: BodyId) -> RotatingWorldError3d {
 fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
     match error {
         RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(id) => {
+            RotatingWorldError3d::MissingBody(id)
+        }
         RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
     }
 }

@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i, obb_contact_seed,
+    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
+    obb_contact_seed,
     obb_response::resolve_obb_contact,
     rigid_box_free_flight_sweep_bounds,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
@@ -131,6 +132,13 @@ impl RotatingWorld3d {
         self.inner.overlap_query(query)
     }
 
+    pub fn body_contacts(
+        &self,
+        body: BodyId,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        self.inner.body_contacts(body)
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
@@ -142,21 +150,27 @@ impl RotatingWorld3d {
 
         let sleep_time_increment =
             sleep_time_increment_q64(timestep_numerator, timestep_denominator);
-        self.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
+        let mut changed_body_ids =
+            self.wake_sleepers_for_sweeps(timestep_numerator, timestep_denominator)?;
         self.freeze_sleeping_bodies()?;
-        let report = match self.inner.step(timestep_numerator, timestep_denominator) {
+        let mut report = match self.inner.step(timestep_numerator, timestep_denominator) {
             Ok(report) => report,
             Err(error) => {
                 let _ = self.restore_sleeping_bodies();
                 return Err(error);
             }
         };
-        if let Err(error) = self.stabilize_fixed_boundaries() {
-            let _ = self.restore_sleeping_bodies();
-            return Err(error);
+        changed_body_ids.extend(report.changed_body_ids.iter().copied());
+        match self.stabilize_fixed_boundaries() {
+            Ok(stabilized) => changed_body_ids.extend(stabilized),
+            Err(error) => {
+                let _ = self.restore_sleeping_bodies();
+                return Err(error);
+            }
         }
         self.restore_sleeping_bodies()?;
-        self.update_sleep_state(sleep_time_increment)?;
+        changed_body_ids.extend(self.update_sleep_state(sleep_time_increment)?);
+        report.changed_body_ids = changed_body_ids.into_iter().collect();
         Ok(report)
     }
 
@@ -164,9 +178,10 @@ impl RotatingWorld3d {
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
-    ) -> Result<(), RotatingWorldError3d> {
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let mut awakened = BTreeSet::new();
         if self.sleeping.is_empty() {
-            return Ok(());
+            return Ok(awakened);
         }
 
         let awake_config = RigidBoxFreeFlightConfig3d::new(
@@ -224,6 +239,7 @@ impl RotatingWorld3d {
                 self.sleeping.remove(&id);
                 self.sleep_stable_time_q64.remove(&id);
                 sleeper_bounds.remove(&id);
+                awakened.insert(id);
                 let rigid_box = self
                     .inner
                     .box_by_id(id)
@@ -235,7 +251,7 @@ impl RotatingWorld3d {
             }
         }
 
-        Ok(())
+        Ok(awakened)
     }
 
     fn freeze_sleeping_bodies(&mut self) -> Result<(), RotatingWorldError3d> {
@@ -272,7 +288,7 @@ impl RotatingWorld3d {
     fn update_sleep_state(
         &mut self,
         sleep_time_increment: u128,
-    ) -> Result<(), RotatingWorldError3d> {
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
         let motion = self
             .inner
             .boxes()
@@ -292,6 +308,7 @@ impl RotatingWorld3d {
         let mut seen = BTreeSet::new();
         let mut direct_sleep = Vec::new();
         let mut supported_sleep = BTreeSet::new();
+        let mut changed_body_ids = BTreeSet::new();
 
         for (id, is_low_motion, is_stationary, rigid_box) in motion {
             seen.insert(id);
@@ -320,6 +337,7 @@ impl RotatingWorld3d {
             self.put_body_to_sleep(id)?;
             self.sleeping.insert(id);
             self.sleep_stable_time_q64.remove(&id);
+            changed_body_ids.insert(id);
         }
 
         loop {
@@ -345,9 +363,10 @@ impl RotatingWorld3d {
                 self.put_body_to_sleep(id)?;
                 self.sleeping.insert(id);
                 self.sleep_stable_time_q64.remove(&id);
+                changed_body_ids.insert(id);
             }
         }
-        Ok(())
+        Ok(changed_body_ids)
     }
 
     fn has_dissipative_sleep_contact(
@@ -628,15 +647,15 @@ impl RotatingWorld3d {
         self.sleep_stable_time_q64.clear();
     }
 
-    fn stabilize_fixed_boundaries(&mut self) -> Result<(), RotatingWorldError3d> {
+    fn stabilize_fixed_boundaries(&mut self) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
         let mut boxes = self.inner.boxes().cloned().collect::<Vec<_>>();
         if boxes.len() < 2 {
-            return Ok(());
+            return Ok(BTreeSet::new());
         }
 
         let mut corrections = vec![PositionCorrectionAccumulator::default(); boxes.len()];
         let mut converged = false;
-        let mut any_changed = false;
+        let mut changed_body_ids = BTreeSet::new();
         for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
             let candidate_pairs =
                 fixed_dynamic_pairs(&boxes, &mut self.fixed_boundary_broad_phase)?;
@@ -690,8 +709,8 @@ impl RotatingWorld3d {
                 let projected = correction.target_position(id, before)?;
                 if projected != before {
                     boxes[index].body.position = projected;
+                    changed_body_ids.insert(id);
                     changed = true;
-                    any_changed = true;
                 }
             }
 
@@ -705,25 +724,24 @@ impl RotatingWorld3d {
                 u32::from(MAX_FIXED_POSITION_STABILIZATION_PASSES),
             ));
         }
-        if !any_changed {
-            return Ok(());
+        if changed_body_ids.is_empty() {
+            return Ok(changed_body_ids);
         }
 
-        let ids = boxes
-            .iter()
-            .map(|rigid_box| rigid_box.body.id)
+        let updates = boxes
+            .into_iter()
+            .filter(|rigid_box| changed_body_ids.contains(&rigid_box.body.id))
             .collect::<Vec<_>>();
-        for id in ids {
+        for rigid_box in updates {
+            let id = rigid_box.body.id;
             let removed = self
                 .inner
                 .remove_box(id)
                 .ok_or(RotatingWorldError3d::MissingBody(id))?;
             debug_assert_eq!(removed.body.id, id);
-        }
-        for rigid_box in boxes {
             self.inner.add_box(rigid_box)?;
         }
-        Ok(())
+        Ok(changed_body_ids)
     }
 }
 
@@ -935,6 +953,9 @@ fn fixed_dynamic_pairs(
 fn map_fixed_boundary_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
     match error {
         RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(id) => {
+            RotatingWorldError3d::MissingBody(id)
+        }
         RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
     }
 }

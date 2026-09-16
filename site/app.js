@@ -221,6 +221,17 @@ function lastPhysicsStepStats() {
     broad_phase_queries: readPhysicsCounter("sandbox_last_broad_phase_queries"),
     broad_phase_rebuilds: readPhysicsCounter("sandbox_last_broad_phase_rebuilds"),
     broad_phase_reuses: readPhysicsCounter("sandbox_last_broad_phase_reuses"),
+    broad_phase_incremental_updates: readPhysicsCounter("sandbox_last_broad_phase_incremental_updates"),
+    broad_phase_reinserts: readPhysicsCounter("sandbox_last_broad_phase_reinserts"),
+    broad_phase_rotations: readPhysicsCounter("sandbox_last_broad_phase_rotations"),
+    broad_phase_partial_queries: readPhysicsCounter("sandbox_last_broad_phase_partial_queries"),
+    broad_phase_partial_body_updates: readPhysicsCounter("sandbox_last_broad_phase_partial_body_updates"),
+    event_response_passes: readPhysicsCounter("sandbox_last_event_response_passes"),
+    stabilization_passes: readPhysicsCounter("sandbox_last_stabilization_passes"),
+    stabilizations_hitting_limit: readPhysicsCounter("sandbox_last_stabilizations_hitting_limit"),
+    stabilization_candidate_pairs: readPhysicsCounter("sandbox_last_stabilization_candidate_pairs"),
+    stabilization_exact_contacts: readPhysicsCounter("sandbox_last_stabilization_exact_contacts"),
+    stabilization_active_bodies: readPhysicsCounter("sandbox_last_stabilization_active_bodies"),
   };
 }
 

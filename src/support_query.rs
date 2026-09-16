@@ -1,4 +1,3 @@
-use crate::current_contact_query::body_current_contacts;
 use crate::ecs_world::EcsRotatingWorld3d;
 use crate::{BodyId, RotatingContactResponseError3d, RotatingWorldError3d, Vec3i};
 
@@ -26,15 +25,12 @@ pub fn body_has_support(
     if acceleration == Vec3i::ZERO {
         return Ok(false);
     }
-    world.with_prepared_fixed_geometry(|| {
-        let boxes = world.boxes().cloned().collect::<Vec<_>>();
-        for current in body_current_contacts(&boxes, body)? {
-            if checked_dot(acceleration, current.axis, body)? > 0 {
-                return Ok(true);
-            }
+    for current in world.body_contacts(body)? {
+        if checked_dot(acceleration, current.axis, body)? > 0 {
+            return Ok(true);
         }
-        Ok(false)
-    })
+    }
+    Ok(false)
 }
 
 fn checked_dot(vector: Vec3i, axis: [i128; 3], body: BodyId) -> Result<i128, RotatingWorldError3d> {

@@ -28,11 +28,14 @@ pub(crate) struct RotatingBroadPhaseStats3d {
     pub incremental_updates: u64,
     pub reinserts: u64,
     pub rotations: u64,
+    pub partial_queries: u64,
+    pub partial_body_updates: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RotatingBroadPhaseError3d {
     DuplicateBodyId(BodyId),
+    IncrementalQueryUnsynchronized(BodyId),
     FreeFlight(RigidBoxFreeFlightError3d),
 }
 
@@ -42,6 +45,11 @@ impl fmt::Display for RotatingBroadPhaseError3d {
             Self::DuplicateBodyId(id) => write!(
                 formatter,
                 "rotational broad phase received duplicate body id {}",
+                id.0
+            ),
+            Self::IncrementalQueryUnsynchronized(id) => write!(
+                formatter,
+                "incremental rotational broad-phase query is not synchronized for body {}",
                 id.0
             ),
             Self::FreeFlight(error) => {
@@ -156,6 +164,98 @@ impl RotatingBroadPhase3d {
         Ok(pairs)
     }
 
+    /// Updates current-position bounds only for the supplied bodies and returns only candidate
+    /// pairs touching one of those bodies. The full broad phase must already be synchronized to the
+    /// same current world state; this is the precise API for contact-island propagation after a local
+    /// solver response, where unchanged bodies cannot create a new current overlap by themselves.
+    pub(crate) fn candidate_pairs_for_changed_current_bodies<'a>(
+        &mut self,
+        changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.stats.queries = self.stats.queries.saturating_add(1);
+        self.stats.partial_queries = self.stats.partial_queries.saturating_add(1);
+        let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+        let mut changed_ids = BTreeSet::new();
+        let mut escaped = Vec::new();
+
+        for rigid_box in changed_boxes {
+            let body = bounded_body(rigid_box, current)?;
+            if !changed_ids.insert(body.id) {
+                return Err(RotatingBroadPhaseError3d::DuplicateBodyId(body.id));
+            }
+            let Some(previous) = self.exact.get(&body.id) else {
+                return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
+                    body.id,
+                ));
+            };
+            if previous.kind != body.kind || previous.collision_layers != body.collision_layers {
+                return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
+                    body.id,
+                ));
+            }
+            self.exact.insert(body.id, body);
+            let Some(fat) = self.tree.leaf_bounds(body.id) else {
+                return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
+                    body.id,
+                ));
+            };
+            if !contains_bounds(fat, body.bounds) {
+                let mut fat_body = body;
+                fat_body.bounds = fatten_bounds(body.bounds);
+                escaped.push(fat_body);
+            }
+        }
+
+        self.stats.partial_body_updates = self
+            .stats
+            .partial_body_updates
+            .saturating_add(u64::try_from(changed_ids.len()).unwrap_or(u64::MAX));
+
+        if escaped.is_empty() {
+            self.stats.reuses = self.stats.reuses.saturating_add(1);
+        } else {
+            self.stats.incremental_updates = self.stats.incremental_updates.saturating_add(1);
+            let mut rotations = 0_u64;
+            let mut incremental_ok = true;
+            for body in escaped {
+                if self.tree.reinsert(body, &mut rotations) {
+                    self.stats.reinserts = self.stats.reinserts.saturating_add(1);
+                } else {
+                    incremental_ok = false;
+                    break;
+                }
+            }
+            self.stats.rotations = self.stats.rotations.saturating_add(rotations);
+            if !incremental_ok {
+                self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
+                let exact = self.exact.values().copied().collect();
+                self.rebuild(exact);
+            }
+        }
+
+        let exact = &self.exact;
+        let mut pairs = BTreeSet::new();
+        for id in changed_ids {
+            self.tree
+                .for_each_candidate_pair_for_body(id, |left, right| {
+                    let left_body = exact
+                        .get(&left)
+                        .expect("incremental broad phase keeps every leaf exact bound");
+                    let right_body = exact
+                        .get(&right)
+                        .expect("incremental broad phase keeps every leaf exact bound");
+                    if bounds_overlap(left_body.bounds, right_body.bounds)
+                        && left_body
+                            .collision_layers
+                            .collides_with(right_body.collision_layers)
+                    {
+                        pairs.insert(RotationalSweepPair3d { left, right });
+                    }
+                });
+        }
+        Ok(pairs.into_iter().collect())
+    }
+
     #[must_use]
     pub const fn stats(&self) -> RotatingBroadPhaseStats3d {
         self.stats
@@ -216,18 +316,25 @@ fn bounded_bodies(
     let mut ids = BTreeSet::new();
     let mut bounded = Vec::with_capacity(boxes.len());
     for rigid_box in boxes {
-        let id = rigid_box.body().id();
-        if !ids.insert(id) {
-            return Err(RotatingBroadPhaseError3d::DuplicateBodyId(id));
+        let body = bounded_body(rigid_box, config)?;
+        if !ids.insert(body.id) {
+            return Err(RotatingBroadPhaseError3d::DuplicateBodyId(body.id));
         }
-        bounded.push(BoundedBody3d {
-            id,
-            kind: rigid_box.body().kind(),
-            collision_layers: rigid_box.collision_layers(),
-            bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,
-        });
+        bounded.push(body);
     }
     Ok(bounded)
+}
+
+fn bounded_body(
+    rigid_box: &RigidBox3d,
+    config: RigidBoxFreeFlightConfig3d,
+) -> Result<BoundedBody3d, RotatingBroadPhaseError3d> {
+    Ok(BoundedBody3d {
+        id: rigid_box.body().id(),
+        kind: rigid_box.body().kind(),
+        collision_layers: rigid_box.collision_layers(),
+        bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,
+    })
 }
 
 fn fatten_bounds(bounds: RotationalSweepBounds3d) -> RotationalSweepBounds3d {
@@ -834,5 +941,66 @@ mod tests {
             ),
             Err(RotatingBroadPhaseError3d::DuplicateBodyId(BodyId(7)))
         );
+    }
+}
+
+#[cfg(test)]
+mod necessary_work_tests {
+    use crate::{
+        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
+        RigidBoxFreeFlightConfig3d, Vec3i,
+    };
+
+    use super::RotatingBroadPhase3d;
+
+    fn box3d(body: RigidBody) -> RigidBox3d {
+        RigidBox3d::new(
+            body,
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid box")
+    }
+
+    #[test]
+    fn partial_current_query_updates_only_supplied_bodies_and_matches_full_truth() {
+        let mut boxes = vec![
+            box3d(RigidBody::dynamic(
+                BodyId(1),
+                Vec3i::new(0, 0, 0),
+                Vec3i::ZERO,
+                Vec3i::new(5, 5, 5),
+            )),
+            box3d(RigidBody::dynamic(
+                BodyId(2),
+                Vec3i::new(30, 0, 0),
+                Vec3i::ZERO,
+                Vec3i::new(5, 5, 5),
+            )),
+            box3d(RigidBody::fixed(
+                BodyId(3),
+                Vec3i::new(60, 0, 0),
+                Vec3i::new(5, 5, 5),
+            )),
+        ];
+        let current = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut partial = RotatingBroadPhase3d::default();
+        partial
+            .candidate_pairs(&boxes, current)
+            .expect("initial sync");
+
+        boxes[0].body.position = Vec3i::new(25, 0, 0);
+        let partial_pairs = partial
+            .candidate_pairs_for_changed_current_bodies([&boxes[0]])
+            .expect("partial query");
+
+        let mut full = RotatingBroadPhase3d::default();
+        let full_pairs = full.candidate_pairs(&boxes, current).expect("full query");
+        let expected = full_pairs
+            .into_iter()
+            .filter(|pair| pair.left == BodyId(1) || pair.right == BodyId(1))
+            .collect::<Vec<_>>();
+        assert_eq!(partial_pairs, expected);
+        assert_eq!(partial.stats().partial_queries, 1);
+        assert_eq!(partial.stats().partial_body_updates, 1);
     }
 }

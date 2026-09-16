@@ -64,6 +64,7 @@ pub use collider::{Collider, ColliderContact, ColliderError, ColliderShape, coll
 pub use collision::{
     ContactNormal, SUBTICKS_PER_TICK, SweepHit, TimeOfImpact, overlap_aabb, swept_aabb,
 };
+pub use current_contact_query::BodyCurrentContact3d;
 pub use ecs_world::EcsRotatingWorld3d as RotatingWorld3d;
 pub use fixed_geometry::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
@@ -79,7 +80,8 @@ pub use query::{Aabb, QueryError, QueryHit, Ray};
 pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
-    RepeatedRotatingEventError3d, RotatingResolvedEvent3d, advance_repeated_rotating_events,
+    RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d, RotatingResolvedEvent3d,
+    advance_repeated_rotating_events,
 };
 pub use rigid_box::{CollisionLayers3d, ContactMode3d, RigidBox3d, RigidBoxError3d};
 pub use rigid_box_free_flight::{
@@ -93,7 +95,8 @@ pub use rotating_contact_frontier::{
     next_rotating_contact_frontier,
 };
 pub use rotating_contact_response::{
-    RotatingContactResponse3d, RotatingContactResponseError3d, resolve_rotating_contact_frontier,
+    RotatingContactResponse3d, RotatingContactResponseError3d, RotatingContactResponseScratch3d,
+    resolve_rotating_contact_frontier, resolve_rotating_contact_frontier_with_scratch,
 };
 pub use rotating_contact_search::{
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
