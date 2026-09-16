@@ -91,11 +91,9 @@ impl RotatingWorld3d {
     /// dynamic state for parked fixed proxies without materializing a second world collection.
     pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {
         let parked = &self.parked;
-        self.active.boxes().map(move |rigid_box| {
-            parked
-                .get(&rigid_box.body().id())
-                .unwrap_or(rigid_box)
-        })
+        self.active
+            .boxes()
+            .map(move |rigid_box| parked.get(&rigid_box.body().id()).unwrap_or(rigid_box))
     }
 
     #[must_use]
