@@ -8,6 +8,15 @@ if [[ -n "${HEAD_SHA:-}" && "$HEAD_SHA" != "$actual_head" ]]; then
   exit 1
 fi
 export HEAD_SHA="$actual_head"
+
+if [[ -z "${BASE_SHA:-}" ]]; then
+  remote_main="$(git rev-parse --verify origin/main 2>/dev/null || true)"
+  if [[ -n "$remote_main" && "$remote_main" != "$actual_head" ]]; then
+    BASE_SHA="$(git merge-base "$actual_head" "$remote_main")"
+    export BASE_SHA
+  fi
+fi
+
 output="${PERFORMANCE_EVIDENCE_DIR:-$root/performance-evidence}"
 mkdir -p "$output"
 {
@@ -22,6 +31,8 @@ rustup target add wasm32-unknown-unknown
 cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
 cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm "$output/head.wasm"
 cp scripts/benchmark-sandbox.mjs "$output/benchmark-sandbox.mjs"
+cp scripts/validate-performance-contract.mjs "$output/validate-performance-contract.mjs"
+cp .performance/contract.json "$output/performance-contract.json"
 cp scripts/summarize-cpu-profile.mjs "$output/summarize-cpu-profile.mjs"
 
 if [[ -n "${BASE_SHA:-}" ]]; then
@@ -40,6 +51,7 @@ if [[ -n "${BASE_SHA:-}" ]]; then
   export BASELINE_WASM="$output/base.wasm"
 fi
 node scripts/benchmark-sandbox.mjs "$output/head.wasm" "$output/sandbox.json"
+node scripts/validate-performance-contract.mjs .performance/contract.json "$output/sandbox.json"
 env -u BASELINE_WASM CASE=three-shots-walking TRIALS=1 node \
   --cpu-prof \
   --cpu-prof-dir="$output" \
