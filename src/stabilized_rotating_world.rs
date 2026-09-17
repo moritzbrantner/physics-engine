@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d};
 
 use crate::{
-    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
-    obb_contact_seed, obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
-    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
+    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotationalSweepBounds3d, Vec3i, obb_contact_seed, obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds, rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
@@ -17,9 +17,6 @@ const SLEEP_STABLE_STEPS_AT_60_HZ: u8 = 12;
 const SLEEP_TIME_SCALE: u128 = 1_u128 << 64;
 const SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 5;
 const SLEEP_LINEAR_SPEED_LIMIT: u32 = 120;
-// Fixed-point contact response changes angular velocity in discrete impulses. Keep the low-motion
-// cutoff above a small residual response quantum so dissipative supported contacts can converge.
-const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 100_000;
 
 /// Engine-owned rotating world with bounded fixed-boundary stabilization and deterministic sleeping.
 ///
@@ -33,21 +30,23 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 100_000;
 /// contract: each changed dynamic queries only its own current overlap neighborhood, and iterative projection
 /// re-queries only that candidate geometry. Unchanged dynamics are not cloned, indexed, or traversed.
 ///
-/// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
-/// continuous simulated duration are put to sleep only when they are already motionless or a current
-/// contact can physically dissipate the residual motion. Sleep stability time is accumulated in deterministic
-/// Q64 units from the requested rational timestep, so equivalent elapsed simulation time reaches the same
-/// sleep threshold independently of 30, 60, or 120 Hz step partitioning. A contact qualifies when its normal
-/// constraint is still opposing relative approach, or when non-zero pair friction belongs to a low-motion
-/// support chain that is ultimately anchored by fixed geometry or an existing sleeper. Gravity-supported
-/// bodies settle position-only against already anchored supports before becoming sleepers, so quantized
-/// equal-mass projection cannot freeze residual penetration into a resting stack. This preserves ordinary
-/// low-speed free-flight and frictionless tangential inertia while letting gravity-loaded rough stacks
-/// converge to sleep as one supported island instead of repeatedly waking their lower members. Sleeping
-/// bodies are presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization
-/// cannot keep nudging a settled body. Before each step, conservative free-flight sweep bounds wake every
-/// sleeping body that an awake dynamic body may reach, including transitive sleeping islands. Explicit
-/// velocity changes also wake their target, adding fixed geometry invalidates existing sleepers
+/// Dynamic bodies whose conservative point-speed bound remains below the deterministic sleep threshold for a
+/// continuous simulated duration are put to sleep only when they are already motionless or a current contact
+/// can physically dissipate the residual motion. The point-speed bound combines translation with a
+/// body-size-aware bound on rotational surface motion, so fixed-point angular units are judged in the same
+/// spatial units as linear velocity instead of against a shape-independent angular constant. Sleep stability
+/// time is accumulated in deterministic Q64 units from the requested rational timestep, so equivalent elapsed
+/// simulation time reaches the same sleep threshold independently of 30, 60, or 120 Hz step partitioning. A
+/// contact qualifies when its normal constraint is still opposing relative approach, or when non-zero pair
+/// friction belongs to a low-motion support chain that is ultimately anchored by fixed geometry or an existing
+/// sleeper. Gravity-supported bodies settle position-only against already anchored supports before becoming
+/// sleepers, so quantized equal-mass projection cannot freeze residual penetration into a resting stack. This
+/// preserves ordinary low-speed free-flight and frictionless tangential inertia while letting gravity-loaded
+/// rough stacks converge to sleep as one supported island instead of repeatedly waking their lower members.
+/// Sleeping bodies are presented to the inner solver as fixed proxies, so gravity and persistent-contact
+/// stabilization cannot keep nudging a settled body. Before each step, conservative free-flight sweep bounds
+/// wake every sleeping body that an awake dynamic body may reach, including transitive sleeping islands.
+/// Explicit velocity changes also wake their target, adding fixed geometry invalidates existing sleepers
 /// conservatively, and any successful body removal invalidates sleep because world membership and contact
 /// topology changed.
 ///
@@ -912,18 +911,31 @@ fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
 
 fn low_motion(rigid_box: &RigidBox3d) -> bool {
     let velocity = rigid_box.body.velocity();
-    let linear_speed = velocity
-        .x
-        .unsigned_abs()
-        .max(velocity.y.unsigned_abs())
-        .max(velocity.z.unsigned_abs());
+    let linear_speed = u128::from(
+        velocity
+            .x
+            .unsigned_abs()
+            .max(velocity.y.unsigned_abs())
+            .max(velocity.z.unsigned_abs()),
+    );
     let angular = rigid_box.angular().angular_velocity;
-    let angular_speed = angular
-        .x
-        .unsigned_abs()
-        .max(angular.y.unsigned_abs())
-        .max(angular.z.unsigned_abs());
-    linear_speed <= SLEEP_LINEAR_SPEED_LIMIT && angular_speed <= SLEEP_ANGULAR_SPEED_LIMIT
+    let angular_speed_l1 = if rigid_box.rotation_locked() {
+        0
+    } else {
+        u128::from(angular.x.unsigned_abs())
+            .saturating_add(u128::from(angular.y.unsigned_abs()))
+            .saturating_add(u128::from(angular.z.unsigned_abs()))
+    };
+    let half = rigid_box.body.half_extents();
+    let radius_bound = u128::from(half.x.unsigned_abs())
+        .saturating_add(u128::from(half.y.unsigned_abs()))
+        .saturating_add(u128::from(half.z.unsigned_abs()));
+    let rotational_surface_speed = radius_bound
+        .saturating_mul(angular_speed_l1)
+        .div_ceil(u128::from(ANGULAR_VELOCITY_SCALE.unsigned_abs()));
+
+    linear_speed.saturating_add(rotational_surface_speed)
+        <= u128::from(SLEEP_LINEAR_SPEED_LIMIT)
 }
 
 fn motion_is_zero(rigid_box: &RigidBox3d) -> bool {
