@@ -77,6 +77,102 @@ pub(crate) struct RepeatedRotatingEventProgress3d {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BodyRuntimeState3d {
+    position: crate::Vec3i,
+    velocity: crate::Vec3i,
+    orientation: crate::Orientation3d,
+    angular_velocity: crate::AngularVelocity3d,
+}
+
+impl BodyRuntimeState3d {
+    fn capture(rigid_box: &RigidBox3d) -> Self {
+        Self {
+            position: rigid_box.body.position,
+            velocity: rigid_box.body.velocity,
+            orientation: rigid_box.angular.orientation,
+            angular_velocity: rigid_box.angular.angular_velocity,
+        }
+    }
+
+    fn matches(self, rigid_box: &RigidBox3d) -> bool {
+        self.position == rigid_box.body.position
+            && self.velocity == rigid_box.body.velocity
+            && self.orientation == rigid_box.angular.orientation
+            && self.angular_velocity == rigid_box.angular.angular_velocity
+    }
+
+    fn restore(self, rigid_box: &mut RigidBox3d) {
+        rigid_box.body.position = self.position;
+        rigid_box.body.velocity = self.velocity;
+        rigid_box.angular.orientation = self.orientation;
+        rigid_box.angular.angular_velocity = self.angular_velocity;
+    }
+}
+
+/// Compact undo log for one authoritative-world transaction.
+///
+/// It stores only fields the runtime physics step can mutate. Immutable body identity, geometry,
+/// material, contact policy, and collision layers are never snapshotted. An index is recorded at most
+/// once, so rollback cost scales with bodies actually touched rather than total world size.
+#[derive(Debug)]
+pub(crate) struct BodyMutationJournal3d {
+    originals: Vec<(usize, BodyRuntimeState3d)>,
+    recorded: Vec<bool>,
+}
+
+impl BodyMutationJournal3d {
+    pub(crate) fn new(body_count: usize) -> Self {
+        Self {
+            originals: Vec::new(),
+            recorded: vec![false; body_count],
+        }
+    }
+
+    pub(crate) fn record(&mut self, world_index: usize, original: &RigidBox3d) {
+        if self.recorded[world_index] {
+            return;
+        }
+        self.recorded[world_index] = true;
+        self.originals
+            .push((world_index, BodyRuntimeState3d::capture(original)));
+    }
+
+    fn record_dynamic_body_id(&mut self, boxes: &[RigidBox3d], id: crate::BodyId) {
+        let world_index = boxes
+            .binary_search_by_key(&id, |rigid_box| rigid_box.body().id())
+            .expect("journaled authoritative world remains BodyId ordered");
+        if boxes[world_index].body().kind() == crate::BodyKind::Dynamic {
+            self.record(world_index, &boxes[world_index]);
+        }
+    }
+
+    pub(crate) fn rollback(&mut self, boxes: &mut [RigidBox3d]) {
+        for (world_index, original) in self.originals.drain(..) {
+            original.restore(&mut boxes[world_index]);
+            self.recorded[world_index] = false;
+        }
+    }
+
+    pub(crate) fn changed_body_ids(&self, boxes: &[RigidBox3d]) -> Vec<crate::BodyId> {
+        let mut changed = self
+            .originals
+            .iter()
+            .filter_map(|(world_index, original)| {
+                let rigid_box = &boxes[*world_index];
+                (!original.matches(rigid_box)).then_some(rigid_box.body().id())
+            })
+            .collect::<Vec<_>>();
+        changed.sort_unstable();
+        changed
+    }
+
+    #[cfg(test)]
+    fn recorded_body_count(&self) -> usize {
+        self.originals.len()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepeatedRotatingEventError3d {
     ZeroEventLimit,
     EventLimit(u16),
@@ -199,8 +295,12 @@ pub fn advance_repeated_rotating_events(
 ) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
     let mut state = boxes.to_vec();
-    let progress =
-        advance_repeated_rotating_events_with_broad_phase(&mut state, config, &mut broad_phase)?;
+    let progress = advance_repeated_rotating_events_with_broad_phase(
+        &mut state,
+        config,
+        &mut broad_phase,
+        None,
+    )?;
     Ok(RepeatedRotatingEventAdvance3d {
         boxes: state,
         events: progress.events,
@@ -214,12 +314,14 @@ pub fn advance_repeated_rotating_events(
 /// Temporal search remains read-only. Once a hit is admitted, free flight is sampled exactly once into a
 /// compact changed-field delta batch and committed to `boxes`. The broad phase is then synchronized at zero
 /// time against that current state, and all equal-time contacts are exact-filtered there. Response therefore
-/// receives an evidence-only zero-time frontier and stages only the active contact island. The function never
-/// clones the complete input world; callers choose the transactional boundary appropriate to their authority.
+/// receives an evidence-only zero-time frontier and stages only the active contact island. When supplied, the
+/// mutation journal records compact pre-mutation motion state before every runtime write, allowing a higher
+/// authority boundary to roll back without a world snapshot.
 pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     boxes: &mut [RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
+    mut journal: Option<&mut BodyMutationJournal3d>,
 ) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
@@ -239,7 +341,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             work,
         });
     };
-    advance_state_to_time(boxes, first_search.free_flight, first_hit.time)?;
+    advance_state_to_time(
+        boxes,
+        first_search.free_flight,
+        first_hit.time,
+        journal.as_deref_mut(),
+    )?;
     let mut event_time = first_hit.time;
     let mut frontier =
         current_frontier_from_admitted_hit(boxes, first_hit, broad_phase, &response_scratch)?;
@@ -250,6 +357,9 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
+        if let Some(journal) = journal.as_deref_mut() {
+            journal_frontier_dynamic_bodies(boxes, &frontier, journal);
+        }
         let (response, modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
                 boxes,
@@ -275,6 +385,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             &response_contacts,
             &mut response_scratch,
             &mut work,
+            journal.as_deref_mut(),
         )?;
         events.push(RotatingResolvedEvent3d {
             time: event_time,
@@ -293,7 +404,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         else {
             break;
         };
-        advance_state_to_time(boxes, next_search.free_flight, next_hit.time)?;
+        advance_state_to_time(
+            boxes,
+            next_search.free_flight,
+            next_hit.time,
+            journal.as_deref_mut(),
+        )?;
         event_time = next_hit.time;
         frontier =
             current_frontier_from_admitted_hit(boxes, next_hit, broad_phase, &response_scratch)?;
@@ -310,6 +426,7 @@ fn advance_state_to_time(
     boxes: &mut [RigidBox3d],
     free_flight: RigidBoxFreeFlightConfig3d,
     time: SampledContactTime3d,
+    mut journal: Option<&mut BodyMutationJournal3d>,
 ) -> Result<(), RepeatedRotatingEventError3d> {
     if time == SampledContactTime3d::ZERO {
         return Ok(());
@@ -325,9 +442,23 @@ fn advance_state_to_time(
         }
     }
     for delta in deltas {
+        if let Some(journal) = journal.as_deref_mut() {
+            journal.record(delta.world_index, &boxes[delta.world_index]);
+        }
         delta.apply(boxes);
     }
     Ok(())
+}
+
+fn journal_frontier_dynamic_bodies(
+    boxes: &[RigidBox3d],
+    frontier: &RotatingContactFrontier3d,
+    journal: &mut BodyMutationJournal3d,
+) {
+    for contact in &frontier.contacts {
+        journal.record_dynamic_body_id(boxes, contact.pair.left);
+        journal.record_dynamic_body_id(boxes, contact.pair.right);
+    }
 }
 
 fn current_frontier_from_admitted_hit(
@@ -396,6 +527,7 @@ fn stabilize_current_contacts(
     initial_contacts: &[RotatingContactSearchHit3d],
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
+    mut journal: Option<&mut BodyMutationJournal3d>,
 ) -> Result<(), RepeatedRotatingEventError3d> {
     response_scratch.ensure_body_index(boxes);
     let mut active = initial_active.to_vec();
@@ -436,6 +568,9 @@ fn stabilize_current_contacts(
             break;
         };
         work.stabilization_passes = work.stabilization_passes.saturating_add(1);
+        if let Some(journal) = journal.as_deref_mut() {
+            journal_frontier_dynamic_bodies(boxes, &frontier, journal);
+        }
         let (_, modified_body_ids) = resolve_rotating_contact_frontier_with_activity_and_scratch(
             boxes,
             &frontier,
@@ -613,9 +748,10 @@ mod tests {
     };
 
     use super::{
-        RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
-        advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
-        current_contact_frontier, scale_remaining_time,
+        BodyMutationJournal3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+        RotatingBroadPhase3d, advance_repeated_rotating_events,
+        advance_repeated_rotating_events_with_broad_phase, current_contact_frontier,
+        scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -648,6 +784,24 @@ mod tests {
     }
 
     #[test]
+    fn compact_journal_restores_only_runtime_motion_state() {
+        let mut boxes = vec![
+            dynamic(1, Vec3i::ZERO, Vec3i::new(5, 0, 0), Material::new(0)),
+            fixed(2, Vec3i::new(20, 0, 0), Material::new(0)),
+        ];
+        let baseline = boxes.clone();
+        let mut journal = BodyMutationJournal3d::new(boxes.len());
+        journal.record(0, &boxes[0]);
+        boxes[0].body.position.x = 99;
+        boxes[0].body.velocity.y = -17;
+
+        assert_eq!(journal.recorded_body_count(), 1);
+        assert_eq!(journal.changed_body_ids(&boxes), vec![BodyId(1)]);
+        journal.rollback(&mut boxes);
+        assert_eq!(boxes, baseline);
+    }
+
+    #[test]
     fn in_place_advance_matches_owned_public_result() {
         let elastic = Material::new(MATERIAL_SCALE);
         let boxes = vec![
@@ -662,6 +816,7 @@ mod tests {
             &mut actual_boxes,
             config(8),
             &mut broad_phase,
+            None,
         )
         .expect("in-place advance");
 
