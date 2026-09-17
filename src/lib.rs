@@ -40,6 +40,7 @@ mod rotating_contact_frontier;
 mod rotating_contact_response;
 #[path = "rotating_contact_search_ordered.rs"]
 mod rotating_contact_search;
+#[allow(dead_code)]
 #[path = "rotating_contact_search.rs"]
 mod rotating_contact_search_reference;
 #[path = "rotating_recontact_search_ordered.rs"]
