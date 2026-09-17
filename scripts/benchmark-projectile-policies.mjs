@@ -15,8 +15,6 @@ const PROJECTILE_POLICY_EXPLICIT_BIT = 1 << 14;
 const PROJECTILE_PROJECTILE_BIT = 1 << 10;
 const ALL_PAIR_BITS = (1 << 11) - 2;
 const TOTAL_TICKS = 180;
-const SHOT_COUNT = 36;
-const SHOT_INTERVAL = 2;
 const TRIALS = 2;
 
 const workCounters = new Map([
@@ -56,18 +54,61 @@ const requiredExports = [
   ...workCounters.values(),
 ];
 
+// Keep the dense lifecycle comparison inside the engine's existing 32-event-per-step contract by
+// disabling projectile/projectile contacts for every response policy. A separate smaller probe below
+// exercises that collision-pair axis without turning the evidence workload into an unsupported swarm.
 const scenarios = [
-  { name: "physical-all-pairs", policyCode: 0, projectileProjectile: true },
-  { name: "inelastic-all-pairs", policyCode: 1, projectileProjectile: true },
-  { name: "impact-retire-all-pairs", policyCode: 2, projectileProjectile: true },
-  { name: "impact-retire-no-projectile-pair", policyCode: 2, projectileProjectile: false },
-];
-
-const shotPattern = [
-  [38, 0, -88],
-  [-38, 0, -104],
-  [24, -7, -96],
-  [-24, 7, -112],
+  {
+    name: "physical-dense-no-projectile-pair",
+    policyCode: 0,
+    projectileProjectile: false,
+    shotCount: 36,
+    shotInterval: 2,
+    shotPattern: [[0, 0, -88]],
+    group: "dense",
+  },
+  {
+    name: "inelastic-dense-no-projectile-pair",
+    policyCode: 1,
+    projectileProjectile: false,
+    shotCount: 36,
+    shotInterval: 2,
+    shotPattern: [[0, 0, -88]],
+    group: "dense",
+  },
+  {
+    name: "impact-retire-dense-no-projectile-pair",
+    policyCode: 2,
+    projectileProjectile: false,
+    shotCount: 36,
+    shotInterval: 2,
+    shotPattern: [[0, 0, -88]],
+    group: "dense",
+  },
+  {
+    name: "impact-retire-pair-probe-all-pairs",
+    policyCode: 2,
+    projectileProjectile: true,
+    shotCount: 8,
+    shotInterval: 1,
+    shotPattern: [
+      [0, 0, -88],
+      [0, 0, -112],
+    ],
+    group: "pair-probe",
+  },
+  {
+    name: "impact-retire-pair-probe-no-projectile-pair",
+    policyCode: 2,
+    projectileProjectile: false,
+    shotCount: 8,
+    shotInterval: 1,
+    shotPattern: [
+      [0, 0, -88],
+      [0, 0, -112],
+    ],
+    group: "pair-probe",
+  },
 ];
 
 function encodeRules(policyCode, projectileProjectile) {
@@ -159,11 +200,11 @@ function runTrial(engine, scenario) {
   let eventSum = 0;
 
   for (let tick = 0; tick < TOTAL_TICKS; tick += 1) {
-    if (tick < SHOT_COUNT * SHOT_INTERVAL && tick % SHOT_INTERVAL === 0) {
-      const shotIndex = tick / SHOT_INTERVAL;
-      const [x, y, z] = shotPattern[shotIndex % shotPattern.length];
+    if (tick < scenario.shotCount * scenario.shotInterval && tick % scenario.shotInterval === 0) {
+      const shotIndex = tick / scenario.shotInterval;
+      const [x, y, z] = scenario.shotPattern[shotIndex % scenario.shotPattern.length];
       if (engine.sandbox_shoot(x, y, z) < 0) {
-        throw new Error(`projectile creation failed at shot ${shotIndex}`);
+        throw new Error(`${scenario.name} projectile creation failed at shot ${shotIndex}`);
       }
       peakProjectileCount = Math.max(
         peakProjectileCount,
@@ -173,7 +214,11 @@ function runTrial(engine, scenario) {
     }
 
     const started = performance.now();
-    step(engine);
+    try {
+      step(engine);
+    } catch (error) {
+      throw new Error(`${scenario.name} tick ${tick}: ${error.message}`, { cause: error });
+    }
     times.push(performance.now() - started);
 
     addWork(work, readWork(engine));
@@ -244,8 +289,8 @@ for (const exportName of requiredExports) {
 }
 
 const result = {
-  workload: "dense-projectile-policy-matrix-v1",
-  note: "Deterministic 50+ body projectile stress matrix. Work/lifecycle counters are authoritative evidence; Node/V8 WASM timings are advisory and are not CI wall-clock budgets.",
+  workload: "dense-projectile-policy-matrix-v2",
+  note: "Deterministic policy evidence split into a 50+ body lifecycle matrix with projectile/projectile contacts disabled and a smaller bounded collision-pair probe. Work/lifecycle counters are authoritative; Node/V8 WASM timings are advisory and are not CI wall-clock budgets.",
   environment: {
     node: process.version,
     v8: process.versions.v8,
@@ -258,69 +303,102 @@ const result = {
   scenarios: [],
 };
 
-for (const scenario of scenarios) {
-  const trials = [];
-  for (let trial = 0; trial < TRIALS; trial += 1) {
-    trials.push(runTrial(engine, scenario));
+try {
+  for (const scenario of scenarios) {
+    const trials = [];
+    for (let trial = 0; trial < TRIALS; trial += 1) {
+      trials.push(runTrial(engine, scenario));
+    }
+    const exact = deterministicTrial(scenario, trials);
+    result.scenarios.push({ ...scenario, trials });
+    console.log(scenario.name, {
+      peak_body_count: exact.peak_body_count,
+      final_projectile_count: exact.final_projectile_count,
+      lifecycle: exact.lifecycle,
+      event_sum: exact.event_sum,
+      work: exact.work,
+      steps: exact.steps,
+    });
   }
-  const exact = deterministicTrial(scenario, trials);
-  result.scenarios.push({ ...scenario, trials });
-  console.log(scenario.name, {
-    peak_body_count: exact.peak_body_count,
-    final_projectile_count: exact.final_projectile_count,
-    lifecycle: exact.lifecycle,
-    event_sum: exact.event_sum,
-    work: exact.work,
-    steps: exact.steps,
-  });
-}
 
-const byName = new Map(
-  result.scenarios.map((scenario) => [scenario.name, deterministicTrial(scenario, scenario.trials)]),
-);
-const physical = byName.get("physical-all-pairs");
-const inelastic = byName.get("inelastic-all-pairs");
-const retire = byName.get("impact-retire-all-pairs");
-const retireNoProjectilePair = byName.get("impact-retire-no-projectile-pair");
+  const byName = new Map(
+    result.scenarios.map((scenario) => [
+      scenario.name,
+      deterministicTrial(scenario, scenario.trials),
+    ]),
+  );
+  const physical = byName.get("physical-dense-no-projectile-pair");
+  const inelastic = byName.get("inelastic-dense-no-projectile-pair");
+  const retire = byName.get("impact-retire-dense-no-projectile-pair");
+  const pairAll = byName.get("impact-retire-pair-probe-all-pairs");
+  const pairFiltered = byName.get("impact-retire-pair-probe-no-projectile-pair");
 
-if (physical.peak_body_count < 50) {
-  throw new Error(`dense physical workload never reached 50 bodies: ${physical.peak_body_count}`);
-}
-if (physical.lifecycle.retired_on_contact !== 0 || inelastic.lifecycle.retired_on_contact !== 0) {
-  throw new Error("non-retiring projectile policies retired a projectile on contact");
-}
-if (retire.lifecycle.retired_on_contact <= 0) {
-  throw new Error("impact-retire workload did not retire any projectile on contact");
-}
-if (retire.final_projectile_count >= physical.final_projectile_count) {
-  throw new Error("impact-retire did not reduce retained projectile population");
-}
-if (
-  retireNoProjectilePair.encoded_rules & PROJECTILE_PROJECTILE_BIT ||
-  engine.sandbox_projectiles_evicted_by_cap() !== 0
-) {
-  throw new Error("projectile-pair policy or projectile cap invalidated the comparison");
-}
+  for (const [name, trial] of [
+    ["physical", physical],
+    ["inelastic", inelastic],
+  ]) {
+    if (trial.peak_body_count < 50) {
+      throw new Error(`dense ${name} workload never reached 50 bodies: ${trial.peak_body_count}`);
+    }
+    if (trial.lifecycle.retired_on_contact !== 0) {
+      throw new Error(`${name} policy retired a projectile on contact`);
+    }
+    if (trial.lifecycle.evicted_by_cap !== 0) {
+      throw new Error(`${name} dense workload reached the projectile cap unexpectedly`);
+    }
+  }
+  if (retire.lifecycle.retired_on_contact <= 0) {
+    throw new Error("impact-retire dense workload did not retire any projectile on contact");
+  }
+  if (retire.final_projectile_count >= physical.final_projectile_count) {
+    throw new Error("impact-retire did not reduce retained projectile population");
+  }
+  if (retire.lifecycle.evicted_by_cap !== 0) {
+    throw new Error("impact-retire dense workload reached the projectile cap unexpectedly");
+  }
+  if ((pairAll.encoded_rules & PROJECTILE_PROJECTILE_BIT) === 0) {
+    throw new Error("all-pairs probe did not enable projectile/projectile collisions");
+  }
+  if ((pairFiltered.encoded_rules & PROJECTILE_PROJECTILE_BIT) !== 0) {
+    throw new Error("filtered probe did not disable projectile/projectile collisions");
+  }
 
-result.comparison = {
-  impact_retire_vs_physical: {
-    final_projectile_delta: retire.final_projectile_count - physical.final_projectile_count,
-    event_sum_delta: retire.event_sum - physical.event_sum,
-    stabilization_pass_delta: retire.work.stabilization_passes - physical.work.stabilization_passes,
-    stabilization_active_body_delta:
-      retire.work.stabilization_active_bodies - physical.work.stabilization_active_bodies,
-    stabilization_exact_contact_delta:
-      retire.work.stabilization_exact_contacts - physical.work.stabilization_exact_contacts,
-  },
-  no_projectile_pair_vs_impact_retire: {
-    event_sum_delta: retireNoProjectilePair.event_sum - retire.event_sum,
-    stabilization_pass_delta:
-      retireNoProjectilePair.work.stabilization_passes - retire.work.stabilization_passes,
-    stabilization_active_body_delta:
-      retireNoProjectilePair.work.stabilization_active_bodies - retire.work.stabilization_active_bodies,
-    stabilization_exact_contact_delta:
-      retireNoProjectilePair.work.stabilization_exact_contacts - retire.work.stabilization_exact_contacts,
-  },
-};
+  result.comparison = {
+    impact_retire_vs_physical_dense: {
+      final_projectile_delta: retire.final_projectile_count - physical.final_projectile_count,
+      event_sum_delta: retire.event_sum - physical.event_sum,
+      stabilization_pass_delta:
+        retire.work.stabilization_passes - physical.work.stabilization_passes,
+      stabilization_active_body_delta:
+        retire.work.stabilization_active_bodies - physical.work.stabilization_active_bodies,
+      stabilization_exact_contact_delta:
+        retire.work.stabilization_exact_contacts - physical.work.stabilization_exact_contacts,
+    },
+    inelastic_vs_physical_dense: {
+      event_sum_delta: inelastic.event_sum - physical.event_sum,
+      stabilization_pass_delta:
+        inelastic.work.stabilization_passes - physical.work.stabilization_passes,
+      stabilization_active_body_delta:
+        inelastic.work.stabilization_active_bodies - physical.work.stabilization_active_bodies,
+      stabilization_exact_contact_delta:
+        inelastic.work.stabilization_exact_contacts - physical.work.stabilization_exact_contacts,
+    },
+    projectile_pair_probe: {
+      event_sum_delta: pairFiltered.event_sum - pairAll.event_sum,
+      retired_on_contact_delta:
+        pairFiltered.lifecycle.retired_on_contact - pairAll.lifecycle.retired_on_contact,
+      stabilization_pass_delta:
+        pairFiltered.work.stabilization_passes - pairAll.work.stabilization_passes,
+      stabilization_active_body_delta:
+        pairFiltered.work.stabilization_active_bodies - pairAll.work.stabilization_active_bodies,
+      stabilization_exact_contact_delta:
+        pairFiltered.work.stabilization_exact_contacts - pairAll.work.stabilization_exact_contacts,
+    },
+  };
+} catch (error) {
+  result.failure = String(error);
+  writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
+  throw error;
+}
 
 writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
