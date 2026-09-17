@@ -1,0 +1,99 @@
+name: Refine pair policy stabilization boundary
+
+on:
+  push:
+    branches:
+      - feature/pair-policy-stabilization-budget
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+      - name: Keep pair budget on ordinary stabilizer only
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count} for {old[:100]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          strict = "src/stabilized_rotating_world.rs"
+          replace_once(
+              strict,
+              "        for pass in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n            let supports = self.direct_gravity_sleep_supports(&candidate)?;",
+              "        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n            let supports = self.direct_gravity_sleep_supports(&candidate)?;",
+          )
+          replace_once(
+              strict,
+              "            for support_id in supports {\n                let pass_limit = self\n                    .interaction_policies\n                    .policy_for_bodies(id, support_id)\n                    .fixed_boundary_stabilization_pass_limit(\n                        MAX_FIXED_POSITION_STABILIZATION_PASSES,\n                    );\n                if pass >= pass_limit {\n                    continue;\n                }\n                let mut support = self",
+              "            for support_id in supports {\n                let mut support = self",
+          )
+          replace_once(
+              strict,
+              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies\n            .set_pair_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies\n            .set_pair_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies.clear_pair_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
+          )
+          replace_once(
+              strict,
+              "        self.interaction_policies\n            .set_directional_policy(source, target, policy)\n    }\n\n    pub fn add_box",
+              "        self.interaction_policies\n            .set_directional_policy(source, target, policy)\n    }\n\n    pub fn clear_directional_interaction_policy(\n        &mut self,\n        source: InteractionCategory3d,\n        target: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies\n            .clear_directional_policy(source, target)\n    }\n\n    pub fn add_box",
+          )
+
+          relaxed = "src/relaxed_rotating_world.rs"
+          replace_once(
+              relaxed,
+              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active.clear_pair_interaction_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
+          )
+          replace_once(
+              relaxed,
+              "        self.active\n            .set_directional_interaction_policy(source, target, policy)\n    }\n\n    pub fn add_box",
+              "        self.active\n            .set_directional_interaction_policy(source, target, policy)\n    }\n\n    pub fn clear_directional_interaction_policy(\n        &mut self,\n        source: InteractionCategory3d,\n        target: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .clear_directional_interaction_policy(source, target)\n    }\n\n    pub fn add_box",
+          )
+          replace_once(
+              relaxed,
+              "        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,\n        RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,\n",
+              "        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, Orientation3d,\n        RigidBody, RigidBox3d, RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,\n",
+          )
+          marker = "    #[test]\n    fn fully_parked_world_skips_all_solver_work_and_keeps_exact_pose() {"
+          test = '''    #[test]\n    fn removing_body_clears_its_interaction_category_before_id_reuse() {\n        let id = BodyId(1);\n        let category = InteractionCategory3d::new(9);\n        let mut world = world();\n        world\n            .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))\n            .expect("add categorized body");\n        world\n            .set_body_interaction_category(id, category)\n            .expect("categorize body");\n        assert_eq!(world.body_interaction_category(id), category);\n\n        world.remove_box(id).expect("remove categorized body");\n        world\n            .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))\n            .expect("reuse body id");\n\n        assert_eq!(\n            world.body_interaction_category(id),\n            InteractionCategory3d::DEFAULT\n        );\n    }\n\n'''
+          replace_once(relaxed, marker, test + marker)
+
+          ecs = "src/ecs_world.rs"
+          replace_once(
+              ecs,
+              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics.clear_pair_interaction_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
+          )
+          replace_once(
+              ecs,
+              "        self.physics\n            .set_directional_interaction_policy(source, target, policy)\n    }\n\n    /// Switches between the existing runtime preparation path",
+              "        self.physics\n            .set_directional_interaction_policy(source, target, policy)\n    }\n\n    pub fn clear_directional_interaction_policy(\n        &mut self,\n        source: InteractionCategory3d,\n        target: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .clear_directional_interaction_policy(source, target)\n    }\n\n    /// Switches between the existing runtime preparation path",
+          )
+          PY
+      - name: Format and test
+        shell: bash
+        run: |
+          cargo fmt --all
+          cargo test --locked
+      - name: Commit refinement
+        shell: bash
+        run: |
+          git rm .github/workflows/refine-pair-policy-stabilization.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Keep sleep settlement exact and complete policy controls"
+          git push origin HEAD:feature/pair-policy-stabilization-budget
