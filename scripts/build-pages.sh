@@ -96,7 +96,7 @@ node --input-type=module --check < site/app.js
 node --input-type=module --check < site/webgpu-renderer.js
 node --input-type=module --check < site/webgl-renderer.js
 node --input-type=module --check < site/physics-error.js
-node --icheck site/bootstrap.mjs
+node --check site/bootstrap.mjs
 node --check site/physics-settings.mjs
 node --check site/physics-error.mjs
 node --check site/interaction-controls.mjs
@@ -169,4 +169,4 @@ test -s pages-dist/physics_engine_demo.wasm
 test -s pages-dist/vendor/settings/settings-browser.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm
-test -s pages-dist/vendor/settings/SOURCE_SHAA
+test -s pages-dist/vendor/settings/SOURCE_SHA
