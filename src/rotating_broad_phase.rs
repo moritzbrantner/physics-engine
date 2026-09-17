@@ -5,8 +5,9 @@ use std::{
 };
 
 use crate::{
-    BodyId, BodyKind, CollisionLayers3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotationalSweepBounds3d, rigid_box_free_flight_sweep_bounds,
+    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
+    rigid_box_free_flight_sweep_bounds,
 };
 
 #[path = "rotating_broad_phase_tree.rs"]
@@ -166,8 +167,10 @@ impl RotatingBroadPhase3d {
 
     /// Updates current-position bounds only for the supplied bodies and returns only candidate
     /// pairs touching one of those bodies. The full broad phase must already be synchronized to the
-    /// same current world state; this is the precise API for contact-island propagation after a local
-    /// solver response, where unchanged bodies cannot create a new current overlap by themselves.
+    /// same current world state; this is the precise API for persistent contact-island propagation
+    /// after a local solver response, where unchanged bodies cannot create a new current overlap by
+    /// themselves. Transient changed bodies still participate in swept collision discovery, but their
+    /// already-resolved impact pairs are deliberately omitted from this resting-contact query.
     pub(crate) fn candidate_pairs_for_changed_current_bodies<'a>(
         &mut self,
         changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
@@ -176,12 +179,16 @@ impl RotatingBroadPhase3d {
         self.stats.partial_queries = self.stats.partial_queries.saturating_add(1);
         let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
         let mut changed_ids = BTreeSet::new();
+        let mut transient_changed_ids = BTreeSet::new();
         let mut escaped = Vec::new();
 
         for rigid_box in changed_boxes {
             let body = bounded_body(rigid_box, current)?;
             if !changed_ids.insert(body.id) {
                 return Err(RotatingBroadPhaseError3d::DuplicateBodyId(body.id));
+            }
+            if rigid_box.contact_persistence() == ContactPersistence3d::Transient {
+                transient_changed_ids.insert(body.id);
             }
             let Some(previous) = self.exact.get(&body.id) else {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
@@ -244,7 +251,9 @@ impl RotatingBroadPhase3d {
                     let right_body = exact
                         .get(&right)
                         .expect("incremental broad phase keeps every leaf exact bound");
-                    if bounds_overlap(left_body.bounds, right_body.bounds)
+                    if !transient_changed_ids.contains(&left)
+                        && !transient_changed_ids.contains(&right)
+                        && bounds_overlap(left_body.bounds, right_body.bounds)
                         && left_body
                             .collision_layers
                             .collides_with(right_body.collision_layers)
@@ -1002,5 +1011,39 @@ mod necessary_work_tests {
         assert_eq!(partial_pairs, expected);
         assert_eq!(partial.stats().partial_queries, 1);
         assert_eq!(partial.stats().partial_body_updates, 1);
+    }
+
+    #[test]
+    fn transient_changed_body_is_not_reintroduced_as_a_resting_contact() {
+        let boxes = vec![
+            box3d(RigidBody::dynamic(
+                BodyId(1),
+                Vec3i::ZERO,
+                Vec3i::new(10, 0, 0),
+                Vec3i::new(5, 5, 5),
+            ))
+            .with_transient_contacts(),
+            box3d(RigidBody::fixed(
+                BodyId(2),
+                Vec3i::new(9, 0, 0),
+                Vec3i::new(5, 5, 5),
+            )),
+        ];
+        let current = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        assert_eq!(
+            broad_phase
+                .candidate_pairs(&boxes, current)
+                .expect("ordinary current query still discovers the impact pair")
+                .len(),
+            1
+        );
+        assert!(
+            broad_phase
+                .candidate_pairs_for_changed_current_bodies([&boxes[0]])
+                .expect("stabilization query")
+                .is_empty(),
+            "transient impact must not become a persistent stabilization constraint"
+        );
     }
 }
