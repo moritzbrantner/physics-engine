@@ -254,7 +254,8 @@ impl Sandbox {
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
                         .with_material(Material::new(impact_policy.restitution_milli())),
                 )
-                .with_collision_layers(controller::scenario_rules::projectile_layers()),
+                .with_collision_layers(controller::scenario_rules::projectile_layers())
+                .with_transient_contacts(),
             )
             .is_err()
         {
@@ -703,7 +704,8 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 #[cfg(test)]
 mod tests {
     use physics_engine::{
-        BodyId, RepeatedRotatingEventError3d, RigidBody, RotatingWorldError3d, Vec3i,
+        BodyId, ContactPersistence3d, RepeatedRotatingEventError3d, RigidBody,
+        RotatingWorldError3d, Vec3i,
     };
 
     use super::{PLAYER_ID, Sandbox, rotating_box, world_error_detail};
@@ -898,6 +900,14 @@ mod tests {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
+        assert_eq!(
+            sandbox
+                .world
+                .box_by_id(BodyId(projectile as u64))
+                .expect("spawned projectile")
+                .contact_persistence(),
+            ContactPersistence3d::Transient
+        );
 
         for _ in 0..7 {
             assert_eq!(sandbox.step(0, 0, false), 0);

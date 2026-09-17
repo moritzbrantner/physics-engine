@@ -38,7 +38,11 @@ mod rigid_box_free_flight;
 mod rotating_broad_phase;
 mod rotating_contact_frontier;
 mod rotating_contact_response;
+#[path = "rotating_contact_search_ordered.rs"]
 mod rotating_contact_search;
+#[allow(dead_code)]
+#[path = "rotating_contact_search.rs"]
+mod rotating_contact_search_reference;
 #[path = "rotating_recontact_search_ordered.rs"]
 mod rotating_recontact_search;
 #[cfg(test)]
@@ -83,7 +87,9 @@ pub use repeated_rotating_events::{
     RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d, RotatingResolvedEvent3d,
     advance_repeated_rotating_events,
 };
-pub use rigid_box::{CollisionLayers3d, ContactMode3d, RigidBox3d, RigidBoxError3d};
+pub use rigid_box::{
+    CollisionLayers3d, ContactMode3d, ContactPersistence3d, RigidBox3d, RigidBoxError3d,
+};
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, sample_rigid_box_free_flight,
 };

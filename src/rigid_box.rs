@@ -58,6 +58,20 @@ pub enum ContactMode3d {
     LinearPush { support_direction: Vec3i },
 }
 
+/// Controls whether a resolved collision is retained as a resting/contact constraint after its impact.
+///
+/// This is intentionally independent from [`ContactMode3d`]. A transient body still uses the normal
+/// physical response path—including restitution, linear impulse, angular impulse, and penetration
+/// projection—but contacts involving it are not fed into persistent-contact stabilization. This is useful
+/// for ballistic/projectile bodies that should deliver discrete impacts without becoming part of a resting
+/// manifold. Collision discovery and later re-contact remain enabled.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactPersistence3d {
+    #[default]
+    Persistent,
+    Transient,
+}
+
 /// Engine-native rotating cuboid state.
 ///
 /// `RigidBody` remains the canonical translational/material state. This wrapper adds rotational state
@@ -68,6 +82,7 @@ pub struct RigidBox3d {
     pub(crate) angular: AngularState3d,
     pub(crate) rotation_locked: bool,
     pub(crate) contact_mode: ContactMode3d,
+    pub(crate) contact_persistence: ContactPersistence3d,
     pub(crate) collision_layers: CollisionLayers3d,
 }
 
@@ -137,6 +152,7 @@ impl RigidBox3d {
             angular,
             rotation_locked: false,
             contact_mode: ContactMode3d::Physical,
+            contact_persistence: ContactPersistence3d::Persistent,
             collision_layers: CollisionLayers3d::default(),
         })
     }
@@ -161,6 +177,16 @@ impl RigidBox3d {
         self.with_rotation_locked()
     }
 
+    /// Marks this body as an impact-only participant in persistent-contact stabilization.
+    ///
+    /// Collision discovery and ordinary physical impulse response are unchanged. Only the post-impact
+    /// resting/contact graph excludes pairs involving this body.
+    #[must_use]
+    pub const fn with_transient_contacts(mut self) -> Self {
+        self.contact_persistence = ContactPersistence3d::Transient;
+        self
+    }
+
     /// Assigns collision-layer membership and the symmetric interaction mask used by collision discovery.
     #[must_use]
     pub const fn with_collision_layers(mut self, collision_layers: CollisionLayers3d) -> Self {
@@ -171,6 +197,11 @@ impl RigidBox3d {
     #[must_use]
     pub const fn contact_mode(&self) -> ContactMode3d {
         self.contact_mode
+    }
+
+    #[must_use]
+    pub const fn contact_persistence(&self) -> ContactPersistence3d {
+        self.contact_persistence
     }
 
     #[must_use]
@@ -212,7 +243,7 @@ impl RigidBox3d {
 mod tests {
     use crate::{AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, Vec3i};
 
-    use super::{CollisionLayers3d, RigidBox3d, RigidBoxError3d};
+    use super::{CollisionLayers3d, ContactPersistence3d, RigidBox3d, RigidBoxError3d};
 
     #[test]
     fn constructor_preserves_engine_body_identity_and_geometry() {
@@ -233,6 +264,31 @@ mod tests {
         assert_eq!(rigid_box.oriented_box().half_extents, body.half_extents());
         assert!(!rigid_box.rotation_locked());
         assert_eq!(rigid_box.collision_layers(), CollisionLayers3d::ALL);
+        assert_eq!(
+            rigid_box.contact_persistence(),
+            ContactPersistence3d::Persistent
+        );
+    }
+
+    #[test]
+    fn transient_contacts_are_an_explicit_independent_policy() {
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(8),
+                Vec3i::ZERO,
+                Vec3i::new(20, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid rotating box")
+        .with_transient_contacts();
+
+        assert_eq!(
+            rigid_box.contact_persistence(),
+            ContactPersistence3d::Transient
+        );
+        assert_eq!(rigid_box.contact_mode(), super::ContactMode3d::Physical);
     }
 
     #[test]
