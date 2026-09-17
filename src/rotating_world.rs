@@ -218,10 +218,12 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// center-plus-rotational motion before the next OBB stabilization pass, so a time-zero contact cannot
 /// be free-flown completely through before the next constraint solve. Tail slicing scales the canonical
 /// exact ratio directly, so repeated-event precision is preserved without forcing the tail back into a
-/// narrower integer pair. If an impulse makes the selected resolution too coarse, the exact tail is
-/// replayed from its starting state with a finer deterministic resolution. Replay rollback journals only
-/// bodies actually changed by the discarded attempt instead of cloning the complete world at every retry;
-/// exceeding the hard bound still fails closed.
+/// narrower integer pair. Each tail slice advances the same authoritative working buffer in place: fixed
+/// bodies are not sampled because free flight cannot change them, while dynamic bodies are written back
+/// only when their sampled state differs. If an impulse makes the selected resolution too coarse, the
+/// exact tail is replayed from its starting state with a finer deterministic resolution. Replay rollback
+/// journals only bodies actually changed by the discarded attempt instead of cloning the complete world
+/// at every retry; exceeding the hard bound still fails closed.
 ///
 /// The world retains independent fat-AABB broad-phase trees for sampled sweeps and persistent-tail
 /// current-overlap queries. Exact conservative bounds remain candidate truth in both paths; retained tree
@@ -463,10 +465,11 @@ fn consume_tail(
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
     let mut stats = TailStepStats3d::default();
-    let initial_contacts = contact_frontier(&boxes, broad_phase, &mut stats)?;
+    let mut current = boxes;
+    let initial_contacts = contact_frontier(&current, broad_phase, &mut stats)?;
     if initial_contacts.is_empty() {
-        let (boxes, contacts) = free_flight_and_stabilize(
-            &boxes,
+        let contacts = free_flight_and_stabilize_in_place(
+            &mut current,
             remaining,
             solver_passes,
             broad_phase,
@@ -474,11 +477,10 @@ fn consume_tail(
             None,
         )?;
         stats.contacts = contacts;
-        return Ok((boxes, stats));
+        return Ok((current, stats));
     }
 
-    let mut slice_count = persistent_tail_slice_count(&boxes, remaining, &initial_contacts)?;
-    let mut current = boxes;
+    let mut slice_count = persistent_tail_slice_count(&current, remaining, &initial_contacts)?;
     let mut journal = TailMutationJournal3d::new(current.len());
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
@@ -492,15 +494,14 @@ fn consume_tail(
                 unsafe_body = Some(id);
                 break;
             }
-            let (next, contacts) = free_flight_and_stabilize(
-                &current,
+            let contacts = free_flight_and_stabilize_in_place(
+                &mut current,
                 slice_config,
                 solver_passes,
                 broad_phase,
                 &mut stats,
                 Some(&mut journal),
             )?;
-            current = next;
             contact_count = contact_count.saturating_add(contacts);
         }
 
@@ -523,29 +524,43 @@ fn consume_tail(
     }
 }
 
-fn free_flight_and_stabilize(
-    boxes: &[RigidBox3d],
+fn advance_tail_free_flight_in_place(
+    boxes: &mut [RigidBox3d],
+    config: RigidBoxFreeFlightConfig3d,
+    mut journal: Option<&mut TailMutationJournal3d>,
+) -> Result<usize, RotatingWorldError3d> {
+    let mut changed = 0_usize;
+    for (world_index, rigid_box) in boxes.iter_mut().enumerate() {
+        if rigid_box.body().kind() == BodyKind::Fixed {
+            continue;
+        }
+        let next = sample_rigid_box_free_flight(rigid_box, config, 1, 1)?;
+        if next == *rigid_box {
+            continue;
+        }
+        if let Some(journal) = journal.as_deref_mut() {
+            journal.record(world_index, rigid_box);
+        }
+        *rigid_box = next;
+        changed = changed.saturating_add(1);
+    }
+    Ok(changed)
+}
+
+fn free_flight_and_stabilize_in_place(
+    boxes: &mut [RigidBox3d],
     config: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     stats: &mut TailStepStats3d,
     mut journal: Option<&mut TailMutationJournal3d>,
-) -> Result<(Vec<RigidBox3d>, usize), RotatingWorldError3d> {
-    let mut sampled = Vec::with_capacity(boxes.len());
-    for (world_index, rigid_box) in boxes.iter().enumerate() {
-        let next = sample_rigid_box_free_flight(rigid_box, config, 1, 1)?;
-        if next != *rigid_box
-            && let Some(journal) = journal.as_deref_mut()
-        {
-            journal.record(world_index, rigid_box);
-        }
-        sampled.push(next);
-    }
+) -> Result<usize, RotatingWorldError3d> {
+    advance_tail_free_flight_in_place(boxes, config, journal.as_deref_mut())?;
 
-    let contacts = contact_frontier(&sampled, broad_phase, stats)?;
+    let contacts = contact_frontier(boxes, broad_phase, stats)?;
     let contact_count = contacts.len();
     if contacts.is_empty() {
-        return Ok((sampled, 0));
+        return Ok(0);
     }
 
     if let Some(journal) = journal {
@@ -568,8 +583,8 @@ fn free_flight_and_stabilize(
         contacts,
         remaining_numerator: 0,
     };
-    resolve_rotating_contact_frontier(&mut sampled, &frontier, solver_passes)?;
-    Ok((sampled, contact_count))
+    resolve_rotating_contact_frontier(boxes, &frontier, solver_passes)?;
+    Ok(contact_count)
 }
 
 fn persistent_tail_slice_count(
@@ -771,12 +786,13 @@ mod tests {
     use crate::{
         ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d,
         OrientedBox3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, Vec3i,
+        sample_rigid_box_free_flight,
     };
 
     use super::{
         RotatingBroadPhase3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
-        TailMutationJournal3d, TailStepStats3d, contact_frontier, tail_motion_within_extent,
-        tail_slice_config,
+        TailMutationJournal3d, TailStepStats3d, advance_tail_free_flight_in_place, contact_frontier,
+        tail_motion_within_extent, tail_slice_config,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
@@ -803,6 +819,39 @@ mod tests {
             solver_passes: 8,
             max_events: 16,
         })
+    }
+
+    #[test]
+    fn tail_free_flight_in_place_matches_materialized_sampling() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -3, 0), 1, 4);
+        let baseline = vec![
+            dynamic(
+                1,
+                Vec3i::new(0, 10, 0),
+                Vec3i::new(8, -2, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            fixed(2, Vec3i::new(20, 0, 0), Vec3i::new(2, 2, 2)),
+            dynamic(
+                3,
+                Vec3i::new(-10, 5, 0),
+                Vec3i::new(-4, 0, 0),
+                Vec3i::new(1, 2, 1),
+            ),
+        ];
+        let expected = baseline
+            .iter()
+            .map(|rigid_box| sample_rigid_box_free_flight(rigid_box, config, 1, 1))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("materialized free flight");
+        let mut actual = baseline.clone();
+
+        let changed = advance_tail_free_flight_in_place(&mut actual, config, None)
+            .expect("in-place free flight");
+
+        assert_eq!(actual, expected);
+        assert_eq!(changed, 2);
+        assert_eq!(actual[1], baseline[1], "fixed body must remain untouched");
     }
 
     #[test]
@@ -833,6 +882,66 @@ mod tests {
         assert_eq!(current, baseline);
         assert!(journal.originals.is_empty());
         assert!(journal.recorded.iter().all(|recorded| !recorded));
+    }
+
+    #[test]
+    #[ignore = "release performance evidence"]
+    fn tail_in_place_sparse_free_flight_benchmark() {
+        const BODY_COUNT: usize = 4_096;
+        const DYNAMIC_COUNT: usize = 8;
+        const SLICES: usize = 256;
+
+        let baseline = (0..BODY_COUNT)
+            .map(|index| {
+                if index < DYNAMIC_COUNT {
+                    dynamic(
+                        index as u64 + 1,
+                        Vec3i::new(index as i32 * 8, 100, 0),
+                        Vec3i::new(1, 0, 0),
+                        Vec3i::new(1, 1, 1),
+                    )
+                } else {
+                    fixed(
+                        index as u64 + 1,
+                        Vec3i::new(index as i32 * 8, 0, 0),
+                        Vec3i::new(1, 1, 1),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+
+        let mut materialized = baseline.clone();
+        let materialized_started = Instant::now();
+        for _ in 0..SLICES {
+            materialized = materialized
+                .iter()
+                .map(|rigid_box| sample_rigid_box_free_flight(rigid_box, config, 1, 1))
+                .collect::<Result<Vec<_>, _>>()
+                .expect("materialized tail free flight");
+            black_box(&materialized);
+        }
+        let materialized_elapsed = materialized_started.elapsed();
+
+        let mut in_place = baseline;
+        let in_place_started = Instant::now();
+        let mut changed = 0_usize;
+        for _ in 0..SLICES {
+            changed = changed.saturating_add(
+                advance_tail_free_flight_in_place(&mut in_place, config, None)
+                    .expect("in-place tail free flight"),
+            );
+            black_box(&in_place);
+        }
+        let in_place_elapsed = in_place_started.elapsed();
+
+        assert_eq!(materialized, in_place);
+        assert_eq!(changed, DYNAMIC_COUNT * SLICES);
+        let speedup = materialized_elapsed.as_secs_f64() / in_place_elapsed.as_secs_f64();
+        println!(
+            "persistent tail sparse free flight {BODY_COUNT}-body world × {SLICES}: materialized={materialized_elapsed:?}, in_place={in_place_elapsed:?}, speedup={speedup:.2}x, fixed_sample_reduction={}x, world_vec_materializations={SLICES}->0",
+            BODY_COUNT / DYNAMIC_COUNT,
+        );
     }
 
     #[test]
