@@ -284,7 +284,10 @@ mod tests {
         .expect("valid rotating box")
         .with_transient_contacts();
 
-        assert_eq!(rigid_box.contact_persistence(), ContactPersistence3d::Transient);
+        assert_eq!(
+            rigid_box.contact_persistence(),
+            ContactPersistence3d::Transient
+        );
         assert_eq!(rigid_box.contact_mode(), super::ContactMode3d::Physical);
     }
 
