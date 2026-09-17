@@ -33,5 +33,17 @@ jobs:
       - name: Test character landing replay
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
 
-      - name: Build Pages artifact
-        run: bash scripts/build-pages.sh
+  build-pages:
+    name: Build or reuse validated Pages artifact
+    needs: validate
+    permissions:
+      actions: read
+      contents: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@544af51c921b09b4452b7346347ec9effa58f179
+    with:
+      source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      artifact_key: physics-engine-pages-v1
+      build_command: bash scripts/build-pages.sh
+      artifact_paths: pages-dist
+      reuse_across_runs: true
+      artifact_retention_days: 7
