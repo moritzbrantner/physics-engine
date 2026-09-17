@@ -35,7 +35,6 @@ jobs:
 
   build-pages:
     name: Build or reuse validated Pages artifact
-    needs: validate
     permissions:
       actions: read
       contents: read
