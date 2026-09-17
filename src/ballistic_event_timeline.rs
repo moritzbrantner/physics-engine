@@ -455,7 +455,10 @@ fn earliest_ballistic_frontier(
         return Ok(None);
     };
     candidates.sort_by_key(|candidate| (candidate.projectile, candidate.hit.body));
-    Ok(Some(BallisticFrontier3d { time, hits: candidates }))
+    Ok(Some(BallisticFrontier3d {
+        time,
+        hits: candidates,
+    }))
 }
 
 fn projected_targets(
@@ -525,7 +528,9 @@ fn resolve_ballistic_frontier(
         let world_index = boxes
             .iter()
             .position(|rigid_box| rigid_box.body().id() == candidate.hit.body)
-            .ok_or(BallisticEventTimelineError3d::MissingTarget(candidate.hit.body))?;
+            .ok_or(BallisticEventTimelineError3d::MissingTarget(
+                candidate.hit.body,
+            ))?;
         let mut target = boxes[world_index].clone();
         if let Some(update) = updates
             .iter()
@@ -538,12 +543,12 @@ fn resolve_ballistic_frontier(
 
     let mut impacts = Vec::with_capacity(frontier.hits.len());
     for candidate in &frontier.hits {
-        let projectile = *projectile_by_id
-            .get(&candidate.projectile)
-            .ok_or(BallisticEventTimelineError3d::DuplicateBody(candidate.projectile))?;
-        let target = target_states
-            .get_mut(&candidate.hit.body)
-            .ok_or(BallisticEventTimelineError3d::MissingTarget(candidate.hit.body))?;
+        let projectile = *projectile_by_id.get(&candidate.projectile).ok_or(
+            BallisticEventTimelineError3d::DuplicateBody(candidate.projectile),
+        )?;
+        let target = target_states.get_mut(&candidate.hit.body).ok_or(
+            BallisticEventTimelineError3d::MissingTarget(candidate.hit.body),
+        )?;
         let normal_impulse = apply_ballistic_target_impulse(projectile, target, candidate.hit)?;
         impacts.push(BallisticResolvedImpact3d {
             projectile: candidate.projectile,
