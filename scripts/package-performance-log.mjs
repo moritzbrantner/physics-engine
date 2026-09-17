@@ -1,10 +1,19 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { basename, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { buildCanonicalPerformanceEvidence } from "./adapt-performance-evidence.mjs";
 
 const GENERATED_FILES = new Set(["README.md", "manifest.json", "provenance.json", "SHA256SUMS"]);
+const CONTRACT = {
+  repository: "https://github.com/moritzbrantner/performance-evidence",
+  revision: "294c136eccb78c0614a42f844b02ea306f0c8f2b",
+  schema_version: "1.0.0",
+};
+const SCRIPT_ROOT = dirname(fileURLToPath(import.meta.url));
+const SANDBOX_PROFILE = join(SCRIPT_ROOT, "..", ".performance", "sandbox-evidence-profile.json");
 
 async function filesBelow(root, directory = root) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -30,13 +39,25 @@ async function readJsonIfPossible(path) {
 }
 
 function evidenceKind(path, parsed) {
+  if (parsed?.schema_version === "1.0.0" && parsed?.measurements) return "canonical performance evidence";
   if (parsed?.kind === "physics-engine-browser-session") return "interactive session";
   if (parsed?.kind === "physics-engine-cpu-profile-summary") return "CPU profile summary";
+  if (path.startsWith("profiles/") && path.endsWith(".json")) return "measurement profile";
   if (parsed?.workload) return `deterministic workload: ${parsed.workload}`;
   if (path.endsWith(".wasm")) return "measured WASM artifact";
   if (path.endsWith(".cpuprofile")) return "CPU profile";
   if (path.endsWith(".log")) return "raw command log";
   return "supporting evidence";
+}
+
+function detectSourceDirty() {
+  if (process.env.SOURCE_DIRTY === "true") return true;
+  if (process.env.SOURCE_DIRTY === "false") return false;
+  try {
+    return execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim().length > 0;
+  } catch {
+    return true;
+  }
 }
 
 export async function buildPerformanceLogBundle({ evidenceDirectory, archivePath, sessionPaths = [] }) {
@@ -46,11 +67,18 @@ export async function buildPerformanceLogBundle({ evidenceDirectory, archivePath
 
   for (const source of sessionPaths) {
     const parsed = await readJsonIfPossible(source);
-    if (parsed?.schema_version !== 1 || parsed?.kind !== "physics-engine-browser-session") {
-      throw new Error(`${source} is not a physics-engine browser performance session`);
+    if (parsed?.schema_version !== 2 || parsed?.kind !== "physics-engine-browser-session") {
+      throw new Error(`${source} is not a current physics-engine browser performance session`);
     }
     await cp(source, join(root, "sessions", basename(source)));
   }
+
+  await mkdir(join(root, "profiles"), { recursive: true });
+  await cp(SANDBOX_PROFILE, join(root, "profiles", "physics-engine-sandbox-v1.json"));
+  const canonicalPaths = await buildCanonicalPerformanceEvidence({
+    evidenceDirectory: root,
+    sourceDirty: detectSourceDirty(),
+  });
 
   for (const generated of GENERATED_FILES) {
     try {
@@ -79,25 +107,29 @@ export async function buildPerformanceLogBundle({ evidenceDirectory, archivePath
   }
 
   const provenance = {
-    schema_version: 1,
+    schema_version: 2,
     kind: "physics-engine-performance-log-provenance",
     generated_at: new Date().toISOString(),
     head_revision: process.env.HEAD_SHA ?? null,
     base_revision: process.env.BASE_SHA ?? null,
     workflow_run_id: process.env.GITHUB_RUN_ID ?? null,
     workflow_run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+    performance_evidence_contract: CONTRACT,
     limitations: [
       "Wall-clock timings are advisory and must not be used as brittle CI pass/fail thresholds.",
       "Node/V8 WASM timings isolate physics calls; they are not browser FPS or GPU measurements.",
       "Interactive sessions include browser scheduling, rendering, device, and user-input variability.",
-      "Compare unchanged workload versions and inspect replay hashes before attributing a timing difference to code.",
+      "Compare identical workload hashes and inspect replay fingerprints before attributing a timing difference to code.",
     ],
   };
   await writeFile(join(root, "provenance.json"), `${JSON.stringify(provenance, null, 2)}\n`);
 
   const manifest = {
-    schema_version: 1,
+    schema_version: 2,
     kind: "physics-engine-performance-log-manifest",
+    performance_evidence_contract: CONTRACT,
+    measurement_profiles: ["profiles/physics-engine-sandbox-v1.json"],
+    canonical_evidence: canonicalPaths,
     files: entries,
     detected_failures: failures,
   };
@@ -105,18 +137,23 @@ export async function buildPerformanceLogBundle({ evidenceDirectory, archivePath
   const rows = entries.map(
     (entry) => `| \`${entry.path}\` | ${entry.kind} | ${entry.bytes} | \`${entry.sha256.slice(0, 12)}…\` |`,
   );
-  const summary = `# Physics-engine performance log\n\n` +
-    `This bundle is designed to be attached to a follow-up conversation for performance analysis. ` +
-    `Start with \`manifest.json\` and \`provenance.json\`, then inspect raw arrays and profiles before drawing conclusions.\n\n` +
+  const summary = `# Physics-engine performance evidence bundle\n\n` +
+    `The primary records are the canonical Performance Evidence documents under \`canonical/\`. ` +
+    `They classify useful work, induced work, and outcomes while preserving exact workload, source, environment, artifact, and baseline provenance. ` +
+    `Raw benchmark logs, browser sessions, WASM binaries, and CPU profiles remain attached as hashed supporting evidence.\n\n` +
+    `## Contract\n\n- Performance Evidence: \`${CONTRACT.revision}\`\n` +
+    `- Schema: \`${CONTRACT.schema_version}\`\n` +
+    `- Canonical documents: ${canonicalPaths.length}\n` +
+    `- Measurement profile: \`profiles/physics-engine-sandbox-v1.json\`\n\n` +
     `## Revisions\n\n- Head: \`${provenance.head_revision ?? "not recorded"}\`\n` +
     `- Base: \`${provenance.base_revision ?? "not recorded"}\`\n` +
     `- Detected workload failures: ${failures.length}\n\n` +
     `## Evidence\n\n| File | Purpose | Bytes | SHA-256 |\n| --- | --- | ---: | --- |\n` +
     `${rows.join("\n")}\n\n` +
     `## Analysis guidance\n\n` +
-    `Treat deterministic workload inputs and replay hashes as correctness boundaries. Compare timing distributions ` +
-    `only across equivalent workload versions and similar environments. Browser sessions are useful for finding ` +
-    `frame spikes and correlations, but they do not replace the deterministic benchmark evidence.\n`;
+    `Start with canonical evidence and compare identical workload hashes. Use induced-work counters to explain changes before ` +
+    `treating wall-clock movement as causal. Replay fingerprints remain correctness evidence. Inspect the referenced raw artifacts ` +
+    `when a counter or timing distribution needs deeper diagnosis; browser sessions are diagnostic and do not replace deterministic workloads.\n`;
   await writeFile(join(root, "README.md"), summary);
 
   const hashableFiles = (await filesBelow(root)).filter(
