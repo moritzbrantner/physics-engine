@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "id": "physics-engine/sandbox-v1",
+  "description": "Canonical measurement profile for deterministic physics-engine sandbox performance evidence.",
+  "scenario_id": "physics-engine/sandbox-projectiles-v4",
+  "producer_adapters": [
+    "scripts/adapt-performance-evidence.mjs:sandbox"
+  ],
+  "measurements": [
+    {
+      "name": "physics.simulation_steps",
+      "group": "useful_work",
+      "unit": "step",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.steps.count"
+    },
+    {
+      "name": "physics.collision_events",
+      "group": "useful_work",
+      "unit": "event",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.event_sum"
+    },
+    {
+      "name": "physics.sampled_events",
+      "group": "induced_work",
+      "unit": "event",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.sampled_events"
+    },
+    {
+      "name": "physics.tail_contacts",
+      "group": "induced_work",
+      "unit": "contact",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_contacts"
+    },
+    {
+      "name": "physics.tail_slices",
+      "group": "induced_work",
+      "unit": "slice",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_slices"
+    },
+    {
+      "name": "physics.tail_replays",
+      "group": "induced_work",
+      "unit": "replay",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_replays"
+    },
+    {
+      "name": "physics.tail_candidate_pairs",
+      "group": "induced_work",
+      "unit": "pair",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_candidate_pairs"
+    },
+    {
+      "name": "physics.tail_broad_phase_queries",
+      "group": "induced_work",
+      "unit": "query",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_broad_phase_queries"
+    },
+    {
+      "name": "physics.tail_broad_phase_rebuilds",
+      "group": "induced_work",
+      "unit": "rebuild",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_broad_phase_rebuilds"
+    },
+    {
+      "name": "physics.tail_broad_phase_reuses",
+      "group": "induced_work",
+      "unit": "reuse",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.tail_broad_phase_reuses"
+    },
+    {
+      "name": "physics.broad_phase_queries",
+      "group": "induced_work",
+      "unit": "query",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_queries"
+    },
+    {
+      "name": "physics.broad_phase_rebuilds",
+      "group": "induced_work",
+      "unit": "rebuild",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_rebuilds"
+    },
+    {
+      "name": "physics.broad_phase_reuses",
+      "group": "induced_work",
+      "unit": "reuse",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_reuses"
+    },
+    {
+      "name": "physics.broad_phase_incremental_updates",
+      "group": "induced_work",
+      "unit": "update",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_incremental_updates"
+    },
+    {
+      "name": "physics.broad_phase_reinserts",
+      "group": "induced_work",
+      "unit": "reinsert",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_reinserts"
+    },
+    {
+      "name": "physics.broad_phase_rotations",
+      "group": "induced_work",
+      "unit": "rotation",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_rotations"
+    },
+    {
+      "name": "physics.broad_phase_partial_queries",
+      "group": "induced_work",
+      "unit": "query",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_partial_queries"
+    },
+    {
+      "name": "physics.broad_phase_partial_body_updates",
+      "group": "induced_work",
+      "unit": "body",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.broad_phase_partial_body_updates"
+    },
+    {
+      "name": "physics.event_response_passes",
+      "group": "induced_work",
+      "unit": "pass",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.event_response_passes"
+    },
+    {
+      "name": "physics.stabilization_passes",
+      "group": "induced_work",
+      "unit": "pass",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.stabilization_passes"
+    },
+    {
+      "name": "physics.stabilizations_hitting_limit",
+      "group": "induced_work",
+      "unit": "occurrence",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.stabilizations_hitting_limit"
+    },
+    {
+      "name": "physics.stabilization_candidate_pairs",
+      "group": "induced_work",
+      "unit": "pair",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.stabilization_candidate_pairs"
+    },
+    {
+      "name": "physics.stabilization_exact_contacts",
+      "group": "induced_work",
+      "unit": "contact",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.stabilization_exact_contacts"
+    },
+    {
+      "name": "physics.stabilization_active_bodies",
+      "group": "induced_work",
+      "unit": "body",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.stabilization_active_bodies"
+    },
+    {
+      "name": "physics.step.mean_ms",
+      "group": "outcomes",
+      "unit": "ms",
+      "measurement_type": "duration",
+      "source": "sandbox.json trial.steps.mean_ms"
+    },
+    {
+      "name": "physics.step.p50_ms",
+      "group": "outcomes",
+      "unit": "ms",
+      "measurement_type": "duration",
+      "source": "sandbox.json trial.steps.p50_ms"
+    },
+    {
+      "name": "physics.step.p95_ms",
+      "group": "outcomes",
+      "unit": "ms",
+      "measurement_type": "duration",
+      "source": "sandbox.json trial.steps.p95_ms"
+    },
+    {
+      "name": "physics.step.max_ms",
+      "group": "outcomes",
+      "unit": "ms",
+      "measurement_type": "duration",
+      "source": "sandbox.json trial.steps.max_ms"
+    },
+    {
+      "name": "physics.body_count",
+      "group": "outcomes",
+      "unit": "body",
+      "measurement_type": "gauge",
+      "source": "sandbox.json trial.body_count"
+    }
+  ],
+  "metadata_extension": {
+    "namespace": "physics-engine.replay",
+    "fields": [
+      "side",
+      "case",
+      "trial",
+      "replay_sha256",
+      "workload_note"
+    ],
+    "excluded_fields": [
+      "raw.steps_ms",
+      "raw.events",
+      "raw.work"
+    ]
+  },
+  "provenance": {
+    "owner": "physics-engine",
+    "canonical_contract": "performance-evidence@294c136eccb78c0614a42f844b02ea306f0c8f2b",
+    "blocking_policy": ".performance/contract.json"
+  }
+}

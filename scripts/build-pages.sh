@@ -86,7 +86,9 @@ node --check site/interaction-controls.mjs
 node --check site/simulation-rules.mjs
 node --check site/simulation-rules-config.mjs
 node --check site/performance-log.mjs
-node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs site/performance-log.test.mjs scripts/package-performance-log.test.mjs scripts/summarize-cpu-profile.test.mjs
+node --check scripts/adapt-performance-evidence.mjs
+node --check scripts/package-performance-log.mjs
+node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs site/performance-log.test.mjs scripts/adapt-performance-evidence.test.mjs scripts/package-performance-log.test.mjs scripts/summarize-cpu-profile.test.mjs
 
 rm -rf pages-dist
 mkdir -p pages-dist
