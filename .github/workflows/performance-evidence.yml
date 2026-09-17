@@ -30,6 +30,7 @@ on:
       - "tests/linear_contact_policy.rs"
       - "demo-wasm/**"
       - ".performance/contract.json"
+      - ".performance/sandbox-evidence-profile.json"
       - ".coding-tooling.json"
       - "scripts/run-performance-evidence.sh"
       - "scripts/run-sandbox-performance.sh"
@@ -39,7 +40,11 @@ on:
       - "scripts/benchmark-projectile-policies.mjs"
       - "scripts/benchmark-baking.mjs"
       - "scripts/collect-performance-log.sh"
+      - "scripts/adapt-performance-evidence.mjs"
+      - "scripts/adapt-performance-evidence.test.mjs"
+      - "scripts/validate-performance-evidence.py"
       - "scripts/package-performance-log.mjs"
+      - "scripts/package-performance-log.test.mjs"
       - "scripts/summarize-cpu-profile.mjs"
       - "site/performance-log.mjs"
       - "site/performance-log.test.mjs"
@@ -101,15 +106,35 @@ jobs:
           cp scripts/benchmark-baking.mjs performance-evidence/
           node scripts/benchmark-baking.mjs performance-evidence/head.wasm performance-evidence/baking-options.json
 
-      - name: Package portable performance log
+      - name: Package portable performance evidence
         if: ${{ always() }}
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SOURCE_DIRTY: "false"
         run: |
           node scripts/package-performance-log.mjs \
             performance-evidence \
-            "physics-performance-log-${HEAD_SHA}-${GITHUB_RUN_ID}.tar.gz"
+            "physics-performance-evidence-${HEAD_SHA}-${GITHUB_RUN_ID}.tar.gz"
+
+      - name: Check out canonical Performance Evidence contract
+        if: ${{ success() }}
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: moritzbrantner/performance-evidence
+          ref: 294c136eccb78c0614a42f844b02ea306f0c8f2b
+          path: .performance-evidence-contract
+
+      - name: Install Performance Evidence validator
+        if: ${{ success() }}
+        run: python -m pip install -r .performance-evidence-contract/requirements-dev.txt
+
+      - name: Validate canonical Performance Evidence
+        if: ${{ success() }}
+        run: >-
+          python scripts/validate-performance-evidence.py
+          .performance-evidence-contract
+          performance-evidence
 
       - name: Upload reproducible performance evidence
         if: ${{ always() }}
@@ -118,6 +143,6 @@ jobs:
           name: physics-performance-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: |
             performance-evidence/
-            physics-performance-log-*.tar.gz
+            physics-performance-evidence-*.tar.gz
           if-no-files-found: warn
           retention-days: 14
