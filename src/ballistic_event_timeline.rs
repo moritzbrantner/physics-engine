@@ -256,7 +256,9 @@ struct MotionUpdate3d {
 /// contacts use the existing sampled re-contact frontier, while ballistic hits use the prepared rounded-OBB
 /// sphere sweep. The earlier event wins; exact ties preserve rigid-body authority. Ballistic Q32.32 hit times
 /// are rounded upward onto a Q1.31 event fraction before state mutation, bounding temporal error below one
-/// 2^-31 fraction of the current interval while keeping the existing u32 exact-fraction machinery.
+/// 2^-31 fraction of the current interval while keeping the existing u32 exact-fraction machinery. Hits that
+/// land in the same committed Q1.31 slot share one frontier, so the conservative time rounding cannot advance
+/// a later hit into overlap and then lose it on the next query.
 pub fn advance_ballistic_event_timeline(
     boxes: &mut [RigidBox3d],
     projectiles: &mut Vec<BallisticSphere3d>,
@@ -412,7 +414,7 @@ fn earliest_ballistic_frontier(
         u64::try_from(scene.target_count().saturating_mul(projectiles.len())).unwrap_or(u64::MAX),
     );
 
-    let mut earliest_raw = None;
+    let mut earliest_time = None;
     let mut candidates = Vec::new();
     for projectile in projectiles.iter().copied() {
         let query = projected_projectile(projectile, remaining)?;
@@ -422,36 +424,39 @@ fn earliest_ballistic_frontier(
         let Some(hit) = hit else {
             continue;
         };
-        match earliest_raw {
+        let time = ballistic_time_to_sampled(hit.time.fraction_subticks())?;
+        match earliest_time {
             None => {
-                earliest_raw = Some(hit.time);
+                earliest_time = Some(time);
                 candidates.clear();
                 candidates.push(BallisticCandidate3d {
                     projectile: projectile.id(),
                     hit,
                 });
             }
-            Some(time) if hit.time < time => {
-                earliest_raw = Some(hit.time);
+            Some(current) if compare_time(time, current) == Ordering::Less => {
+                earliest_time = Some(time);
                 candidates.clear();
                 candidates.push(BallisticCandidate3d {
                     projectile: projectile.id(),
                     hit,
                 });
             }
-            Some(time) if hit.time == time => candidates.push(BallisticCandidate3d {
-                projectile: projectile.id(),
-                hit,
-            }),
+            Some(current) if compare_time(time, current) == Ordering::Equal => {
+                candidates.push(BallisticCandidate3d {
+                    projectile: projectile.id(),
+                    hit,
+                });
+            }
             Some(_) => {}
         }
     }
-    let Some(time) = earliest_raw else {
+    let Some(time) = earliest_time else {
         return Ok(None);
     };
     candidates.sort_by_key(|candidate| (candidate.projectile, candidate.hit.body));
     Ok(Some(BallisticFrontier3d {
-        time: ballistic_time_to_sampled(time.fraction_subticks())?,
+        time,
         hits: candidates,
     }))
 }
@@ -1268,7 +1273,8 @@ mod tests {
     };
 
     use super::{
-        BallisticEventTimelineConfig3d, BallisticTimelineEvent3d, advance_ballistic_event_timeline,
+        BallisticEventTimelineConfig3d, BallisticTimelineEvent3d,
+        advance_ballistic_event_timeline, ballistic_time_to_sampled,
     };
 
     fn rigid_config() -> BallisticEventTimelineConfig3d {
@@ -1312,6 +1318,13 @@ mod tests {
         )
         .expect("valid dynamic box")
         .with_collision_layers(layers)
+    }
+
+    #[test]
+    fn adjacent_q32_hits_share_the_same_conservative_q31_slot() {
+        let first = ballistic_time_to_sampled(1).expect("first sub-tick");
+        let second = ballistic_time_to_sampled(2).expect("second sub-tick");
+        assert_eq!(first, second);
     }
 
     #[test]
