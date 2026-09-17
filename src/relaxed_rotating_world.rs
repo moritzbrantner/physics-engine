@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i,
-    rigid_box_free_flight_sweep_bounds,
+    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
+    InteractionPolicy3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -48,6 +48,42 @@ impl RotatingWorld3d {
         self.active.config()
     }
 
+    #[must_use]
+    pub fn body_interaction_category(&self, id: BodyId) -> InteractionCategory3d {
+        self.active.body_interaction_category(id)
+    }
+
+    pub fn set_body_interaction_category(
+        &mut self,
+        id: BodyId,
+        category: InteractionCategory3d,
+    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {
+        self.active.set_body_interaction_category(id, category)
+    }
+
+    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
+        self.active.set_default_interaction_policy(policy);
+    }
+
+    pub fn set_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.active.set_pair_interaction_policy(left, right, policy)
+    }
+
+    pub fn set_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.active
+            .set_directional_interaction_policy(source, target, policy)
+    }
+
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
         let id = rigid_box.body().id();
         if self.active.box_by_id(id).is_some() {
@@ -76,6 +112,7 @@ impl RotatingWorld3d {
             }
             removed
         };
+        self.active.clear_body_interaction_category(id);
 
         self.unpark_all()
             .expect("parked bodies are valid and disjoint from active dynamics");

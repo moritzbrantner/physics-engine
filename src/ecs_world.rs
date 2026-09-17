@@ -1,8 +1,8 @@
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
     BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
-    OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, Vec3i,
+    InteractionCategory3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -39,6 +39,43 @@ impl EcsRotatingWorld3d {
     #[must_use]
     pub fn config(&self) -> RotatingWorldConfig3d {
         self.physics.config()
+    }
+
+    #[must_use]
+    pub fn body_interaction_category(&self, entity: BodyId) -> InteractionCategory3d {
+        self.physics.body_interaction_category(entity)
+    }
+
+    pub fn set_body_interaction_category(
+        &mut self,
+        entity: BodyId,
+        category: InteractionCategory3d,
+    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {
+        self.physics.set_body_interaction_category(entity, category)
+    }
+
+    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
+        self.physics.set_default_interaction_policy(policy);
+    }
+
+    pub fn set_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics
+            .set_pair_interaction_policy(left, right, policy)
+    }
+
+    pub fn set_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics
+            .set_directional_interaction_policy(source, target, policy)
     }
 
     /// Switches between the existing runtime preparation path and retained prepare-at-load geometry.
