@@ -9,11 +9,11 @@ use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
 };
 
+pub(crate) use crate::rotating_contact_search_reference::coarse_sample_limit;
 pub use crate::rotating_contact_search_reference::{
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
     SampledContactTime3d,
 };
-pub(crate) use crate::rotating_contact_search_reference::coarse_sample_limit;
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
 
@@ -76,13 +76,8 @@ impl CoarseSampleCache3d {
             return Ok(sampled);
         }
 
-        let shape = sample_rigid_box_free_flight(
-            rigid_box,
-            config,
-            numerator,
-            self.denominator,
-        )?
-        .oriented_box();
+        let shape = sample_rigid_box_free_flight(rigid_box, config, numerator, self.denominator)?
+            .oriented_box();
         let sampled = self.prepare_geometry(body_index, shape);
         if self.len() < MAX_CACHED_COARSE_SAMPLES
             && sample_index == self.samples_by_body[body_index].len()
@@ -160,12 +155,18 @@ pub(crate) fn sampled_rotating_contact_search_profiled(
     let mut initial_best: Option<RotatingContactSearchHit3d> = None;
 
     for pair in pairs {
-        let left_index = *by_id
-            .get(&pair.left)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.left))?;
-        let right_index = *by_id
-            .get(&pair.right)
-            .ok_or(RotatingContactSearchError3d::MissingCandidateBody(pair.right))?;
+        let left_index =
+            *by_id
+                .get(&pair.left)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.left,
+                ))?;
+        let right_index =
+            *by_id
+                .get(&pair.right)
+                .ok_or(RotatingContactSearchError3d::MissingCandidateBody(
+                    pair.right,
+                ))?;
         let prepared_left =
             coarse_samples.prepare_geometry(left_index, boxes[left_index].oriented_box());
         let prepared_right =
@@ -293,10 +294,9 @@ fn refine_contact_bracket(
         )?;
         work.refinement_evaluations = work.refinement_evaluations.saturating_add(1);
         work.exact_contact_evaluations = work.exact_contact_evaluations.saturating_add(1);
-        if let Some(contact) = crate::obb_contact_seed(
-            sampled_left.oriented_box(),
-            sampled_right.oriented_box(),
-        )? {
+        if let Some(contact) =
+            crate::obb_contact_seed(sampled_left.oriented_box(), sampled_right.oriented_box())?
+        {
             bracket.upper_numerator = midpoint_numerator;
             bracket.upper_contact = contact;
         } else {
@@ -350,14 +350,11 @@ fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
 mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RigidBoxFreeFlightConfig3d, Vec3i,
-        rotating_broad_phase::RotatingBroadPhase3d,
+        RigidBoxFreeFlightConfig3d, Vec3i, rotating_broad_phase::RotatingBroadPhase3d,
         rotating_contact_search_reference::sampled_rotating_contact_search_with_broad_phase as reference_search,
     };
 
-    use super::{
-        RotatingContactSearchConfig3d, sampled_rotating_contact_search_profiled,
-    };
+    use super::{RotatingContactSearchConfig3d, sampled_rotating_contact_search_profiled};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -388,12 +385,9 @@ mod tests {
         let expected = reference_search(boxes, config, &mut reference_broad_phase)
             .expect("reference first-contact search");
         let mut ordered_broad_phase = RotatingBroadPhase3d::default();
-        let (actual, _) = sampled_rotating_contact_search_profiled(
-            boxes,
-            config,
-            &mut ordered_broad_phase,
-        )
-        .expect("ordered first-contact search");
+        let (actual, _) =
+            sampled_rotating_contact_search_profiled(boxes, config, &mut ordered_broad_phase)
+                .expect("ordered first-contact search");
         assert_eq!(actual, expected);
     }
 
@@ -423,14 +417,14 @@ mod tests {
             fixed(4, Vec3i::new(10, 0, 0)),
         ];
         let mut broad_phase = RotatingBroadPhase3d::default();
-        let (hit, work) = sampled_rotating_contact_search_profiled(
-            &boxes,
-            config(32),
-            &mut broad_phase,
-        )
-        .expect("ordered first-contact search");
+        let (hit, work) =
+            sampled_rotating_contact_search_profiled(&boxes, config(32), &mut broad_phase)
+                .expect("ordered first-contact search");
         assert!(hit.is_some());
-        assert!(work.coarse_rows < 32, "search should not scan the full time grid");
+        assert!(
+            work.coarse_rows < 32,
+            "search should not scan the full time grid"
+        );
         assert_eq!(
             work.coarse_pair_evaluations,
             work.candidate_pairs * work.coarse_rows,
