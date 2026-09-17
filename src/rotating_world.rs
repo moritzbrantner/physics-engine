@@ -360,14 +360,16 @@ impl RotatingWorld3d {
 
         let broad_phase_before = self.broad_phase.stats();
         let tail_broad_phase_before = self.tail_broad_phase.stats();
-        let boxes = self.boxes.values().cloned().collect::<Vec<_>>();
+        // `self.boxes` remains the fail-closed transaction authority for this slice. The working
+        // BodyId-ordered vector is materialized once and then reused by repeated events and the tail.
+        let mut boxes = self.boxes.values().cloned().collect::<Vec<_>>();
         let free_flight = RigidBoxFreeFlightConfig3d::new(
             self.config.gravity,
             timestep_numerator,
             timestep_denominator,
         );
         let advance = advance_repeated_rotating_events_with_broad_phase(
-            &boxes,
+            &mut boxes,
             RepeatedRotatingEventConfig3d::new(
                 RotatingContactSearchConfig3d::new(
                     free_flight,
@@ -382,10 +384,10 @@ impl RotatingWorld3d {
 
         let sampled_events = advance.events.len();
         let (boxes, tail) = if advance.remaining.timestep_is_zero() {
-            (advance.boxes, TailStepStats3d::default())
+            (boxes, TailStepStats3d::default())
         } else {
             consume_tail(
-                advance.boxes,
+                boxes,
                 advance.remaining,
                 self.config.solver_passes,
                 &mut self.tail_broad_phase,
