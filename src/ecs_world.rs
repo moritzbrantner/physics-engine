@@ -68,6 +68,14 @@ impl EcsRotatingWorld3d {
             .set_pair_interaction_policy(left, right, policy)
     }
 
+    pub fn clear_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics.clear_pair_interaction_policy(left, right)
+    }
+
     pub fn set_directional_interaction_policy(
         &mut self,
         source: InteractionCategory3d,
@@ -76,6 +84,15 @@ impl EcsRotatingWorld3d {
     ) -> Option<InteractionPolicy3d> {
         self.physics
             .set_directional_interaction_policy(source, target, policy)
+    }
+
+    pub fn clear_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics
+            .clear_directional_interaction_policy(source, target)
     }
 
     /// Switches between the existing runtime preparation path and retained prepare-at-load geometry.

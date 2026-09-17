@@ -124,6 +124,14 @@ impl RotatingWorld3d {
             .set_pair_policy(left, right, policy)
     }
 
+    pub fn clear_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies.clear_pair_policy(left, right)
+    }
+
     pub fn set_directional_interaction_policy(
         &mut self,
         source: InteractionCategory3d,
@@ -132,6 +140,15 @@ impl RotatingWorld3d {
     ) -> Option<InteractionPolicy3d> {
         self.interaction_policies
             .set_directional_policy(source, target, policy)
+    }
+
+    pub fn clear_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .clear_directional_policy(source, target)
     }
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
@@ -600,7 +617,7 @@ impl RotatingWorld3d {
         let original_position = candidate.body.position;
         let mut converged = false;
 
-        for pass in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
             let supports = self.direct_gravity_sleep_supports(&candidate)?;
             if supports.is_empty() {
                 converged = true;
@@ -610,15 +627,6 @@ impl RotatingWorld3d {
             let before = candidate.body.position;
             let mut corrections = PositionCorrectionAccumulator::default();
             for support_id in supports {
-                let pass_limit = self
-                    .interaction_policies
-                    .policy_for_bodies(id, support_id)
-                    .fixed_boundary_stabilization_pass_limit(
-                        MAX_FIXED_POSITION_STABILIZATION_PASSES,
-                    );
-                if pass >= pass_limit {
-                    continue;
-                }
                 let mut support = self
                     .inner
                     .box_by_id(support_id)
