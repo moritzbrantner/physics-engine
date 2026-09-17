@@ -82,8 +82,7 @@ fn set_pair_policy(
         sandbox.world.set_pair_interaction_policy(
             left,
             right,
-            InteractionPolicy3d::default()
-                .with_fixed_boundary_stabilization_pass_limit(pass_limit),
+            InteractionPolicy3d::default().with_fixed_boundary_stabilization_pass_limit(pass_limit),
         );
     }
 }
