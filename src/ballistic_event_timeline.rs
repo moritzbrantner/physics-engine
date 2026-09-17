@@ -8,13 +8,13 @@ use std::{
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BallisticSphere3d,
     BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
-    BallisticSphereSweepHit3d, BodyId, BodyKind, MATERIAL_SCALE, ORIENTATION_SCALE,
-    Orientation3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-    RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotatingContactFrontierError3d, RotatingContactResponseError3d,
-    RotatingContactSearchConfig3d, RotatingResolvedEvent3d, SampledContactTime3d, Vec3i,
-    box_inertia, sample_rigid_box_free_flight,
+    BallisticSphereSweepHit3d, BodyId, BodyKind, MATERIAL_SCALE, ORIENTATION_SCALE, Orientation3d,
+    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
+    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
+    RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
+    RotatingResolvedEvent3d, SampledContactTime3d, Vec3i,
     wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
+    box_inertia, sample_rigid_box_free_flight,
 };
 use crate::{
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
@@ -96,17 +96,63 @@ pub enum BallisticEventTimelineError3d {
 impl fmt::Display for BallisticEventTimelineError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroEventLimit => write!(formatter, "ballistic event timeline requires at least one event slot"),
-            Self::EventLimit(limit) => write!(formatter, "ballistic event timeline reached its {limit}-event limit while time remained"),
-            Self::DuplicateBody(id) => write!(formatter, "ballistic event timeline contains duplicate body id {}", id.0),
-            Self::MissingTarget(id) => write!(formatter, "ballistic impact target {} is missing from the rigid world", id.0),
-            Self::Rigid(error) => write!(formatter, "ballistic event timeline rigid advance failed: {error}"),
-            Self::Frontier(error) => write!(formatter, "ballistic event timeline rigid frontier failed: {error}"),
-            Self::Response(error) => write!(formatter, "ballistic event timeline rigid response failed: {error}"),
-            Self::FreeFlight(error) => write!(formatter, "ballistic event timeline free flight failed: {error}"),
-            Self::Ballistic(error) => write!(formatter, "ballistic event timeline sphere query failed: {error}"),
-            Self::Angular(error) => write!(formatter, "ballistic event timeline angular response failed: {error}"),
-            Self::ArithmeticOverflow => write!(formatter, "ballistic event timeline arithmetic overflowed"),
+            Self::ZeroEventLimit => write!(
+                formatter,
+                "ballistic event timeline requires at least one event slot"
+            ),
+            Self::EventLimit(limit) => write!(
+                formatter,
+                "ballistic event timeline reached its {limit}-event limit while time remained"
+            ),
+            Self::DuplicateBody(id) => write!(
+                formatter,
+                "ballistic event timeline contains duplicate body id {}",
+                id.0
+            ),
+            Self::MissingTarget(id) => write!(
+                formatter,
+                "ballistic impact target {} is missing from the rigid world",
+                id.0
+            ),
+            Self::Rigid(error) => {
+                write!(
+                    formatter,
+                    "ballistic event timeline rigid advance failed: {error}"
+                )
+            }
+            Self::Frontier(error) => {
+                write!(
+                    formatter,
+                    "ballistic event timeline rigid frontier failed: {error}"
+                )
+            }
+            Self::Response(error) => {
+                write!(
+                    formatter,
+                    "ballistic event timeline rigid response failed: {error}"
+                )
+            }
+            Self::FreeFlight(error) => {
+                write!(
+                    formatter,
+                    "ballistic event timeline free flight failed: {error}"
+                )
+            }
+            Self::Ballistic(error) => {
+                write!(
+                    formatter,
+                    "ballistic event timeline sphere query failed: {error}"
+                )
+            }
+            Self::Angular(error) => {
+                write!(
+                    formatter,
+                    "ballistic event timeline angular response failed: {error}"
+                )
+            }
+            Self::ArithmeticOverflow => {
+                write!(formatter, "ballistic event timeline arithmetic overflowed")
+            }
         }
     }
 }
@@ -226,7 +272,6 @@ pub fn advance_ballistic_event_timeline(
     let mut response_scratch = RotatingContactResponseScratch3d::default();
     let mut events = Vec::new();
     let mut work = BallisticEventTimelineWorkStats3d::default();
-    let mut need_zero_time_rigid_resolution = true;
     let mut positive_events = 0_u16;
 
     while !remaining.timestep_is_zero() {
@@ -236,31 +281,16 @@ pub fn advance_ballistic_event_timeline(
             ));
         }
 
-        if need_zero_time_rigid_resolution {
-            resolve_current_rigid_contacts(
-                boxes,
-                config.rigid,
-                &mut broad_phase,
-                &mut work,
-            )?;
-            need_zero_time_rigid_resolution = false;
-        }
+        resolve_current_rigid_contacts(boxes, config.rigid, &mut broad_phase, &mut work)?;
 
         let rigid_search = RotatingContactSearchConfig3d {
             free_flight: remaining,
             ..config.rigid.search
         };
-        let rigid_frontier = next_rotating_contact_frontier_with_broad_phase(
-            boxes,
-            rigid_search,
-            &mut broad_phase,
-        )?;
-        let ballistic_frontier = earliest_ballistic_frontier(
-            boxes,
-            projectiles,
-            remaining,
-            &mut work,
-        )?;
+        let rigid_frontier =
+            next_rotating_contact_frontier_with_broad_phase(boxes, rigid_search, &mut broad_phase)?;
+        let ballistic_frontier =
+            earliest_ballistic_frontier(boxes, projectiles, remaining, &mut work)?;
 
         match select_event(rigid_frontier.as_ref(), ballistic_frontier.as_ref()) {
             SelectedEvent3d::None => {
@@ -291,7 +321,6 @@ pub fn advance_ballistic_event_timeline(
                     response_passes: response.passes_used,
                 }));
                 positive_events = positive_events.saturating_add(1);
-                need_zero_time_rigid_resolution = true;
             }
             SelectedEvent3d::Ballistic => {
                 let frontier = ballistic_frontier.expect("selected ballistic frontier exists");
@@ -308,7 +337,6 @@ pub fn advance_ballistic_event_timeline(
                     .saturating_add(u64::try_from(impacts.len()).unwrap_or(u64::MAX));
                 events.push(BallisticTimelineEvent3d::Ballistic(impacts));
                 positive_events = positive_events.saturating_add(1);
-                need_zero_time_rigid_resolution = true;
             }
         }
     }
@@ -379,6 +407,7 @@ fn earliest_ballistic_frontier(
 
     let prepared_targets = projected_targets(boxes, remaining)?;
     let scene = BallisticSphereScene3d::prepare(prepared_targets.iter())?;
+    let step = scene.prepare_step(1, 1)?;
     work.ballistic_target_bound_checks = work.ballistic_target_bound_checks.saturating_add(
         u64::try_from(scene.target_count().saturating_mul(projectiles.len())).unwrap_or(u64::MAX),
     );
@@ -388,7 +417,7 @@ fn earliest_ballistic_frontier(
     for projectile in projectiles.iter().copied() {
         let query = projected_projectile(projectile, remaining)?;
         let mut stats = BallisticSphereQueryStats3d::default();
-        let hit = scene.earliest_hit(query, 1, 1, &mut stats)?;
+        let hit = step.earliest_hit(query, &mut stats)?;
         accumulate_ballistic_query_stats(work, stats);
         let Some(hit) = hit else {
             continue;
@@ -436,10 +465,7 @@ fn projected_targets(
         .map(|rigid_box| {
             let end = sample_rigid_box_free_flight(rigid_box, remaining, 1, 1)?;
             let mut projected = rigid_box.clone();
-            projected.body.velocity = displacement_velocity(
-                rigid_box.body.position,
-                end.body.position,
-            )?;
+            projected.body.velocity = displacement_velocity(rigid_box.body.position, end.body.position)?;
             Ok(projected)
         })
         .collect()
@@ -483,12 +509,8 @@ fn resolve_ballistic_frontier(
     work: &mut BallisticEventTimelineWorkStats3d,
 ) -> Result<Vec<BallisticResolvedImpact3d>, BallisticEventTimelineError3d> {
     let updates = stage_box_motion_updates(boxes, remaining, frontier.time, work)?;
-    let staged_projectiles = staged_projectiles_after_fraction(
-        projectiles,
-        remaining,
-        frontier.time,
-        work,
-    )?;
+    let staged_projectiles =
+        staged_projectiles_after_fraction(projectiles, remaining, frontier.time, work)?;
     let projectile_by_id = staged_projectiles
         .iter()
         .copied()
@@ -503,9 +525,14 @@ fn resolve_ballistic_frontier(
         let world_index = boxes
             .iter()
             .position(|rigid_box| rigid_box.body().id() == candidate.hit.body)
-            .ok_or(BallisticEventTimelineError3d::MissingTarget(candidate.hit.body))?;
+            .ok_or(BallisticEventTimelineError3d::MissingTarget(
+                candidate.hit.body,
+            ))?;
         let mut target = boxes[world_index].clone();
-        if let Some(update) = updates.iter().find(|update| update.world_index == world_index) {
+        if let Some(update) = updates
+            .iter()
+            .find(|update| update.world_index == world_index)
+        {
             update.state.apply(&mut target);
         }
         target_states.insert(candidate.hit.body, target);
@@ -513,12 +540,14 @@ fn resolve_ballistic_frontier(
 
     let mut impacts = Vec::with_capacity(frontier.hits.len());
     for candidate in &frontier.hits {
-        let projectile = *projectile_by_id
-            .get(&candidate.projectile)
-            .ok_or(BallisticEventTimelineError3d::DuplicateBody(candidate.projectile))?;
+        let projectile = *projectile_by_id.get(&candidate.projectile).ok_or(
+            BallisticEventTimelineError3d::DuplicateBody(candidate.projectile),
+        )?;
         let target = target_states
             .get_mut(&candidate.hit.body)
-            .ok_or(BallisticEventTimelineError3d::MissingTarget(candidate.hit.body))?;
+            .ok_or(BallisticEventTimelineError3d::MissingTarget(
+                candidate.hit.body,
+            ))?;
         let normal_impulse = apply_ballistic_target_impulse(projectile, target, candidate.hit)?;
         impacts.push(BallisticResolvedImpact3d {
             projectile: candidate.projectile,
@@ -606,8 +635,7 @@ fn staged_projectiles_after_fraction(
     time: SampledContactTime3d,
     work: &mut BallisticEventTimelineWorkStats3d,
 ) -> Result<Vec<BallisticSphere3d>, BallisticEventTimelineError3d> {
-    let segment = remaining
-        .scaled_fraction(time.numerator, time.denominator)?;
+    let segment = remaining.scaled_fraction(time.numerator, time.denominator)?;
     let mut staged = projectiles.to_vec();
     for projectile in &mut staged {
         work.projectile_motion_samples = work.projectile_motion_samples.saturating_add(1);
@@ -687,12 +715,8 @@ fn apply_ballistic_target_impulse(
         u128::from(projectile.mass_units()),
     )?)
     .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
-    let target_inverse_mass = body_effective_inverse_mass_scaled(
-        target,
-        target_offset,
-        axis,
-        axis_length_squared,
-    )?;
+    let target_inverse_mass =
+        body_effective_inverse_mass_scaled(target, target_offset, axis, axis_length_squared)?;
     let effective_inverse_mass = sphere_inverse_mass
         .checked_add(target_inverse_mass)
         .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)?;
@@ -816,14 +840,22 @@ fn projectile_contact_point(
         .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
     let radius = i128::from(projectile.radius());
     let center = projectile.position();
-    let mut point = [i128::from(center.x), i128::from(center.y), i128::from(center.z)];
+    let mut point = [
+        i128::from(center.x),
+        i128::from(center.y),
+        i128::from(center.z),
+    ];
     for axis in 0..3 {
         let offset = div_round_nearest(checked_mul(radius, normal[axis])?, length)?;
         point[axis] = point[axis]
             .checked_sub(offset)
             .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)?;
     }
-    Ok(Vec3i::new(to_i32(point[0])?, to_i32(point[1])?, to_i32(point[2])?))
+    Ok(Vec3i::new(
+        to_i32(point[0])?,
+        to_i32(point[1])?,
+        to_i32(point[2])?,
+    ))
 }
 
 fn contact_velocity(
@@ -974,9 +1006,18 @@ fn cross_i64_i128(
 ) -> Result<[i128; 3], BallisticEventTimelineError3d> {
     let left = left.map(i128::from);
     Ok([
-        checked_sub(checked_mul(left[1], right[2])?, checked_mul(left[2], right[1])?)?,
-        checked_sub(checked_mul(left[2], right[0])?, checked_mul(left[0], right[2])?)?,
-        checked_sub(checked_mul(left[0], right[1])?, checked_mul(left[1], right[0])?)?,
+        checked_sub(
+            checked_mul(left[1], right[2])?,
+            checked_mul(left[2], right[1])?,
+        )?,
+        checked_sub(
+            checked_mul(left[2], right[0])?,
+            checked_mul(left[0], right[2])?,
+        )?,
+        checked_sub(
+            checked_mul(left[0], right[1])?,
+            checked_mul(left[1], right[0])?,
+        )?,
     ])
 }
 
@@ -992,7 +1033,11 @@ fn primitive_axis(
     }
     let divisor = i128::try_from(divisor)
         .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
-    Ok([axis[0] / divisor, axis[1] / divisor, axis[2] / divisor])
+    Ok([
+        axis[0] / divisor,
+        axis[1] / divisor,
+        axis[2] / divisor,
+    ])
 }
 
 fn axis_length_squared(
@@ -1090,8 +1135,12 @@ fn accumulate_rigid_work(
     target: &mut RepeatedRotatingEventWorkStats3d,
     source: RepeatedRotatingEventWorkStats3d,
 ) {
-    target.event_response_passes = target.event_response_passes.saturating_add(source.event_response_passes);
-    target.stabilization_passes = target.stabilization_passes.saturating_add(source.stabilization_passes);
+    target.event_response_passes = target
+        .event_response_passes
+        .saturating_add(source.event_response_passes);
+    target.stabilization_passes = target
+        .stabilization_passes
+        .saturating_add(source.stabilization_passes);
     target.stabilizations_hitting_limit = target
         .stabilizations_hitting_limit
         .saturating_add(source.stabilizations_hitting_limit);
@@ -1145,26 +1194,17 @@ fn negate_axis(
     ])
 }
 
-fn checked_add(
-    left: i128,
-    right: i128,
-) -> Result<i128, BallisticEventTimelineError3d> {
+fn checked_add(left: i128, right: i128) -> Result<i128, BallisticEventTimelineError3d> {
     left.checked_add(right)
         .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)
 }
 
-fn checked_sub(
-    left: i128,
-    right: i128,
-) -> Result<i128, BallisticEventTimelineError3d> {
+fn checked_sub(left: i128, right: i128) -> Result<i128, BallisticEventTimelineError3d> {
     left.checked_sub(right)
         .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)
 }
 
-fn checked_mul(
-    left: i128,
-    right: i128,
-) -> Result<i128, BallisticEventTimelineError3d> {
+fn checked_mul(left: i128, right: i128) -> Result<i128, BallisticEventTimelineError3d> {
     left.checked_mul(right)
         .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)
 }
@@ -1174,7 +1214,10 @@ fn checked_dot(
     right: [i128; 3],
 ) -> Result<i128, BallisticEventTimelineError3d> {
     checked_add(
-        checked_add(checked_mul(left[0], right[0])?, checked_mul(left[1], right[1])?)?,
+        checked_add(
+            checked_mul(left[0], right[0])?,
+            checked_mul(left[1], right[1])?,
+        )?,
         checked_mul(left[2], right[2])?,
     )
 }
@@ -1242,7 +1285,10 @@ fn integer_sqrt(value: u128) -> u128 {
     let mut high = value.min(u128::from(u64::MAX));
     while low <= high {
         let middle = low + (high - low) / 2;
-        match middle.checked_mul(middle).map(|square| square.cmp(&value)) {
+        match middle
+            .checked_mul(middle)
+            .map(|square| square.cmp(&value))
+        {
             Some(Ordering::Equal) => return middle,
             Some(Ordering::Less) => low = middle.saturating_add(1),
             Some(Ordering::Greater) | None => high = middle.saturating_sub(1),
@@ -1276,7 +1322,12 @@ mod tests {
         ))
     }
 
-    fn fixed(id: u64, position: Vec3i, half_extents: Vec3i, layers: CollisionLayers3d) -> RigidBox3d {
+    fn fixed(
+        id: u64,
+        position: Vec3i,
+        half_extents: Vec3i,
+        layers: CollisionLayers3d,
+    ) -> RigidBox3d {
         RigidBox3d::new(
             RigidBody::fixed(BodyId(id), position, half_extents),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
@@ -1331,7 +1382,10 @@ mod tests {
         assert_eq!(report.work.ballistic_impacts, 1);
         assert!(boxes[0].body().velocity().x > 0);
         assert_ne!(boxes[0].angular().angular_velocity.z, 0);
-        assert!(matches!(report.events[0], BallisticTimelineEvent3d::Ballistic(_)));
+        assert!(matches!(
+            report.events[0],
+            BallisticTimelineEvent3d::Ballistic(_)
+        ));
     }
 
     #[test]
@@ -1340,7 +1394,12 @@ mod tests {
         let target_layers = CollisionLayers3d::new(0b0010, 0b0100);
         let projectile_layers = CollisionLayers3d::new(0b0100, 0b0010);
         let mut boxes = vec![
-            fixed(1, Vec3i::new(10, 0, 0), Vec3i::new(1, 4, 4), rigid_layers),
+            fixed(
+                1,
+                Vec3i::new(10, 0, 0),
+                Vec3i::new(1, 4, 4),
+                rigid_layers,
+            ),
             dynamic(
                 2,
                 Vec3i::ZERO,
@@ -1371,8 +1430,14 @@ mod tests {
             .expect("mixed timeline");
 
         assert!(report.events.len() >= 2);
-        assert!(matches!(report.events[0], BallisticTimelineEvent3d::Rigid(_)));
-        assert!(matches!(report.events[1], BallisticTimelineEvent3d::Ballistic(_)));
+        assert!(matches!(
+            report.events[0],
+            BallisticTimelineEvent3d::Rigid(_)
+        ));
+        assert!(matches!(
+            report.events[1],
+            BallisticTimelineEvent3d::Ballistic(_)
+        ));
         assert!(projectiles.is_empty());
     }
 
