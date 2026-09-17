@@ -160,8 +160,8 @@ impl BallisticTime3d {
 pub struct BallisticSphereSweepHit3d {
     pub body: BodyId,
     pub time: BallisticTime3d,
-    /// Fixed-point world-space normal pointing from the rigid target toward the incoming sphere.
-    /// Components use [`ORIENTATION_SCALE`] units.
+    /// Primitive integer world-space direction pointing from the rigid target toward the sphere.
+    /// Only direction is significant; the vector is deliberately not normalized with floating point.
     pub normal: [i128; 3],
 }
 
@@ -169,9 +169,9 @@ pub struct BallisticSphereSweepHit3d {
 pub struct BallisticSphereQueryStats3d {
     /// Targets whose conservative swept world-space bounds overlapped the sphere sweep.
     pub broad_phase_candidates: u64,
-    /// Exact rounded-box time-of-impact queries executed after broad-phase rejection.
+    /// Rounded-box time-of-impact queries executed after broad-phase rejection.
     pub toi_tests: u64,
-    /// Face, edge, and corner feature tests used by exact sphere-versus-frozen-OBB CCD.
+    /// Face, edge, and corner feature tests used by sphere-versus-frozen-OBB CCD.
     pub feature_tests: u64,
 }
 
@@ -195,7 +195,11 @@ impl fmt::Display for BallisticSphereError3d {
                 id.0
             ),
             Self::ZeroMass(id) => {
-                write!(formatter, "ballistic sphere {} requires non-zero mass", id.0)
+                write!(
+                    formatter,
+                    "ballistic sphere {} requires non-zero mass",
+                    id.0
+                )
             }
             Self::NegativeTimestepNumerator(value) => write!(
                 formatter,
@@ -250,13 +254,16 @@ struct PreparedBallisticTarget3d {
     collision_layers: CollisionLayers3d,
 }
 
-/// Immutable rigid-scene preparation shared by every ballistic sphere query in a frame.
+#[derive(Clone, Copy, Debug)]
+struct PreparedBallisticStepTarget3d {
+    displacement: [i64; 3],
+    swept_bounds: ([i64; 3], [i64; 3]),
+}
+
+/// Immutable rigid-scene preparation shared by ballistic sphere queries across frames.
 ///
-/// Each target orientation is intentionally frozen for the queried substep while relative linear motion is
-/// included. The exact narrow phase evaluates the rounded-box Minkowski boundary as six face prisms,
-/// twelve finite edge cylinders, and eight corner spheres. It therefore avoids the false corner contacts of
-/// a simple radius-expanded box sweep while still avoiding rotating SAT sampling and contact stabilization.
-/// Rapidly rotating targets should stay on the general rotating rigid-body path.
+/// Target OBB geometry is prepared once from the rigid world. A [`BallisticSphereStep3d`] then prepares
+/// only per-step target displacement and swept bounds once for all projectiles in that simulation step.
 #[derive(Clone, Debug, Default)]
 pub struct BallisticSphereScene3d {
     targets: Vec<PreparedBallisticTarget3d>,
@@ -279,6 +286,32 @@ impl BallisticSphereScene3d {
         self.targets.len()
     }
 
+    pub fn prepare_step(
+        &self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<BallisticSphereStep3d<'_>, BallisticSphereError3d> {
+        validate_timestep(timestep_numerator, timestep_denominator)?;
+        let mut prepared_targets = Vec::with_capacity(self.targets.len());
+        for target in &self.targets {
+            let target_displacement = displacement(
+                target.velocity,
+                timestep_numerator,
+                timestep_denominator,
+            )?;
+            prepared_targets.push(PreparedBallisticStepTarget3d {
+                displacement: target_displacement,
+                swept_bounds: swept_target_bounds(target, target_displacement)?,
+            });
+        }
+        Ok(BallisticSphereStep3d {
+            scene: self,
+            timestep_numerator,
+            timestep_denominator,
+            prepared_targets,
+        })
+    }
+
     pub fn earliest_hit(
         &self,
         sphere: BallisticSphere3d,
@@ -286,47 +319,63 @@ impl BallisticSphereScene3d {
         timestep_denominator: i32,
         stats: &mut BallisticSphereQueryStats3d,
     ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
-        validate_timestep(timestep_numerator, timestep_denominator)?;
-        if timestep_numerator == 0 {
+        self.prepare_step(timestep_numerator, timestep_denominator)?
+            .earliest_hit(sphere, stats)
+    }
+}
+
+/// Per-step ballistic query state. Target orientation is frozen for this substep while target linear
+/// displacement is included exactly in the quantized engine units. The narrow phase evaluates the rounded
+/// OBB Minkowski boundary as six face prisms, twelve finite edge cylinders, and eight corner spheres.
+/// Rapidly rotating targets should stay on the general rotating rigid-body path.
+#[derive(Debug)]
+pub struct BallisticSphereStep3d<'a> {
+    scene: &'a BallisticSphereScene3d,
+    timestep_numerator: i32,
+    timestep_denominator: i32,
+    prepared_targets: Vec<PreparedBallisticStepTarget3d>,
+}
+
+impl BallisticSphereStep3d<'_> {
+    pub fn earliest_hit(
+        &self,
+        sphere: BallisticSphere3d,
+        stats: &mut BallisticSphereQueryStats3d,
+    ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
+        if self.timestep_numerator == 0 {
             return Ok(None);
         }
-
         let sphere_displacement = displacement(
             sphere.velocity,
-            timestep_numerator,
-            timestep_denominator,
+            self.timestep_numerator,
+            self.timestep_denominator,
         )?;
         let sphere_bounds = swept_sphere_bounds(sphere, sphere_displacement)?;
         let mut earliest = None;
-        for target in &self.targets {
+        for (target, step_target) in self
+            .scene
+            .targets
+            .iter()
+            .zip(self.prepared_targets.iter().copied())
+        {
             if target.id == sphere.id
                 || !sphere
                     .collision_layers
                     .collides_with(target.collision_layers)
+                || !bounds_overlap(sphere_bounds, step_target.swept_bounds)
             {
                 continue;
             }
-            let target_displacement = displacement(
-                target.velocity,
-                timestep_numerator,
-                timestep_denominator,
-            )?;
-            if !bounds_overlap(
-                sphere_bounds,
-                swept_target_bounds(target, target_displacement)?,
-            ) {
-                continue;
-            }
-
             stats.broad_phase_candidates = stats.broad_phase_candidates.saturating_add(1);
             stats.toi_tests = stats.toi_tests.saturating_add(1);
             let Some(hit) = swept_sphere_target(
                 sphere,
                 sphere_displacement,
                 target,
-                target_displacement,
+                step_target.displacement,
                 stats,
-            )? else {
+            )?
+            else {
                 continue;
             };
             if earliest.is_none_or(|current: BallisticSphereSweepHit3d| {
@@ -482,9 +531,7 @@ fn swept_sphere_target(
     let normal = rotate_fixed_vector(target.rotation, local_normal)?;
     Ok(Some(BallisticSphereSweepHit3d {
         body: target.id,
-        time: BallisticTime3d {
-            fraction_subticks,
-        },
+        time: BallisticTime3d { fraction_subticks },
         normal,
     }))
 }
@@ -514,9 +561,10 @@ fn face_hit_time(
     };
     for tangent in other_axes(axis) {
         let coordinate = scaled_coordinate(position[tangent], movement[tangent], time)?;
-        let limit = i128::from(extents[tangent])
-            .checked_mul(BALLISTIC_TIME_SCALE_I128)
-            .ok_or(BallisticSphereError3d::ArithmeticOverflow)?;
+        let limit = checked_mul(
+            i128::from(extents[tangent]),
+            BALLISTIC_TIME_SCALE_I128,
+        )?;
         if coordinate.abs() > limit {
             return Ok(None);
         }
@@ -533,11 +581,9 @@ fn edge_hit_time(
     side_axes: [usize; 2],
     signs: [i64; 2],
 ) -> Result<Option<u64>, BallisticSphereError3d> {
-    let Some((minimum, maximum)) = axis_inside_interval(
-        position[free_axis],
-        movement[free_axis],
-        extents[free_axis],
-    )? else {
+    let Some((minimum, maximum)) =
+        axis_inside_interval(position[free_axis], movement[free_axis], extents[free_axis])?
+    else {
         return Ok(None);
     };
     let offsets = [
@@ -586,14 +632,12 @@ fn earliest_quadratic_contact<const N: usize>(
     let a = deltas.iter().try_fold(0_i128, |sum, value| {
         checked_add(sum, checked_mul(*value, *value)?)
     })?;
-    let threshold = checked_mul(
-        checked_mul(i128::from(radius), BALLISTIC_TIME_SCALE_I128)?,
-        checked_mul(i128::from(radius), BALLISTIC_TIME_SCALE_I128)?,
-    )?;
+    let scaled_radius = checked_mul(i128::from(radius), BALLISTIC_TIME_SCALE_I128)?;
+    let threshold = checked_mul(scaled_radius, scaled_radius)?;
     if a == 0 {
-        return (feature_distance_squared(offsets, deltas, minimum)? <= threshold)
-            .then_some(minimum)
-            .pipe(Ok);
+        return Ok(
+            (feature_distance_squared(offsets, deltas, minimum)? <= threshold).then_some(minimum),
+        );
     }
 
     let dot = offsets
@@ -772,7 +816,8 @@ fn primitive_direction(mut vector: [i128; 3]) -> Result<[i128; 3], BallisticSphe
         .filter(|component| *component != 0)
         .reduce(gcd)
         .ok_or(BallisticSphereError3d::ArithmeticOverflow)?;
-    let divisor = i128::try_from(divisor).map_err(|_| BallisticSphereError3d::ArithmeticOverflow)?;
+    let divisor =
+        i128::try_from(divisor).map_err(|_| BallisticSphereError3d::ArithmeticOverflow)?;
     for component in &mut vector {
         *component /= divisor;
     }
@@ -814,14 +859,24 @@ fn displacement(
     timestep_numerator: i32,
     timestep_denominator: i32,
 ) -> Result<[i64; 3], BallisticSphereError3d> {
-    [velocity.x, velocity.y, velocity.z].map(|value| {
-        let moved = mul_div_round_i128(
-            i128::from(value),
-            i128::from(timestep_numerator),
-            i128::from(timestep_denominator),
-        )?;
-        i64::try_from(moved).map_err(|_| BallisticSphereError3d::ArithmeticOverflow)
-    })
+    Ok([
+        displacement_axis(velocity.x, timestep_numerator, timestep_denominator)?,
+        displacement_axis(velocity.y, timestep_numerator, timestep_denominator)?,
+        displacement_axis(velocity.z, timestep_numerator, timestep_denominator)?,
+    ])
+}
+
+fn displacement_axis(
+    velocity: i32,
+    timestep_numerator: i32,
+    timestep_denominator: i32,
+) -> Result<i64, BallisticSphereError3d> {
+    let moved = mul_div_round_i128(
+        i128::from(velocity),
+        i128::from(timestep_numerator),
+        i128::from(timestep_denominator),
+    )?;
+    i64::try_from(moved).map_err(|_| BallisticSphereError3d::ArithmeticOverflow)
 }
 
 fn swept_sphere_bounds(
@@ -1072,14 +1127,6 @@ fn gcd(mut left: u128, mut right: u128) -> u128 {
     left.max(1)
 }
 
-trait Pipe: Sized {
-    fn pipe<T>(self, function: impl FnOnce(Self) -> T) -> T {
-        function(self)
-    }
-}
-
-impl<T> Pipe for T {}
-
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -1107,10 +1154,11 @@ mod tests {
             1,
         )
         .expect("valid sphere");
+        let step = scene.prepare_step(1, 60).expect("prepared step");
         let mut stats = BallisticSphereQueryStats3d::default();
-        let hit = scene
-            .earliest_hit(sphere, 1, 60, &mut stats)
-            .expect("analytic sweep")
+        let hit = step
+            .earliest_hit(sphere, &mut stats)
+            .expect("sphere sweep")
             .expect("thin target hit");
 
         assert_eq!(hit.body, BodyId(7));
@@ -1139,7 +1187,7 @@ mod tests {
         assert!(
             scene
                 .earliest_hit(sphere, 1, 60, &mut stats)
-                .expect("analytic sweep")
+                .expect("sphere sweep")
                 .is_none()
         );
         assert_eq!(stats.broad_phase_candidates, 1);
@@ -1199,7 +1247,7 @@ mod tests {
         let mut stats = BallisticSphereQueryStats3d::default();
         let hit = scene
             .earliest_hit(sphere, 1, 60, &mut stats)
-            .expect("analytic sweep")
+            .expect("sphere sweep")
             .expect("near hit");
 
         assert_eq!(hit.body, BodyId(1));
@@ -1223,7 +1271,7 @@ mod tests {
         let mut stats = BallisticSphereQueryStats3d::default();
         let hit = scene
             .earliest_hit(sphere, 1, 60, &mut stats)
-            .expect("analytic sweep")
+            .expect("sphere sweep")
             .expect("hit");
 
         assert_eq!(hit.body, BodyId(10));
