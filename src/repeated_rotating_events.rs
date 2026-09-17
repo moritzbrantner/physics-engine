@@ -69,6 +69,13 @@ pub struct RepeatedRotatingEventAdvance3d {
     pub work: RepeatedRotatingEventWorkStats3d,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RepeatedRotatingEventProgress3d {
+    pub events: Vec<RotatingResolvedEvent3d>,
+    pub remaining: RigidBoxFreeFlightConfig3d,
+    pub work: RepeatedRotatingEventWorkStats3d,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepeatedRotatingEventError3d {
     ZeroEventLimit,
@@ -181,50 +188,61 @@ impl BodyMotionDelta3d {
     }
 }
 
-/// Advances through sampled events while keeping one mutable working world.
+/// Advances through sampled events and returns an owned result for standalone callers.
 ///
-/// Temporal search remains read-only. Once a hit is admitted, free flight is sampled exactly once into a
-/// compact changed-field delta batch and committed to the working world. The broad phase is then synchronized
-/// at zero time against that current state, and all equal-time contacts are exact-filtered there. Response
-/// therefore receives an evidence-only zero-time frontier and stages only the active contact island; it does
-/// not resample the world or inherit conservative temporal sweep bounds into stabilization.
+/// The public boundary intentionally materializes one caller-owned working world because the borrowed input
+/// must remain unchanged. Internal world stepping uses [`advance_repeated_rotating_events_with_broad_phase`]
+/// directly on its existing mutable working buffer and therefore does not create a second full-world copy.
 pub fn advance_repeated_rotating_events(
     boxes: &[RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
 ) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
-    advance_repeated_rotating_events_with_broad_phase(boxes, config, &mut broad_phase)
+    let mut state = boxes.to_vec();
+    let progress =
+        advance_repeated_rotating_events_with_broad_phase(&mut state, config, &mut broad_phase)?;
+    Ok(RepeatedRotatingEventAdvance3d {
+        boxes: state,
+        events: progress.events,
+        remaining: progress.remaining,
+        work: progress.work,
+    })
 }
 
+/// Advances sampled events in place on a caller-owned working world.
+///
+/// Temporal search remains read-only. Once a hit is admitted, free flight is sampled exactly once into a
+/// compact changed-field delta batch and committed to `boxes`. The broad phase is then synchronized at zero
+/// time against that current state, and all equal-time contacts are exact-filtered there. Response therefore
+/// receives an evidence-only zero-time frontier and stages only the active contact island. The function never
+/// clones the complete input world; callers choose the transactional boundary appropriate to their authority.
 pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
-    boxes: &[RigidBox3d],
+    boxes: &mut [RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
-) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
+) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
     let mut work = RepeatedRotatingEventWorkStats3d::default();
     let mut response_scratch = RotatingContactResponseScratch3d::default();
     let mut remaining = config.search.free_flight;
-    let mut state = boxes.to_vec();
-    response_scratch.ensure_body_index(&state);
+    response_scratch.ensure_body_index(boxes);
 
     let first_search = search_with_free_flight(config.search, remaining);
     let Some(first_hit) =
-        sampled_rotating_contact_search_with_broad_phase(&state, first_search, broad_phase)
+        sampled_rotating_contact_search_with_broad_phase(boxes, first_search, broad_phase)
             .map_err(RotatingContactFrontierError3d::from)?
     else {
-        return Ok(RepeatedRotatingEventAdvance3d {
-            boxes: state,
+        return Ok(RepeatedRotatingEventProgress3d {
             events: Vec::new(),
             remaining,
             work,
         });
     };
-    advance_state_to_time(&mut state, first_search.free_flight, first_hit.time)?;
+    advance_state_to_time(boxes, first_search.free_flight, first_hit.time)?;
     let mut event_time = first_hit.time;
     let mut frontier =
-        current_frontier_from_admitted_hit(&state, first_hit, broad_phase, &response_scratch)?;
+        current_frontier_from_admitted_hit(boxes, first_hit, broad_phase, &response_scratch)?;
 
     let mut events = Vec::new();
     loop {
@@ -234,7 +252,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 
         let (response, modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
-                &mut state,
+                boxes,
                 &frontier,
                 config.solver_passes,
                 &mut response_scratch,
@@ -250,7 +268,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             .event_response_passes
             .saturating_add(u64::from(response_passes));
         stabilize_current_contacts(
-            &mut state,
+            boxes,
             config.solver_passes,
             broad_phase,
             &modified_body_ids,
@@ -270,19 +288,18 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 
         let next_search = search_with_free_flight(config.search, remaining);
         let Some(next_hit) =
-            sampled_rotating_recontact_search_with_broad_phase(&state, next_search, broad_phase)
+            sampled_rotating_recontact_search_with_broad_phase(boxes, next_search, broad_phase)
                 .map_err(RotatingContactFrontierError3d::from)?
         else {
             break;
         };
-        advance_state_to_time(&mut state, next_search.free_flight, next_hit.time)?;
+        advance_state_to_time(boxes, next_search.free_flight, next_hit.time)?;
         event_time = next_hit.time;
         frontier =
-            current_frontier_from_admitted_hit(&state, next_hit, broad_phase, &response_scratch)?;
+            current_frontier_from_admitted_hit(boxes, next_hit, broad_phase, &response_scratch)?;
     }
 
-    Ok(RepeatedRotatingEventAdvance3d {
-        boxes: state,
+    Ok(RepeatedRotatingEventProgress3d {
         events,
         remaining,
         work,
@@ -588,14 +605,17 @@ fn scale_remaining_time(
 
 #[cfg(test)]
 mod tests {
+    use std::{hint::black_box, time::Instant};
+
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
         RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
     };
 
     use super::{
-        RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-        advance_repeated_rotating_events, current_contact_frontier, scale_remaining_time,
+        RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
+        advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
+        current_contact_frontier, scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -625,6 +645,79 @@ mod tests {
             8,
             max_events,
         )
+    }
+
+    #[test]
+    fn in_place_advance_matches_owned_public_result() {
+        let elastic = Material::new(MATERIAL_SCALE);
+        let boxes = vec![
+            fixed(1, Vec3i::new(-20, 0, 0), elastic),
+            dynamic(2, Vec3i::ZERO, Vec3i::new(100, 0, 0), elastic),
+            fixed(3, Vec3i::new(20, 0, 0), elastic),
+        ];
+        let expected = advance_repeated_rotating_events(&boxes, config(8)).expect("owned advance");
+        let mut actual_boxes = boxes;
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let actual = advance_repeated_rotating_events_with_broad_phase(
+            &mut actual_boxes,
+            config(8),
+            &mut broad_phase,
+        )
+        .expect("in-place advance");
+
+        assert_eq!(actual_boxes, expected.boxes);
+        assert_eq!(actual.events, expected.events);
+        assert_eq!(actual.remaining, expected.remaining);
+        assert_eq!(actual.work, expected.work);
+    }
+
+    #[test]
+    #[ignore = "release performance evidence"]
+    fn repeated_event_working_world_handoff_benchmark() {
+        const BODY_COUNT: usize = 4_096;
+        const ITERATIONS: usize = 512;
+        let boxes = (0..BODY_COUNT)
+            .map(|index| {
+                fixed(
+                    index as u64 + 1,
+                    Vec3i::new(index as i32 * 8, 0, 0),
+                    Material::new(0),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let clone_started = Instant::now();
+        let mut checksum = 0_u64;
+        for _ in 0..ITERATIONS {
+            let duplicate = black_box(&boxes).to_vec();
+            checksum = checksum.saturating_add(
+                duplicate
+                    .last()
+                    .map(|body| body.body().id().0)
+                    .unwrap_or_default(),
+            );
+            black_box(duplicate);
+        }
+        let clone_elapsed = clone_started.elapsed();
+
+        let mut working = boxes;
+        let in_place_started = Instant::now();
+        let mut in_place_checksum = 0_u64;
+        for _ in 0..ITERATIONS {
+            in_place_checksum = in_place_checksum.saturating_add(
+                black_box(&mut working)
+                    .last()
+                    .map(|body| body.body().id().0)
+                    .unwrap_or_default(),
+            );
+        }
+        let in_place_elapsed = in_place_started.elapsed();
+
+        assert_eq!(checksum, in_place_checksum);
+        let speedup = clone_elapsed.as_secs_f64() / in_place_elapsed.as_secs_f64();
+        println!(
+            "repeated-event working-world handoff {BODY_COUNT} bodies × {ITERATIONS}: duplicate={clone_elapsed:?}, in_place={in_place_elapsed:?}, speedup={speedup:.2}x, full_world_body_clones_per_frame=1->0"
+        );
     }
 
     #[test]

@@ -35,6 +35,10 @@ if grep -Eq '(^|/)(query\.rs|ray_query_performance\.rs)$' <<<"$changed"; then
   run_integration ray_query_performance
 fi
 
+if grep -Eq '(^|/)(repeated_rotating_events\.rs)$' <<<"$changed"; then
+  run_library_module repeated_rotating_events
+fi
+
 if grep -Eq '(^|/)(rigid_box_free_flight\.rs|repeated_rotating_events\.rs|current_contact_broadphase\.rs)$' <<<"$changed"; then
   run_integration current_contact_broadphase
 fi
