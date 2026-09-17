@@ -8,7 +8,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
   const timestamps = ["2026-09-15T10:00:00.000Z", "2026-09-15T10:00:01.000Z"];
   const recorder = createPerformanceSessionRecorder({
     environment: { renderer: "webgl2" },
-    scenario: { character: "linear" },
+    scenario: { character: "linear", projectile_impact: "impact-retire" },
     now: () => monotonic,
     wallClock: () => timestamps.shift(),
   });
@@ -49,6 +49,10 @@ test("session output keeps raw timings and derives stable summaries", () => {
       },
     ],
     body_count: 12,
+    projectile_count: 4,
+    projectiles_retired_on_contact: 2,
+    projectiles_retired_out_of_bounds: 1,
+    projectiles_evicted_by_cap: 0,
     collision_contacts: 2,
     paused: false,
   });
@@ -87,10 +91,36 @@ test("session output keeps raw timings and derives stable summaries", () => {
     stabilization_exact_contacts: 0,
     stabilization_active_bodies: 0,
   });
+  assert.deepEqual(result.summary.projectile_lifecycle, {
+    max_live_projectiles: 4,
+    retired_on_contact: 2,
+    retired_out_of_bounds: 1,
+    evicted_by_cap: 0,
+  });
   assert.equal(result.raw.frames[0].physics_step_stats.length, 2);
   assert.equal(result.raw.frames[0].body_count, 12);
+  assert.equal(result.raw.frames[0].projectile_count, 4);
   assert.equal(result.summary.rendered_frames, 1);
   assert.equal(JSON.parse(serializePerformanceSession(result)).schema_version, 2);
+});
+
+test("projectile lifecycle totals remain additive across a sandbox reset", () => {
+  const recorder = createPerformanceSessionRecorder();
+  recorder.start();
+  const frame = (retired) => ({
+    frame_interval_ms: 16,
+    callback_ms: 1,
+    render_performed: false,
+    projectile_count: 1,
+    projectiles_retired_on_contact: retired,
+    projectiles_retired_out_of_bounds: 0,
+    projectiles_evicted_by_cap: 0,
+  });
+  recorder.recordFrame(frame(2));
+  recorder.recordFrame(frame(3));
+  recorder.recordFrame(frame(0));
+  recorder.recordFrame(frame(2));
+  assert.equal(recorder.finish().summary.projectile_lifecycle.retired_on_contact, 5);
 });
 
 test("session storage is bounded and reports omitted frames", () => {

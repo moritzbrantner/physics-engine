@@ -388,6 +388,13 @@ fn event_remaining_numerator(
         .ok_or(RepeatedRotatingEventError3d::InvalidRemainder(time))
 }
 
+/// Stabilizes complete connected contact islands reached from bodies changed by the event response.
+///
+/// Each event response has already solved all simultaneous contacts once. Stabilization keeps the cached
+/// zero-time contact graph so every affected island is still solved as one simultaneous frontier on every pass,
+/// preserving the existing convergence semantics. Contacts in components disconnected from every body changed
+/// by the previous pass are not re-solved. This removes unrelated work without turning island propagation into
+/// one-contact-edge-per-pass behavior.
 fn stabilize_current_contacts(
     boxes: &mut [RigidBox3d],
     solver_passes: u8,
@@ -443,6 +450,8 @@ fn stabilize_current_contacts(
             response_scratch,
         )?;
         active = modified_body_ids;
+        active.sort_unstable();
+        active.dedup();
         if active.is_empty() {
             break;
         }
@@ -462,6 +471,30 @@ struct CurrentContactFrontierResult3d {
     frontier: Option<RotatingContactFrontier3d>,
     candidate_pairs: usize,
     recomputed_contacts: usize,
+}
+
+fn connected_contacts_for_active(
+    contacts: &BTreeMap<crate::RotationalSweepPair3d, RotatingContactSearchHit3d>,
+    active: &[crate::BodyId],
+) -> Vec<RotatingContactSearchHit3d> {
+    let mut reachable = active.iter().copied().collect::<BTreeSet<_>>();
+    loop {
+        let mut changed = false;
+        for pair in contacts.keys() {
+            if reachable.contains(&pair.left) || reachable.contains(&pair.right) {
+                changed |= reachable.insert(pair.left);
+                changed |= reachable.insert(pair.right);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    contacts
+        .iter()
+        .filter(|(pair, _)| reachable.contains(&pair.left) || reachable.contains(&pair.right))
+        .map(|(_, contact)| *contact)
+        .collect()
 }
 
 fn refresh_current_contacts_for_changed_bodies(
@@ -507,13 +540,14 @@ fn refresh_current_contacts_for_changed_bodies(
         );
     }
 
-    let frontier = if contacts.is_empty() {
+    let island_contacts = connected_contacts_for_active(contacts, active);
+    let frontier = if island_contacts.is_empty() {
         None
     } else {
         Some(RotatingContactFrontier3d {
             free_flight: RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1),
             time: SampledContactTime3d::ZERO,
-            contacts: contacts.values().cloned().collect(),
+            contacts: island_contacts,
             remaining_numerator: 1,
         })
     };
@@ -605,17 +639,19 @@ fn scale_remaining_time(
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
         RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
+        rotating_contact_response::RotatingContactResponseScratch3d,
     };
 
     use super::{
         RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
         advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
-        current_contact_frontier, scale_remaining_time,
+        current_contact_frontier, refresh_current_contacts_for_changed_bodies,
+        scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -669,6 +705,47 @@ mod tests {
         assert_eq!(actual.events, expected.events);
         assert_eq!(actual.remaining, expected.remaining);
         assert_eq!(actual.work, expected.work);
+    }
+
+    #[test]
+    fn changed_contact_query_excludes_disconnected_stable_islands() {
+        let material = Material::new(0);
+        let boxes = [
+            dynamic(1, Vec3i::ZERO, Vec3i::ZERO, material),
+            fixed(2, Vec3i::new(2, 0, 0), material),
+            dynamic(3, Vec3i::new(100, 0, 0), Vec3i::ZERO, material),
+            fixed(4, Vec3i::new(102, 0, 0), material),
+        ];
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        broad_phase
+            .candidate_pairs(&boxes, zero_time)
+            .expect("prime current broad phase");
+        let all_contacts = current_contact_frontier(&boxes)
+            .expect("all current contacts")
+            .expect("two touching islands");
+        assert_eq!(all_contacts.contacts.len(), 2);
+        let mut contacts = all_contacts
+            .contacts
+            .into_iter()
+            .map(|contact| (contact.pair, contact))
+            .collect::<BTreeMap<_, _>>();
+        let mut body_index = RotatingContactResponseScratch3d::default();
+        body_index.ensure_body_index(&boxes);
+
+        let current = refresh_current_contacts_for_changed_bodies(
+            &boxes,
+            &[BodyId(1)],
+            &mut contacts,
+            &mut broad_phase,
+            &body_index,
+        )
+        .expect("active-island contacts");
+        let frontier = current.frontier.expect("body 1 touches body 2");
+
+        assert_eq!(frontier.contacts.len(), 1);
+        assert_eq!(frontier.contacts[0].pair.left, BodyId(1));
+        assert_eq!(frontier.contacts[0].pair.right, BodyId(2));
     }
 
     #[test]

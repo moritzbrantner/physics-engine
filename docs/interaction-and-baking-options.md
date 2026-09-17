@@ -2,18 +2,19 @@
 
 ## Interactive controls
 
-The page has three independent options. Changing any option resets the scene and stores the choice in URL query parameters, so disturbed piles do not contaminate the next comparison.
+The page has independent gameplay and preparation options. Changing any option resets the scene and stores the choice in URL query parameters, so disturbed piles do not contaminate the next comparison.
 
-| Character | Crates | Fixed geometry | Behavior |
-| --- | --- | --- | --- |
-| `linear` | `upright` | `runtime` | Default: linear character pushes, passive landings, upright crates, and the reference runtime OBB preparation path. |
-| `linear` | `free` | either | Passive character landings without direct character torque; other contacts can rotate crates. |
-| `physical` | `free` | either | Original rigid-body gameplay response, with fixed preparation independently selectable. |
-| either | either | `load` | Same physics semantics, but genuine fixed scene OBB geometry is prepared once and retained for exact SAT reuse. |
+| Character | Crates | Projectile impact | Fixed geometry | Behavior |
+| --- | --- | --- | --- | --- |
+| `linear` | `upright` | `physical` | `runtime` | Linear character pushes, upright crates, physically bouncing projectiles, and the reference runtime OBB preparation path. |
+| `linear` | `free` | `physical` | either | Passive character landings without direct character torque; projectile impacts can rotate crates. |
+| either | either | `inelastic` | either | Projectile contacts retain physical/angular impulse response but use zero restitution, so no bounce energy is reintroduced. |
+| either | either | `impact-retire` | either | The first inelastic projectile impact is solved normally, then the projectile is removed once engine contact evidence confirms the hit. |
+| either | either | either | `load` | Same gameplay semantics, but genuine fixed scene OBB geometry is prepared once and retained for exact SAT reuse. |
 
-For example, `?character=linear&crates=free&bake=load` keeps free crate rotation while testing repaired landings and prepare-at-load fixed geometry. Character/crate modes intentionally differ in physics; the `bake` axis must not. `bake=runtime` remains the reference path and is the default when the query parameter is absent.
+For example, `?character=linear&crates=free&projectile-impact=impact-retire&bake=load` keeps free crate rotation while testing repaired landings, one-impact projectile lifecycle, and prepare-at-load fixed geometry. Character/crate/projectile modes intentionally differ in physics; the `bake` axis must not. `bake=runtime` remains the reference path and is the default when the query parameter is absent.
 
-The legacy `sandbox_reset` export and `sandbox-projectiles-v1` benchmark retain physical/free/runtime behavior. `sandbox_reset_with_character_mode(0|1)` selects character response with free crates; `sandbox_reset_with_options(character_mode, upright_crates)` independently selects gameplay response; `sandbox_reset_with_baking_options(character_mode, upright_crates, fixed_geometry_mode)` adds the independent runtime/prepare-at-load axis. Invalid option values leave the existing world untouched.
+The legacy `sandbox_reset` export and `sandbox-projectiles-v1` benchmark retain physical/free/runtime behavior. `sandbox_reset_with_character_mode(0|1)` selects character response with free crates; `sandbox_reset_with_options(character_mode, upright_crates)` independently selects gameplay response; `sandbox_reset_with_baking_options(character_mode, upright_crates, fixed_geometry_mode)` accepts either legacy character values or the explicit scenario bitfield and adds the independent runtime/prepare-at-load axis. Invalid option values leave the existing world untouched.
 
 ## Engine-owned contact policy
 
@@ -22,6 +23,14 @@ The legacy `sandbox_reset` export and `sandbox-projectiles-v1` benchmark retain 
 This deliberately does not model character weight or transfer landing momentum into supports. It is not a complete kinematic character controller; stepping, slope limits, and rotating-platform transport are separate capabilities. Reported normal constraint impulse is response-policy evidence, not a promise of equal momentum transfer into a passive support.
 
 For cardinal support directions, a contact from strictly above the support centre remains passive at shallow edges and SAT-axis ties. A conservative actuator sweep wholly inside this same half-space does not wake a sleeping support. The support remains collision-tested. Centre-level side contacts remain pushable; side pushes, other dynamic impacts, and topology changes retain their wake behavior. General directions use conservative waking. Grounding still uses actual engine contact normals.
+
+## Projectile impact policy and lifecycle
+
+Projectile collision eligibility and projectile response are deliberately separate. The collision matrix decides whether a pair reaches broad-phase/contact work at all. The projectile impact policy only controls restitution and lifecycle after an eligible contact.
+
+`physical` is the compatibility/reference path and keeps the existing projectile restitution. `inelastic` uses zero restitution while preserving the normal, frictional, and angular impulse solve. `impact-retire` uses the same inelastic impact, then removes the projectile only after `RotatingWorld3d::body_contacts` reports a current engine contact. The browser does not infer impact from distance, rendering, or frame timing, and it never applies gameplay impulses itself.
+
+The Wasm adapter exposes live projectile count plus cumulative contact retirement, out-of-bounds retirement, and projectile-cap eviction counters. Browser performance logs retain those counters so a reduction in solver work can be attributed to projectile lifecycle separately from a core solver optimization. Old explicit scenario bitfields that predate this policy marker continue to decode as `physical`.
 
 ## Upright crates are not fixed bodies
 
@@ -43,23 +52,10 @@ The world scopes prepared geometry to its own query/step. Retained maps use shar
 
 `node scripts/benchmark-baking.mjs <head.wasm> <results.json>` runs the stable projectile workload twice in both `runtime` and `prepare-at-load` fixed-geometry modes. Every corresponding replay hash, event count and body count must be identical. It also records preparation count, representation version, retained bytes and reset/startup time. Node/V8 WASM timings are advisory and exclude rendering; they are not browser FPS or a wall-clock CI threshold. The Performance Evidence workflow retains these results alongside the unchanged physical base/head workload comparison.
 
-
 ## Scenario-defined simulation rules
 
-The sandbox scenario now owns an explicit interaction matrix for four roles: world, character, crate,
-and projectile. Each pair can be enabled or disabled independently. The engine represents those choices as
-symmetric collision-layer memberships/masks and rejects disabled pairs in broad-phase discovery, current
-contact queries, and persistent-tail contact handling. The browser only edits/serializes the scenario; it
-does not filter contacts after the fact.
+The sandbox scenario owns an explicit interaction matrix for four roles: world, character, crate, and projectile. Each pair can be enabled or disabled independently. The engine represents those choices as symmetric collision-layer memberships/masks and rejects disabled pairs in broad-phase discovery, current contact queries, and persistent-tail contact handling. The browser only edits/serializes the scenario; it does not filter contacts after the fact.
 
-Response policy is a separate axis from collision eligibility. The puzzle-friendly default uses the
-engine's constrained linear-push actuator policy for the character, free rigid-body rotation for crates,
-and ordinary physical response for projectiles. Walking into a crate therefore transfers predictable
-linear motion without inducing torque, while an off-center projectile can still rotate the same crate.
-The existing character-options benchmark remains the stable comparison workload for physical versus
-linear character response. Fixed-geometry prepare-at-load remains independent of all gameplay rules.
+Response policy is a separate axis from collision eligibility. The puzzle-friendly setup uses the engine's constrained linear-push actuator policy for the character, free rigid-body rotation for crates, and an explicit projectile impact policy. Walking into a crate therefore transfers predictable linear motion without inducing torque, while a projectile can still rotate the same crate. The existing character-options benchmark remains the stable comparison workload for physical versus linear character response. Fixed-geometry prepare-at-load remains independent of all gameplay rules.
 
-Legacy Wasm reset values `0` and `1` still mean physical/linear character response with every collision
-pair enabled. New scenario-aware callers set the explicit-rules marker bit and encode response plus pair
-rules in the same integer; the legacy crate argument remains accepted only for compatibility. Rule changes
-reset the acceptance world and are stored in URL query state for reproducible comparisons.
+Legacy Wasm reset values `0` and `1` still mean physical/linear character response with every collision pair enabled and physical projectile response. Scenario-aware callers set the explicit-rules marker bit and encode response, projectile impact policy, and pair rules in the same integer; old explicit bitfields without the projectile-policy marker remain physical for compatibility. Rule changes reset the acceptance world and are stored in URL query state for reproducible comparisons.

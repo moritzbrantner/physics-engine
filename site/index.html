@@ -47,7 +47,16 @@
             <option value="free">Free rigid-body rotation</option>
             <option value="upright">Translation only · keep upright</option>
           </select>
-          <p>Projectiles always use full rigid-body response, including off-center torque.</p>
+          <label for="projectile-impact-policy">Projectile impact</label>
+          <select id="projectile-impact-policy" disabled>
+            <option value="physical">Physical bounce · restitution + angular impulse</option>
+            <option value="inelastic">Inelastic · angular impulse without bounce</option>
+            <option value="impact-retire">Impact and retire · no repeated projectile contact</option>
+          </select>
+          <p>
+            Projectile response is independent from collision eligibility. Impact-and-retire keeps the first
+            physical contact meaningful while preventing a spent projectile from re-entering later solver passes.
+          </p>
           <table class="rules-table">
             <thead><tr><th>Collision pair</th><th>Enabled</th></tr></thead>
             <tbody>

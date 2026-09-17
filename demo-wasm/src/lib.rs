@@ -30,6 +30,9 @@ struct Sandbox {
     last_tail_contacts: usize,
     last_step_stats: RotatingWorldStepStats3d,
     total_collisions: u32,
+    projectiles_retired_on_contact: u32,
+    projectiles_retired_out_of_bounds: u32,
+    projectiles_evicted_by_cap: u32,
     error_code: i32,
     error_detail: i32,
 }
@@ -127,6 +130,9 @@ impl Sandbox {
             last_tail_contacts: 0,
             last_step_stats: RotatingWorldStepStats3d::default(),
             total_collisions: 0,
+            projectiles_retired_on_contact: 0,
+            projectiles_retired_out_of_bounds: 0,
+            projectiles_evicted_by_cap: 0,
             error_code: 0,
             error_detail: 0,
         })
@@ -239,13 +245,14 @@ impl Sandbox {
         );
         let id = BodyId(self.next_projectile_id);
         self.next_projectile_id = self.next_projectile_id.saturating_add(1);
+        let impact_policy = controller::scenario_rules::projectile_impact_policy();
 
         if self
             .world
             .add_box(
                 rotating_box(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                        .with_material(Material::new(350)),
+                        .with_material(Material::new(impact_policy.restitution_milli())),
                 )
                 .with_collision_layers(controller::scenario_rules::projectile_layers()),
             )
@@ -257,28 +264,53 @@ impl Sandbox {
         self.projectile_ids.push(id);
         if self.projectile_ids.len() > MAX_PROJECTILES {
             let oldest = self.projectile_ids.remove(0);
-            self.world.remove_box(oldest);
+            if self.world.remove_box(oldest).is_some() {
+                self.projectiles_evicted_by_cap = self.projectiles_evicted_by_cap.saturating_add(1);
+            }
         }
         i32::try_from(id.0).unwrap_or(i32::MAX)
     }
 
     fn cleanup_projectiles(&mut self) {
+        let retire_on_contact =
+            controller::scenario_rules::projectile_impact_policy().retire_on_contact();
         let stale = self
             .projectile_ids
             .iter()
             .copied()
-            .filter(|id| {
-                self.world.box_by_id(*id).is_none_or(|rigid_box| {
-                    let position = rigid_box.body().position();
-                    position.x.abs() > 1_200
-                        || position.y < -300
-                        || position.y > 900
-                        || position.z.abs() > 1_200
-                })
+            .filter_map(|id| {
+                let Some(rigid_box) = self.world.box_by_id(id) else {
+                    return Some((id, false));
+                };
+                let position = rigid_box.body().position();
+                let out_of_bounds = position.x.abs() > 1_200
+                    || position.y < -300
+                    || position.y > 900
+                    || position.z.abs() > 1_200;
+                if out_of_bounds {
+                    return Some((id, false));
+                }
+                if retire_on_contact
+                    && self
+                        .world
+                        .body_contacts(id)
+                        .is_ok_and(|contacts| !contacts.is_empty())
+                {
+                    return Some((id, true));
+                }
+                None
             })
             .collect::<Vec<_>>();
-        for id in stale {
-            self.world.remove_box(id);
+        for (id, retired_on_contact) in stale {
+            if self.world.remove_box(id).is_some() {
+                if retired_on_contact {
+                    self.projectiles_retired_on_contact =
+                        self.projectiles_retired_on_contact.saturating_add(1);
+                } else {
+                    self.projectiles_retired_out_of_bounds =
+                        self.projectiles_retired_out_of_bounds.saturating_add(1);
+                }
+            }
             self.projectile_ids.retain(|candidate| *candidate != id);
         }
     }
@@ -427,6 +459,26 @@ pub const extern "C" fn sandbox_render_snapshot_stride() -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_body_count() -> u32 {
     with_sandbox(|sandbox| u32::try_from(sandbox.body_count()).unwrap_or(u32::MAX))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_projectile_count() -> u32 {
+    with_sandbox(|sandbox| u32::try_from(sandbox.projectile_ids.len()).unwrap_or(u32::MAX))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_projectiles_retired_on_contact() -> u32 {
+    with_sandbox(|sandbox| sandbox.projectiles_retired_on_contact)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_projectiles_retired_out_of_bounds() -> u32 {
+    with_sandbox(|sandbox| sandbox.projectiles_retired_out_of_bounds)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_projectiles_evicted_by_cap() -> u32 {
+    with_sandbox(|sandbox| sandbox.projectiles_evicted_by_cap)
 }
 
 #[unsafe(no_mangle)]

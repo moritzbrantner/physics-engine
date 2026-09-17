@@ -91,6 +91,7 @@ function performanceScenario() {
     crate_motion: query.get("crates") ?? "upright",
     fixed_geometry: query.get("bake") ?? "load",
     collision_pairs: query.get("collisions") ?? "all",
+    projectile_impact: query.get("projectile-impact") ?? "physical",
   };
 }
 
@@ -546,11 +547,14 @@ function frame(timestamp) {
     physics_steps_ms: pendingPhysicsStepMs,
     physics_step_stats: pendingPhysicsStepStats,
     dropped_accumulator_ms: droppedAccumulatorMs,
-    body_count: typeof engine?.sandbox_body_count === "function" ? engine.sandbox_body_count() : null,
-    collision_contacts:
-      typeof engine?.sandbox_last_collision_events === "function"
-        ? engine.sandbox_last_collision_events()
-        : null,
+    body_count: readPhysicsCounter("sandbox_body_count"),
+    projectile_count: readPhysicsCounter("sandbox_projectile_count"),
+    projectiles_retired_on_contact: readPhysicsCounter("sandbox_projectiles_retired_on_contact"),
+    projectiles_retired_out_of_bounds: readPhysicsCounter(
+      "sandbox_projectiles_retired_out_of_bounds",
+    ),
+    projectiles_evicted_by_cap: readPhysicsCounter("sandbox_projectiles_evicted_by_cap"),
+    collision_contacts: readPhysicsCounter("sandbox_last_collision_events"),
     paused,
   });
   pendingPhysicsStepMs = [];
