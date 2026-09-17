@@ -35,6 +35,10 @@ if grep -Eq '(^|/)(query\.rs|ray_query_performance\.rs)$' <<<"$changed"; then
   run_integration ray_query_performance
 fi
 
+if grep -Eq '(^|/)(ballistic_sphere\.rs|ballistic_sphere_scaling_performance\.rs)$' <<<"$changed"; then
+  run_integration ballistic_sphere_scaling_performance
+fi
+
 if grep -Eq '(^|/)(repeated_rotating_events\.rs)$' <<<"$changed"; then
   run_library_module repeated_rotating_events
 fi
