@@ -16,6 +16,7 @@ pub use crate::rotating_contact_search_reference::{
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
 
+#[cfg(test)]
 pub(crate) fn coarse_sample_limit(time: SampledContactTime3d, sample_count: u16) -> u32 {
     let scaled_numerator = u64::from(time.numerator) * u64::from(sample_count);
     let limit = scaled_numerator.div_ceil(u64::from(time.denominator));
