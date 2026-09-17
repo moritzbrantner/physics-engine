@@ -1,4 +1,8 @@
-use std::{error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
@@ -268,6 +272,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             config.solver_passes,
             broad_phase,
             &modified_body_ids,
+            &response_contacts,
             &mut response_scratch,
             &mut work,
         )?;
@@ -383,19 +388,19 @@ fn event_remaining_numerator(
         .ok_or(RepeatedRotatingEventError3d::InvalidRemainder(time))
 }
 
-/// Stabilizes only the contact neighborhood reachable from bodies changed by the preceding solve.
+/// Stabilizes complete connected contact islands reached from bodies changed by the event response.
 ///
-/// The event frontier itself has already been solved as a whole. Carrying every unchanged contact from that
-/// frontier into every later stabilization pass makes disconnected islands pay the same pass budget again and
-/// turns dense scenes into event_count × solver_passes work. Each pass therefore queries current contacts only
-/// for bodies changed by the previous pass. If solving those contacts changes a neighbor, that neighbor becomes
-/// active for the next pass and the deterministic wave expands through the affected island without revisiting
-/// unrelated, already-resolved contacts.
+/// Each event response has already solved all simultaneous contacts once. Stabilization keeps the cached
+/// zero-time contact graph so every affected island is still solved as one simultaneous frontier on every pass,
+/// preserving the existing convergence semantics. Contacts in components disconnected from every body changed
+/// by the previous pass are not re-solved. This removes unrelated work without turning island propagation into
+/// one-contact-edge-per-pass behavior.
 fn stabilize_current_contacts(
     boxes: &mut [RigidBox3d],
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     initial_active: &[crate::BodyId],
+    initial_contacts: &[RotatingContactSearchHit3d],
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
 ) -> Result<(), RepeatedRotatingEventError3d> {
@@ -403,6 +408,14 @@ fn stabilize_current_contacts(
     let mut active = initial_active.to_vec();
     active.sort_unstable();
     active.dedup();
+    let mut contacts = initial_contacts
+        .iter()
+        .cloned()
+        .map(|mut contact| {
+            contact.time = SampledContactTime3d::ZERO;
+            (contact.pair, contact)
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut exhausted_with_changes = false;
 
     for pass in 0..solver_passes {
@@ -412,9 +425,10 @@ fn stabilize_current_contacts(
         work.stabilization_active_bodies = work
             .stabilization_active_bodies
             .saturating_add(u64::try_from(active.len()).unwrap_or(u64::MAX));
-        let current = current_contacts_for_changed_bodies(
+        let current = refresh_current_contacts_for_changed_bodies(
             boxes,
             &active,
+            &mut contacts,
             broad_phase,
             response_scratch,
         )?;
@@ -459,12 +473,41 @@ struct CurrentContactFrontierResult3d {
     recomputed_contacts: usize,
 }
 
-fn current_contacts_for_changed_bodies(
+fn connected_contacts_for_active(
+    contacts: &BTreeMap<crate::RotationalSweepPair3d, RotatingContactSearchHit3d>,
+    active: &[crate::BodyId],
+) -> Vec<RotatingContactSearchHit3d> {
+    let mut reachable = active.iter().copied().collect::<BTreeSet<_>>();
+    loop {
+        let mut changed = false;
+        for pair in contacts.keys() {
+            if reachable.contains(&pair.left) || reachable.contains(&pair.right) {
+                changed |= reachable.insert(pair.left);
+                changed |= reachable.insert(pair.right);
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    contacts
+        .iter()
+        .filter(|(pair, _)| reachable.contains(&pair.left) || reachable.contains(&pair.right))
+        .map(|(_, contact)| contact.clone())
+        .collect()
+}
+
+fn refresh_current_contacts_for_changed_bodies(
     boxes: &[RigidBox3d],
     active: &[crate::BodyId],
+    contacts: &mut BTreeMap<crate::RotationalSweepPair3d, RotatingContactSearchHit3d>,
     broad_phase: &mut RotatingBroadPhase3d,
     body_index: &RotatingContactResponseScratch3d,
 ) -> Result<CurrentContactFrontierResult3d, RotatingContactFrontierError3d> {
+    let active_set = active.iter().copied().collect::<BTreeSet<_>>();
+    contacts
+        .retain(|pair, _| !active_set.contains(&pair.left) && !active_set.contains(&pair.right));
+
     let mut active_boxes = Vec::with_capacity(active.len());
     for id in active {
         let rigid_box = body_index
@@ -474,7 +517,7 @@ fn current_contacts_for_changed_bodies(
     }
     let candidates = broad_phase.candidate_pairs_for_changed_current_bodies(active_boxes)?;
     let candidate_pairs = candidates.len();
-    let mut contacts = Vec::new();
+    let mut recomputed_contacts = 0_usize;
 
     for pair in candidates {
         let left = body_index
@@ -486,21 +529,25 @@ fn current_contacts_for_changed_bodies(
         let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
             continue;
         };
-        contacts.push(RotatingContactSearchHit3d {
-            time: SampledContactTime3d::ZERO,
+        recomputed_contacts = recomputed_contacts.saturating_add(1);
+        contacts.insert(
             pair,
-            contact,
-        });
+            RotatingContactSearchHit3d {
+                time: SampledContactTime3d::ZERO,
+                pair,
+                contact,
+            },
+        );
     }
 
-    let recomputed_contacts = contacts.len();
-    let frontier = if contacts.is_empty() {
+    let island_contacts = connected_contacts_for_active(contacts, active);
+    let frontier = if island_contacts.is_empty() {
         None
     } else {
         Some(RotatingContactFrontier3d {
             free_flight: RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1),
             time: SampledContactTime3d::ZERO,
-            contacts,
+            contacts: island_contacts,
             remaining_numerator: 1,
         })
     };
@@ -522,11 +569,13 @@ fn current_contact_frontier(
         .iter()
         .map(|rigid_box| rigid_box.body().id())
         .collect::<Vec<_>>();
+    let mut contacts = BTreeMap::new();
     let mut body_index = RotatingContactResponseScratch3d::default();
     body_index.ensure_body_index(boxes);
-    Ok(current_contacts_for_changed_bodies(
+    Ok(refresh_current_contacts_for_changed_bodies(
         boxes,
         &active,
+        &mut contacts,
         &mut broad_phase,
         &body_index,
     )?
@@ -590,7 +639,7 @@ fn scale_remaining_time(
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
@@ -601,7 +650,7 @@ mod tests {
     use super::{
         RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
         advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
-        current_contact_frontier, current_contacts_for_changed_bodies, scale_remaining_time,
+        current_contact_frontier, refresh_current_contacts_for_changed_bodies, scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -671,12 +720,22 @@ mod tests {
         broad_phase
             .candidate_pairs(&boxes, zero_time)
             .expect("prime current broad phase");
+        let all_contacts = current_contact_frontier(&boxes)
+            .expect("all current contacts")
+            .expect("two touching islands");
+        assert_eq!(all_contacts.contacts.len(), 2);
+        let mut contacts = all_contacts
+            .contacts
+            .into_iter()
+            .map(|contact| (contact.pair, contact))
+            .collect::<BTreeMap<_, _>>();
         let mut body_index = RotatingContactResponseScratch3d::default();
         body_index.ensure_body_index(&boxes);
 
-        let current = current_contacts_for_changed_bodies(
+        let current = refresh_current_contacts_for_changed_bodies(
             &boxes,
             &[BodyId(1)],
+            &mut contacts,
             &mut broad_phase,
             &body_index,
         )
@@ -686,7 +745,6 @@ mod tests {
         assert_eq!(frontier.contacts.len(), 1);
         assert_eq!(frontier.contacts[0].pair.left, BodyId(1));
         assert_eq!(frontier.contacts[0].pair.right, BodyId(2));
-        assert_eq!(current.recomputed_contacts, 1);
     }
 
     #[test]
