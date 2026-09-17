@@ -1,7 +1,11 @@
 name: Pages
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - Validate
+    types:
+      - completed
     branches:
       - main
   workflow_dispatch:
@@ -15,13 +19,15 @@ concurrency:
 
 jobs:
   build-pages:
-    name: Build or reuse Pages artifact
+    name: Reuse validated Pages artifact
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       actions: read
       contents: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@eaf67b9a00fc52d45b1ba509c86f05cd87b4ac91
+      packages: read
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@544af51c921b09b4452b7346347ec9effa58f179
     with:
-      source_sha: ${{ github.sha }}
+      source_sha: ${{ github.event.workflow_run.head_sha || github.sha }}
       artifact_key: physics-engine-pages-v1
       build_command: bash scripts/build-pages.sh
       artifact_paths: pages-dist
@@ -36,7 +42,7 @@ jobs:
       pages: write
       id-token: write
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@eaf67b9a00fc52d45b1ba509c86f05cd87b4ac91
+    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@544af51c921b09b4452b7346347ec9effa58f179
     with:
       node_version: ""
       bun_version: ""
