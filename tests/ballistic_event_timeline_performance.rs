@@ -13,11 +13,7 @@ const PROJECTILE_COUNTS: [usize; 5] = [50, 100, 500, 1_000, 5_000];
 
 fn target(id: u64, lane: i32) -> RigidBox3d {
     RigidBox3d::new(
-        RigidBody::fixed(
-            BodyId(id),
-            Vec3i::new(0, lane * 20, 0),
-            Vec3i::new(5, 4, 4),
-        ),
+        RigidBody::fixed(BodyId(id), Vec3i::new(0, lane * 20, 0), Vec3i::new(5, 4, 4)),
         AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
     )
     .expect("valid target")
@@ -55,16 +51,9 @@ fn projectile(index: usize) -> BallisticSphere3d {
 
 fn run(projectile_count: usize) -> physics_engine::BallisticEventTimelineWorkStats3d {
     let mut boxes = (0..TARGET_COUNT)
-        .map(|index| {
-            target(
-                u64::try_from(index + 1).expect("target id"),
-                index as i32,
-            )
-        })
+        .map(|index| target(u64::try_from(index + 1).expect("target id"), index as i32))
         .collect::<Vec<_>>();
-    let mut projectiles = (0..projectile_count)
-        .map(projectile)
-        .collect::<Vec<_>>();
+    let mut projectiles = (0..projectile_count).map(projectile).collect::<Vec<_>>();
     let report = advance_ballistic_event_timeline(&mut boxes, &mut projectiles, config())
         .expect("ballistic timeline");
 
@@ -73,12 +62,14 @@ fn run(projectile_count: usize) -> physics_engine::BallisticEventTimelineWorkSta
     assert_eq!(projectiles.len(), projectile_count - expected_impacts);
     assert_eq!(report.work.ballistic_query_rounds, 2);
     assert_eq!(report.work.ballistic_toi_tests, expected_impacts as u64);
-    assert_eq!(report.work.ballistic_feature_tests, expected_impacts as u64 * 26);
+    assert_eq!(
+        report.work.ballistic_feature_tests,
+        expected_impacts as u64 * 26
+    );
     assert_eq!(
         report.work.ballistic_target_bound_checks,
         u64::try_from(
-            projectile_count * TARGET_COUNT
-                + (projectile_count - expected_impacts) * TARGET_COUNT,
+            projectile_count * TARGET_COUNT + (projectile_count - expected_impacts) * TARGET_COUNT,
         )
         .expect("work count fits")
     );
