@@ -238,8 +238,8 @@ pub extern "C" fn sandbox_simulation_rules() -> i32 {
 mod tests {
     use super::{
         CHARACTER_CRATE_BIT, CHARACTER_PROJECTILE_BIT, CRATE_UPRIGHT_BIT, EXPLICIT_RULES_BIT,
-        PROJECTILE_POLICY_EXPLICIT_BIT, PROJECTILE_POLICY_SHIFT, ProjectileImpactPolicy, ScenarioRole,
-        ScenarioRules,
+        PROJECTILE_POLICY_EXPLICIT_BIT, PROJECTILE_POLICY_SHIFT, ProjectileImpactPolicy,
+        ScenarioRole, ScenarioRules,
     };
 
     #[test]
@@ -288,9 +288,8 @@ mod tests {
 
     #[test]
     fn reserved_projectile_policy_is_rejected() {
-        let encoded = EXPLICIT_RULES_BIT
-            | PROJECTILE_POLICY_EXPLICIT_BIT
-            | (3 << PROJECTILE_POLICY_SHIFT);
+        let encoded =
+            EXPLICIT_RULES_BIT | PROJECTILE_POLICY_EXPLICIT_BIT | (3 << PROJECTILE_POLICY_SHIFT);
         assert!(ScenarioRules::decode(encoded, false).is_none());
     }
 }
