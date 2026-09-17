@@ -130,8 +130,7 @@ fn impact_retire_preserves_contact_response_before_projectile_removal() {
     let mut sandbox = Sandbox::with_character_mode(true).unwrap();
     // Explicit scenario marker + all pair bits + linear character response + explicit impact-retire policy.
     let all_pair_bits = (1_i32 << 11) - 2;
-    let encoded_rules =
-        (1_i32 << 29) | all_pair_bits | 1 | (1_i32 << 14) | (2_i32 << 12);
+    let encoded_rules = (1_i32 << 29) | all_pair_bits | 1 | (1_i32 << 14) | (2_i32 << 12);
     let rules = super::controller::scenario_rules::ScenarioRules::decode(encoded_rules, false)
         .expect("impact-retire scenario rules");
     super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
