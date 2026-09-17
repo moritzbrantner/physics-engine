@@ -11,9 +11,12 @@
 //! and a rotating-box world that consumes persistent contact tails deterministically. The original
 //! `World` solver remains translational and AABB-only. Rotation-invariant ballistic spheres use a
 //! dedicated rounded-OBB feature sweep so they do not enter sampled rotating-body collision work.
-//! The public `RotatingWorld3d` defaults to an ECS-backed entity/component world that runs the
-//! performance-oriented parked-sleep physics system; the raw solver resource remains available as
-//! `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! A ballistic scene is an immutable snapshot of target pose, velocity, shape, and collision layers;
+//! consumers must prepare a new snapshot after any of those authoritative target properties change.
+//! Reusing one across frames is valid only while those target properties remain unchanged, such as for
+//! fixed scene geometry. The public `RotatingWorld3d` defaults to an ECS-backed entity/component world
+//! that runs the performance-oriented parked-sleep physics system; the raw solver resource remains
+//! available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
