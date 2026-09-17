@@ -66,8 +66,8 @@ pub use angular::{
     ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse, integrate_orientation,
 };
 pub use ballistic_sphere::{
-    BallisticSphere3d, BallisticSphereError3d, BallisticSphereQueryStats3d,
-    BallisticSphereScene3d, BallisticSphereSweepHit3d, BallisticTime3d,
+    BallisticSphere3d, BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
+    BallisticSphereSweepHit3d, BallisticTime3d,
 };
 pub use body::{BodyId, BodyKind, MATERIAL_SCALE, Material, RigidBody};
 pub use collider::{Collider, ColliderContact, ColliderError, ColliderShape, collider_contact};
