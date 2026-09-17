@@ -379,9 +379,9 @@ fn map_ratio_error(_: WideRatioError) -> RigidBoxFreeFlightError3d {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId,
-        ContactPersistence3d, Orientation3d, RigidBody, RigidBox3d, Vec3i, World, WorldConfig,
-        oriented_box_vertices, rotational_sweep_bounds,
+        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, ContactPersistence3d,
+        Orientation3d, RigidBody, RigidBox3d, Vec3i, World, WorldConfig, oriented_box_vertices,
+        rotational_sweep_bounds,
     };
 
     use super::{
