@@ -71,7 +71,8 @@ pub struct InteractionPolicies3d {
     default_policy: InteractionPolicy3d,
     body_categories: BTreeMap<BodyId, InteractionCategory3d>,
     symmetric_pairs: BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicy3d>,
-    directional_pairs: BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicy3d>,
+    directional_pairs:
+        BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicy3d>,
 }
 
 impl InteractionPolicies3d {
@@ -218,8 +219,7 @@ mod tests {
         let character = BodyId(10);
         let crate_body = BodyId(20);
         let mut policies = InteractionPolicies3d::default();
-        let tuned =
-            InteractionPolicy3d::default().with_fixed_boundary_stabilization_pass_limit(3);
+        let tuned = InteractionPolicy3d::default().with_fixed_boundary_stabilization_pass_limit(3);
         policies.set_body_category(character, CHARACTER);
         policies.set_body_category(crate_body, CRATE);
         policies.set_pair_policy(CHARACTER, CRATE, tuned);
@@ -251,9 +251,6 @@ mod tests {
         assert_eq!(policies.body_category(body), CRATE);
 
         policies.set_body_category(body, InteractionCategory3d::DEFAULT);
-        assert_eq!(
-            policies.body_category(body),
-            InteractionCategory3d::DEFAULT
-        );
+        assert_eq!(policies.body_category(body), InteractionCategory3d::DEFAULT);
     }
 }
