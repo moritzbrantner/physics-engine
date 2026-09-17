@@ -493,7 +493,7 @@ fn connected_contacts_for_active(
     contacts
         .iter()
         .filter(|(pair, _)| reachable.contains(&pair.left) || reachable.contains(&pair.right))
-        .map(|(_, contact)| contact.clone())
+        .map(|(_, contact)| *contact)
         .collect()
 }
 
