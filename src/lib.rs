@@ -14,9 +14,11 @@
 //! A ballistic scene is an immutable snapshot of target pose, velocity, shape, and collision layers;
 //! consumers must prepare a new snapshot after any of those authoritative target properties change.
 //! Reusing one across frames is valid only while those target properties remain unchanged, such as for
-//! fixed scene geometry. The public `RotatingWorld3d` defaults to an ECS-backed entity/component world
-//! that runs the performance-oriented parked-sleep physics system; the raw solver resource remains
-//! available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! fixed scene geometry. Interaction categories and deterministic pair policies are separate from both
+//! collision layers and materials, so consumers can tune simulation budgets without changing collision
+//! eligibility or physical coefficients. The public `RotatingWorld3d` defaults to an ECS-backed
+//! entity/component world that runs the performance-oriented parked-sleep physics system; the raw solver
+//! resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
@@ -30,6 +32,7 @@ mod collision;
 mod current_contact_query;
 mod ecs_world;
 mod fixed_geometry;
+mod interaction_policy;
 mod linear_contact;
 mod math;
 mod obb_friction;
@@ -83,6 +86,7 @@ pub use fixed_geometry::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
     FixedGeometryPreparationStats3d, obb_contact_seed, rigid_box_free_flight_sweep_bounds,
 };
+pub use interaction_policy::{InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d};
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
 pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
