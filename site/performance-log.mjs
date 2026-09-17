@@ -34,6 +34,18 @@ function sumCounter(steps, name) {
   return steps.reduce((sum, step) => sum + (step[name] ?? 0), 0);
 }
 
+function cumulativeCounterTotal(frames, name) {
+  let total = 0;
+  let previous = 0;
+  for (const frame of frames) {
+    const current = frame[name];
+    if (current === null || current === undefined) continue;
+    total += current >= previous ? current - previous : current;
+    previous = current;
+  }
+  return total;
+}
+
 function normalizeStepStats(step) {
   return {
     sampled_events: optionalCounter(step.sampled_events, "sampled_events"),
@@ -124,10 +136,21 @@ export function createPerformanceSessionRecorder({
           frame.dropped_accumulator_ms ?? 0,
           "dropped_accumulator_ms",
         ),
-        body_count: Number.isInteger(frame.body_count) ? frame.body_count : null,
-        collision_contacts: Number.isInteger(frame.collision_contacts)
-          ? frame.collision_contacts
-          : null,
+        body_count: optionalCounter(frame.body_count, "body_count"),
+        projectile_count: optionalCounter(frame.projectile_count, "projectile_count"),
+        projectiles_retired_on_contact: optionalCounter(
+          frame.projectiles_retired_on_contact,
+          "projectiles_retired_on_contact",
+        ),
+        projectiles_retired_out_of_bounds: optionalCounter(
+          frame.projectiles_retired_out_of_bounds,
+          "projectiles_retired_out_of_bounds",
+        ),
+        projectiles_evicted_by_cap: optionalCounter(
+          frame.projectiles_evicted_by_cap,
+          "projectiles_evicted_by_cap",
+        ),
+        collision_contacts: optionalCounter(frame.collision_contacts, "collision_contacts"),
         paused: Boolean(frame.paused),
       };
       if (normalized.physics_step_stats.length !== 0 && normalized.physics_step_stats.length !== normalized.physics_steps_ms.length) {
@@ -158,6 +181,9 @@ export function createPerformanceSessionRecorder({
         .map((frame) => frame.render_ms);
       const physicsSteps = frames.flatMap((frame) => frame.physics_steps_ms);
       const physicsStepStats = frames.flatMap((frame) => frame.physics_step_stats);
+      const liveProjectileCounts = frames
+        .map((frame) => frame.projectile_count)
+        .filter((value) => value !== null);
       return {
         schema_version: SCHEMA_VERSION,
         kind: "physics-engine-browser-session",
@@ -202,6 +228,16 @@ export function createPerformanceSessionRecorder({
             stabilization_candidate_pairs: sumCounter(physicsStepStats, "stabilization_candidate_pairs"),
             stabilization_exact_contacts: sumCounter(physicsStepStats, "stabilization_exact_contacts"),
             stabilization_active_bodies: sumCounter(physicsStepStats, "stabilization_active_bodies"),
+          },
+          projectile_lifecycle: {
+            max_live_projectiles:
+              liveProjectileCounts.length === 0 ? null : Math.max(...liveProjectileCounts),
+            retired_on_contact: cumulativeCounterTotal(frames, "projectiles_retired_on_contact"),
+            retired_out_of_bounds: cumulativeCounterTotal(
+              frames,
+              "projectiles_retired_out_of_bounds",
+            ),
+            evicted_by_cap: cumulativeCounterTotal(frames, "projectiles_evicted_by_cap"),
           },
           frames_with_dropped_accumulator: frames.filter(
             (frame) => frame.dropped_accumulator_ms > 0,
