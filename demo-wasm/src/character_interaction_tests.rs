@@ -147,10 +147,20 @@ fn physically_rotated_crates_return_to_sleep_after_the_impact() {
 
     let mut settled = false;
     for tick in 0..600 {
+        let before_step = crate_ids.map(|id| {
+            let rigid_box = sandbox.world.box_by_id(id).unwrap();
+            (
+                id,
+                rigid_box.body().position(),
+                rigid_box.body().velocity(),
+                rigid_box.angular().angular_velocity,
+            )
+        });
+        let status = sandbox.step_velocity(0, 0, false);
         assert_eq!(
-            sandbox.step_velocity(0, 0, false),
-            0,
-            "settling tick {tick}"
+            status, 0,
+            "settling tick {tick}, detail {}, crates before step {before_step:?}",
+            sandbox.error_detail
         );
         if crate_ids
             .into_iter()
