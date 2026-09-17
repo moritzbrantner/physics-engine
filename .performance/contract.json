@@ -54,7 +54,7 @@
     {
       "id": "walking-no-shots",
       "kind": "common",
-      "description": "Active character movement without projectiles exercises ordinary stepping, grounding, contacts and retained broad-phase reuse.",
+      "description": "Active character movement without projectiles exercises ordinary stepping, grounding, contacts and retained broad-phase reuse; at most one additional lifecycle rebuild may park newly settled bodies.",
       "dimensions": {
         "ticks": 180,
         "projectiles": 0,
@@ -80,7 +80,7 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": { "max": 2 }
         },
         {
           "name": "mean_step_ms",

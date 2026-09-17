@@ -126,6 +126,69 @@ fn projectiles_still_rotate_crates_in_linear_character_mode() {
 }
 
 #[test]
+fn physically_rotated_crates_return_to_sleep_after_the_impact() {
+    let mut sandbox = Sandbox::with_character_mode(true).unwrap();
+    settle(&mut sandbox);
+    let crate_ids = [BodyId(100), BodyId(101)];
+    let before = crate_ids.map(|id| sandbox.world.box_by_id(id).unwrap().clone());
+    assert!(sandbox.shoot(-38, 0, -88) >= 0);
+
+    let mut rotated = false;
+    for tick in 0..24 {
+        assert_eq!(sandbox.step_velocity(0, 0, false), 0, "impact tick {tick}");
+        for (index, id) in crate_ids.into_iter().enumerate() {
+            rotated |= sandbox.world.box_by_id(id).unwrap().angular() != before[index].angular();
+        }
+    }
+    assert!(
+        rotated,
+        "acceptance setup must impart angular motion to a crate"
+    );
+
+    let mut settled = false;
+    for tick in 0..600 {
+        let before_step = crate_ids.map(|id| {
+            let rigid_box = sandbox.world.box_by_id(id).unwrap();
+            (
+                id,
+                rigid_box.body().position(),
+                rigid_box.body().velocity(),
+                rigid_box.angular().angular_velocity,
+            )
+        });
+        let status = sandbox.step_velocity(0, 0, false);
+        assert_eq!(
+            status, 0,
+            "settling tick {tick}, detail {}, crates before step {before_step:?}",
+            sandbox.error_detail
+        );
+        if crate_ids
+            .into_iter()
+            .all(|id| sandbox.world.is_sleeping(id))
+        {
+            settled = true;
+            break;
+        }
+    }
+    assert!(
+        settled,
+        "rough zero-restitution crates must not keep rocking/bouncing on the ground indefinitely"
+    );
+
+    let sleeping = crate_ids.map(|id| sandbox.world.box_by_id(id).unwrap().clone());
+    for tick in 0..60 {
+        assert_eq!(sandbox.step_velocity(0, 0, false), 0, "sleep tick {tick}");
+    }
+    for (index, id) in crate_ids.into_iter().enumerate() {
+        assert_eq!(
+            sandbox.world.box_by_id(id),
+            Some(&sleeping[index]),
+            "settled crate {id:?} must keep an exact resting pose"
+        );
+    }
+}
+
+#[test]
 fn impact_retire_preserves_contact_response_before_projectile_removal() {
     let mut sandbox = Sandbox::with_character_mode(true).unwrap();
     // Explicit scenario marker + all pair bits + linear character response + explicit impact-retire policy.
