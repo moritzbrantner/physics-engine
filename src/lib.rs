@@ -11,18 +11,22 @@
 //! and a rotating-box world that consumes persistent contact tails deterministically. The original
 //! `World` solver remains translational and AABB-only. Rotation-invariant ballistic spheres use a
 //! dedicated rounded-OBB feature sweep so they do not enter sampled rotating-body collision work.
-//! A ballistic scene is an immutable snapshot of target pose, velocity, shape, and collision layers;
-//! consumers must prepare a new snapshot after any of those authoritative target properties change.
-//! Reusing one across frames is valid only while those target properties remain unchanged, such as for
-//! fixed scene geometry. The public `RotatingWorld3d` defaults to an ECS-backed entity/component world
-//! that runs the performance-oriented parked-sleep physics system; the raw solver resource remains
-//! available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! Single-impact ballistic spheres can also participate on the same chronological event line as rigid
+//! contacts: the earlier event wins, equal-time rigid contacts remain authoritative, and admitted
+//! ballistic hits transfer linear impulse and torque before the projectile retires. A ballistic scene
+//! is an immutable snapshot of target pose, velocity, shape, and collision layers; consumers must prepare
+//! a new snapshot after any of those authoritative target properties change. Reusing one across frames is
+//! valid only while those target properties remain unchanged, such as for fixed scene geometry. The public
+//! `RotatingWorld3d` defaults to an ECS-backed entity/component world that runs the performance-oriented
+//! parked-sleep physics system; the raw solver resource remains available as `PhysicsWorld3dKernel` for
+//! deliberately lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
 #![forbid(unsafe_code)]
 
 mod angular;
+mod ballistic_event_timeline;
 mod ballistic_sphere;
 mod body;
 mod collider;
@@ -67,6 +71,11 @@ mod world;
 pub use angular::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d, BoxInertia3d,
     ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse, integrate_orientation,
+};
+pub use ballistic_event_timeline::{
+    BallisticEventTimelineConfig3d, BallisticEventTimelineError3d, BallisticEventTimelineReport3d,
+    BallisticEventTimelineWorkStats3d, BallisticResolvedImpact3d, BallisticTimelineEvent3d,
+    advance_ballistic_event_timeline,
 };
 pub use ballistic_sphere::{
     BallisticSphere3d, BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
