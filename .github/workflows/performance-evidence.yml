@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/query.rs"
+      - "src/ballistic_sphere.rs"
       - "src/rigid_box.rs"
       - "src/linear_contact.rs"
       - "src/stabilized_rotating_world.rs"
