@@ -9,16 +9,18 @@
 //! sampled rotating contact/re-contact search, shared first/re-contact frontiers, deterministic
 //! OBB/frontier response, Coulomb-limited OBB friction, bounded repeated sampled-event advancement,
 //! and a rotating-box world that consumes persistent contact tails deterministically. The original
-//! `World` solver remains translational and AABB-only. The public `RotatingWorld3d` defaults to an
-//! ECS-backed entity/component world that runs the performance-oriented parked-sleep physics system; the
-//! raw solver resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level
-//! integrations.
+//! `World` solver remains translational and AABB-only. Rotation-invariant ballistic spheres use a
+//! separate analytic expanded-OBB sweep path so they do not enter sampled rotating-body collision work.
+//! The public `RotatingWorld3d` defaults to an ECS-backed entity/component world that runs the
+//! performance-oriented parked-sleep physics system; the raw solver resource remains available as
+//! `PhysicsWorld3dKernel` for deliberately lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
 #![forbid(unsafe_code)]
 
 mod angular;
+mod ballistic_sphere;
 mod body;
 mod collider;
 mod collision;
@@ -62,6 +64,10 @@ mod world;
 pub use angular::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d, BoxInertia3d,
     ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse, integrate_orientation,
+};
+pub use ballistic_sphere::{
+    BallisticSphere3d, BallisticSphereError3d, BallisticSphereQueryStats3d,
+    BallisticSphereScene3d, BallisticSphereSweepHit3d, BallisticTime3d,
 };
 pub use body::{BodyId, BodyKind, MATERIAL_SCALE, Material, RigidBody};
 pub use collider::{Collider, ColliderContact, ColliderError, ColliderShape, collider_contact};
