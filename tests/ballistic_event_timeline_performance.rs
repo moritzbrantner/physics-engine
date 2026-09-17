@@ -55,9 +55,16 @@ fn projectile(index: usize) -> BallisticSphere3d {
 
 fn run(projectile_count: usize) -> physics_engine::BallisticEventTimelineWorkStats3d {
     let mut boxes = (0..TARGET_COUNT)
-        .map(|index| target(u64::try_from(index + 1).expect("target id"), index as i32))
+        .map(|index| {
+            target(
+                u64::try_from(index + 1).expect("target id"),
+                index as i32,
+            )
+        })
         .collect::<Vec<_>>();
-    let mut projectiles = (0..projectile_count).map(projectile).collect::<Vec<_>>();
+    let mut projectiles = (0..projectile_count)
+        .map(projectile)
+        .collect::<Vec<_>>();
     let report = advance_ballistic_event_timeline(&mut boxes, &mut projectiles, config())
         .expect("ballistic timeline");
 
