@@ -5,10 +5,11 @@ use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
-    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotationalSweepBounds3d, Vec3i, obb_contact_seed, obb_response::resolve_obb_contact,
-    rigid_box_free_flight_sweep_bounds, rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
+    obb_contact_seed, obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
+    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
@@ -66,6 +67,7 @@ pub struct RotatingWorld3d {
     sleeping: BTreeSet<BodyId>,
     sleep_stable_time_q64: BTreeMap<BodyId, u128>,
     pending_fixed_boundary_body_ids: BTreeSet<BodyId>,
+    interaction_policies: InteractionPolicies3d,
 }
 
 impl RotatingWorld3d {
@@ -76,12 +78,77 @@ impl RotatingWorld3d {
             sleeping: BTreeSet::new(),
             sleep_stable_time_q64: BTreeMap::new(),
             pending_fixed_boundary_body_ids: BTreeSet::new(),
+            interaction_policies: InteractionPolicies3d::default(),
         }
     }
 
     #[must_use]
     pub fn config(&self) -> RotatingWorldConfig3d {
         self.inner.config()
+    }
+
+    #[must_use]
+    pub fn body_interaction_category(&self, id: BodyId) -> InteractionCategory3d {
+        self.interaction_policies.body_category(id)
+    }
+
+    pub fn set_body_interaction_category(
+        &mut self,
+        id: BodyId,
+        category: InteractionCategory3d,
+    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {
+        if self.inner.box_by_id(id).is_none() {
+            return Err(RotatingWorldError3d::MissingBody(id));
+        }
+        Ok(self.interaction_policies.set_body_category(id, category))
+    }
+
+    pub(crate) fn clear_body_interaction_category(
+        &mut self,
+        id: BodyId,
+    ) -> Option<InteractionCategory3d> {
+        self.interaction_policies.clear_body_category(id)
+    }
+
+    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
+        self.interaction_policies.set_default_policy(policy);
+    }
+
+    pub fn set_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .set_pair_policy(left, right, policy)
+    }
+
+    pub fn clear_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies.clear_pair_policy(left, right)
+    }
+
+    pub fn set_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .set_directional_policy(source, target, policy)
+    }
+
+    pub fn clear_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .clear_directional_policy(source, target)
     }
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
@@ -695,7 +762,7 @@ impl RotatingWorld3d {
             let original_position = candidate.body.position;
             let mut converged = false;
 
-            for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+            for pass in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
                 let before = candidate.body.position;
                 let mut corrections = PositionCorrectionAccumulator::default();
 
@@ -712,6 +779,15 @@ impl RotatingWorld3d {
                             .collision_layers()
                             .collides_with(fixed.collision_layers())
                     {
+                        continue;
+                    }
+                    let pass_limit = self
+                        .interaction_policies
+                        .policy_for_bodies(id, fixed_id)
+                        .fixed_boundary_stabilization_pass_limit(
+                            MAX_FIXED_POSITION_STABILIZATION_PASSES,
+                        );
+                    if pass >= pass_limit {
                         continue;
                     }
 
@@ -1018,8 +1094,9 @@ mod tests {
     use std::{collections::BTreeSet, hint::black_box, time::Instant};
 
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorldConfig3d, Vec3i, obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,
+        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, InteractionPolicy3d,
+        Material, Orientation3d, RigidBody, RigidBox3d, RotatingWorldConfig3d, Vec3i,
+        obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,
     };
 
     use super::{
@@ -1213,6 +1290,46 @@ mod tests {
             Vec3i::ZERO
         );
         assert_eq!(world.box_by_id(BodyId(66)), Some(&before_unrelated));
+    }
+
+    #[test]
+    fn pair_policy_can_disable_fixed_boundary_stabilization_for_one_pair() {
+        let target = BodyId(1);
+        let terrain = BodyId(1000);
+        let crate_category = InteractionCategory3d::new(1);
+        let terrain_category = InteractionCategory3d::new(2);
+        let mut world = zero_gravity_world();
+        world
+            .add_box(fixed(terrain.0, Vec3i::ZERO))
+            .expect("fixed obstacle");
+        world
+            .add_box(dynamic(target.0, Vec3i::ZERO, Vec3i::ZERO))
+            .expect("overlapping target");
+        world
+            .set_body_interaction_category(target, crate_category)
+            .expect("categorize crate");
+        world
+            .set_body_interaction_category(terrain, terrain_category)
+            .expect("categorize terrain");
+        world.set_pair_interaction_policy(
+            crate_category,
+            terrain_category,
+            InteractionPolicy3d::default().with_fixed_boundary_stabilization_pass_limit(0),
+        );
+
+        let changed = world
+            .stabilize_fixed_boundaries(&BTreeSet::from([target]))
+            .expect("policy-bounded stabilization");
+
+        assert!(changed.is_empty());
+        assert_eq!(
+            world
+                .box_by_id(target)
+                .expect("target remains")
+                .body()
+                .position(),
+            Vec3i::ZERO
+        );
     }
 
     #[test]

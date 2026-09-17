@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i,
-    rigid_box_free_flight_sweep_bounds,
+    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
+    InteractionPolicy3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -48,6 +48,59 @@ impl RotatingWorld3d {
         self.active.config()
     }
 
+    #[must_use]
+    pub fn body_interaction_category(&self, id: BodyId) -> InteractionCategory3d {
+        self.active.body_interaction_category(id)
+    }
+
+    pub fn set_body_interaction_category(
+        &mut self,
+        id: BodyId,
+        category: InteractionCategory3d,
+    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {
+        self.active.set_body_interaction_category(id, category)
+    }
+
+    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
+        self.active.set_default_interaction_policy(policy);
+    }
+
+    pub fn set_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.active.set_pair_interaction_policy(left, right, policy)
+    }
+
+    pub fn clear_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.active.clear_pair_interaction_policy(left, right)
+    }
+
+    pub fn set_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.active
+            .set_directional_interaction_policy(source, target, policy)
+    }
+
+    pub fn clear_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.active
+            .clear_directional_interaction_policy(source, target)
+    }
+
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
         let id = rigid_box.body().id();
         if self.active.box_by_id(id).is_some() {
@@ -76,6 +129,7 @@ impl RotatingWorld3d {
             }
             removed
         };
+        self.active.clear_body_interaction_category(id);
 
         self.unpark_all()
             .expect("parked bodies are valid and disjoint from active dynamics");
@@ -318,8 +372,8 @@ fn sweep_bounds_overlap(left: RotationalSweepBounds3d, right: RotationalSweepBou
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, Orientation3d, RigidBody,
+        RigidBox3d, RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,
     };
 
     use super::RotatingWorld3d;
@@ -358,6 +412,30 @@ mod tests {
             }
         }
         panic!("body did not reach parked sleep state");
+    }
+
+    #[test]
+    fn removing_body_clears_its_interaction_category_before_id_reuse() {
+        let id = BodyId(1);
+        let category = InteractionCategory3d::new(9);
+        let mut world = world();
+        world
+            .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))
+            .expect("add categorized body");
+        world
+            .set_body_interaction_category(id, category)
+            .expect("categorize body");
+        assert_eq!(world.body_interaction_category(id), category);
+
+        world.remove_box(id).expect("remove categorized body");
+        world
+            .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::ZERO))
+            .expect("reuse body id");
+
+        assert_eq!(
+            world.body_interaction_category(id),
+            InteractionCategory3d::DEFAULT
+        );
     }
 
     #[test]
