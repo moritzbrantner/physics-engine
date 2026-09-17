@@ -272,7 +272,8 @@ impl Sandbox {
     }
 
     fn cleanup_projectiles(&mut self) {
-        let retire_on_contact = controller::scenario_rules::projectile_impact_policy().retire_on_contact();
+        let retire_on_contact =
+            controller::scenario_rules::projectile_impact_policy().retire_on_contact();
         let stale = self
             .projectile_ids
             .iter()
