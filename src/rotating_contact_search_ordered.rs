@@ -9,13 +9,20 @@ use crate::{
     rotating_broad_phase::RotatingBroadPhase3d,
 };
 
-pub(crate) use crate::rotating_contact_search_reference::coarse_sample_limit;
 pub use crate::rotating_contact_search_reference::{
     RotatingContactSearchConfig3d, RotatingContactSearchError3d, RotatingContactSearchHit3d,
     SampledContactTime3d,
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
+
+pub(crate) fn coarse_sample_limit(time: SampledContactTime3d, sample_count: u16) -> u32 {
+    let scaled_numerator = u64::from(time.numerator) * u64::from(sample_count);
+    let limit = scaled_numerator.div_ceil(u64::from(time.denominator));
+    u32::try_from(limit)
+        .expect("coarse sample limit fits u32")
+        .min(u32::from(sample_count))
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ContactSearchWork3d {
