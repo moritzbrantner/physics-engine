@@ -140,11 +140,18 @@ fn physically_rotated_crates_return_to_sleep_after_the_impact() {
             rotated |= sandbox.world.box_by_id(id).unwrap().angular() != before[index].angular();
         }
     }
-    assert!(rotated, "acceptance setup must impart angular motion to a crate");
+    assert!(
+        rotated,
+        "acceptance setup must impart angular motion to a crate"
+    );
 
     let mut settled = false;
     for tick in 0..600 {
-        assert_eq!(sandbox.step_velocity(0, 0, false), 0, "settling tick {tick}");
+        assert_eq!(
+            sandbox.step_velocity(0, 0, false),
+            0,
+            "settling tick {tick}"
+        );
         if crate_ids
             .into_iter()
             .all(|id| sandbox.world.is_sleeping(id))
