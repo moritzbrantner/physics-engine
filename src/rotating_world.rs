@@ -791,8 +791,8 @@ mod tests {
 
     use super::{
         RotatingBroadPhase3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
-        TailMutationJournal3d, TailStepStats3d, advance_tail_free_flight_in_place, contact_frontier,
-        tail_motion_within_extent, tail_slice_config,
+        TailMutationJournal3d, TailStepStats3d, advance_tail_free_flight_in_place,
+        contact_frontier, tail_motion_within_extent, tail_slice_config,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
