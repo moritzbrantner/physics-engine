@@ -39,6 +39,10 @@ if grep -Eq '(^|/)(ballistic_sphere\.rs|ballistic_sphere_scaling_performance\.rs
   run_integration ballistic_sphere_scaling_performance
 fi
 
+if grep -Eq '(^|/)(ballistic_event_timeline\.rs|ballistic_event_timeline_performance\.rs)$' <<<"$changed"; then
+  run_integration ballistic_event_timeline_performance
+fi
+
 if grep -Eq '(^|/)(repeated_rotating_events\.rs)$' <<<"$changed"; then
   run_library_module repeated_rotating_events
 fi

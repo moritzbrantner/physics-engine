@@ -5,6 +5,7 @@ on:
     paths:
       - "src/query.rs"
       - "src/ballistic_sphere.rs"
+      - "src/ballistic_event_timeline.rs"
       - "src/rigid_box.rs"
       - "src/linear_contact.rs"
       - "src/stabilized_rotating_world.rs"
