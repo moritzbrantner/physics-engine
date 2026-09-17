@@ -1,0 +1,124 @@
+name: Apply pair policy stabilization slice
+
+on:
+  push:
+    branches:
+      - feature/pair-policy-stabilization-budget
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+      - name: Apply focused source changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count} for {old[:80]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          strict = "src/stabilized_rotating_world.rs"
+          replace_once(
+              strict,
+              "    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,\n    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,\n",
+              "    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,\n    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,\n    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,\n",
+          )
+          replace_once(
+              strict,
+              "    pending_fixed_boundary_body_ids: BTreeSet<BodyId>,\n}",
+              "    pending_fixed_boundary_body_ids: BTreeSet<BodyId>,\n    interaction_policies: InteractionPolicies3d,\n}",
+          )
+          replace_once(
+              strict,
+              "            pending_fixed_boundary_body_ids: BTreeSet::new(),\n        }",
+              "            pending_fixed_boundary_body_ids: BTreeSet::new(),\n            interaction_policies: InteractionPolicies3d::default(),\n        }",
+          )
+          replace_once(
+              strict,
+              "    pub fn config(&self) -> RotatingWorldConfig3d {\n        self.inner.config()\n    }\n\n    pub fn add_box",
+              "    pub fn config(&self) -> RotatingWorldConfig3d {\n        self.inner.config()\n    }\n\n    #[must_use]\n    pub fn body_interaction_category(&self, id: BodyId) -> InteractionCategory3d {\n        self.interaction_policies.body_category(id)\n    }\n\n    pub fn set_body_interaction_category(\n        &mut self,\n        id: BodyId,\n        category: InteractionCategory3d,\n    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {\n        if self.inner.box_by_id(id).is_none() {\n            return Err(RotatingWorldError3d::MissingBody(id));\n        }\n        Ok(self.interaction_policies.set_body_category(id, category))\n    }\n\n    pub(crate) fn clear_body_interaction_category(\n        &mut self,\n        id: BodyId,\n    ) -> Option<InteractionCategory3d> {\n        self.interaction_policies.clear_body_category(id)\n    }\n\n    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {\n        self.interaction_policies.set_default_policy(policy);\n    }\n\n    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies.set_pair_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(\n        &mut self,\n        source: InteractionCategory3d,\n        target: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies\n            .set_directional_policy(source, target, policy)\n    }\n\n    pub fn add_box",
+          )
+          replace_once(
+              strict,
+              "        for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n            let supports = self.direct_gravity_sleep_supports(&candidate)?;",
+              "        for pass in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n            let supports = self.direct_gravity_sleep_supports(&candidate)?;",
+          )
+          replace_once(
+              strict,
+              "            for support_id in supports {\n                let mut support = self",
+              "            for support_id in supports {\n                let pass_limit = self\n                    .interaction_policies\n                    .policy_for_bodies(id, support_id)\n                    .fixed_boundary_stabilization_pass_limit(\n                        MAX_FIXED_POSITION_STABILIZATION_PASSES,\n                    );\n                if pass >= pass_limit {\n                    continue;\n                }\n                let mut support = self",
+          )
+          replace_once(
+              strict,
+              "            for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n                let before = candidate.body.position;\n                let mut corrections = PositionCorrectionAccumulator::default();",
+              "            for pass in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {\n                let before = candidate.body.position;\n                let mut corrections = PositionCorrectionAccumulator::default();",
+          )
+          replace_once(
+              strict,
+              "                    if fixed.body.kind != BodyKind::Fixed\n                        || !candidate\n                            .collision_layers()\n                            .collides_with(fixed.collision_layers())\n                    {\n                        continue;\n                    }\n\n                    let response = if id < fixed_id {",
+              "                    if fixed.body.kind != BodyKind::Fixed\n                        || !candidate\n                            .collision_layers()\n                            .collides_with(fixed.collision_layers())\n                    {\n                        continue;\n                    }\n                    let pass_limit = self\n                        .interaction_policies\n                        .policy_for_bodies(id, fixed_id)\n                        .fixed_boundary_stabilization_pass_limit(\n                            MAX_FIXED_POSITION_STABILIZATION_PASSES,\n                        );\n                    if pass >= pass_limit {\n                        continue;\n                    }\n\n                    let response = if id < fixed_id {",
+          )
+          replace_once(
+              strict,
+              "        AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,\n        RotatingWorldConfig3d, Vec3i, obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,\n",
+              "        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, InteractionPolicy3d,\n        Material, Orientation3d, RigidBody, RigidBox3d, RotatingWorldConfig3d, Vec3i,\n        obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,\n",
+          )
+          marker = "    #[test]\n    #[ignore = \"release-mode evidence that fixed-boundary work follows changed subjects\"]\n    fn fixed_boundary_changed_subject_scaling_benchmark() {"
+          test = '''    #[test]\n    fn pair_policy_can_disable_fixed_boundary_stabilization_for_one_pair() {\n        let target = BodyId(1);\n        let terrain = BodyId(1000);\n        let crate_category = InteractionCategory3d::new(1);\n        let terrain_category = InteractionCategory3d::new(2);\n        let mut world = zero_gravity_world();\n        world\n            .add_box(fixed(terrain.0, Vec3i::ZERO))\n            .expect("fixed obstacle");\n        world\n            .add_box(dynamic(target.0, Vec3i::ZERO, Vec3i::ZERO))\n            .expect("overlapping target");\n        world\n            .set_body_interaction_category(target, crate_category)\n            .expect("categorize crate");\n        world\n            .set_body_interaction_category(terrain, terrain_category)\n            .expect("categorize terrain");\n        world.set_pair_interaction_policy(\n            crate_category,\n            terrain_category,\n            InteractionPolicy3d::default().with_fixed_boundary_stabilization_pass_limit(0),\n        );\n\n        let changed = world\n            .stabilize_fixed_boundaries(&BTreeSet::from([target]))\n            .expect("policy-bounded stabilization");\n\n        assert!(changed.is_empty());\n        assert_eq!(\n            world\n                .box_by_id(target)\n                .expect("target remains")\n                .body()\n                .position(),\n            Vec3i::ZERO\n        );\n    }\n\n'''
+          replace_once(strict, marker, test + marker)
+
+          relaxed = "src/relaxed_rotating_world.rs"
+          replace_once(
+              relaxed,
+              "    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,\n    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,\n",
+              "    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,\n    InteractionPolicy3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,\n    RotatingWorldConfig3d, RotatingWorldError3d,\n",
+          )
+          replace_once(
+              relaxed,
+              "    pub fn config(&self) -> RotatingWorldConfig3d {\n        self.active.config()\n    }\n\n    pub fn add_box",
+              "    pub fn config(&self) -> RotatingWorldConfig3d {\n        self.active.config()\n    }\n\n    #[must_use]\n    pub fn body_interaction_category(&self, id: BodyId) -> InteractionCategory3d {\n        self.active.body_interaction_category(id)\n    }\n\n    pub fn set_body_interaction_category(\n        &mut self,\n        id: BodyId,\n        category: InteractionCategory3d,\n    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {\n        self.active.set_body_interaction_category(id, category)\n    }\n\n    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {\n        self.active.set_default_interaction_policy(policy);\n    }\n\n    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(\n        &mut self,\n        source: InteractionCategory3d,\n        target: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .set_directional_interaction_policy(source, target, policy)\n    }\n\n    pub fn add_box",
+          )
+          replace_once(
+              relaxed,
+              "        };\n\n        self.unpark_all()\n            .expect(\"parked bodies are valid and disjoint from active dynamics\");",
+              "        };\n        self.active.clear_body_interaction_category(id);\n\n        self.unpark_all()\n            .expect(\"parked bodies are valid and disjoint from active dynamics\");",
+          )
+
+          ecs = "src/ecs_world.rs"
+          replace_once(
+              ecs,
+              "    BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,\n    OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,\n",
+              "    BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,\n    InteractionCategory3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,\n    RotatingWorldError3d,\n",
+          )
+          replace_once(
+              ecs,
+              "    pub fn config(&self) -> RotatingWorldConfig3d {\n        self.physics.config()\n    }\n\n    /// Switches between the existing runtime preparation path",
+              "    pub fn config(&self) -> RotatingWorldConfig3d {\n        self.physics.config()\n    }\n\n    #[must_use]\n    pub fn body_interaction_category(&self, entity: BodyId) -> InteractionCategory3d {\n        self.physics.body_interaction_category(entity)\n    }\n\n    pub fn set_body_interaction_category(\n        &mut self,\n        entity: BodyId,\n        category: InteractionCategory3d,\n    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {\n        self.physics.set_body_interaction_category(entity, category)\n    }\n\n    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {\n        self.physics.set_default_interaction_policy(policy);\n    }\n\n    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(\n        &mut self,\n        source: InteractionCategory3d,\n        target: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .set_directional_interaction_policy(source, target, policy)\n    }\n\n    /// Switches between the existing runtime preparation path",
+          )
+          PY
+      - name: Format and test
+        shell: bash
+        run: |
+          cargo fmt --all
+          cargo test --locked
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git rm .github/workflows/apply-pair-policy-stabilization.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Consume pair policies in fixed-boundary stabilization"
+          git push origin HEAD:feature/pair-policy-stabilization-budget
