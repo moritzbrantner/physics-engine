@@ -36,6 +36,7 @@ on:
       - "scripts/benchmark-sandbox.mjs"
       - "scripts/validate-performance-contract.mjs"
       - "scripts/benchmark-character-options.mjs"
+      - "scripts/benchmark-projectile-policies.mjs"
       - "scripts/benchmark-baking.mjs"
       - "scripts/collect-performance-log.sh"
       - "scripts/package-performance-log.mjs"
@@ -87,6 +88,13 @@ jobs:
         run: |
           cp scripts/benchmark-character-options.mjs performance-evidence/
           node scripts/benchmark-character-options.mjs performance-evidence/head.wasm performance-evidence/character-options.json
+
+      - name: Record dense projectile policy matrix
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          cp scripts/benchmark-projectile-policies.mjs performance-evidence/
+          node scripts/benchmark-projectile-policies.mjs performance-evidence/head.wasm performance-evidence/projectile-policies.json
 
       - name: Compare optional fixed geometry preparation
         run: |
