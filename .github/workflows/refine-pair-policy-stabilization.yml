@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
         with:
           fetch-depth: 0
-      - name: Keep pair budget on ordinary stabilizer only
+      - name: Refine policy boundary
         shell: bash
         run: |
           python3 - <<'PY'
@@ -42,8 +42,8 @@ jobs:
           )
           replace_once(
               strict,
-              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies\n            .set_pair_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
-              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies\n            .set_pair_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies.clear_pair_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "        self.interaction_policies\n            .set_pair_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "        self.interaction_policies\n            .set_pair_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.interaction_policies.clear_pair_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
           )
           replace_once(
               strict,
@@ -54,8 +54,8 @@ jobs:
           relaxed = "src/relaxed_rotating_world.rs"
           replace_once(
               relaxed,
-              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
-              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active.clear_pair_interaction_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "        self.active.set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "        self.active.set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.active.clear_pair_interaction_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
           )
           replace_once(
               relaxed,
@@ -74,8 +74,8 @@ jobs:
           ecs = "src/ecs_world.rs"
           replace_once(
               ecs,
-              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
-              "    pub fn set_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n        policy: InteractionPolicy3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics.clear_pair_interaction_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn set_directional_interaction_policy(",
+              "        self.physics\n            .set_pair_interaction_policy(left, right, policy)\n    }\n\n    pub fn clear_pair_interaction_policy(\n        &mut self,\n        left: InteractionCategory3d,\n        right: InteractionCategory3d,\n    ) -> Option<InteractionPolicy3d> {\n        self.physics.clear_pair_interaction_policy(left, right)\n    }\n\n    pub fn set_directional_interaction_policy(",
           )
           replace_once(
               ecs,
