@@ -10,11 +10,7 @@ const PROJECTILE_COUNTS: [usize; 5] = [50, 100, 500, 1_000, 5_000];
 
 fn fixed_target(id: u64, lane: i32) -> RigidBox3d {
     RigidBox3d::new(
-        RigidBody::fixed(
-            BodyId(id),
-            Vec3i::new(0, lane * 20, 0),
-            Vec3i::new(5, 4, 4),
-        ),
+        RigidBody::fixed(BodyId(id), Vec3i::new(0, lane * 20, 0), Vec3i::new(5, 4, 4)),
         AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
     )
     .expect("valid fixed ballistic target")
@@ -22,7 +18,12 @@ fn fixed_target(id: u64, lane: i32) -> RigidBox3d {
 
 fn target_scene() -> (Vec<RigidBox3d>, BallisticSphereScene3d) {
     let targets = (0..TARGET_COUNT)
-        .map(|index| fixed_target(u64::try_from(index + 1).expect("small target id"), index as i32))
+        .map(|index| {
+            fixed_target(
+                u64::try_from(index + 1).expect("small target id"),
+                index as i32,
+            )
+        })
         .collect::<Vec<_>>();
     let scene = BallisticSphereScene3d::prepare(targets.iter()).expect("prepared ballistic scene");
     (targets, scene)
@@ -58,7 +59,11 @@ fn run_queries(
     (hit_count, stats)
 }
 
-fn assert_linear_work(projectile_count: usize, hit_count: usize, stats: BallisticSphereQueryStats3d) {
+fn assert_linear_work(
+    projectile_count: usize,
+    hit_count: usize,
+    stats: BallisticSphereQueryStats3d,
+) {
     assert_eq!(hit_count, projectile_count);
     assert_eq!(stats.broad_phase_candidates, projectile_count as u64);
     assert_eq!(stats.toi_tests, projectile_count as u64);
