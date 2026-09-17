@@ -87,7 +87,9 @@ pub use repeated_rotating_events::{
     RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d, RotatingResolvedEvent3d,
     advance_repeated_rotating_events,
 };
-pub use rigid_box::{CollisionLayers3d, ContactMode3d, RigidBox3d, RigidBoxError3d};
+pub use rigid_box::{
+    CollisionLayers3d, ContactMode3d, ContactPersistence3d, RigidBox3d, RigidBoxError3d,
+};
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, sample_rigid_box_free_flight,
 };
