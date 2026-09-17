@@ -294,11 +294,8 @@ impl BallisticSphereScene3d {
         validate_timestep(timestep_numerator, timestep_denominator)?;
         let mut prepared_targets = Vec::with_capacity(self.targets.len());
         for target in &self.targets {
-            let target_displacement = displacement(
-                target.velocity,
-                timestep_numerator,
-                timestep_denominator,
-            )?;
+            let target_displacement =
+                displacement(target.velocity, timestep_numerator, timestep_denominator)?;
             prepared_targets.push(PreparedBallisticStepTarget3d {
                 displacement: target_displacement,
                 swept_bounds: swept_target_bounds(target, target_displacement)?,
@@ -561,10 +558,7 @@ fn face_hit_time(
     };
     for tangent in other_axes(axis) {
         let coordinate = scaled_coordinate(position[tangent], movement[tangent], time)?;
-        let limit = checked_mul(
-            i128::from(extents[tangent]),
-            BALLISTIC_TIME_SCALE_I128,
-        )?;
+        let limit = checked_mul(i128::from(extents[tangent]), BALLISTIC_TIME_SCALE_I128)?;
         if coordinate.abs() > limit {
             return Ok(None);
         }
@@ -1176,9 +1170,9 @@ mod tests {
         let scene = BallisticSphereScene3d::prepare([&target]).expect("prepared target");
         let sphere = BallisticSphere3d::new(
             BodyId(1000),
-            Vec3i::new(14, 14, 100),
+            Vec3i::new(13, 13, 100),
             Vec3i::new(0, 0, -12_000),
-            3,
+            4,
             1,
         )
         .expect("valid sphere");
