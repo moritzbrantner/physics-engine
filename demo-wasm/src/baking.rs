@@ -33,6 +33,12 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     let Some(fixed_geometry_mode) = preparation_mode(fixed_geometry_mode) else {
         return -1;
     };
+
+    // SANDBOX is lazy and its default constructor resets the scenario-rules thread-local. Initialize it
+    // before staging a valid replacement so a first explicit reset cannot erase the rules after they are
+    // applied to the replacement. Invalid inputs still return above without touching the current sandbox.
+    with_sandbox(|_| ());
+
     let Ok(mut replacement) =
         Sandbox::with_options(rules.character_linear_push(), rules.upright_crates())
     else {
@@ -106,7 +112,22 @@ pub const extern "C" fn sandbox_fixed_geometry_representation_version() -> u32 {
 mod tests {
     use physics_engine::FixedGeometryPreparationMode3d;
 
-    use crate::Sandbox;
+    use crate::{
+        Sandbox,
+        controller::scenario_rules::{EXPLICIT_RULES_BIT, sandbox_simulation_rules},
+    };
+
+    use super::sandbox_reset_with_baking_options;
+
+    #[test]
+    fn first_explicit_reset_preserves_projectile_policy_bits() {
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire = (1_i32 << 14) | (2_i32 << 12);
+        let encoded = EXPLICIT_RULES_BIT | all_pair_bits | impact_retire;
+
+        assert_eq!(sandbox_reset_with_baking_options(encoded, 0, 0), 0);
+        assert_eq!(sandbox_simulation_rules(), encoded);
+    }
 
     #[test]
     fn prepare_at_load_keeps_sleeping_dynamics_out_of_baked_set() {
