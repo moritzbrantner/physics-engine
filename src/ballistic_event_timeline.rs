@@ -12,9 +12,9 @@ use crate::{
     RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
     RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingResolvedEvent3d, SampledContactTime3d, Vec3i,
+    RotatingResolvedEvent3d, SampledContactTime3d, Vec3i, box_inertia,
+    sample_rigid_box_free_flight,
     wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
-    box_inertia, sample_rigid_box_free_flight,
 };
 use crate::{
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
@@ -465,7 +465,8 @@ fn projected_targets(
         .map(|rigid_box| {
             let end = sample_rigid_box_free_flight(rigid_box, remaining, 1, 1)?;
             let mut projected = rigid_box.clone();
-            projected.body.velocity = displacement_velocity(rigid_box.body.position, end.body.position)?;
+            projected.body.velocity =
+                displacement_velocity(rigid_box.body.position, end.body.position)?;
             Ok(projected)
         })
         .collect()
@@ -478,14 +479,14 @@ fn projected_projectile(
     let mut end = projectile;
     advance_projectile_exact(&mut end, remaining)?;
     let mut projected = projectile;
-    projected.set_velocity(displacement_velocity(projectile.position(), end.position())?);
+    projected.set_velocity(displacement_velocity(
+        projectile.position(),
+        end.position(),
+    )?);
     Ok(projected)
 }
 
-fn displacement_velocity(
-    start: Vec3i,
-    end: Vec3i,
-) -> Result<Vec3i, BallisticEventTimelineError3d> {
+fn displacement_velocity(start: Vec3i, end: Vec3i) -> Result<Vec3i, BallisticEventTimelineError3d> {
     Ok(Vec3i::new(
         difference_i32(end.x, start.x)?,
         difference_i32(end.y, start.y)?,
@@ -493,10 +494,7 @@ fn displacement_velocity(
     ))
 }
 
-fn difference_i32(
-    left: i32,
-    right: i32,
-) -> Result<i32, BallisticEventTimelineError3d> {
+fn difference_i32(left: i32, right: i32) -> Result<i32, BallisticEventTimelineError3d> {
     i32::try_from(i64::from(left) - i64::from(right))
         .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)
 }
@@ -543,11 +541,9 @@ fn resolve_ballistic_frontier(
         let projectile = *projectile_by_id.get(&candidate.projectile).ok_or(
             BallisticEventTimelineError3d::DuplicateBody(candidate.projectile),
         )?;
-        let target = target_states
-            .get_mut(&candidate.hit.body)
-            .ok_or(BallisticEventTimelineError3d::MissingTarget(
-                candidate.hit.body,
-            ))?;
+        let target = target_states.get_mut(&candidate.hit.body).ok_or(
+            BallisticEventTimelineError3d::MissingTarget(candidate.hit.body),
+        )?;
         let normal_impulse = apply_ballistic_target_impulse(projectile, target, candidate.hit)?;
         impacts.push(BallisticResolvedImpact3d {
             projectile: candidate.projectile,
@@ -594,12 +590,8 @@ fn stage_box_motion_updates(
     let mut updates = Vec::new();
     for (world_index, rigid_box) in boxes.iter().enumerate() {
         work.rigid_body_motion_samples = work.rigid_body_motion_samples.saturating_add(1);
-        let sampled = sample_rigid_box_free_flight(
-            rigid_box,
-            remaining,
-            time.numerator,
-            time.denominator,
-        )?;
+        let sampled =
+            sample_rigid_box_free_flight(rigid_box, remaining, time.numerator, time.denominator)?;
         let before = MotionState3d::from_box(rigid_box);
         let after = MotionState3d::from_box(&sampled);
         if before != after {
@@ -836,8 +828,8 @@ fn projectile_contact_point(
 ) -> Result<Vec3i, BallisticEventTimelineError3d> {
     let length_squared = axis_length_squared(normal)?;
     let length = integer_sqrt(length_squared).max(1);
-    let length = i128::try_from(length)
-        .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
+    let length =
+        i128::try_from(length).map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
     let radius = i128::from(projectile.radius());
     let center = projectile.position();
     let mut point = [
@@ -903,10 +895,7 @@ fn add_linear_rotation(
         .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)
 }
 
-fn vector_delta(
-    center: Vec3i,
-    point: Vec3i,
-) -> Result<[i64; 3], BallisticEventTimelineError3d> {
+fn vector_delta(center: Vec3i, point: Vec3i) -> Result<[i64; 3], BallisticEventTimelineError3d> {
     Ok([
         i64::from(point.x) - i64::from(center.x),
         i64::from(point.y) - i64::from(center.y),
@@ -993,10 +982,7 @@ fn rotate_with_matrix(
     Ok(output)
 }
 
-fn scaled_twice(
-    value: i128,
-    scale: i128,
-) -> Result<i128, BallisticEventTimelineError3d> {
+fn scaled_twice(value: i128, scale: i128) -> Result<i128, BallisticEventTimelineError3d> {
     div_round_nearest(checked_mul(value, 2)?, scale)
 }
 
@@ -1021,9 +1007,7 @@ fn cross_i64_i128(
     ])
 }
 
-fn primitive_axis(
-    axis: [i128; 3],
-) -> Result<[i128; 3], BallisticEventTimelineError3d> {
+fn primitive_axis(axis: [i128; 3]) -> Result<[i128; 3], BallisticEventTimelineError3d> {
     let divisor = axis
         .iter()
         .map(|value| value.unsigned_abs())
@@ -1031,18 +1015,12 @@ fn primitive_axis(
     if divisor == 0 {
         return Err(BallisticEventTimelineError3d::ArithmeticOverflow);
     }
-    let divisor = i128::try_from(divisor)
-        .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
-    Ok([
-        axis[0] / divisor,
-        axis[1] / divisor,
-        axis[2] / divisor,
-    ])
+    let divisor =
+        i128::try_from(divisor).map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
+    Ok([axis[0] / divisor, axis[1] / divisor, axis[2] / divisor])
 }
 
-fn axis_length_squared(
-    axis: [i128; 3],
-) -> Result<u128, BallisticEventTimelineError3d> {
+fn axis_length_squared(axis: [i128; 3]) -> Result<u128, BallisticEventTimelineError3d> {
     axis.into_iter().try_fold(0_u128, |sum, value| {
         let magnitude = value.unsigned_abs();
         sum.checked_add(
@@ -1061,8 +1039,8 @@ fn ballistic_time_to_sampled(
         return Err(BallisticEventTimelineError3d::ArithmeticOverflow);
     }
     let numerator = fraction_subticks.div_ceil(2);
-    let numerator = u32::try_from(numerator)
-        .map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
+    let numerator =
+        u32::try_from(numerator).map_err(|_| BallisticEventTimelineError3d::ArithmeticOverflow)?;
     let divisor = gcd_u32(numerator, TIMELINE_TIME_SCALE);
     Ok(SampledContactTime3d {
         numerator: numerator / divisor,
@@ -1084,10 +1062,7 @@ fn remaining_after(
     if time.denominator == 0 || time.numerator > time.denominator {
         return Err(BallisticEventTimelineError3d::ArithmeticOverflow);
     }
-    Ok(remaining.scaled_fraction(
-        time.denominator - time.numerator,
-        time.denominator,
-    )?)
+    Ok(remaining.scaled_fraction(time.denominator - time.numerator, time.denominator)?)
 }
 
 fn compare_time(left: SampledContactTime3d, right: SampledContactTime3d) -> Ordering {
@@ -1126,9 +1101,7 @@ fn accumulate_ballistic_query_stats(
 }
 
 fn accumulate_response_passes(work: &mut RepeatedRotatingEventWorkStats3d, passes: u8) {
-    work.event_response_passes = work
-        .event_response_passes
-        .saturating_add(u64::from(passes));
+    work.event_response_passes = work.event_response_passes.saturating_add(u64::from(passes));
 }
 
 fn accumulate_rigid_work(
@@ -1167,10 +1140,7 @@ fn add_impulse_axis(
     )
 }
 
-fn add_angular_axis(
-    current: i32,
-    delta: i128,
-) -> Result<i32, BallisticEventTimelineError3d> {
+fn add_angular_axis(current: i32, delta: i128) -> Result<i32, BallisticEventTimelineError3d> {
     to_i32(
         i128::from(current)
             .checked_add(delta)
@@ -1178,9 +1148,7 @@ fn add_angular_axis(
     )
 }
 
-fn negate_axis(
-    vector: [i128; 3],
-) -> Result<[i128; 3], BallisticEventTimelineError3d> {
+fn negate_axis(vector: [i128; 3]) -> Result<[i128; 3], BallisticEventTimelineError3d> {
     Ok([
         vector[0]
             .checked_neg()
@@ -1209,10 +1177,7 @@ fn checked_mul(left: i128, right: i128) -> Result<i128, BallisticEventTimelineEr
         .ok_or(BallisticEventTimelineError3d::ArithmeticOverflow)
 }
 
-fn checked_dot(
-    left: [i128; 3],
-    right: [i128; 3],
-) -> Result<i128, BallisticEventTimelineError3d> {
+fn checked_dot(left: [i128; 3], right: [i128; 3]) -> Result<i128, BallisticEventTimelineError3d> {
     checked_add(
         checked_add(
             checked_mul(left[0], right[0])?,
@@ -1285,10 +1250,7 @@ fn integer_sqrt(value: u128) -> u128 {
     let mut high = value.min(u128::from(u64::MAX));
     while low <= high {
         let middle = low + (high - low) / 2;
-        match middle
-            .checked_mul(middle)
-            .map(|square| square.cmp(&value))
-        {
+        match middle.checked_mul(middle).map(|square| square.cmp(&value)) {
             Some(Ordering::Equal) => return middle,
             Some(Ordering::Less) => low = middle.saturating_add(1),
             Some(Ordering::Greater) | None => high = middle.saturating_sub(1),
@@ -1306,8 +1268,7 @@ mod tests {
     };
 
     use super::{
-        BallisticEventTimelineConfig3d, BallisticTimelineEvent3d,
-        advance_ballistic_event_timeline,
+        BallisticEventTimelineConfig3d, BallisticTimelineEvent3d, advance_ballistic_event_timeline,
     };
 
     fn rigid_config() -> BallisticEventTimelineConfig3d {
@@ -1394,12 +1355,7 @@ mod tests {
         let target_layers = CollisionLayers3d::new(0b0010, 0b0100);
         let projectile_layers = CollisionLayers3d::new(0b0100, 0b0010);
         let mut boxes = vec![
-            fixed(
-                1,
-                Vec3i::new(10, 0, 0),
-                Vec3i::new(1, 4, 4),
-                rigid_layers,
-            ),
+            fixed(1, Vec3i::new(10, 0, 0), Vec3i::new(1, 4, 4), rigid_layers),
             dynamic(
                 2,
                 Vec3i::ZERO,
@@ -1444,12 +1400,7 @@ mod tests {
     #[test]
     fn simultaneous_ballistic_hits_share_one_frontier_and_one_advance() {
         let layers = CollisionLayers3d::ALL;
-        let mut boxes = vec![fixed(
-            1,
-            Vec3i::ZERO,
-            Vec3i::new(5, 50, 5),
-            layers,
-        )];
+        let mut boxes = vec![fixed(1, Vec3i::ZERO, Vec3i::new(5, 50, 5), layers)];
         let mut projectiles = (0..32)
             .map(|index| {
                 BallisticSphere3d::new(
