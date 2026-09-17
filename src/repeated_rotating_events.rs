@@ -650,7 +650,8 @@ mod tests {
     use super::{
         RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
         advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
-        current_contact_frontier, refresh_current_contacts_for_changed_bodies, scale_remaining_time,
+        current_contact_frontier, refresh_current_contacts_for_changed_bodies,
+        scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
