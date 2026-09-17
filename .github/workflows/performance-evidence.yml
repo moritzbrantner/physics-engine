@@ -5,6 +5,7 @@ on:
     paths:
       - "src/query.rs"
       - "src/ballistic_sphere.rs"
+      - "src/ballistic_event_timeline.rs"
       - "src/rigid_box.rs"
       - "src/linear_contact.rs"
       - "src/stabilized_rotating_world.rs"
@@ -101,7 +102,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           cp scripts/benchmark-projectile-policies.mjs performance-evidence/
-          node scripts/benchmark-projectile-policies.mjs performance-evidence/head.wasm performance-evidence/projectile-policies.json
+          node scripts/benchmark-projectile-policies.mjs performance-evidence/projectile-policies.json
 
       - name: Compare optional fixed geometry preparation
         run: |
