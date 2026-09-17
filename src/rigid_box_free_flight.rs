@@ -271,6 +271,7 @@ pub fn sample_rigid_box_free_flight(
         angular,
         rotation_locked: rigid_box.rotation_locked,
         contact_mode: rigid_box.contact_mode,
+        contact_persistence: rigid_box.contact_persistence,
         collision_layers: rigid_box.collision_layers,
     })
 }
@@ -378,9 +379,9 @@ fn map_ratio_error(_: WideRatioError) -> RigidBoxFreeFlightError3d {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, Orientation3d,
-        RigidBody, RigidBox3d, Vec3i, World, WorldConfig, oriented_box_vertices,
-        rotational_sweep_bounds,
+        ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId,
+        ContactPersistence3d, Orientation3d, RigidBody, RigidBox3d, Vec3i, World, WorldConfig,
+        oriented_box_vertices, rotational_sweep_bounds,
     };
 
     use super::{
@@ -423,6 +424,32 @@ mod tests {
 
         assert_eq!(sampled.body(), world.body(BodyId(1)).expect("body remains"));
         assert_ne!(sampled.angular().orientation, Orientation3d::IDENTITY);
+    }
+
+    #[test]
+    fn free_flight_preserves_transient_contact_persistence() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(11),
+                Vec3i::ZERO,
+                Vec3i::new(120, 0, 0),
+                Vec3i::new(2, 2, 2),
+            ),
+            AngularVelocity3d::default(),
+        )
+        .with_transient_contacts();
+        let sampled = sample_rigid_box_free_flight(
+            &rigid_box,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60),
+            1,
+            1,
+        )
+        .expect("valid projectile sample");
+
+        assert_eq!(
+            sampled.contact_persistence(),
+            ContactPersistence3d::Transient
+        );
     }
 
     #[test]
