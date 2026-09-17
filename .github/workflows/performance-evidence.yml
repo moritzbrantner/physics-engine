@@ -15,6 +15,7 @@ on:
       - "src/rotating_broad_phase_tree.rs"
       - "src/rotating_contact_frontier.rs"
       - "src/rotating_contact_search.rs"
+      - "src/rotating_contact_search_ordered.rs"
       - "src/rotating_recontact_search.rs"
       - "src/rotating_recontact_prepared_tests.rs"
       - "src/oriented_box.rs"
