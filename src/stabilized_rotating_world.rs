@@ -934,8 +934,7 @@ fn low_motion(rigid_box: &RigidBox3d) -> bool {
         .saturating_mul(angular_speed_l1)
         .div_ceil(u128::from(ANGULAR_VELOCITY_SCALE.unsigned_abs()));
 
-    linear_speed.saturating_add(rotational_surface_speed)
-        <= u128::from(SLEEP_LINEAR_SPEED_LIMIT)
+    linear_speed.saturating_add(rotational_surface_speed) <= u128::from(SLEEP_LINEAR_SPEED_LIMIT)
 }
 
 fn motion_is_zero(rigid_box: &RigidBox3d) -> bool {
