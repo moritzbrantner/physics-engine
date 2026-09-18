@@ -755,12 +755,14 @@ pub extern "C" fn sandbox_body_orientation_w(index: u32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_collision_events() -> u32 {
     with_sandbox(|sandbox| {
-        u32::try_from(
-            sandbox
-                .last_rotating_events
-                .saturating_add(sandbox.last_tail_contacts),
+        let rigid = sandbox
+            .last_rotating_events
+            .saturating_add(sandbox.last_tail_contacts);
+        saturating_u32(
+            u64::try_from(rigid)
+                .unwrap_or(u64::MAX)
+                .saturating_add(sandbox.last_step_stats.ballistic_impacts),
         )
-        .unwrap_or(u32::MAX)
     })
 }
 
@@ -879,6 +881,56 @@ pub extern "C" fn sandbox_last_stabilization_exact_contacts() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_stabilization_active_bodies() -> u32 {
     with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilization_active_bodies))
+}
+
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_sphere_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.ballistic_sphere_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_query_rounds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_query_rounds))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_target_bound_checks() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_target_bound_checks))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_broad_phase_candidates() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.ballistic_broad_phase_candidates)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_toi_tests() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_toi_tests))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_feature_tests() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_feature_tests))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_motion_samples() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_motion_samples))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_impacts() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_impacts))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_retired() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_retired))
 }
 
 #[unsafe(no_mangle)]
