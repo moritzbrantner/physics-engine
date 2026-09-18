@@ -1247,9 +1247,13 @@ mod tests {
         let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
         let mut broad_phase = RotatingBroadPhase3d::default();
 
-        broad_phase.candidate_pairs(&boxes, config).expect("first query");
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("first query");
         let first = broad_phase.stats();
-        broad_phase.candidate_pairs(&boxes, config).expect("second query");
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("second query");
         let second = broad_phase.stats();
 
         assert_eq!(first.fixed_bound_recomputations, 128);
