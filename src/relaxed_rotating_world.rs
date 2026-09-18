@@ -206,6 +206,39 @@ impl RotatingWorld3d {
             .saturating_add(self.active.sleeping_body_count())
     }
 
+    /// Immediately parks an awake dynamic at its current pose with zero residual motion.
+    ///
+    /// This is a representation transition for consumers that know an object has completed its
+    /// active motion (for example, an inelastic transient projectile after its first impact).
+    /// The retained dynamic can still be conservatively awakened by a later overlapping sweep.
+    pub fn park_body_at_rest(&mut self, id: BodyId) -> Result<bool, RotatingWorldError3d> {
+        if self.parked.contains_key(&id) {
+            return Ok(false);
+        }
+        let Some(mut rigid_box) = self.active.remove_box(id) else {
+            return Err(RotatingWorldError3d::MissingBody(id));
+        };
+        if rigid_box.body().kind() != BodyKind::Dynamic {
+            self.active.add_box(rigid_box)?;
+            return Ok(false);
+        }
+
+        rigid_box.body.velocity = Vec3i::ZERO;
+        rigid_box.angular.angular_velocity = AngularVelocity3d::default();
+        let proxy = fixed_sleep_proxy(rigid_box.clone());
+        if let Err(error) = self.active.add_box(proxy) {
+            self.active
+                .add_box(rigid_box)
+                .expect("restoring a previously valid dynamic after failed parking cannot fail");
+            return Err(error);
+        }
+
+        self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
+        self.parked.insert(id, rigid_box);
+        self.rebuild_parked_wake_index()?;
+        Ok(true)
+    }
+
     pub fn set_linear_velocity(
         &mut self,
         id: BodyId,
@@ -532,6 +565,35 @@ mod tests {
         assert_eq!(
             world.body_interaction_category(id),
             InteractionCategory3d::DEFAULT
+        );
+    }
+
+    #[test]
+    fn explicit_rest_parking_preserves_pose_and_leaves_no_active_dynamic() {
+        let id = BodyId(1);
+        let mut world = world();
+        world
+            .add_box(dynamic(
+                id.0,
+                Vec3i::new(10, 20, 30),
+                Vec3i::new(400, -20, 50),
+            ))
+            .expect("add projectile-like body");
+        let before = world.box_by_id(id).expect("body before parking").clone();
+
+        assert!(world.park_body_at_rest(id).expect("park body"));
+        let parked = world.box_by_id(id).expect("parked body");
+        assert_eq!(parked.body().position(), before.body().position());
+        assert_eq!(parked.body().velocity(), Vec3i::ZERO);
+        assert!(parked.angular().angular_velocity.is_zero());
+        assert!(world.is_sleeping(id));
+        assert_eq!(world.active_dynamic_count, 0);
+
+        let report = world.step(1, 60).expect("quiescent parked step");
+        assert_eq!(report.stats.sampled_events, 0);
+        assert_eq!(
+            world.box_by_id(id).expect("body after parked step").body().position(),
+            before.body().position()
         );
     }
 
