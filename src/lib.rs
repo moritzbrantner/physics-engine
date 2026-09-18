@@ -90,7 +90,8 @@ pub use fixed_geometry::{
     FixedGeometryPreparationStats3d, obb_contact_seed, rigid_box_free_flight_sweep_bounds,
 };
 pub use interaction_policy::{
-    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, WakePropagation3d,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d, InteractionPolicy3d,
+    WakePropagation3d,
 };
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
