@@ -22,10 +22,9 @@ const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
 enum ProjectileType {
-    #[default]
     Sphere = 0,
     Arrow = 1,
 }
@@ -44,7 +43,7 @@ struct Sandbox {
     world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
-    projectile_type: ProjectileType,
+    projectile_type: Option<ProjectileType>,
     last_rotating_events: usize,
     last_tail_contacts: usize,
     last_step_stats: RotatingWorldStepStats3d,
@@ -145,7 +144,7 @@ impl Sandbox {
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
-            projectile_type: ProjectileType::default(),
+            projectile_type: None,
             last_rotating_events: 0,
             last_tail_contacts: 0,
             last_step_stats: RotatingWorldStepStats3d::default(),
@@ -252,15 +251,15 @@ impl Sandbox {
         let Some(projectile_type) = ProjectileType::from_i32(projectile_type) else {
             return -1;
         };
-        self.projectile_type = projectile_type;
+        self.projectile_type = Some(projectile_type);
         0
     }
 
     fn render_role_for(&self, id: BodyId) -> i32 {
         if id.0 >= PROJECTILE_ID_START {
             return match self.projectile_type {
-                ProjectileType::Sphere => 3,
-                ProjectileType::Arrow => 4,
+                Some(ProjectileType::Arrow) => 4,
+                None | Some(ProjectileType::Sphere) => 3,
             };
         }
         role_for(id)
@@ -296,7 +295,15 @@ impl Sandbox {
         let material = Material::new(impact_policy.restitution_milli());
         let layers = controller::scenario_rules::projectile_layers();
         let projectile = match self.projectile_type {
-            ProjectileType::Sphere => rotating_box(
+            None => rotating_box(
+                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                    .with_material(material),
+            )
+            // Keep the pre-selector WASM behavior stable for historical benchmark callers. The browser always
+            // selects a concrete projectile type before shooting.
+            .with_collision_layers(layers)
+            .with_transient_contacts(),
+            Some(ProjectileType::Sphere) => rotating_box(
                 RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
                     .with_material(material),
             )
@@ -306,7 +313,7 @@ impl Sandbox {
             .with_rotation_locked()
             .with_collision_layers(layers)
             .with_transient_contacts(),
-            ProjectileType::Arrow => RigidBox3d::new(
+            Some(ProjectileType::Arrow) => RigidBox3d::new(
                 RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
                     .with_material(material),
                 AngularState3d::new(
@@ -337,7 +344,7 @@ impl Sandbox {
     }
 
     fn update_arrow_directions(&mut self) -> Result<(), RotatingWorldError3d> {
-        if self.projectile_type != ProjectileType::Arrow || self.projectile_ids.is_empty() {
+        if self.projectile_type != Some(ProjectileType::Arrow) || self.projectile_ids.is_empty() {
             return Ok(());
         }
         let updates = self
@@ -558,7 +565,7 @@ pub extern "C" fn sandbox_set_projectile_type(projectile_type: i32) -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_projectile_type() -> i32 {
-    with_sandbox(|sandbox| sandbox.projectile_type as i32)
+    with_sandbox(|sandbox| sandbox.projectile_type.map_or(-1, |value| value as i32))
 }
 
 #[unsafe(no_mangle)]
@@ -1027,7 +1034,8 @@ mod tests {
     #[test]
     fn sphere_projectile_is_rotation_free_and_transient() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
-        assert_eq!(sandbox.projectile_type, ProjectileType::Sphere);
+        assert_eq!(sandbox.set_projectile_type(ProjectileType::Sphere as i32), 0);
+        assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
         let projectile = sandbox
@@ -1090,13 +1098,13 @@ mod tests {
             sandbox.set_projectile_type(ProjectileType::Arrow as i32),
             -1
         );
-        assert_eq!(sandbox.projectile_type, ProjectileType::Sphere);
+        assert_eq!(sandbox.projectile_type, None);
     }
 
     #[test]
     fn fast_projectile_does_not_tunnel_through_thin_target() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
-        assert_eq!(sandbox.projectile_type, ProjectileType::Sphere);
+        assert_eq!(sandbox.projectile_type, None);
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
         assert_eq!(
