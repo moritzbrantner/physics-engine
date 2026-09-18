@@ -939,15 +939,20 @@ fn rotate_fixed_vector(
     matrix: [[i128; 3]; 3],
     vector: [i128; 3],
 ) -> Result<[i128; 3], BallisticSphereError3d> {
+    let scale = i128::from(ORIENTATION_SCALE);
     let mut output = [0_i128; 3];
     for (target, row) in output.iter_mut().zip(matrix) {
-        *target = checked_add(
+        let sum = checked_add(
             checked_add(
                 checked_mul(row[0], vector[0])?,
                 checked_mul(row[1], vector[1])?,
             )?,
             checked_mul(row[2], vector[2])?,
         )?;
+        // The rotation matrix is Q-scaled. Return the rotated direction in the same integer
+        // magnitude domain as the input so downstream impulse math does not accidentally
+        // square the orientation scale as part of the contact normal.
+        *target = div_round_nearest(sum, scale)?;
     }
     primitive_direction(output)
 }
