@@ -2,9 +2,8 @@ use std::cell::RefCell;
 
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BallisticSphere3d, BodyId, BodyKind, Material,
-    Orientation3d,
-    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
+    Orientation3d, RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
 
 mod controller;
@@ -321,7 +320,9 @@ impl Sandbox {
                     return -1;
                 };
                 self.world.add_ballistic_sphere(
-                    projectile.with_material(material).with_collision_layers(layers),
+                    projectile
+                        .with_material(material)
+                        .with_collision_layers(layers),
                     impact_policy.retire_on_contact(),
                 )
             }
@@ -883,7 +884,6 @@ pub extern "C" fn sandbox_last_stabilization_active_bodies() -> u32 {
     with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.stabilization_active_bodies))
 }
 
-
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_ballistic_sphere_count() -> u32 {
     with_sandbox(|sandbox| {
@@ -903,9 +903,7 @@ pub extern "C" fn sandbox_last_ballistic_target_bound_checks() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_ballistic_broad_phase_candidates() -> u32 {
-    with_sandbox(|sandbox| {
-        saturating_u32(sandbox.last_step_stats.ballistic_broad_phase_candidates)
-    })
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_broad_phase_candidates))
 }
 
 #[unsafe(no_mangle)]
