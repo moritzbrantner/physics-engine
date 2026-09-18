@@ -36,6 +36,20 @@ Use `with_aggressive_sleep()` and, where appropriate, a pair policy with a low f
 
 Aggressive sleep changes only the deterministic stable-duration requirement. It does not increase the low-motion velocity threshold and therefore does not freeze fast-moving debris.
 
+## Execution order
+
+The ECS-facing world orders work from cheapest to most general:
+
+1. body capabilities classify whether a body is solid or overlap-only before collision work;
+2. overlap-only dynamics take one deterministic free-flight lane and never enter repeated-event or persistent-tail solving;
+3. solid bodies alone form the rigid solver working set and broad-phase trees;
+4. interaction-category policies resolve to a precompiled `InteractionExecutionPlan3d` for pair-specific stage gates such as wake propagation and fixed-boundary stabilization;
+5. existing specialized paths such as ballistic spheres stay outside the general rotating-box solver;
+6. sleep/parking removes settled dynamics from future active work.
+
+This ordering is intended to avoid whole stages of computation rather than merely make individual equations faster.
+`RotatingWorldStepStats3d` records `solver_body_count` and `solver_bypassed_body_count` so consumers and Performance Evidence can verify the partition directly.
+
 ## Policy-resolution rules
 
 Interaction categories remain consumer-defined. Directional pair overrides take precedence over symmetric pair overrides, which take precedence over the default policy. Wake propagation is directional: suppressing `debris -> debris` does not automatically suppress `character -> debris`.
