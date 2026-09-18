@@ -17,8 +17,14 @@
             tabindex="0"
             aria-label="First-person physics sandbox"
           ></canvas>
+          <div id="projectile-hud" class="projectile-hud" aria-live="polite">
+            <span class="projectile-hud-label">Projectile</span>
+            <span data-projectile-shortcut="sphere"><kbd>1</kbd> Sphere</span>
+            <span data-projectile-shortcut="arrow"><kbd>2</kbd> Arrow</span>
+            <span data-projectile-shortcut="rigid"><kbd>3</kbd> Rigid</span>
+          </div>
           <div class="help" aria-hidden="true">
-            WASD move · Space jump · Mouse / arrows look · Click / F shoot · R reset · P pause · N step
+            WASD move · Space jump · Mouse / arrows look · Click / F shoot · 1/2/3 projectile · R reset · P pause · N step
           </div>
         </div>
 
@@ -106,11 +112,12 @@
             <label class="setting-row" for="projectile-type">
               <span>
                 <strong>Projectile type</strong>
-                <small>Compare optimized rotation-free spheres with directional arrows.</small>
+                <small>Compare specialized spheres and arrows with the full rigid-body reference path.</small>
               </span>
               <select id="projectile-type" disabled>
-                <option value="sphere">Sphere · rotation-free</option>
-                <option value="arrow">Arrow · directional shaft</option>
+                <option value="sphere">1 · Sphere · rotation-free</option>
+                <option value="arrow">2 · Arrow · directional shaft</option>
+                <option value="rigid">3 · Rigid body · reference</option>
               </select>
             </label>
 
