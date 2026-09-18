@@ -34,6 +34,7 @@ jobs:
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
 
   build-pages:
+    if: ${{ github.event_name != 'pull_request' }}
     name: Build or reuse validated Pages artifact
     permissions:
       actions: read
