@@ -17,9 +17,9 @@ use crate::{
 };
 use crate::{
     ballistic_event::{
-        BallisticStepWork3d, advance_ballistic_spheres_full, advance_ballistic_spheres_to_time,
-        earliest_ballistic_frontier, remaining_after as ballistic_remaining_after,
-        resolve_ballistic_frontier,
+        BallisticStepWork3d, BallisticTimelineError3d, advance_ballistic_spheres_full,
+        advance_ballistic_spheres_to_time, earliest_ballistic_frontier,
+        remaining_after as ballistic_remaining_after, resolve_ballistic_frontier,
     },
     current_contact_query::{BodyCurrentContact3d, GenerationContactCache3d},
     repeated_rotating_events::{
@@ -171,6 +171,7 @@ pub enum RotatingWorldError3d {
     FreeFlight(RigidBoxFreeFlightError3d),
     Contact(OrientedBoxError3d),
     Response(RotatingContactResponseError3d),
+    Ballistic(BallisticTimelineError3d),
 }
 
 impl fmt::Display for RotatingWorldError3d {
@@ -218,6 +219,7 @@ impl fmt::Display for RotatingWorldError3d {
                 write!(formatter, "rotating tail contact query failed: {error}")
             }
             Self::Response(error) => write!(formatter, "rotating tail response failed: {error}"),
+            Self::Ballistic(error) => write!(formatter, "rotating ballistic event failed: {error}"),
         }
     }
 }
@@ -245,6 +247,12 @@ impl From<OrientedBoxError3d> for RotatingWorldError3d {
 impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
     fn from(value: RotatingContactResponseError3d) -> Self {
         Self::Response(value)
+    }
+}
+
+impl From<BallisticTimelineError3d> for RotatingWorldError3d {
+    fn from(value: BallisticTimelineError3d) -> Self {
+        Self::Ballistic(value)
     }
 }
 
@@ -574,6 +582,11 @@ impl RotatingWorld3d {
                 timestep_denominator,
             ));
         }
+
+        let total_body_count = self
+            .boxes
+            .len()
+            .saturating_add(self.ballistic_spheres.len());
         if timestep_numerator == 0 {
             let response_authority_body_count =
                 self.solver_partitions.response_authority_body_ids.len();
@@ -585,10 +598,11 @@ impl RotatingWorld3d {
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
                 stats: RotatingWorldStepStats3d {
-                    body_count: self.boxes.len(),
+                    body_count: total_body_count,
                     solver_body_count,
-                    solver_bypassed_body_count: self.boxes.len().saturating_sub(solver_body_count),
+                    solver_bypassed_body_count: total_body_count.saturating_sub(solver_body_count),
                     response_authority_body_count,
+                    ballistic_sphere_count: self.ballistic_spheres.len(),
                     ..RotatingWorldStepStats3d::default()
                 },
             });
@@ -602,17 +616,16 @@ impl RotatingWorld3d {
             timestep_denominator,
         );
 
-        // Partition before expensive collision work. If no solid physics-owned dynamic can receive solver
-        // mutation, fixed and externally authoritative bodies cannot affect one another through the solver,
-        // so every dynamic advances directly and the rigid collision pipeline is skipped entirely. Otherwise
-        // solid bodies remain collision inputs for the mutable dynamics, while overlap-only dynamics stay in
-        // the cheap free-flight lane.
+        // Ballistic spheres never enter the sampled rotating-body solver. When one is live, however, every
+        // solid rigid body remains available as an analytic target even if there is otherwise no mutable rigid
+        // response authority in the world.
         let response_authority_body_count =
             self.solver_partitions.response_authority_body_ids.len();
+        let mixed_ballistic_step = !self.ballistic_spheres.is_empty();
         let mut solver_boxes = Vec::with_capacity(self.solver_partitions.solid_body_ids.len());
         let mut bypassed_updates = Vec::new();
 
-        if response_authority_body_count > 0 {
+        if response_authority_body_count > 0 || mixed_ballistic_step {
             for id in &self.solver_partitions.solid_body_ids {
                 let rigid_box = self
                     .boxes
@@ -642,10 +655,60 @@ impl RotatingWorld3d {
                 }
             }
         }
-        let solver_body_count = solver_boxes.len();
-        let solver_bypassed_body_count = self.boxes.len().saturating_sub(solver_body_count);
 
-        let (solver_boxes, sampled_events, tail, work) = if solver_boxes.is_empty() {
+        let solver_body_count = solver_boxes.len();
+        let solver_bypassed_body_count = total_body_count.saturating_sub(solver_body_count);
+        let mut ballistic_work = BallisticStepWork3d::default();
+
+        let (solver_boxes, sampled_events, tail, work) = if mixed_ballistic_step {
+            if solver_boxes.is_empty() {
+                advance_ballistic_spheres_full(
+                    &mut self.ballistic_spheres,
+                    free_flight,
+                    &mut ballistic_work,
+                )?;
+                (
+                    solver_boxes,
+                    0,
+                    TailStepStats3d::default(),
+                    RepeatedRotatingEventWorkStats3d::default(),
+                )
+            } else {
+                let advance = advance_repeated_rotating_events_with_ballistics(
+                    &mut solver_boxes,
+                    &mut self.ballistic_spheres,
+                    &self.ballistic_retire_on_contact,
+                    RepeatedRotatingEventConfig3d::new(
+                        RotatingContactSearchConfig3d::new(
+                            free_flight,
+                            self.config.sample_count,
+                            self.config.refinement_steps,
+                        ),
+                        self.config.solver_passes,
+                        self.config.max_events,
+                    ),
+                    &mut self.broad_phase,
+                    &mut self.response_scratch,
+                    &mut ballistic_work,
+                )?;
+                let sampled_events = advance.events.len();
+                let work = advance.work;
+                let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
+                    (solver_boxes, TailStepStats3d::default())
+                } else {
+                    consume_tail_with_ballistics(
+                        solver_boxes,
+                        &mut self.ballistic_spheres,
+                        &self.ballistic_retire_on_contact,
+                        advance.remaining,
+                        self.config.solver_passes,
+                        &mut self.tail_broad_phase,
+                        &mut ballistic_work,
+                    )?
+                };
+                (solver_boxes, sampled_events, tail, work)
+            }
+        } else if solver_boxes.is_empty() {
             (
                 solver_boxes,
                 0,
@@ -682,6 +745,14 @@ impl RotatingWorld3d {
             (solver_boxes, sampled_events, tail, work)
         };
 
+        let live_ballistic_ids = self
+            .ballistic_spheres
+            .iter()
+            .map(|projectile| projectile.id())
+            .collect::<BTreeSet<_>>();
+        self.ballistic_retire_on_contact
+            .retain(|id| live_ballistic_ids.contains(id));
+
         let mut changed_body_ids = BTreeSet::new();
         for rigid_box in solver_boxes.into_iter().chain(bypassed_updates) {
             let id = rigid_box.body().id();
@@ -695,12 +766,16 @@ impl RotatingWorld3d {
         if !changed_body_ids.is_empty() {
             self.mark_contact_geometry_changed_for(&changed_body_ids);
         }
+
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
             changed_body_ids: changed_body_ids.into_iter().collect(),
             stats: RotatingWorldStepStats3d {
-                body_count: self.boxes.len(),
+                body_count: self
+                    .boxes
+                    .len()
+                    .saturating_add(self.ballistic_spheres.len()),
                 solver_body_count,
                 solver_bypassed_body_count,
                 response_authority_body_count,
@@ -759,6 +834,15 @@ impl RotatingWorld3d {
                 stabilization_candidate_pairs: work.stabilization_candidate_pairs,
                 stabilization_exact_contacts: work.stabilization_exact_contacts,
                 stabilization_active_bodies: work.stabilization_active_bodies,
+                ballistic_sphere_count: self.ballistic_spheres.len(),
+                ballistic_query_rounds: ballistic_work.query_rounds,
+                ballistic_target_bound_checks: ballistic_work.target_bound_checks,
+                ballistic_broad_phase_candidates: ballistic_work.broad_phase_candidates,
+                ballistic_toi_tests: ballistic_work.toi_tests,
+                ballistic_feature_tests: ballistic_work.feature_tests,
+                ballistic_motion_samples: ballistic_work.motion_samples,
+                ballistic_impacts: ballistic_work.impacts,
+                ballistic_retired: ballistic_work.retired,
             },
         })
     }
