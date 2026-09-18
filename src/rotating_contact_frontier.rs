@@ -217,7 +217,7 @@ fn reconstruct_frontier(
     // The temporal search leaves the broad phase synchronized to the conservative full-interval sweep.
     // Re-querying that same interval is still cheaper than constructing a complete sampled world and keeps
     // the candidate set a conservative superset of every pair that can overlap at `earliest.time`.
-    let candidates = broad_phase.candidate_pairs(boxes, config.free_flight)?;
+    let candidates = broad_phase.response_candidate_pairs(boxes, config.free_flight)?;
     let by_id = boxes
         .iter()
         .map(|rigid_box| (rigid_box.body().id(), rigid_box))
