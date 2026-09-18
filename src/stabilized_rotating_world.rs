@@ -6,7 +6,7 @@ use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
     InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d, InteractionPolicy3d,
-    MotionAuthority3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    MotionAuthority3d, Orientation3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
     RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d, SolverParticipation3d, Vec3i,
     WakePropagation3d, obb_contact_seed, obb_response::resolve_obb_contact,
@@ -237,6 +237,19 @@ impl RotatingWorld3d {
         self.sleeping.remove(&id);
         self.sleep_stable_time_q64.remove(&id);
         self.pending_fixed_boundary_body_ids.insert(id);
+        Ok(())
+    }
+
+    pub fn set_orientations(
+        &mut self,
+        updates: &[(BodyId, Orientation3d)],
+    ) -> Result<(), RotatingWorldError3d> {
+        self.inner.set_orientations(updates)?;
+        for (id, _) in updates {
+            self.sleeping.remove(id);
+            self.sleep_stable_time_q64.remove(id);
+            self.pending_fixed_boundary_body_ids.insert(*id);
+        }
         Ok(())
     }
 
