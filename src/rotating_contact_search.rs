@@ -254,7 +254,7 @@ pub(crate) fn sampled_rotating_contact_search_with_broad_phase(
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<Option<RotatingContactSearchHit3d>, RotatingContactSearchError3d> {
     validate_resolution(config)?;
-    let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
+    let pairs = broad_phase.response_candidate_pairs(boxes, config.free_flight)?;
     if pairs.is_empty() {
         return Ok(None);
     }
