@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
-    InteractionPolicy3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d,
     RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
     RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, WakePropagation3d,
     rigid_box_free_flight_sweep_bounds,
@@ -73,6 +74,16 @@ impl RotatingWorld3d {
         target: BodyId,
     ) -> InteractionPolicy3d {
         self.active.interaction_policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.active
+            .interaction_execution_plan_for_bodies(source, target)
     }
 
     pub fn set_pair_interaction_policy(
@@ -335,7 +346,7 @@ impl RotatingWorld3d {
                         .any(|(awake_id, awake_bounds)| {
                             self.active.box_by_id(*awake_id).is_some_and(|awake_box| {
                                 self.active
-                                    .interaction_policy_for_bodies(*awake_id, *parked_id)
+                                    .interaction_execution_plan_for_bodies(*awake_id, *parked_id)
                                     .wake_propagation()
                                     == WakePropagation3d::Full
                                     && awake_box
