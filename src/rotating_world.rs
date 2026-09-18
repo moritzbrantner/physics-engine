@@ -6,7 +6,8 @@ use std::{
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBox3d, OrientedBoxError3d,
-    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
+    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+    RepeatedRotatingEventWorkStats3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
     SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
@@ -422,30 +423,50 @@ impl RotatingWorld3d {
         let solver_body_count = solver_boxes.len();
         let solver_bypassed_body_count = self.boxes.len().saturating_sub(solver_body_count);
 
-        let advance = advance_repeated_rotating_events_with_broad_phase(
-            &mut solver_boxes,
-            RepeatedRotatingEventConfig3d::new(
-                RotatingContactSearchConfig3d::new(
-                    free_flight,
-                    self.config.sample_count,
-                    self.config.refinement_steps,
-                ),
-                self.config.solver_passes,
-                self.config.max_events,
-            ),
-            &mut self.broad_phase,
-        )?;
-
-        let sampled_events = advance.events.len();
-        let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
-            (solver_boxes, TailStepStats3d::default())
-        } else {
-            consume_tail(
+        let (solver_boxes, sampled_events, tail, work) = if solver_boxes.is_empty() {
+            (
                 solver_boxes,
-                advance.remaining,
-                self.config.solver_passes,
-                &mut self.tail_broad_phase,
-            )?
+                0,
+                TailStepStats3d::default(),
+                RepeatedRotatingEventWorkStats3d::default(),
+            )
+        } else {
+            let advance = advance_repeated_rotating_events_with_broad_phase(
+                &mut solver_boxes,
+                RepeatedRotatingEventConfig3d::new(
+                    RotatingContactSearchConfig3d::new(
+                        free_flight,
+                        self.config.sample_count,
+                        self.config.refinement_steps,
+                    ),
+                    self.config.solver_passes,
+                    self.config.max_events,
+                ),
+                &mut self.broad_phase,
+            )?;
+            let sampled_events = advance.events.len();
+            let work = advance.work;
+            let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
+                (solver_boxes, TailStepStats3d::default())
+            } else {
+                (
+                    consume_tail(
+                        solver_boxes,
+                        advance.remaining,
+                        self.config.solver_passes,
+                        &mut self.tail_broad_phase,
+                    )?
+                    .0,
+                    consume_tail(
+                        Vec::new(),
+                        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+                        self.config.solver_passes,
+                        &mut self.tail_broad_phase,
+                    )?
+                    .1,
+                )
+            };
+            (solver_boxes, sampled_events, tail, work)
         };
 
         let mut changed_body_ids = BTreeSet::new();
