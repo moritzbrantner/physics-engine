@@ -27,6 +27,7 @@ const CRATE_FRICTION_MILLI: u16 = 1_000;
 enum ProjectileType {
     Sphere = 0,
     Arrow = 1,
+    Rigid = 2,
 }
 
 impl ProjectileType {
@@ -34,6 +35,7 @@ impl ProjectileType {
         match value {
             0 => Some(Self::Sphere),
             1 => Some(Self::Arrow),
+            2 => Some(Self::Rigid),
             _ => None,
         }
     }
@@ -259,6 +261,7 @@ impl Sandbox {
         if id.0 >= PROJECTILE_ID_START {
             return match self.projectile_type {
                 Some(ProjectileType::Arrow) => 4,
+                Some(ProjectileType::Rigid) => 5,
                 None | Some(ProjectileType::Sphere) => 3,
             };
         }
@@ -329,6 +332,13 @@ impl Sandbox {
             .with_collision_layers(layers)
             .with_transient_contacts()
             .with_aggressive_sleep(),
+            Some(ProjectileType::Rigid) => rotating_box(
+                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                    .with_material(material),
+            )
+            // Deliberately retain the full rigid-body reference path for A/B comparison against specialized
+            // projectile archetypes.
+            .with_collision_layers(layers),
         };
 
         if self.world.add_box(projectile).is_err() {
@@ -1172,6 +1182,23 @@ mod tests {
         let arrow = sandbox.world.box_by_id(id).expect("arrow after step");
         assert_ne!(arrow.angular().orientation, before);
         assert!(arrow.angular().angular_velocity.is_zero());
+    }
+
+    #[test]
+    fn rigid_projectile_keeps_general_persistent_contact_path() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(sandbox.set_projectile_type(ProjectileType::Rigid as i32), 0);
+        let projectile = sandbox.shoot(0, 0, -96);
+        assert!(projectile >= 0);
+        let projectile = sandbox
+            .world
+            .box_by_id(BodyId(projectile as u64))
+            .expect("spawned rigid projectile");
+        assert!(!projectile.rotation_locked());
+        assert_eq!(
+            projectile.contact_persistence(),
+            ContactPersistence3d::Persistent
+        );
     }
 
     #[test]
