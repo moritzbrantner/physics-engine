@@ -130,8 +130,16 @@ impl RotatingWorld3d {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
 
-        if rigid_box.body().kind() == BodyKind::Fixed {
-            self.unpark_all()?;
+        let topology_bounds = if rigid_box.body().kind() == BodyKind::Fixed && !self.parked.is_empty() {
+            Some(rigid_box_free_flight_sweep_bounds(
+                &rigid_box,
+                RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+            )?)
+        } else {
+            None
+        };
+        if let Some(bounds) = topology_bounds {
+            self.unpark_parked_component(bounds)?;
         }
         let dynamic = rigid_box.body().kind() == BodyKind::Dynamic;
         self.active.add_box(rigid_box)?;
@@ -142,6 +150,13 @@ impl RotatingWorld3d {
     }
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
+        let topology_bounds = self.box_by_id(id).and_then(|rigid_box| {
+            rigid_box_free_flight_sweep_bounds(
+                rigid_box,
+                RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+            )
+            .ok()
+        });
         let removed = if self.parked.contains_key(&id) {
             self.active.remove_box(id)?;
             self.parked.remove(&id)?
@@ -154,8 +169,13 @@ impl RotatingWorld3d {
         };
         self.active.clear_body_interaction_category(id);
 
-        self.unpark_all()
-            .expect("parked bodies are valid and disjoint from active dynamics");
+        if let Some(bounds) = topology_bounds {
+            self.unpark_parked_component(bounds)
+                .expect("parked topology was valid before removal");
+        } else {
+            self.unpark_all()
+                .expect("parked bodies are valid and disjoint from active dynamics");
+        }
         Some(removed)
     }
 
@@ -315,6 +335,35 @@ impl RotatingWorld3d {
         self.parked_wake_index
             .rebuild_stationary(self.parked.values())
             .map_err(map_broad_phase_error)
+    }
+
+    fn unpark_parked_component(
+        &mut self,
+        seed_bounds: crate::RotationalSweepBounds3d,
+    ) -> Result<(), RotatingWorldError3d> {
+        if self.parked.is_empty() {
+            return Ok(());
+        }
+        let stationary = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut pending = vec![seed_bounds];
+        let mut awakened = BTreeSet::new();
+
+        while let Some(bounds) = pending.pop() {
+            for id in self.parked_wake_index.overlapping_ids(bounds).body_ids {
+                if !awakened.insert(id) {
+                    continue;
+                }
+                let Some(rigid_box) = self.parked.get(&id) else {
+                    continue;
+                };
+                let next_bounds = rigid_box_free_flight_sweep_bounds(rigid_box, stationary)?;
+                if self.unpark_without_index(id)? {
+                    pending.push(next_bounds);
+                }
+            }
+        }
+
+        self.rebuild_parked_wake_index()
     }
 
     fn wake_parked_for_sweeps(
@@ -556,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_topology_change_wakes_parked_bodies() {
+    fn fixed_topology_change_wakes_only_local_parked_component() {
         let sleeper = BodyId(6);
         let mut world = world();
         world
@@ -567,8 +616,19 @@ mod tests {
 
         world
             .add_box(fixed(7, Vec3i::new(100, 0, 0)))
-            .expect("add fixed geometry");
-        assert!(!world.is_sleeping(sleeper));
+            .expect("add distant fixed geometry");
+        assert!(
+            world.is_sleeping(sleeper),
+            "distant topology must not wake an unrelated parked body"
+        );
+
+        world
+            .add_box(fixed(8, Vec3i::ZERO))
+            .expect("add overlapping fixed geometry");
+        assert!(
+            !world.is_sleeping(sleeper),
+            "local topology must wake the intersecting parked component"
+        );
     }
 
     #[test]
