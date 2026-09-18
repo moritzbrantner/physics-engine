@@ -18,6 +18,7 @@ use crate::{
     current_contact_query::{BodyCurrentContact3d, GenerationContactCache3d},
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
+    rotating_contact_response::RotatingContactResponseScratch3d,
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -79,6 +80,8 @@ pub struct RotatingWorldStepStats3d {
     pub broad_phase_rotations: u64,
     pub broad_phase_partial_queries: u64,
     pub broad_phase_partial_body_updates: u64,
+    /// Response body-index scratch rebuilds during this step. Stable solver membership should normally report zero after warm-up.
+    pub response_scratch_index_rebuilds: u64,
     pub event_response_passes: u64,
     pub stabilization_passes: u64,
     pub stabilizations_hitting_limit: u64,
@@ -287,6 +290,7 @@ pub struct RotatingWorld3d {
     solver_partitions: SolverPartitions3d,
     broad_phase: RotatingBroadPhase3d,
     tail_broad_phase: RotatingBroadPhase3d,
+    response_scratch: RotatingContactResponseScratch3d,
 }
 
 impl RotatingWorld3d {
@@ -300,6 +304,7 @@ impl RotatingWorld3d {
             solver_partitions: SolverPartitions3d::default(),
             broad_phase: RotatingBroadPhase3d::default(),
             tail_broad_phase: RotatingBroadPhase3d::default(),
+            response_scratch: RotatingContactResponseScratch3d::default(),
         }
     }
 
@@ -584,6 +589,7 @@ impl RotatingWorld3d {
                     self.config.max_events,
                 ),
                 &mut self.broad_phase,
+                &mut self.response_scratch,
             )?;
             let sampled_events = advance.events.len();
             let work = advance.work;
@@ -670,6 +676,7 @@ impl RotatingWorld3d {
                 broad_phase_partial_body_updates: broad_phase_after
                     .partial_body_updates
                     .saturating_sub(broad_phase_before.partial_body_updates),
+                response_scratch_index_rebuilds: work.response_scratch_index_rebuilds,
                 event_response_passes: work.event_response_passes,
                 stabilization_passes: work.stabilization_passes,
                 stabilizations_hitting_limit: work.stabilizations_hitting_limit,
