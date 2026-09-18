@@ -118,6 +118,44 @@ impl IndexedBvh3d {
         self.visit_body_against(body, root, &mut visit);
     }
 
+    /// Visits retained leaves whose fat bounds overlap `bounds`.
+    ///
+    /// The caller is responsible for exact-bound filtering. Returning the visited-node count makes
+    /// deterministic pruning work observable without turning wall-clock timing into a correctness gate.
+    pub(super) fn for_each_body_overlapping_bounds(
+        &self,
+        bounds: RotationalSweepBounds3d,
+        mut visit: impl FnMut(BodyId),
+    ) -> usize {
+        let Some(root) = self.root else {
+            return 0;
+        };
+        let mut visited_nodes = 0_usize;
+        self.visit_bounds_against(bounds, root, &mut visited_nodes, &mut visit);
+        visited_nodes
+    }
+
+    fn visit_bounds_against(
+        &self,
+        bounds: RotationalSweepBounds3d,
+        index: NodeIndex,
+        visited_nodes: &mut usize,
+        visit: &mut impl FnMut(BodyId),
+    ) {
+        *visited_nodes = visited_nodes.saturating_add(1);
+        let node = *self.node(index);
+        if !bounds_overlap(bounds, node.bounds) {
+            return;
+        }
+        match node.kind {
+            ArenaNodeKind3d::Leaf(body) => visit(body.id),
+            ArenaNodeKind3d::Branch { left, right } => {
+                self.visit_bounds_against(bounds, left, visited_nodes, visit);
+                self.visit_bounds_against(bounds, right, visited_nodes, visit);
+            }
+        }
+    }
+
     fn visit_body_against(
         &self,
         body: BoundedBody3d,

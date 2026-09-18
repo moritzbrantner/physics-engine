@@ -353,6 +353,71 @@ impl RotatingBroadPhase3d {
     }
 }
 
+/// Retained stationary-bounds index for wrapper-level spatial queries such as parked-body wake discovery.
+///
+/// Membership changes rebuild the deterministic tree once, while ordinary frame queries traverse the retained
+/// topology and exact stationary bounds without reconstructing every parked body's envelope.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RotatingBoundsIndex3d {
+    tree: IndexedBvh3d,
+    exact: BTreeMap<BodyId, RotationalSweepBounds3d>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RotatingBoundsQuery3d {
+    pub body_ids: Vec<BodyId>,
+    pub visited_nodes: usize,
+}
+
+impl RotatingBoundsIndex3d {
+    pub(crate) fn rebuild_stationary<'a>(
+        &mut self,
+        boxes: impl IntoIterator<Item = &'a RigidBox3d>,
+    ) -> Result<(), RotatingBroadPhaseError3d> {
+        let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+        let mut ids = BTreeSet::new();
+        let mut exact = BTreeMap::new();
+        let mut fat = Vec::new();
+
+        for rigid_box in boxes {
+            let id = rigid_box.body().id();
+            if !ids.insert(id) {
+                return Err(RotatingBroadPhaseError3d::DuplicateBodyId(id));
+            }
+            if rigid_box.solver_participation() != SolverParticipation3d::Solid {
+                continue;
+            }
+            let mut body = bounded_body(rigid_box, current)?;
+            exact.insert(body.id, body.bounds);
+            body.bounds = fatten_bounds(body.bounds);
+            fat.push(body);
+        }
+
+        self.exact = exact;
+        self.tree.rebuild(&mut fat);
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn overlapping_ids(&self, bounds: RotationalSweepBounds3d) -> RotatingBoundsQuery3d {
+        let mut body_ids = Vec::new();
+        let visited_nodes = self.tree.for_each_body_overlapping_bounds(bounds, |id| {
+            if self
+                .exact
+                .get(&id)
+                .is_some_and(|exact| bounds_overlap(bounds, *exact))
+            {
+                body_ids.push(id);
+            }
+        });
+        body_ids.sort_unstable();
+        RotatingBoundsQuery3d {
+            body_ids,
+            visited_nodes,
+        }
+    }
+}
+
 /// Produces a deterministic conservative candidate set for rotating-box contact search.
 ///
 /// Every body is first enclosed by [`rigid_box_free_flight_sweep_bounds`], so acceleration, velocity
@@ -491,8 +556,9 @@ mod tests {
     };
 
     use super::{
-        BoundedBody3d, RotatingBroadPhase3d, RotatingBroadPhaseError3d, RotationalSweepPair3d,
-        bounds_overlap, rotational_sweep_candidate_pairs, tree::IndexedBvh3d,
+        BoundedBody3d, RotatingBoundsIndex3d, RotatingBroadPhase3d, RotatingBroadPhaseError3d,
+        RotationalSweepPair3d, bounds_overlap, rotational_sweep_candidate_pairs,
+        tree::IndexedBvh3d,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
@@ -1072,6 +1138,51 @@ mod tests {
         assert_eq!(persistent.stats().rebuilds, 1);
         assert!(persistent.stats().incremental_updates > 0);
         assert!(persistent.stats().reinserts > 8);
+    }
+
+    #[test]
+    fn retained_bounds_index_prunes_sparse_stationary_queries() {
+        let boxes = (0..256_u64)
+            .map(|index| {
+                dynamic(
+                    index + 1,
+                    Vec3i::new(i32::try_from(index).expect("small index") * 16, 0, 0),
+                    Vec3i::ZERO,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut index = RotatingBoundsIndex3d::default();
+        index
+            .rebuild_stationary(boxes.iter())
+            .expect("stationary bounds index");
+
+        let query_body = dynamic(10_000, Vec3i::new(100 * 16, 0, 0), Vec3i::ZERO);
+        let query_bounds = rigid_box_free_flight_sweep_bounds(
+            &query_body,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+        )
+        .expect("query bounds");
+        let query = index.overlapping_ids(query_bounds);
+
+        let expected = boxes
+            .iter()
+            .filter_map(|rigid_box| {
+                let bounds = rigid_box_free_flight_sweep_bounds(
+                    rigid_box,
+                    RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+                )
+                .expect("stationary bounds");
+                bounds_overlap(query_bounds, bounds).then_some(rigid_box.body().id())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(query.body_ids, expected);
+        assert!(
+            query.visited_nodes < boxes.len(),
+            "sparse query should prune retained-tree work: visited={} bodies={}",
+            query.visited_nodes,
+            boxes.len()
+        );
     }
 
     #[test]
