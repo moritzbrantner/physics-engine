@@ -77,18 +77,12 @@ fn no_response_authority_world_skips_the_rigid_pipeline() {
 fn no_authority_pairs_are_rejected_when_a_mutable_dynamic_keeps_the_solver_active() {
     let mut world = world();
     world
-        .add_box(dynamic(
-            1,
-            Vec3i::new(1_000, 0, 0),
-            Vec3i::ZERO,
-        ))
+        .add_box(dynamic(1, Vec3i::new(1_000, 0, 0), Vec3i::ZERO))
         .expect("mutable dynamic");
     world
         .add_box(external(2, Vec3i::ZERO, Vec3i::ZERO))
         .expect("external body");
-    world
-        .add_box(fixed(3, Vec3i::ZERO))
-        .expect("fixed body");
+    world.add_box(fixed(3, Vec3i::ZERO)).expect("fixed body");
 
     let report = world.step(1, 60).expect("mixed-authority step");
 
@@ -105,11 +99,7 @@ fn populated_world(body_count: u64, external_authority: bool) -> PhysicsWorld3dK
     let mut world = world();
     for id in 1..=body_count {
         let x = i32::try_from(id).expect("small fixture id") * 12;
-        let body = dynamic(
-            id,
-            Vec3i::new(x, 0, 0),
-            Vec3i::new(1, 0, 0),
-        );
+        let body = dynamic(id, Vec3i::new(x, 0, 0), Vec3i::new(1, 0, 0));
         world
             .add_box(if external_authority {
                 body.with_external_motion()
