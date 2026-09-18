@@ -229,6 +229,7 @@ pub struct RotatingContactResponseScratch3d {
     deltas: Vec<BodyDeltaAccumulator3d>,
     combined: Vec<BodyDelta3d>,
     modified_body_ids: BTreeSet<BodyId>,
+    body_index_rebuilds: u64,
 }
 
 impl RotatingContactResponseScratch3d {
@@ -243,6 +244,7 @@ impl RotatingContactResponseScratch3d {
             return;
         }
 
+        self.body_index_rebuilds = self.body_index_rebuilds.saturating_add(1);
         self.indices.clear();
         self.indexed_body_ids.clear();
         self.indexed_body_ids.reserve(boxes.len());
@@ -251,6 +253,11 @@ impl RotatingContactResponseScratch3d {
             self.indices.insert(id, index);
             self.indexed_body_ids.push(id);
         }
+    }
+
+    #[must_use]
+    pub(crate) const fn body_index_rebuilds(&self) -> u64 {
+        self.body_index_rebuilds
     }
 
     pub(crate) fn indexed_box<'a>(
