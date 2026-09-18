@@ -54,6 +54,59 @@ pub struct InteractionPolicy3d {
     wake_propagation: WakePropagation3d,
 }
 
+const EXECUTION_PLAN_WAKE_PROPAGATION: u8 = 1 << 0;
+
+/// Compact stage plan compiled when an interaction policy is registered.
+///
+/// Hot-path systems consume this instead of repeatedly interpreting policy enums. The plan deliberately
+/// contains only stages the engine currently owns; collision eligibility and material response remain
+/// separate authorities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InteractionExecutionPlan3d {
+    flags: u8,
+    fixed_boundary_stabilization_pass_limit: Option<u8>,
+}
+
+impl Default for InteractionExecutionPlan3d {
+    fn default() -> Self {
+        InteractionPolicy3d::default().execution_plan()
+    }
+}
+
+impl InteractionExecutionPlan3d {
+    #[must_use]
+    pub const fn wake_propagation(self) -> WakePropagation3d {
+        if self.flags & EXECUTION_PLAN_WAKE_PROPAGATION != 0 {
+            WakePropagation3d::Full
+        } else {
+            WakePropagation3d::None
+        }
+    }
+
+    #[must_use]
+    pub const fn fixed_boundary_stabilization_pass_limit(self, engine_limit: u8) -> u8 {
+        match self.fixed_boundary_stabilization_pass_limit {
+            Some(limit) if limit < engine_limit => limit,
+            _ => engine_limit,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InteractionPolicyEntry3d {
+    policy: InteractionPolicy3d,
+    execution_plan: InteractionExecutionPlan3d,
+}
+
+impl InteractionPolicyEntry3d {
+    const fn new(policy: InteractionPolicy3d) -> Self {
+        Self {
+            policy,
+            execution_plan: policy.execution_plan(),
+        }
+    }
+}
+
 impl InteractionPolicy3d {
     #[must_use]
     pub const fn with_fixed_boundary_stabilization_pass_limit(mut self, limit: u8) -> Self {
@@ -77,6 +130,18 @@ impl InteractionPolicy3d {
         self.wake_propagation
     }
 
+    #[must_use]
+    pub const fn execution_plan(self) -> InteractionExecutionPlan3d {
+        let mut flags = 0_u8;
+        if matches!(self.wake_propagation, WakePropagation3d::Full) {
+            flags |= EXECUTION_PLAN_WAKE_PROPAGATION;
+        }
+        InteractionExecutionPlan3d {
+            flags,
+            fixed_boundary_stabilization_pass_limit: self.fixed_boundary_stabilization_pass_limit,
+        }
+    }
+
     /// Resolves this pair's configured budget against the engine-owned hard limit.
     #[must_use]
     pub const fn fixed_boundary_stabilization_pass_limit(self, engine_limit: u8) -> u8 {
@@ -96,10 +161,11 @@ impl InteractionPolicy3d {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InteractionPolicies3d {
     default_policy: InteractionPolicy3d,
+    default_execution_plan: InteractionExecutionPlan3d,
     body_categories: BTreeMap<BodyId, InteractionCategory3d>,
-    symmetric_pairs: BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicy3d>,
+    symmetric_pairs: BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicyEntry3d>,
     directional_pairs:
-        BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicy3d>,
+        BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicyEntry3d>,
 }
 
 impl InteractionPolicies3d {
@@ -110,6 +176,7 @@ impl InteractionPolicies3d {
 
     pub fn set_default_policy(&mut self, policy: InteractionPolicy3d) {
         self.default_policy = policy;
+        self.default_execution_plan = policy.execution_plan();
     }
 
     /// Assigns one body to a category. Assigning [`InteractionCategory3d::DEFAULT`] removes explicit state.
@@ -145,7 +212,8 @@ impl InteractionPolicies3d {
         policy: InteractionPolicy3d,
     ) -> Option<InteractionPolicy3d> {
         self.symmetric_pairs
-            .insert(canonical_pair(left, right), policy)
+            .insert(canonical_pair(left, right), InteractionPolicyEntry3d::new(policy))
+            .map(|entry| entry.policy)
     }
 
     pub fn clear_pair_policy(
@@ -153,7 +221,9 @@ impl InteractionPolicies3d {
         left: InteractionCategory3d,
         right: InteractionCategory3d,
     ) -> Option<InteractionPolicy3d> {
-        self.symmetric_pairs.remove(&canonical_pair(left, right))
+        self.symmetric_pairs
+            .remove(&canonical_pair(left, right))
+            .map(|entry| entry.policy)
     }
 
     /// Sets an ordered override for interactions whose initiator/target roles are meaningful.
@@ -163,7 +233,9 @@ impl InteractionPolicies3d {
         target: InteractionCategory3d,
         policy: InteractionPolicy3d,
     ) -> Option<InteractionPolicy3d> {
-        self.directional_pairs.insert((source, target), policy)
+        self.directional_pairs
+            .insert((source, target), InteractionPolicyEntry3d::new(policy))
+            .map(|entry| entry.policy)
     }
 
     pub fn clear_directional_policy(
@@ -171,7 +243,9 @@ impl InteractionPolicies3d {
         source: InteractionCategory3d,
         target: InteractionCategory3d,
     ) -> Option<InteractionPolicy3d> {
-        self.directional_pairs.remove(&(source, target))
+        self.directional_pairs
+            .remove(&(source, target))
+            .map(|entry| entry.policy)
     }
 
     /// Resolves one ordered category interaction.
@@ -181,17 +255,46 @@ impl InteractionPolicies3d {
         source: InteractionCategory3d,
         target: InteractionCategory3d,
     ) -> InteractionPolicy3d {
-        self.directional_pairs
-            .get(&(source, target))
-            .or_else(|| self.symmetric_pairs.get(&canonical_pair(source, target)))
-            .copied()
-            .unwrap_or(self.default_policy)
+        self.resolved_entry(source, target)
+            .map_or(self.default_policy, |entry| entry.policy)
     }
 
     /// Resolves one ordered body interaction through the current body/category assignments.
     #[must_use]
     pub fn policy_for_bodies(&self, source: BodyId, target: BodyId) -> InteractionPolicy3d {
         self.policy(self.body_category(source), self.body_category(target))
+    }
+
+    /// Returns the precompiled engine-stage plan for an ordered category interaction.
+    #[must_use]
+    pub fn execution_plan(
+        &self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> InteractionExecutionPlan3d {
+        self.resolved_entry(source, target)
+            .map_or(self.default_execution_plan, |entry| entry.execution_plan)
+    }
+
+    /// Resolves a precompiled execution plan through current body/category assignments.
+    #[must_use]
+    pub fn execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.execution_plan(self.body_category(source), self.body_category(target))
+    }
+
+    fn resolved_entry(
+        &self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicyEntry3d> {
+        self.directional_pairs
+            .get(&(source, target))
+            .or_else(|| self.symmetric_pairs.get(&canonical_pair(source, target)))
+            .copied()
     }
 }
 
@@ -211,7 +314,8 @@ mod tests {
     use crate::BodyId;
 
     use super::{
-        InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, WakePropagation3d,
+        InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d,
+        InteractionPolicy3d, WakePropagation3d,
     };
 
     const CHARACTER: InteractionCategory3d = InteractionCategory3d::new(1);
@@ -282,6 +386,23 @@ mod tests {
         assert_eq!(policy.wake_propagation(), WakePropagation3d::None);
         assert_eq!(
             InteractionPolicy3d::default().wake_propagation(),
+            WakePropagation3d::Full
+        );
+    }
+
+    #[test]
+    fn execution_plan_is_compiled_once_with_policy_semantics() {
+        let mut policies = InteractionPolicies3d::default();
+        let policy = InteractionPolicy3d::default()
+            .with_fixed_boundary_stabilization_pass_limit(3)
+            .with_wake_propagation(WakePropagation3d::None);
+        policies.set_directional_policy(CHARACTER, CRATE, policy);
+
+        let plan: InteractionExecutionPlan3d = policies.execution_plan(CHARACTER, CRATE);
+        assert_eq!(plan.fixed_boundary_stabilization_pass_limit(16), 3);
+        assert_eq!(plan.wake_propagation(), WakePropagation3d::None);
+        assert_eq!(
+            policies.execution_plan(CRATE, CHARACTER).wake_propagation(),
             WakePropagation3d::Full
         );
     }
