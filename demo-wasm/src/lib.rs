@@ -810,6 +810,34 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_solver_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.solver_body_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_solver_bypassed_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.solver_bypassed_body_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.response_authority_body_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_pair_rejections() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.response_authority_pair_rejections)
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_sampled_events() -> u32 {
     with_sandbox(|sandbox| {
         u32::try_from(sandbox.last_step_stats.sampled_events).unwrap_or(u32::MAX)
