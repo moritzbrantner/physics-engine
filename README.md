@@ -166,12 +166,19 @@ Performance work should prefer eliminating or reordering whole stages before opt
 1. **Response-authority partitioning** — admit physical pairs only when at least one participant is a physics-owned dynamic body; reject fixed↔fixed, external↔fixed, and external↔external pairs before sampled CCD/response, and bypass the entire rigid solver when no body can receive solver mutation.
 2. **Parked-body spatial wake index** — replace awake×parked wake scans with spatial queries from awake sweeps into a retained parked-body index; propagate wake only from newly awakened bodies.
 3. **Generation-driven contact/support graph** — replace full-world fingerprints and repeated sleep/support discovery with pose/layer/membership generations and incrementally maintained contact/support edges.
-4. **Persistent solver/lifecycle partitions** — retain active-solid, overlap-only, external/kinematic, parked, and fixed memberships across frames so normal steps do not rediscover and clone their admission sets.
+4. **Persistent solver/lifecycle partitions** — retain active-solid, overlap-only, external/kinematic, parked, and fixed memberships across frames so normal steps do not rediscover their admission sets. Implemented by the current structural sequence.
 5. **Delta-driven broad-phase bounds** — retain exact sweep bounds and recompute them only for bodies whose pose, velocity, angular state, collision layers, solver participation, or motion authority changed.
 6. **Persistent contact-search scratch** — reuse body indices, prepared geometry, candidate sets, and sampled rows across repeated events when their dependencies remain valid.
 7. **Dense active-category execution matrix** — compact active interaction categories to stable indices and resolve hot pair execution plans by matrix lookup instead of repeated tree-map resolution.
 8. **Accuracy-aware CCD admission** — route analytic projectiles, rotation-locked/linear bodies, sufficiently slow discrete candidates, and genuinely rotating CCD into separate deterministic lanes before sampled rotational search.
 9. **Admission-funnel Performance Evidence** — report the full work funnel (world bodies → active bodies → solver-authority bodies → candidate pairs → sampled/exact tests → contacts → solver/stabilization work) so structural waste is visible before wall-clock profiling.
+10. **Static/dynamic broad-phase separation** — keep immutable/fixed geometry in a retained static index and update exact sweep bounds only for bodies whose motion or collision dependencies changed.
+11. **Incremental contact/support adjacency** — update contact and support edges only around changed bodies and traverse connected islands from adjacency instead of rescanning unrelated contacts.
+12. **Event-driven sleep and local topology invalidation** — reconsider quiet bodies only at deterministic sleep deadlines or relevant deltas; wake only spatial/support dependents after local scene topology changes.
+13. **World-owned persistent search scratch** — retain BodyId indices and reusable sampled-search scratch across events/frames while invalidating only the dependencies that changed.
+14. **Spatial ballistic target index** — query projectile sweeps against a retained target BVH instead of checking every prepared rigid target for every ballistic sphere.
+
+Current structural sequence: persistent solver/lifecycle partitions → static/dynamic broad phase → incremental contact/support adjacency → event-driven sleep/local topology invalidation → persistent search scratch → ballistic target indexing.
 
 ## Validation
 
