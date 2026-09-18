@@ -449,22 +449,12 @@ impl RotatingWorld3d {
             let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
                 (solver_boxes, TailStepStats3d::default())
             } else {
-                (
-                    consume_tail(
-                        solver_boxes,
-                        advance.remaining,
-                        self.config.solver_passes,
-                        &mut self.tail_broad_phase,
-                    )?
-                    .0,
-                    consume_tail(
-                        Vec::new(),
-                        RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
-                        self.config.solver_passes,
-                        &mut self.tail_broad_phase,
-                    )?
-                    .1,
-                )
+                consume_tail(
+                    solver_boxes,
+                    advance.remaining,
+                    self.config.solver_passes,
+                    &mut self.tail_broad_phase,
+                )?
             };
             (solver_boxes, sampled_events, tail, work)
         };
@@ -525,12 +515,12 @@ impl RotatingWorld3d {
                 broad_phase_partial_body_updates: broad_phase_after
                     .partial_body_updates
                     .saturating_sub(broad_phase_before.partial_body_updates),
-                event_response_passes: advance.work.event_response_passes,
-                stabilization_passes: advance.work.stabilization_passes,
-                stabilizations_hitting_limit: advance.work.stabilizations_hitting_limit,
-                stabilization_candidate_pairs: advance.work.stabilization_candidate_pairs,
-                stabilization_exact_contacts: advance.work.stabilization_exact_contacts,
-                stabilization_active_bodies: advance.work.stabilization_active_bodies,
+                event_response_passes: work.event_response_passes,
+                stabilization_passes: work.stabilization_passes,
+                stabilizations_hitting_limit: work.stabilizations_hitting_limit,
+                stabilization_candidate_pairs: work.stabilization_candidate_pairs,
+                stabilization_exact_contacts: work.stabilization_exact_contacts,
+                stabilization_active_bodies: work.stabilization_active_bodies,
             },
         })
     }
