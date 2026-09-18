@@ -786,8 +786,8 @@ fn project_pair(
     right: &mut RigidBox3d,
     correction: [i64; 3],
 ) -> Result<(), ObbContactResponseError3d> {
-    let left_authoritative = left.body.kind == BodyKind::Fixed
-        || left.motion_authority() == MotionAuthority3d::External;
+    let left_authoritative =
+        left.body.kind == BodyKind::Fixed || left.motion_authority() == MotionAuthority3d::External;
     let right_authoritative = right.body.kind == BodyKind::Fixed
         || right.motion_authority() == MotionAuthority3d::External;
     match (left_authoritative, right_authoritative) {

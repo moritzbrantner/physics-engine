@@ -2,8 +2,8 @@ use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingBroadPhaseError3d, RotatingWorldError3d, SolverParticipation3d, Vec3i, obb_contact_seed,
-    rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,
+    RotatingBroadPhaseError3d, RotatingWorldError3d, SolverParticipation3d, Vec3i,
+    obb_contact_seed, rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,7 +22,13 @@ struct CurrentContactGraph3d {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct CurrentContactCache3d {
-    fingerprint: Vec<(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)>,
+    fingerprint: Vec<(
+        BodyId,
+        BodyKind,
+        CollisionLayers3d,
+        SolverParticipation3d,
+        OrientedBox3d,
+    )>,
     graph: Option<CurrentContactGraph3d>,
     builds: u64,
     candidate_pairs: u64,
@@ -149,7 +155,13 @@ pub(crate) fn body_current_overlap_ids(
 
 fn snapshot_fingerprint<'a>(
     boxes: impl IntoIterator<Item = &'a RigidBox3d>,
-) -> Vec<(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)> {
+) -> Vec<(
+    BodyId,
+    BodyKind,
+    CollisionLayers3d,
+    SolverParticipation3d,
+    OrientedBox3d,
+)> {
     let mut fingerprint = boxes
         .into_iter()
         .map(|rigid_box| {
@@ -167,7 +179,13 @@ fn snapshot_fingerprint<'a>(
 }
 
 fn cached_contacts(
-    fingerprint: &[(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)],
+    fingerprint: &[(
+        BodyId,
+        BodyKind,
+        CollisionLayers3d,
+        SolverParticipation3d,
+        OrientedBox3d,
+    )],
     body: BodyId,
 ) -> Option<Vec<BodyCurrentContact3d>> {
     CURRENT_CONTACT_CACHE.with(|cache| {
@@ -180,7 +198,13 @@ fn cached_contacts(
 }
 
 fn cache_graph(
-    fingerprint: Vec<(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)>,
+    fingerprint: Vec<(
+        BodyId,
+        BodyKind,
+        CollisionLayers3d,
+        SolverParticipation3d,
+        OrientedBox3d,
+    )>,
     graph: CurrentContactGraph3d,
 ) {
     CURRENT_CONTACT_CACHE.with(|cache| {

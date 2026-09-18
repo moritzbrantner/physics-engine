@@ -1,8 +1,7 @@
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyKind, MATERIAL_SCALE, MotionAuthority3d,
     ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactResponse3d, ObbContactResponseError3d,
-    ObbResolvedContact3d,
-    Orientation3d, RigidBox3d, Vec3i, box_inertia, oriented_box_vertices,
+    ObbResolvedContact3d, Orientation3d, RigidBox3d, Vec3i, box_inertia, oriented_box_vertices,
     wide_ratio::{mul_div_round_i128, mul_div_round_u128},
 };
 

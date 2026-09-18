@@ -7,10 +7,9 @@ use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
     InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, MotionAuthority3d,
     OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,
-    RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d, Vec3i,
-    WakePropagation3d,
-    obb_contact_seed, obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotationalSweepBounds3d, SleepMode3d, Vec3i, WakePropagation3d, obb_contact_seed,
+    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 

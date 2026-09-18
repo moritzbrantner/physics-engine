@@ -1,8 +1,8 @@
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, InteractionPolicy3d,
     Material, Orientation3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingWorld3d,
-    RotatingWorldConfig3d, SolverParticipation3d, Vec3i, WakePropagation3d,
-    resolve_obb_contact, rotational_sweep_candidate_pairs,
+    RotatingWorldConfig3d, SolverParticipation3d, Vec3i, WakePropagation3d, resolve_obb_contact,
+    rotational_sweep_candidate_pairs,
 };
 
 fn angular() -> AngularState3d {
@@ -11,8 +11,7 @@ fn angular() -> AngularState3d {
 
 fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
     RigidBox3d::new(
-        RigidBody::dynamic(BodyId(id), position, velocity, half)
-            .with_material(Material::new(0)),
+        RigidBody::dynamic(BodyId(id), position, velocity, half).with_material(Material::new(0)),
         angular(),
     )
     .expect("valid dynamic box")
@@ -56,7 +55,9 @@ fn overlap_only_sensor_is_queryable_but_never_becomes_a_solver_candidate() {
     world.add_box(solid).expect("add solid");
 
     assert_eq!(
-        world.body_overlaps(sensor_id).expect("sensor overlap query"),
+        world
+            .body_overlaps(sensor_id)
+            .expect("sensor overlap query"),
         vec![solid_id]
     );
     assert!(
@@ -69,24 +70,17 @@ fn overlap_only_sensor_is_queryable_but_never_becomes_a_solver_candidate() {
 
 #[test]
 fn external_motion_is_one_sided_contact_authority() {
-    let kinematic = dynamic(
-        1,
-        Vec3i::ZERO,
-        Vec3i::new(20, 0, 0),
-        Vec3i::new(2, 2, 2),
-    )
-    .with_external_motion();
-    let dynamic = dynamic(
-        2,
-        Vec3i::new(3, 0, 0),
-        Vec3i::ZERO,
-        Vec3i::new(2, 2, 2),
-    );
+    let kinematic =
+        dynamic(1, Vec3i::ZERO, Vec3i::new(20, 0, 0), Vec3i::new(2, 2, 2)).with_external_motion();
+    let dynamic = dynamic(2, Vec3i::new(3, 0, 0), Vec3i::ZERO, Vec3i::new(2, 2, 2));
     let before = kinematic.clone();
 
     let response = resolve_obb_contact(kinematic, dynamic, false).expect("valid contact response");
 
-    assert_eq!(response.left, before, "solver must not mutate external authority");
+    assert_eq!(
+        response.left, before,
+        "solver must not mutate external authority"
+    );
     assert!(response.contact.is_some());
     assert_ne!(
         response.right.body().velocity(),
@@ -111,13 +105,8 @@ fn aggressive_debris_sleep_settles_before_normal_sleep() {
         .expect("add normal body");
     debris_world
         .add_box(
-            dynamic(
-                debris_id.0,
-                Vec3i::ZERO,
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            )
-            .with_aggressive_sleep(),
+            dynamic(debris_id.0, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1))
+                .with_aggressive_sleep(),
         )
         .expect("add debris body");
 
@@ -140,13 +129,8 @@ fn debris_pair_can_decline_wake_propagation_without_disabling_collision() {
 
     world
         .add_box(
-            dynamic(
-                sleeper_id.0,
-                Vec3i::ZERO,
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            )
-            .with_aggressive_sleep(),
+            dynamic(sleeper_id.0, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1))
+                .with_aggressive_sleep(),
         )
         .expect("add debris sleeper");
     world

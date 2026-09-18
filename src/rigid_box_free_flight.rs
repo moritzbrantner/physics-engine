@@ -394,8 +394,7 @@ mod tests {
     use crate::{
         ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, ContactPersistence3d,
         MotionAuthority3d, Orientation3d, RigidBody, RigidBox3d, Vec3i, World, WorldConfig,
-        oriented_box_vertices,
-        rotational_sweep_bounds,
+        oriented_box_vertices, rotational_sweep_bounds,
     };
 
     use super::{

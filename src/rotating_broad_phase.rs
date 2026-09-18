@@ -7,8 +7,7 @@ use std::{
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
-    SolverParticipation3d,
-    rigid_box_free_flight_sweep_bounds,
+    SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
 
 #[path = "rotating_broad_phase_tree.rs"]
@@ -284,13 +283,10 @@ impl RotatingBroadPhase3d {
             return false;
         }
         exact.iter().all(|body| {
-            self.exact
-                .get(&body.id)
-                .is_some_and(|previous| {
-                    previous.kind == body.kind
-                        && previous.solver_participation == body.solver_participation
-                })
-                && self.tree.has_leaf(body.id)
+            self.exact.get(&body.id).is_some_and(|previous| {
+                previous.kind == body.kind
+                    && previous.solver_participation == body.solver_participation
+            }) && self.tree.has_leaf(body.id)
         })
     }
 

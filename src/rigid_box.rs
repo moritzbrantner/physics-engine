@@ -407,12 +407,7 @@ mod tests {
     #[test]
     fn debris_sleep_mode_is_explicit() {
         let rigid_box = RigidBox3d::new(
-            RigidBody::dynamic(
-                BodyId(19),
-                Vec3i::ZERO,
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            ),
+            RigidBody::dynamic(BodyId(19), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1)),
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid rotating box")
