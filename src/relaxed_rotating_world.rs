@@ -130,14 +130,15 @@ impl RotatingWorld3d {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
 
-        let topology_bounds = if rigid_box.body().kind() == BodyKind::Fixed && !self.parked.is_empty() {
-            Some(rigid_box_free_flight_sweep_bounds(
-                &rigid_box,
-                RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
-            )?)
-        } else {
-            None
-        };
+        let topology_bounds =
+            if rigid_box.body().kind() == BodyKind::Fixed && !self.parked.is_empty() {
+                Some(rigid_box_free_flight_sweep_bounds(
+                    &rigid_box,
+                    RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+                )?)
+            } else {
+                None
+            };
         if let Some(bounds) = topology_bounds {
             self.unpark_parked_component(bounds)?;
         }
