@@ -844,6 +844,7 @@ mod tests {
                     id: BodyId(id + 1),
                     kind: BodyKind::Dynamic,
                     collision_layers: crate::CollisionLayers3d::ALL,
+                    solver_participation: SolverParticipation3d::Solid,
                     bounds: RotationalSweepBounds3d {
                         minimum: [coordinate, 0, 0],
                         maximum: [coordinate + 2, 2, 2],
