@@ -560,6 +560,50 @@ mod tests {
     }
 
     #[test]
+    fn active_step_refreshes_only_changed_contact_adjacency() {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            ..RotatingWorldConfig3d::default()
+        });
+        for index in 0..64_u64 {
+            world
+                .add_box(rotating(RigidBody::dynamic(
+                    BodyId(index + 1),
+                    Vec3i::new(i32::try_from(index).expect("small index") * 20, 0, 0),
+                    Vec3i::ZERO,
+                    Vec3i::new(2, 2, 2),
+                )))
+                .expect("dynamic body");
+        }
+
+        let first_query = world.box_by_id(BodyId(1)).expect("body one").oriented_box();
+        world.overlap_query(first_query).expect("initial graph");
+        assert_eq!(world.current_contact_cache_stats().0, 1);
+
+        world
+            .set_linear_velocity(BodyId(1), Vec3i::new(60, 0, 0))
+            .expect("move one body");
+        let report = world.step(1, 60).expect("sparse movement step");
+        assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
+
+        let moved_query = world.box_by_id(BodyId(1)).expect("moved body").oriented_box();
+        world
+            .overlap_query(moved_query)
+            .expect("incrementally refreshed graph");
+
+        assert_eq!(
+            world.current_contact_cache_stats().0,
+            1,
+            "local pose changes must not rebuild the full graph"
+        );
+        assert_eq!(
+            world.current_contact_incremental_stats().0,
+            1,
+            "one changed-body generation should produce one local adjacency refresh"
+        );
+    }
+
+    #[test]
     fn repeated_precise_subject_query_reuses_generation_until_pose_changes() {
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::ZERO,
