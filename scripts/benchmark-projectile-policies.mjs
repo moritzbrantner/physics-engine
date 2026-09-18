@@ -26,6 +26,7 @@ const workCounters = new Map([
   ["broad_phase_queries", "sandbox_last_broad_phase_queries"],
   ["broad_phase_partial_queries", "sandbox_last_broad_phase_partial_queries"],
   ["broad_phase_partial_body_updates", "sandbox_last_broad_phase_partial_body_updates"],
+  ["response_scratch_index_rebuilds", "sandbox_last_response_scratch_index_rebuilds"],
   ["event_response_passes", "sandbox_last_event_response_passes"],
   ["stabilization_passes", "sandbox_last_stabilization_passes"],
   ["stabilizations_hitting_limit", "sandbox_last_stabilizations_hitting_limit"],
