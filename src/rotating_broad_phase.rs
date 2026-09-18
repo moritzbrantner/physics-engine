@@ -199,7 +199,10 @@ impl RotatingBroadPhase3d {
                     body.id,
                 ));
             };
-            if previous.kind != body.kind || previous.collision_layers != body.collision_layers {
+            if previous.kind != body.kind
+                || previous.collision_layers != body.collision_layers
+                || previous.solver_participation != body.solver_participation
+            {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
                 ));
