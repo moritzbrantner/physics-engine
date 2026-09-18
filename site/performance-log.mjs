@@ -80,6 +80,27 @@ function normalizeStepStats(step) {
     stabilization_candidate_pairs: optionalCounter(step.stabilization_candidate_pairs, "stabilization_candidate_pairs"),
     stabilization_exact_contacts: optionalCounter(step.stabilization_exact_contacts, "stabilization_exact_contacts"),
     stabilization_active_bodies: optionalCounter(step.stabilization_active_bodies, "stabilization_active_bodies"),
+    ballistic_sphere_count: optionalCounter(step.ballistic_sphere_count, "ballistic_sphere_count"),
+    ballistic_query_rounds: optionalCounter(step.ballistic_query_rounds, "ballistic_query_rounds"),
+    ballistic_target_bound_checks: optionalCounter(
+      step.ballistic_target_bound_checks,
+      "ballistic_target_bound_checks",
+    ),
+    ballistic_broad_phase_candidates: optionalCounter(
+      step.ballistic_broad_phase_candidates,
+      "ballistic_broad_phase_candidates",
+    ),
+    ballistic_toi_tests: optionalCounter(step.ballistic_toi_tests, "ballistic_toi_tests"),
+    ballistic_feature_tests: optionalCounter(
+      step.ballistic_feature_tests,
+      "ballistic_feature_tests",
+    ),
+    ballistic_motion_samples: optionalCounter(
+      step.ballistic_motion_samples,
+      "ballistic_motion_samples",
+    ),
+    ballistic_impacts: optionalCounter(step.ballistic_impacts, "ballistic_impacts"),
+    ballistic_retired: optionalCounter(step.ballistic_retired, "ballistic_retired"),
   };
 }
 
@@ -237,6 +258,20 @@ export function createPerformanceSessionRecorder({
             stabilization_candidate_pairs: sumCounter(physicsStepStats, "stabilization_candidate_pairs"),
             stabilization_exact_contacts: sumCounter(physicsStepStats, "stabilization_exact_contacts"),
             stabilization_active_bodies: sumCounter(physicsStepStats, "stabilization_active_bodies"),
+            ballistic_query_rounds: sumCounter(physicsStepStats, "ballistic_query_rounds"),
+            ballistic_target_bound_checks: sumCounter(
+              physicsStepStats,
+              "ballistic_target_bound_checks",
+            ),
+            ballistic_broad_phase_candidates: sumCounter(
+              physicsStepStats,
+              "ballistic_broad_phase_candidates",
+            ),
+            ballistic_toi_tests: sumCounter(physicsStepStats, "ballistic_toi_tests"),
+            ballistic_feature_tests: sumCounter(physicsStepStats, "ballistic_feature_tests"),
+            ballistic_motion_samples: sumCounter(physicsStepStats, "ballistic_motion_samples"),
+            ballistic_impacts: sumCounter(physicsStepStats, "ballistic_impacts"),
+            ballistic_retired: sumCounter(physicsStepStats, "ballistic_retired"),
           },
           projectile_lifecycle: {
             max_live_projectiles:
