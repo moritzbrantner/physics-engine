@@ -239,6 +239,7 @@ function lastPhysicsStepStats() {
     broad_phase_rotations: readPhysicsCounter("sandbox_last_broad_phase_rotations"),
     broad_phase_partial_queries: readPhysicsCounter("sandbox_last_broad_phase_partial_queries"),
     broad_phase_partial_body_updates: readPhysicsCounter("sandbox_last_broad_phase_partial_body_updates"),
+    response_scratch_index_rebuilds: readPhysicsCounter("sandbox_last_response_scratch_index_rebuilds"),
     event_response_passes: readPhysicsCounter("sandbox_last_event_response_passes"),
     stabilization_passes: readPhysicsCounter("sandbox_last_stabilization_passes"),
     stabilizations_hitting_limit: readPhysicsCounter("sandbox_last_stabilizations_hitting_limit"),
