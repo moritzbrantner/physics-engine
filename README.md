@@ -174,11 +174,11 @@ Performance work should prefer eliminating or reordering whole stages before opt
 9. **Admission-funnel Performance Evidence** — report the full work funnel (world bodies → active bodies → solver-authority bodies → candidate pairs → sampled/exact tests → contacts → solver/stabilization work) so structural waste is visible before wall-clock profiling.
 10. **Static/dynamic broad-phase separation** — retain immutable fixed-body bounds independently of dynamic sweep horizons and recompute dynamic bounds for the current query only. Implemented by the current structural sequence.
 11. **Incremental contact/support adjacency** — update contact edges only around changed bodies using the retained current broad phase, preserving local adjacency across pose generations instead of rebuilding the whole contact graph. Implemented by the current structural sequence.
-12. **Event-driven sleep and local topology invalidation** — reconsider quiet bodies only at deterministic sleep deadlines or relevant deltas; wake only spatial/support dependents after local scene topology changes.
+12. **Event-driven sleep reevaluation** — retain a sleep-candidate set driven by changed bodies and active stability deadlines so ordinary steps do not rediscover every dynamic sleep candidate. Implemented by the current structural sequence.
 13. **World-owned persistent search scratch** — retain BodyId indices and reusable sampled-search scratch across events/frames while invalidating only the dependencies that changed.
-14. **Spatial ballistic target index** — query projectile sweeps against a retained target BVH instead of checking every prepared rigid target for every ballistic sphere.
+14. **Spatial ballistic target index** — query projectile sweeps against a retained target BVH instead of checking every prepared rigid target for every ballistic sphere.\n15. **Local topology invalidation** — replace conservative global sleeper wake-up after scene topology changes only when a dependency-complete local wake rule can preserve the existing replay semantics and improve induced-work evidence.
 
-Current structural sequence: persistent solver/lifecycle partitions → static/dynamic broad phase → incremental contact/support adjacency → event-driven sleep/local topology invalidation → persistent search scratch → ballistic target indexing.
+Current structural sequence: persistent solver/lifecycle partitions → static/dynamic broad phase → incremental contact/support adjacency → event-driven sleep reevaluation → persistent search scratch → ballistic target indexing.
 
 ## Validation
 
