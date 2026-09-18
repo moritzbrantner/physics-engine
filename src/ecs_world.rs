@@ -1,6 +1,7 @@
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
-    BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
+    BallisticSphere3d, BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d,
+    FixedGeometryPreparationStats3d,
     InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
     OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
     RotatingWorldStepReport3d, Vec3i,
@@ -149,6 +150,34 @@ impl EcsRotatingWorld3d {
         let removed = self.physics.remove_box(entity)?;
         self.fixed_geometry.unregister(entity);
         Some(removed)
+    }
+
+
+    pub fn add_ballistic_sphere(
+        &mut self,
+        projectile: BallisticSphere3d,
+        retire_on_contact: bool,
+    ) -> Result<(), RotatingWorldError3d> {
+        self.physics
+            .add_ballistic_sphere(projectile, retire_on_contact)
+    }
+
+    pub fn remove_ballistic_sphere(&mut self, entity: BodyId) -> Option<BallisticSphere3d> {
+        self.physics.remove_ballistic_sphere(entity)
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_by_id(&self, entity: BodyId) -> Option<&BallisticSphere3d> {
+        self.physics.ballistic_sphere_by_id(entity)
+    }
+
+    pub fn ballistic_spheres(&self) -> impl Iterator<Item = &BallisticSphere3d> {
+        self.physics.ballistic_spheres()
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_count(&self) -> usize {
+        self.physics.ballistic_sphere_count()
     }
 
     #[must_use]
