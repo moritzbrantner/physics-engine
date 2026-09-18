@@ -1,8 +1,9 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BallisticSphere3d, BodyId, BodyKind, Material,
-    Orientation3d, RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d,
+    AngularState3d, AngularVelocity3d, BallisticSphere3d, BallisticSphereError3d,
+    BallisticTimelineError3d, BodyId, BodyKind, Material, Orientation3d,
+    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d,
     RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
 
@@ -436,13 +437,11 @@ impl Sandbox {
                             self.projectiles_retired_on_contact.saturating_add(1);
                     }
                 }
-                2 => {
-                    if self.world.remove_box(id).is_some()
-                        || self.world.remove_ballistic_sphere(id).is_some()
-                    {
-                        self.projectiles_retired_out_of_bounds =
-                            self.projectiles_retired_out_of_bounds.saturating_add(1);
-                    }
+                2 if self.world.remove_box(id).is_some()
+                    || self.world.remove_ballistic_sphere(id).is_some() =>
+                {
+                    self.projectiles_retired_out_of_bounds =
+                        self.projectiles_retired_out_of_bounds.saturating_add(1);
                 }
                 _ => {}
             }
@@ -490,6 +489,30 @@ fn world_error_detail(error: RotatingWorldError3d) -> i32 {
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::InvalidRemainder(_)) => 613,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Frontier(_)) => 614,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Response(_)) => 615,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::DuplicateBody(_),
+        )) => 651,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::MissingProjectile(_),
+        )) => 652,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::MissingTarget(_),
+        )) => 653,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::FreeFlight(_),
+        )) => 654,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::Ballistic(BallisticSphereError3d::ArithmeticOverflow),
+        )) => 655,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::Ballistic(_),
+        )) => 656,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::Angular(_),
+        )) => 657,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::ArithmeticOverflow,
+        )) => 658,
         RotatingWorldError3d::Repeated(_) => 610,
         RotatingWorldError3d::FreeFlight(_) => 620,
         RotatingWorldError3d::Contact(_) => 630,
@@ -957,8 +980,8 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 #[cfg(test)]
 mod tests {
     use physics_engine::{
-        BodyId, ContactPersistence3d, Material, Orientation3d, RepeatedRotatingEventError3d,
-        RigidBody, RotatingWorldError3d, Vec3i,
+        BodyId, ContactPersistence3d, Orientation3d, RepeatedRotatingEventError3d, RigidBody,
+        RotatingWorldError3d, Vec3i,
     };
 
     use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
