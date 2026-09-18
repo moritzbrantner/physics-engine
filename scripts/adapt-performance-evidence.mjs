@@ -44,6 +44,7 @@ const WORK_UNITS = new Map([
   ["broad_phase_rotations", "rotation"],
   ["broad_phase_partial_queries", "query"],
   ["broad_phase_partial_body_updates", "body"],
+  ["response_scratch_index_rebuilds", "rebuild"],
   ["event_response_passes", "pass"],
   ["stabilization_passes", "pass"],
   ["stabilizations_hitting_limit", "occurrence"],
