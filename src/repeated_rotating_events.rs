@@ -59,6 +59,8 @@ pub struct RepeatedRotatingEventWorkStats3d {
     pub stabilization_candidate_pairs: u64,
     pub stabilization_exact_contacts: u64,
     pub stabilization_active_bodies: u64,
+    /// Response BodyId->world-index rebuilds performed during this repeated-event advance.
+    pub response_scratch_index_rebuilds: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -198,9 +200,14 @@ pub fn advance_repeated_rotating_events(
     config: RepeatedRotatingEventConfig3d,
 ) -> Result<RepeatedRotatingEventAdvance3d, RepeatedRotatingEventError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
+    let mut response_scratch = RotatingContactResponseScratch3d::default();
     let mut state = boxes.to_vec();
-    let progress =
-        advance_repeated_rotating_events_with_broad_phase(&mut state, config, &mut broad_phase)?;
+    let progress = advance_repeated_rotating_events_with_broad_phase(
+        &mut state,
+        config,
+        &mut broad_phase,
+        response_scratch,
+    )?;
     Ok(RepeatedRotatingEventAdvance3d {
         boxes: state,
         events: progress.events,
@@ -220,11 +227,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     boxes: &mut [RigidBox3d],
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
 ) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
     let mut work = RepeatedRotatingEventWorkStats3d::default();
-    let mut response_scratch = RotatingContactResponseScratch3d::default();
+    let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
     let mut remaining = config.search.free_flight;
     response_scratch.ensure_body_index(boxes);
 
@@ -233,6 +241,9 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         sampled_rotating_contact_search_with_broad_phase(boxes, first_search, broad_phase)
             .map_err(RotatingContactFrontierError3d::from)?
     else {
+        work.response_scratch_index_rebuilds = response_scratch
+            .body_index_rebuilds()
+            .saturating_sub(scratch_rebuilds_before);
         return Ok(RepeatedRotatingEventProgress3d {
             events: Vec::new(),
             remaining,
@@ -242,7 +253,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     advance_state_to_time(boxes, first_search.free_flight, first_hit.time)?;
     let mut event_time = first_hit.time;
     let mut frontier =
-        current_frontier_from_admitted_hit(boxes, first_hit, broad_phase, &response_scratch)?;
+        current_frontier_from_admitted_hit(boxes, first_hit, broad_phase, response_scratch)?;
 
     let mut events = Vec::new();
     loop {
@@ -255,7 +266,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
                 boxes,
                 &frontier,
                 config.solver_passes,
-                &mut response_scratch,
+                response_scratch,
             )?;
         remaining = scale_remaining_time(
             remaining,
@@ -273,7 +284,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             broad_phase,
             &modified_body_ids,
             &response_contacts,
-            &mut response_scratch,
+            response_scratch,
             &mut work,
         )?;
         events.push(RotatingResolvedEvent3d {
@@ -296,9 +307,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         advance_state_to_time(boxes, next_search.free_flight, next_hit.time)?;
         event_time = next_hit.time;
         frontier =
-            current_frontier_from_admitted_hit(boxes, next_hit, broad_phase, &response_scratch)?;
+            current_frontier_from_admitted_hit(boxes, next_hit, broad_phase, response_scratch)?;
     }
 
+    work.response_scratch_index_rebuilds = response_scratch
+        .body_index_rebuilds()
+        .saturating_sub(scratch_rebuilds_before);
     Ok(RepeatedRotatingEventProgress3d {
         events,
         remaining,
@@ -694,10 +708,12 @@ mod tests {
         let expected = advance_repeated_rotating_events(&boxes, config(8)).expect("owned advance");
         let mut actual_boxes = boxes;
         let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut response_scratch = RotatingContactResponseScratch3d::default();
         let actual = advance_repeated_rotating_events_with_broad_phase(
             &mut actual_boxes,
             config(8),
             &mut broad_phase,
+            &mut response_scratch,
         )
         .expect("in-place advance");
 
@@ -705,6 +721,40 @@ mod tests {
         assert_eq!(actual.events, expected.events);
         assert_eq!(actual.remaining, expected.remaining);
         assert_eq!(actual.work, expected.work);
+    }
+
+    #[test]
+    fn repeated_world_advance_reuses_response_body_index_when_layout_is_stable() {
+        let material = Material::new(0);
+        let original = vec![
+            dynamic(1, Vec3i::new(-100, 0, 0), Vec3i::ZERO, material),
+            fixed(2, Vec3i::new(100, 0, 0), material),
+        ];
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut response_scratch = RotatingContactResponseScratch3d::default();
+
+        let mut first = original.clone();
+        let first_progress = advance_repeated_rotating_events_with_broad_phase(
+            &mut first,
+            config(8),
+            &mut broad_phase,
+            &mut response_scratch,
+        )
+        .expect("first in-place advance");
+        assert_eq!(first_progress.work.response_scratch_index_rebuilds, 1);
+
+        let mut second = original;
+        let second_progress = advance_repeated_rotating_events_with_broad_phase(
+            &mut second,
+            config(8),
+            &mut broad_phase,
+            &mut response_scratch,
+        )
+        .expect("second in-place advance");
+        assert_eq!(
+            second_progress.work.response_scratch_index_rebuilds, 0,
+            "stable body layout must reuse the retained response body index"
+        );
     }
 
     #[test]
