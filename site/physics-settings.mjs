@@ -45,7 +45,7 @@ const SETTINGS_DEFINITIONS = [
   },
   {
     id: "simulation.projectile_type",
-    kind: { type: "choice", options: ["sphere", "arrow"] },
+    kind: { type: "choice", options: ["sphere", "arrow", "rigid"] },
     default: { type: "choice", value: "sphere" },
     scope: "save",
     apply_mode: "immediate",
@@ -174,7 +174,7 @@ function applyUrlOverrides() {
   }
 
   const projectileType = url.searchParams.get("projectile-type");
-  if (projectileType === "sphere" || projectileType === "arrow") {
+  if (projectileType === "sphere" || projectileType === "arrow" || projectileType === "rigid") {
     setChoice("simulation.projectile_type", projectileType);
   }
 
