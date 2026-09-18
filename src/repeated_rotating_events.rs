@@ -608,6 +608,7 @@ fn current_contact_frontier(
     Ok(refresh_current_contacts_for_changed_bodies(
         boxes,
         &active,
+        &active,
         &mut contacts,
         &mut broad_phase,
         &body_index,
