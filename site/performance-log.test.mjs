@@ -50,6 +50,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
     ],
     body_count: 12,
     projectile_count: 4,
+    active_projectile_count: 3,
     projectiles_retired_on_contact: 2,
     projectiles_retired_out_of_bounds: 1,
     projectiles_evicted_by_cap: 0,
@@ -93,6 +94,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
   });
   assert.deepEqual(result.summary.projectile_lifecycle, {
     max_live_projectiles: 4,
+    max_active_projectiles: 3,
     retired_on_contact: 2,
     retired_out_of_bounds: 1,
     evicted_by_cap: 0,
@@ -100,6 +102,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
   assert.equal(result.raw.frames[0].physics_step_stats.length, 2);
   assert.equal(result.raw.frames[0].body_count, 12);
   assert.equal(result.raw.frames[0].projectile_count, 4);
+  assert.equal(result.raw.frames[0].active_projectile_count, 3);
   assert.equal(result.summary.rendered_frames, 1);
   assert.equal(JSON.parse(serializePerformanceSession(result)).schema_version, 2);
 });
