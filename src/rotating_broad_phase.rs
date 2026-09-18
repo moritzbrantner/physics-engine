@@ -102,6 +102,27 @@ impl RotatingBroadPhase3d {
         boxes: &[RigidBox3d],
         config: RigidBoxFreeFlightConfig3d,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.candidate_pairs_with_admission(boxes, config, false)
+    }
+
+    /// Returns only pairs that can mutate at least one physics-owned dynamic body.
+    ///
+    /// Geometric overlap/query callers must use `candidate_pairs` so externally authoritative contacts
+    /// remain visible even when no physical response is possible.
+    pub(crate) fn response_candidate_pairs(
+        &mut self,
+        boxes: &[RigidBox3d],
+        config: RigidBoxFreeFlightConfig3d,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.candidate_pairs_with_admission(boxes, config, true)
+    }
+
+    fn candidate_pairs_with_admission(
+        &mut self,
+        boxes: &[RigidBox3d],
+        config: RigidBoxFreeFlightConfig3d,
+        require_response_authority: bool,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
         self.stats.queries = self.stats.queries.saturating_add(1);
         let exact = bounded_bodies(boxes, config)?;
 
@@ -167,7 +188,10 @@ impl RotatingBroadPhase3d {
             {
                 return;
             }
-            if !left_body.receives_solver_response && !right_body.receives_solver_response {
+            if require_response_authority
+                && !left_body.receives_solver_response
+                && !right_body.receives_solver_response
+            {
                 response_authority_rejections = response_authority_rejections.saturating_add(1);
                 return;
             }
