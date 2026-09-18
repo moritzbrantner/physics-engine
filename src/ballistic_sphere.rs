@@ -1276,3 +1276,21 @@ mod tests {
         assert_eq!(hit.body, BodyId(10));
     }
 }
+
+#[cfg(test)]
+mod rotated_normal_scale_tests {
+    use super::{Orientation3d, primitive_direction, rotate_fixed_vector, rotation_matrix};
+
+    #[test]
+    fn rotated_contact_direction_does_not_retain_orientation_matrix_scale() {
+        let orientation = Orientation3d::new(0, 410_903_207, 0, 992_008_094)
+            .normalized()
+            .expect("valid deterministic orientation");
+        let matrix = rotation_matrix(orientation).expect("rotation matrix");
+        let local = primitive_direction([9, 7, 5]).expect("local direction");
+        let world = rotate_fixed_vector(matrix, local).expect("world direction");
+
+        assert!(world.iter().all(|component| component.unsigned_abs() <= 32));
+        assert!(world.iter().any(|component| *component != 0));
+    }
+}
