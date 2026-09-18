@@ -261,7 +261,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
-        let (response, modified_body_ids) =
+        let (response, modified_body_ids, geometry_modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
                 boxes,
                 &frontier,
@@ -283,6 +283,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             config.solver_passes,
             broad_phase,
             &modified_body_ids,
+            &geometry_modified_body_ids,
             &response_contacts,
             response_scratch,
             &mut work,
@@ -414,6 +415,7 @@ fn stabilize_current_contacts(
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     initial_active: &[crate::BodyId],
+    initial_geometry_active: &[crate::BodyId],
     initial_contacts: &[RotatingContactSearchHit3d],
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
@@ -422,6 +424,9 @@ fn stabilize_current_contacts(
     let mut active = initial_active.to_vec();
     active.sort_unstable();
     active.dedup();
+    let mut geometry_active = initial_geometry_active.to_vec();
+    geometry_active.sort_unstable();
+    geometry_active.dedup();
     let mut contacts = initial_contacts
         .iter()
         .cloned()
@@ -441,6 +446,7 @@ fn stabilize_current_contacts(
             .saturating_add(u64::try_from(active.len()).unwrap_or(u64::MAX));
         let current = refresh_current_contacts_for_changed_bodies(
             boxes,
+            &geometry_active,
             &active,
             &mut contacts,
             broad_phase,
@@ -457,15 +463,19 @@ fn stabilize_current_contacts(
             break;
         };
         work.stabilization_passes = work.stabilization_passes.saturating_add(1);
-        let (_, modified_body_ids) = resolve_rotating_contact_frontier_with_activity_and_scratch(
-            boxes,
-            &frontier,
-            1,
-            response_scratch,
-        )?;
+        let (_, modified_body_ids, geometry_modified_body_ids) =
+            resolve_rotating_contact_frontier_with_activity_and_scratch(
+                boxes,
+                &frontier,
+                1,
+                response_scratch,
+            )?;
         active = modified_body_ids;
         active.sort_unstable();
         active.dedup();
+        geometry_active = geometry_modified_body_ids;
+        geometry_active.sort_unstable();
+        geometry_active.dedup();
         if active.is_empty() {
             break;
         }
@@ -513,23 +523,32 @@ fn connected_contacts_for_active(
 
 fn refresh_current_contacts_for_changed_bodies(
     boxes: &[RigidBox3d],
+    geometry_changed: &[crate::BodyId],
     active: &[crate::BodyId],
     contacts: &mut BTreeMap<crate::RotationalSweepPair3d, RotatingContactSearchHit3d>,
     broad_phase: &mut RotatingBroadPhase3d,
     body_index: &RotatingContactResponseScratch3d,
 ) -> Result<CurrentContactFrontierResult3d, RotatingContactFrontierError3d> {
-    let active_set = active.iter().copied().collect::<BTreeSet<_>>();
-    contacts
-        .retain(|pair, _| !active_set.contains(&pair.left) && !active_set.contains(&pair.right));
+    let geometry_changed_set = geometry_changed.iter().copied().collect::<BTreeSet<_>>();
+    if !geometry_changed_set.is_empty() {
+        contacts.retain(|pair, _| {
+            !geometry_changed_set.contains(&pair.left)
+                && !geometry_changed_set.contains(&pair.right)
+        });
+    }
 
-    let mut active_boxes = Vec::with_capacity(active.len());
-    for id in active {
+    let mut changed_boxes = Vec::with_capacity(geometry_changed.len());
+    for id in geometry_changed {
         let rigid_box = body_index
             .indexed_box(boxes, *id)
             .ok_or(RotatingContactFrontierError3d::MissingBody(*id))?;
-        active_boxes.push(rigid_box);
+        changed_boxes.push(rigid_box);
     }
-    let candidates = broad_phase.candidate_pairs_for_changed_current_bodies(active_boxes)?;
+    let candidates = if changed_boxes.is_empty() {
+        Vec::new()
+    } else {
+        broad_phase.candidate_pairs_for_changed_current_bodies(changed_boxes)?
+    };
     let candidate_pairs = candidates.len();
     let mut recomputed_contacts = 0_usize;
 
@@ -786,6 +805,7 @@ mod tests {
         let current = refresh_current_contacts_for_changed_bodies(
             &boxes,
             &[BodyId(1)],
+            &[BodyId(1)],
             &mut contacts,
             &mut broad_phase,
             &body_index,
@@ -796,6 +816,50 @@ mod tests {
         assert_eq!(frontier.contacts.len(), 1);
         assert_eq!(frontier.contacts[0].pair.left, BodyId(1));
         assert_eq!(frontier.contacts[0].pair.right, BodyId(2));
+    }
+
+    #[test]
+    fn velocity_only_activity_reuses_current_contact_graph_without_partial_query() {
+        let material = Material::new(0);
+        let boxes = [
+            dynamic(1, Vec3i::ZERO, Vec3i::ZERO, material),
+            fixed(2, Vec3i::new(2, 0, 0), material),
+        ];
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        broad_phase
+            .candidate_pairs(&boxes, zero_time)
+            .expect("prime current broad phase");
+        let initial = current_contact_frontier(&boxes)
+            .expect("current contacts")
+            .expect("touching pair");
+        let mut contacts = initial
+            .contacts
+            .into_iter()
+            .map(|contact| (contact.pair, contact))
+            .collect::<BTreeMap<_, _>>();
+        let mut body_index = RotatingContactResponseScratch3d::default();
+        body_index.ensure_body_index(&boxes);
+        let partial_queries_before = broad_phase.stats().partial_queries;
+
+        let current = refresh_current_contacts_for_changed_bodies(
+            &boxes,
+            &[],
+            &[BodyId(1)],
+            &mut contacts,
+            &mut broad_phase,
+            &body_index,
+        )
+        .expect("reuse current contacts");
+
+        assert!(current.frontier.is_some());
+        assert_eq!(current.candidate_pairs, 0);
+        assert_eq!(current.recomputed_contacts, 0);
+        assert_eq!(
+            broad_phase.stats().partial_queries,
+            partial_queries_before,
+            "velocity-only solver activity must not trigger geometry refresh"
+        );
     }
 
     #[test]
