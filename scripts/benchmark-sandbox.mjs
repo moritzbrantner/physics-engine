@@ -16,6 +16,7 @@ const names = [
   "three-shots-idle",
   "three-shots-walking",
   "six-shots-idle",
+  "thirty-shots-walking",
 ];
 const cases = process.env.CASE ? names.filter((name) => name === process.env.CASE) : names;
 if (cases.length === 0) throw new Error("unknown CASE");
@@ -36,9 +37,15 @@ function sumKnown(values, key) {
   return known.length === values.length ? known.reduce((sum, value) => sum + value, 0) : null;
 }
 function shotTicks(name) {
+  if (name === "thirty-shots-walking") {
+    return Array.from({ length: 30 }, (_, index) => index * 5);
+  }
   if (name === "six-shots-idle") return [0, 30, 60, 90, 120, 150];
   if (name.startsWith("three-shots-")) return [0, 40, 80];
   return [];
+}
+function caseTicks(name) {
+  return name === "thirty-shots-walking" ? 240 : 180;
 }
 function ratio(head, baseline) {
   return baseline === 0 ? null : head / baseline;
@@ -93,12 +100,20 @@ async function measure(path) {
     const measurements = [];
     for (let trial = 0; trial < trials; trial += 1) {
       settle();
+      if (name === "thirty-shots-walking") {
+        if (typeof engine.sandbox_set_projectile_type !== "function") {
+          throw new Error("thirty-shots-walking requires explicit projectile type selection");
+        }
+        if (engine.sandbox_set_projectile_type(0) !== 0) {
+          throw new Error("failed to select sphere projectile stress lane");
+        }
+      }
       const times = [];
       const events = [];
       const work = [];
       const trace = createHash("sha256");
       const shots = shotTicks(name);
-      for (let tick = 0; tick < 180; tick += 1) {
+      for (let tick = 0; tick < caseTicks(name); tick += 1) {
         const shotIndex = shots.indexOf(tick);
         if (shotIndex >= 0) {
           const projectileX = shotIndex % 2 === 0 ? 38 : -38;
@@ -107,7 +122,7 @@ async function measure(path) {
             throw new Error("projectile creation failed");
           }
         }
-        const moving = name === "walking-no-shots" || name === "three-shots-walking";
+        const moving = name === "walking-no-shots" || name.endsWith("-walking");
         const x = moving && tick >= 80 ? Math.round(420 * Math.sin(0.7)) : 0;
         const z = moving ? (tick >= 80 ? -Math.round(420 * Math.cos(0.7)) : -420) : 0;
         const start = performance.now();
@@ -171,8 +186,8 @@ async function measure(path) {
   return result;
 }
 const result = {
-  workload: "sandbox-projectiles-v4",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v4 keeps exact within-build replay determinism and scenario/body-count validity, while baseline/head replay differences are recorded rather than rejected so deliberate deterministic physics approximations can be evaluated by behavior and performance evidence.",
+  workload: "sandbox-projectiles-v5",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v5 adds a deterministic 30-shot walking stress trace while keeping exact within-build replay determinism and scenario/body-count validity, while baseline/head replay differences are recorded rather than rejected so deliberate deterministic physics approximations can be evaluated by behavior and performance evidence.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
