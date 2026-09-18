@@ -433,7 +433,8 @@ fn stabilize_current_contacts(
     let mut geometry_active = seed.geometry_active.to_vec();
     geometry_active.sort_unstable();
     geometry_active.dedup();
-    let mut contacts = seed.contacts
+    let mut contacts = seed
+        .contacts
         .iter()
         .cloned()
         .map(|mut contact| {
