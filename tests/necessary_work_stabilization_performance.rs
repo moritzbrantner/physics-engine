@@ -104,8 +104,8 @@ fn benchmark_necessary_work_stabilization() {
             partial_body_updates.saturating_add(report.stats.broad_phase_partial_body_updates);
         sampled_events = sampled_events
             .saturating_add(u64::try_from(report.stats.sampled_events).unwrap_or(u64::MAX));
-        stabilization_active_bodies = stabilization_active_bodies
-            .saturating_add(report.stats.stabilization_active_bodies);
+        stabilization_active_bodies =
+            stabilization_active_bodies.saturating_add(report.stats.stabilization_active_bodies);
     }
     let elapsed = started.elapsed();
     let nanos_per_step = elapsed.as_nanos() / u128::try_from(SAMPLES).expect("sample count fits");
