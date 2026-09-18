@@ -42,7 +42,7 @@ pub(crate) struct BallisticFrontier3d {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BallisticTimelineError3d {
+pub enum BallisticTimelineError3d {
     DuplicateBody(BodyId),
     MissingProjectile(BodyId),
     MissingTarget(BodyId),
