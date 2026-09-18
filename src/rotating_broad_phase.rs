@@ -399,22 +399,17 @@ impl RotatingBoundsIndex3d {
     }
 
     #[must_use]
-    pub(crate) fn overlapping_ids(
-        &self,
-        bounds: RotationalSweepBounds3d,
-    ) -> RotatingBoundsQuery3d {
+    pub(crate) fn overlapping_ids(&self, bounds: RotationalSweepBounds3d) -> RotatingBoundsQuery3d {
         let mut body_ids = Vec::new();
-        let visited_nodes = self
-            .tree
-            .for_each_body_overlapping_bounds(bounds, |id| {
-                if self
-                    .exact
-                    .get(&id)
-                    .is_some_and(|exact| bounds_overlap(bounds, *exact))
-                {
-                    body_ids.push(id);
-                }
-            });
+        let visited_nodes = self.tree.for_each_body_overlapping_bounds(bounds, |id| {
+            if self
+                .exact
+                .get(&id)
+                .is_some_and(|exact| bounds_overlap(bounds, *exact))
+            {
+                body_ids.push(id);
+            }
+        });
         body_ids.sort_unstable();
         RotatingBoundsQuery3d {
             body_ids,
@@ -562,7 +557,8 @@ mod tests {
 
     use super::{
         BoundedBody3d, RotatingBoundsIndex3d, RotatingBroadPhase3d, RotatingBroadPhaseError3d,
-        RotationalSweepPair3d, bounds_overlap, rotational_sweep_candidate_pairs, tree::IndexedBvh3d,
+        RotationalSweepPair3d, bounds_overlap, rotational_sweep_candidate_pairs,
+        tree::IndexedBvh3d,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
@@ -1150,11 +1146,7 @@ mod tests {
             .map(|index| {
                 dynamic(
                     index + 1,
-                    Vec3i::new(
-                        i32::try_from(index).expect("small index") * 16,
-                        0,
-                        0,
-                    ),
+                    Vec3i::new(i32::try_from(index).expect("small index") * 16, 0, 0),
                     Vec3i::ZERO,
                 )
             })
