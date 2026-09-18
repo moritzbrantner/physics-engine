@@ -1227,10 +1227,22 @@ mod tests {
                 .first()
                 .and_then(|id| sandbox.world.ballistic_sphere_by_id(*id))
                 .copied();
+            let crates = (100_u64..=105)
+                .filter_map(|id| {
+                    sandbox.world.box_by_id(BodyId(id)).map(|rigid_box| {
+                        (
+                            id,
+                            rigid_box.body().position(),
+                            rigid_box.body().velocity(),
+                            rigid_box.angular(),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
             assert_eq!(
                 result,
                 0,
-                "sphere stress lane failed at tick {tick} with detail {}, {} ballistic spheres live; before={before:?}; after={after:?}",
+                "sphere stress lane failed at tick {tick} with detail {}, {} ballistic spheres live; before={before:?}; after={after:?}; crates={crates:?}",
                 sandbox.error_detail,
                 sandbox.world.ballistic_sphere_count(),
             );
