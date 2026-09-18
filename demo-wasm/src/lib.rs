@@ -8,9 +8,11 @@ use physics_engine::{
 };
 
 mod controller;
+mod lab_scenarios;
 mod render_snapshot;
 
 use controller::TICKS_PER_SECOND;
+use lab_scenarios::SandboxScenario;
 pub use controller::controlled_velocity;
 
 const PLAYER_ID: BodyId = BodyId(1);
@@ -47,6 +49,7 @@ struct Sandbox {
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
     projectile_type: Option<ProjectileType>,
+    scenario: SandboxScenario,
     last_rotating_events: usize,
     last_tail_contacts: usize,
     last_step_stats: RotatingWorldStepStats3d,
@@ -68,6 +71,14 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        Self::with_options_and_scenario(linear_push, upright_crates, SandboxScenario::Playground)
+    }
+
+    fn with_options_and_scenario(
+        linear_push: bool,
+        upright_crates: bool,
+        scenario: SandboxScenario,
+    ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
@@ -143,11 +154,14 @@ impl Sandbox {
             })?;
         }
 
+        lab_scenarios::apply(&mut world, scenario)?;
+
         Ok(Self {
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
             projectile_type: None,
+            scenario,
             last_rotating_events: 0,
             last_tail_contacts: 0,
             last_step_stats: RotatingWorldStepStats3d::default(),
@@ -216,6 +230,11 @@ impl Sandbox {
             self.error_code = 3;
             return self.error_code;
         }
+        if let Err(error) = lab_scenarios::drive(&mut self.world, self.scenario) {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
+        }
 
         let report = match self.world.step(1, ROTATING_TICKS_PER_SECOND) {
             Ok(report) => report,
@@ -273,7 +292,7 @@ impl Sandbox {
                 None | Some(ProjectileType::Sphere) => 3,
             };
         }
-        role_for(id)
+        lab_scenarios::render_role(id).unwrap_or_else(|| role_for(id))
     }
 
     fn shoot(&mut self, velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
