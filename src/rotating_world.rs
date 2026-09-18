@@ -5,7 +5,7 @@ use crate::{
     RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    SampledContactTime3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
@@ -313,21 +313,48 @@ impl RotatingWorld3d {
     /// direct exact scan, so the public query contract is unchanged.
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
         oriented_box_vertices(query)?;
-        if let Some(body) = self
-            .boxes
-            .values()
-            .find(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic && rigid_box.oriented_box() == query
-            })
-            .map(|rigid_box| rigid_box.body().id())
-        {
-            return body_current_overlap_ids(&self.boxes, body);
+        if let Some(rigid_box) = self.boxes.values().find(|rigid_box| {
+            rigid_box.body().kind() == BodyKind::Dynamic && rigid_box.oriented_box() == query
+        }) {
+            let body = rigid_box.body().id();
+            if rigid_box.solver_participation() == SolverParticipation3d::Solid {
+                return body_current_overlap_ids(&self.boxes, body);
+            }
+            let mut hits = self.body_overlaps(body)?;
+            hits.push(body);
+            hits.sort_unstable();
+            return Ok(hits);
         }
 
         let mut hits = Vec::new();
         for (id, rigid_box) in &self.boxes {
             if obb_contact_seed(query, rigid_box.oriented_box())?.is_some() {
                 hits.push(*id);
+            }
+        }
+        Ok(hits)
+    }
+
+    /// Returns stable BodyId-ordered overlaps for one known body without treating those overlaps as solver
+    /// contacts. Collision layers still define interaction eligibility, making this the intended query for
+    /// overlap-only sensors and triggers.
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        let subject = self
+            .boxes
+            .get(&body)
+            .ok_or(RotatingWorldError3d::MissingBody(body))?;
+        oriented_box_vertices(subject.oriented_box())?;
+        let mut hits = Vec::new();
+        for (other_id, other) in &self.boxes {
+            if *other_id == body
+                || !subject
+                    .collision_layers()
+                    .collides_with(other.collision_layers())
+            {
+                continue;
+            }
+            if obb_contact_seed(subject.oriented_box(), other.oriented_box())?.is_some() {
+                hits.push(*other_id);
             }
         }
         Ok(hits)
