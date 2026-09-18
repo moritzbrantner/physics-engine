@@ -48,7 +48,7 @@ pub struct RotatingWorldStepStats3d {
     pub body_count: usize,
     /// Bodies admitted to the expensive rigid-contact event/tail pipeline.
     pub solver_body_count: usize,
-    /// Bodies advanced outside the rigid solver because their participation is overlap-only.
+    /// Bodies excluded from the rigid-contact solver because their participation is overlap-only.
     pub solver_bypassed_body_count: usize,
     pub sampled_events: usize,
     pub tail_contacts: usize,
@@ -384,10 +384,19 @@ impl RotatingWorld3d {
             ));
         }
         if timestep_numerator == 0 {
+            let solver_body_count = self
+                .boxes
+                .values()
+                .filter(|rigid_box| {
+                    rigid_box.solver_participation() == SolverParticipation3d::Solid
+                })
+                .count();
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
                 stats: RotatingWorldStepStats3d {
                     body_count: self.boxes.len(),
+                    solver_body_count,
+                    solver_bypassed_body_count: self.boxes.len().saturating_sub(solver_body_count),
                     ..RotatingWorldStepStats3d::default()
                 },
             });
