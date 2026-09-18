@@ -224,6 +224,11 @@ impl Sandbox {
         };
 
         self.last_step_stats = report.stats;
+        if let Err(error) = self.update_arrow_directions() {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
+        }
         self.last_rotating_events = self.last_step_stats.sampled_events;
         self.last_tail_contacts = self.last_step_stats.tail_contacts;
         let collisions = self
@@ -329,6 +334,25 @@ impl Sandbox {
             }
         }
         i32::try_from(id.0).unwrap_or(i32::MAX)
+    }
+
+    fn update_arrow_directions(&mut self) -> Result<(), RotatingWorldError3d> {
+        if self.projectile_type != ProjectileType::Arrow || self.projectile_ids.is_empty() {
+            return Ok(());
+        }
+        let updates = self
+            .projectile_ids
+            .iter()
+            .copied()
+            .filter_map(|id| {
+                self.world.box_by_id(id).and_then(|rigid_box| {
+                    let velocity = rigid_box.body().velocity();
+                    (velocity != Vec3i::ZERO)
+                        .then_some((id, projectile_direction_orientation(velocity)))
+                })
+            })
+            .collect::<Vec<_>>();
+        self.world.set_orientations(&updates)
     }
 
     fn cleanup_projectiles(&mut self) {
@@ -1036,6 +1060,26 @@ mod tests {
             projectile.contact_persistence(),
             ContactPersistence3d::Transient
         );
+    }
+
+    #[test]
+    fn arrow_direction_follows_ballistic_velocity_without_angular_velocity() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(sandbox.set_projectile_type(ProjectileType::Arrow as i32), 0);
+        let projectile = sandbox.shoot(96, 0, 0);
+        assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+        let before = sandbox
+            .world
+            .box_by_id(id)
+            .expect("arrow before step")
+            .angular()
+            .orientation;
+
+        assert_eq!(sandbox.step(0, 0, false), 0);
+        let arrow = sandbox.world.box_by_id(id).expect("arrow after step");
+        assert_ne!(arrow.angular().orientation, before);
+        assert!(arrow.angular().angular_velocity.is_zero());
     }
 
     #[test]
