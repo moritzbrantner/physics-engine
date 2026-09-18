@@ -227,6 +227,25 @@ impl RotatingBroadPhase3d {
         &mut self,
         changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.candidate_pairs_for_changed_current_bodies_internal(changed_boxes, true)
+    }
+
+    /// Query-facing partial update that preserves transient contacts.
+    ///
+    /// Resting stabilization deliberately omits transient impact pairs after response; observable contact
+    /// queries must retain them so lifecycle consumers can see the impact before removing the body.
+    pub(crate) fn candidate_pairs_for_changed_current_query_bodies<'a>(
+        &mut self,
+        changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.candidate_pairs_for_changed_current_bodies_internal(changed_boxes, false)
+    }
+
+    fn candidate_pairs_for_changed_current_bodies_internal<'a>(
+        &mut self,
+        changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
+        omit_transient_contacts: bool,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
         self.stats.queries = self.stats.queries.saturating_add(1);
         self.stats.partial_queries = self.stats.partial_queries.saturating_add(1);
         let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
@@ -239,7 +258,9 @@ impl RotatingBroadPhase3d {
             if !changed_ids.insert(body.id) {
                 return Err(RotatingBroadPhaseError3d::DuplicateBodyId(body.id));
             }
-            if rigid_box.contact_persistence() == ContactPersistence3d::Transient {
+            if omit_transient_contacts
+                && rigid_box.contact_persistence() == ContactPersistence3d::Transient
+            {
                 transient_changed_ids.insert(body.id);
             }
             let Some(previous) = self.exact.get(&body.id) else {

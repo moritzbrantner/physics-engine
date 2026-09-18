@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     BodyId, BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
     RotatingWorldError3d, SolverParticipation3d, Vec3i, obb_contact_seed,
-    rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,
+    rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBroadPhase3d,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,15 +20,20 @@ struct CurrentContactGraph3d {
     exact_pair_tests: usize,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct GenerationContactCache3d {
     generation: Option<u64>,
     graph: Option<CurrentContactGraph3d>,
     body_contacts: BTreeMap<BodyId, Vec<BodyCurrentContact3d>>,
+    broad_phase: RotatingBroadPhase3d,
+    pending_changed: BTreeSet<BodyId>,
     graph_builds: u64,
     subject_builds: u64,
     candidate_pairs: u64,
     exact_pair_tests: u64,
+    incremental_refreshes: u64,
+    incremental_candidate_pairs: u64,
+    incremental_exact_tests: u64,
 }
 
 impl GenerationContactCache3d {
@@ -39,6 +44,111 @@ impl GenerationContactCache3d {
         self.generation = Some(generation);
         self.graph = None;
         self.body_contacts.clear();
+        self.pending_changed.clear();
+        self.broad_phase = RotatingBroadPhase3d::default();
+    }
+
+    pub(crate) fn note_membership_generation(&mut self, generation: u64) {
+        self.generation = Some(generation);
+        self.graph = None;
+        self.body_contacts.clear();
+        self.pending_changed.clear();
+        self.broad_phase = RotatingBroadPhase3d::default();
+    }
+
+    pub(crate) fn note_changed_generation(
+        &mut self,
+        generation: u64,
+        changed: impl IntoIterator<Item = BodyId>,
+    ) {
+        if self.generation.is_none() {
+            self.generation = Some(generation);
+            return;
+        }
+        self.generation = Some(generation);
+        self.pending_changed.extend(changed);
+        self.body_contacts.clear();
+    }
+
+    fn refresh_pending_graph(
+        &mut self,
+        boxes: &BTreeMap<BodyId, RigidBox3d>,
+    ) -> Result<(), RotatingWorldError3d> {
+        if self.pending_changed.is_empty() || self.graph.is_none() {
+            return Ok(());
+        }
+        let changed = std::mem::take(&mut self.pending_changed);
+        let graph = self.graph.as_mut().expect("checked contact graph");
+        let mut touched = changed.clone();
+
+        for id in &changed {
+            if let Some(previous) = graph.contacts.remove(id) {
+                for contact in previous {
+                    if let Some(neighbors) = graph.contacts.get_mut(&contact.other) {
+                        neighbors.retain(|neighbor| neighbor.other != *id);
+                        touched.insert(contact.other);
+                    }
+                }
+            }
+            graph.contacts.entry(*id).or_default();
+        }
+
+        let mut changed_boxes = Vec::with_capacity(changed.len());
+        for id in &changed {
+            changed_boxes.push(
+                boxes
+                    .get(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(*id))?,
+            );
+        }
+        let candidates = self
+            .broad_phase
+            .candidate_pairs_for_changed_current_query_bodies(changed_boxes)
+            .map_err(map_broad_phase_error)?;
+        self.incremental_candidate_pairs = self
+            .incremental_candidate_pairs
+            .saturating_add(u64::try_from(candidates.len()).unwrap_or(u64::MAX));
+
+        for pair in candidates {
+            let left = boxes
+                .get(&pair.left)
+                .ok_or(RotatingWorldError3d::MissingBody(pair.left))?;
+            let right = boxes
+                .get(&pair.right)
+                .ok_or(RotatingWorldError3d::MissingBody(pair.right))?;
+            self.incremental_exact_tests = self.incremental_exact_tests.saturating_add(1);
+            let Some(contact) = obb_contact_seed(left.oriented_box(), right.oriented_box())? else {
+                continue;
+            };
+            let reverse_axis = reverse_axis(contact.axis, pair.left)?;
+            graph
+                .contacts
+                .entry(pair.left)
+                .or_default()
+                .push(BodyCurrentContact3d {
+                    other: pair.right,
+                    axis: contact.axis,
+                });
+            graph
+                .contacts
+                .entry(pair.right)
+                .or_default()
+                .push(BodyCurrentContact3d {
+                    other: pair.left,
+                    axis: reverse_axis,
+                });
+            touched.insert(pair.left);
+            touched.insert(pair.right);
+        }
+
+        for id in touched {
+            if let Some(neighbors) = graph.contacts.get_mut(&id) {
+                neighbors.sort_by_key(|contact| contact.other);
+                neighbors.dedup_by_key(|contact| contact.other);
+            }
+        }
+        self.incremental_refreshes = self.incremental_refreshes.saturating_add(1);
+        Ok(())
     }
 
     /// Returns exact current contacts for one known body.
@@ -53,6 +163,7 @@ impl GenerationContactCache3d {
         generation: u64,
     ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
         self.activate_generation(generation);
+        self.refresh_pending_graph(boxes)?;
         if let Some(graph) = &self.graph {
             return graph
                 .contacts
@@ -91,7 +202,8 @@ impl GenerationContactCache3d {
         self.activate_generation(generation);
         if self.graph.is_none() {
             let snapshot = boxes.values().cloned().collect::<Vec<_>>();
-            let graph = build_current_contact_graph(&snapshot)?;
+            let graph =
+                build_current_contact_graph_with_broad_phase(&snapshot, &mut self.broad_phase)?;
             self.graph_builds = self.graph_builds.saturating_add(1);
             self.candidate_pairs = self
                 .candidate_pairs
@@ -101,6 +213,9 @@ impl GenerationContactCache3d {
                 .saturating_add(u64::try_from(graph.exact_pair_tests).unwrap_or(u64::MAX));
             self.graph = Some(graph);
             self.body_contacts.clear();
+            self.pending_changed.clear();
+        } else {
+            self.refresh_pending_graph(boxes)?;
         }
 
         let contacts = self
@@ -124,6 +239,15 @@ impl GenerationContactCache3d {
             self.subject_builds,
             self.candidate_pairs,
             self.exact_pair_tests,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn incremental_stats(&self) -> (u64, u64, u64) {
+        (
+            self.incremental_refreshes,
+            self.incremental_candidate_pairs,
+            self.incremental_exact_tests,
         )
     }
 }
@@ -175,16 +299,25 @@ fn body_current_contacts_for_body(
     Ok(contacts)
 }
 
+#[cfg(test)]
 fn build_current_contact_graph(
     boxes: &[RigidBox3d],
+) -> Result<CurrentContactGraph3d, RotatingWorldError3d> {
+    let mut broad_phase = RotatingBroadPhase3d::default();
+    build_current_contact_graph_with_broad_phase(boxes, &mut broad_phase)
+}
+
+fn build_current_contact_graph_with_broad_phase(
+    boxes: &[RigidBox3d],
+    broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<CurrentContactGraph3d, RotatingWorldError3d> {
     let by_id = boxes
         .iter()
         .map(|rigid_box| (rigid_box.body().id(), rigid_box))
         .collect::<BTreeMap<_, _>>();
-    let candidates =
-        rotational_sweep_candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
-            .map_err(map_broad_phase_error)?;
+    let candidates = broad_phase
+        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
+        .map_err(map_broad_phase_error)?;
     let candidate_pairs = candidates.len();
     let mut exact_pair_tests = 0_usize;
     let mut contacts = by_id
@@ -429,6 +562,53 @@ mod tests {
             world.current_contact_cache_stats().0,
             2,
             "pose change must refresh the graph"
+        );
+    }
+
+    #[test]
+    fn active_step_refreshes_only_changed_contact_adjacency() {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            ..RotatingWorldConfig3d::default()
+        });
+        for index in 0..64_u64 {
+            world
+                .add_box(rotating(RigidBody::dynamic(
+                    BodyId(index + 1),
+                    Vec3i::new(i32::try_from(index).expect("small index") * 20, 0, 0),
+                    Vec3i::ZERO,
+                    Vec3i::new(2, 2, 2),
+                )))
+                .expect("dynamic body");
+        }
+
+        let first_query = world.box_by_id(BodyId(1)).expect("body one").oriented_box();
+        world.overlap_query(first_query).expect("initial graph");
+        assert_eq!(world.current_contact_cache_stats().0, 1);
+
+        world
+            .set_linear_velocity(BodyId(1), Vec3i::new(60, 0, 0))
+            .expect("move one body");
+        let report = world.step(1, 60).expect("sparse movement step");
+        assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
+
+        let moved_query = world
+            .box_by_id(BodyId(1))
+            .expect("moved body")
+            .oriented_box();
+        world
+            .overlap_query(moved_query)
+            .expect("incrementally refreshed graph");
+
+        assert_eq!(
+            world.current_contact_cache_stats().0,
+            1,
+            "local pose changes must not rebuild the full graph"
+        );
+        assert_eq!(
+            world.current_contact_incremental_stats().0,
+            1,
+            "one changed-body generation should produce one local adjacency refresh"
         );
     }
 
