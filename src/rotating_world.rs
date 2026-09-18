@@ -7,8 +7,7 @@ use std::{
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, BallisticSphere3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
-    OrientedBox3d,
-    OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+    OrientedBox3d, OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
     RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
     RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
@@ -378,7 +377,6 @@ impl RotatingWorld3d {
         self.boxes.values()
     }
 
-
     pub fn add_ballistic_sphere(
         &mut self,
         projectile: BallisticSphere3d,
@@ -394,7 +392,8 @@ impl RotatingWorld3d {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
         self.ballistic_spheres.push(projectile);
-        self.ballistic_spheres.sort_by_key(|projectile| projectile.id());
+        self.ballistic_spheres
+            .sort_by_key(|projectile| projectile.id());
         if retire_on_contact {
             self.ballistic_retire_on_contact.insert(id);
         }
@@ -999,14 +998,10 @@ fn advance_tail_slice_with_ballistics(
             return Ok((contact_count, None));
         };
 
-        let segment = remaining.scaled_fraction(frontier.time.numerator, frontier.time.denominator)?;
+        let segment =
+            remaining.scaled_fraction(frontier.time.numerator, frontier.time.denominator)?;
         advance_tail_free_flight_in_place(boxes, segment, Some(journal))?;
-        advance_ballistic_spheres_to_time(
-            projectiles,
-            remaining,
-            frontier.time,
-            ballistic_work,
-        )?;
+        advance_ballistic_spheres_to_time(projectiles, remaining, frontier.time, ballistic_work)?;
 
         for candidate in &frontier.hits {
             if let Some(world_index) = boxes
@@ -1174,13 +1169,7 @@ fn free_flight_and_stabilize_in_place(
     mut journal: Option<&mut TailMutationJournal3d>,
 ) -> Result<usize, RotatingWorldError3d> {
     advance_tail_free_flight_in_place(boxes, config, journal.as_deref_mut())?;
-    stabilize_tail_contacts_in_place(
-        boxes,
-        solver_passes,
-        broad_phase,
-        stats,
-        journal,
-    )
+    stabilize_tail_contacts_in_place(boxes, solver_passes, broad_phase, stats, journal)
 }
 
 fn persistent_tail_slice_count(
