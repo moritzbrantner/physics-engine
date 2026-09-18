@@ -2,12 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind,
-    InteractionCategory3d,
-    InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
-    SolverParticipation3d, Vec3i, WakePropagation3d, rigid_box_free_flight_sweep_bounds,
-    rotating_broad_phase::RotatingBoundsIndex3d,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
+    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
+    RotatingWorldStepStats3d, SolverParticipation3d, Vec3i, WakePropagation3d,
+    rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -159,7 +158,6 @@ impl RotatingWorld3d {
             .expect("parked bodies are valid and disjoint from active dynamics");
         Some(removed)
     }
-
 
     pub fn add_ballistic_sphere(
         &mut self,
