@@ -1095,8 +1095,8 @@ mod tests {
     };
 
     use super::{
-        RotatingBroadPhase3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
-        RotatingContactResponseScratch3d, TailMutationJournal3d, TailStepStats3d,
+        RotatingBroadPhase3d, RotatingContactResponseScratch3d, RotatingWorld3d,
+        RotatingWorldConfig3d, RotatingWorldError3d, TailMutationJournal3d, TailStepStats3d,
         advance_tail_free_flight_in_place, consume_tail, contact_frontier,
         tail_motion_within_extent, tail_slice_config,
     };
@@ -1320,25 +1320,14 @@ mod tests {
     fn tail_reuses_current_contact_evidence_between_slice_boundaries() {
         let boxes = vec![
             fixed(1, Vec3i::new(0, -1, 0), Vec3i::new(20, 1, 20)),
-            dynamic(
-                2,
-                Vec3i::new(0, 1, 0),
-                Vec3i::ZERO,
-                Vec3i::new(1, 1, 1),
-            ),
+            dynamic(2, Vec3i::new(0, 1, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
         ];
         let remaining = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -3_600, 0), 1, 60);
         let mut broad_phase = RotatingBroadPhase3d::default();
         let mut response_scratch = RotatingContactResponseScratch3d::default();
 
-        let (_, stats) = consume_tail(
-            boxes,
-            remaining,
-            8,
-            &mut broad_phase,
-            &mut response_scratch,
-        )
-        .expect("resting tail");
+        let (_, stats) = consume_tail(boxes, remaining, 8, &mut broad_phase, &mut response_scratch)
+            .expect("resting tail");
 
         assert!(stats.slices > 0, "fixture must exercise sliced tail work");
         assert_eq!(stats.replays, 0, "fixture should not need a replay");
