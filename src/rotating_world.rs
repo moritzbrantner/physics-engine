@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
@@ -13,9 +14,7 @@ use crate::{
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
-    current_contact_query::{
-        BodyCurrentContact3d, body_current_contacts_for_body, body_current_overlap_ids,
-    },
+    current_contact_query::{BodyCurrentContact3d, GenerationContactCache3d},
     repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
 };
@@ -244,6 +243,8 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
     boxes: BTreeMap<BodyId, RigidBox3d>,
+    contact_geometry_generation: u64,
+    current_contact_cache: RefCell<GenerationContactCache3d>,
     broad_phase: RotatingBroadPhase3d,
     tail_broad_phase: RotatingBroadPhase3d,
 }
@@ -254,6 +255,8 @@ impl RotatingWorld3d {
         Self {
             config,
             boxes: BTreeMap::new(),
+            contact_geometry_generation: 0,
+            current_contact_cache: RefCell::new(GenerationContactCache3d::default()),
             broad_phase: RotatingBroadPhase3d::default(),
             tail_broad_phase: RotatingBroadPhase3d::default(),
         }
@@ -270,11 +273,16 @@ impl RotatingWorld3d {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
         self.boxes.insert(id, rigid_box);
+        self.mark_contact_geometry_changed();
         Ok(())
     }
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
-        self.boxes.remove(&id)
+        let removed = self.boxes.remove(&id);
+        if removed.is_some() {
+            self.mark_contact_geometry_changed();
+        }
+        removed
     }
 
     #[must_use]
@@ -286,13 +294,19 @@ impl RotatingWorld3d {
         self.boxes.values()
     }
 
-    /// Returns exact current contacts for one known body without discovering that body from query geometry
-    /// or constructing the full-world contact graph.
+    /// Returns exact current contacts for one known body without discovering that body from query geometry.
+    ///
+    /// A one-off query uses the precise subject path. Repeated queries within the same contact-geometry
+    /// generation reuse the cached subject result, and an already-built graph is shared when available.
     pub fn body_contacts(
         &self,
         body: BodyId,
     ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
-        body_current_contacts_for_body(&self.boxes, body)
+        self.current_contact_cache.borrow_mut().body_contacts(
+            &self.boxes,
+            body,
+            self.contact_geometry_generation,
+        )
     }
 
     /// Replaces one dynamic body's linear velocity while preserving its rotational state.
@@ -330,7 +344,11 @@ impl RotatingWorld3d {
         }) {
             let body = rigid_box.body().id();
             if rigid_box.solver_participation() == SolverParticipation3d::Solid {
-                return body_current_overlap_ids(&self.boxes, body);
+                return self.current_contact_cache.borrow_mut().overlap_ids(
+                    &self.boxes,
+                    body,
+                    self.contact_geometry_generation,
+                );
             }
             let mut hits = self.body_overlaps(body)?;
             hits.push(body);
@@ -499,6 +517,9 @@ impl RotatingWorld3d {
             changed_body_ids.insert(id);
         }
 
+        if !changed_body_ids.is_empty() {
+            self.mark_contact_geometry_changed();
+        }
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
@@ -564,6 +585,22 @@ impl RotatingWorld3d {
                 stabilization_active_bodies: work.stabilization_active_bodies,
             },
         })
+    }
+
+    fn mark_contact_geometry_changed(&mut self) {
+        if let Some(next) = self.contact_geometry_generation.checked_add(1) {
+            self.contact_geometry_generation = next;
+            return;
+        }
+
+        // Generation wrap is not allowed to make stale derived contacts look current.
+        self.contact_geometry_generation = 0;
+        self.current_contact_cache = RefCell::new(GenerationContactCache3d::default());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_contact_cache_stats(&self) -> (u64, u64, u64, u64) {
+        self.current_contact_cache.borrow().stats()
     }
 }
 
