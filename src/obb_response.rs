@@ -2,8 +2,9 @@ use std::{error::Error, fmt};
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE,
-    ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactSeed3d, Orientation3d, OrientedBoxError3d,
-    RigidBox3d, Vec3i, box_inertia, obb_contact_seed, oriented_box_vertices,
+    MotionAuthority3d, ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactSeed3d, Orientation3d,
+    OrientedBoxError3d, RigidBox3d, SolverParticipation3d, Vec3i, box_inertia, obb_contact_seed,
+    oriented_box_vertices,
     wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
 };
 
@@ -117,6 +118,16 @@ pub fn resolve_obb_contact(
     right: RigidBox3d,
     allow_restitution: bool,
 ) -> Result<ObbContactResponse3d, ObbContactResponseError3d> {
+    validate_pair(&left, &right)?;
+    if left.solver_participation() == SolverParticipation3d::OverlapOnly
+        || right.solver_participation() == SolverParticipation3d::OverlapOnly
+    {
+        return Ok(ObbContactResponse3d {
+            left,
+            right,
+            contact: None,
+        });
+    }
     if crate::linear_contact::uses_linear_response(&left, &right) {
         return crate::linear_contact::resolve(left, right);
     }
@@ -624,7 +635,9 @@ fn body_effective_inverse_mass_scaled(
     axis_length_squared: u128,
     include_angular: bool,
 ) -> Result<i128, ObbContactResponseError3d> {
-    if rigid_box.body.kind == BodyKind::Fixed {
+    if rigid_box.body.kind == BodyKind::Fixed
+        || rigid_box.motion_authority() == MotionAuthority3d::External
+    {
         return Ok(0);
     }
     let translational = i128::try_from(mul_div_round_u128(
@@ -663,7 +676,9 @@ fn apply_body_impulse(
     impulse: [i128; 3],
     include_angular: bool,
 ) -> Result<(), ObbContactResponseError3d> {
-    if rigid_box.body.kind == BodyKind::Fixed {
+    if rigid_box.body.kind == BodyKind::Fixed
+        || rigid_box.motion_authority() == MotionAuthority3d::External
+    {
         return Ok(());
     }
     let mass_units = rigid_box.body.mass_units;
@@ -771,18 +786,22 @@ fn project_pair(
     right: &mut RigidBox3d,
     correction: [i64; 3],
 ) -> Result<(), ObbContactResponseError3d> {
-    match (left.body.kind, right.body.kind) {
-        (BodyKind::Fixed, BodyKind::Fixed) => Ok(()),
-        (BodyKind::Fixed, BodyKind::Dynamic) => {
+    let left_authoritative =
+        left.body.kind == BodyKind::Fixed || left.motion_authority() == MotionAuthority3d::External;
+    let right_authoritative = right.body.kind == BodyKind::Fixed
+        || right.motion_authority() == MotionAuthority3d::External;
+    match (left_authoritative, right_authoritative) {
+        (true, true) => Ok(()),
+        (true, false) => {
             right.body.position = offset_position(right.body.position, correction)?;
             Ok(())
         }
-        (BodyKind::Dynamic, BodyKind::Fixed) => {
+        (false, true) => {
             left.body.position =
                 offset_position(left.body.position, negate_i64_vector(correction)?)?;
             Ok(())
         }
-        (BodyKind::Dynamic, BodyKind::Dynamic) => {
+        (false, false) => {
             let total_mass = u64::from(left.body.mass_units)
                 .checked_add(u64::from(right.body.mass_units))
                 .ok_or(ObbContactResponseError3d::ArithmeticOverflow)?;

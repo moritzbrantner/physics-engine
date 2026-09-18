@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
-    InteractionPolicy3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, rigid_box_free_flight_sweep_bounds,
+    InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d,
+    SolverParticipation3d, Vec3i, WakePropagation3d, rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -63,6 +64,25 @@ impl RotatingWorld3d {
 
     pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
         self.active.set_default_interaction_policy(policy);
+    }
+
+    #[must_use]
+    pub fn interaction_policy_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionPolicy3d {
+        self.active.interaction_policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.active
+            .interaction_execution_plan_for_bodies(source, target)
     }
 
     pub fn set_pair_interaction_policy(
@@ -182,6 +202,10 @@ impl RotatingWorld3d {
         self.active.body_contacts(body)
     }
 
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        self.active.body_overlaps(body)
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
@@ -291,7 +315,10 @@ impl RotatingWorld3d {
         let mut awake_bounds = self
             .active
             .boxes()
-            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)
+            .filter(|rigid_box| {
+                rigid_box.body().kind() == BodyKind::Dynamic
+                    && rigid_box.solver_participation() == SolverParticipation3d::Solid
+            })
             .map(|rigid_box| {
                 Ok((
                     rigid_box.body().id(),
@@ -302,6 +329,9 @@ impl RotatingWorld3d {
         let mut parked_bounds = self
             .parked
             .iter()
+            .filter(|(_, rigid_box)| {
+                rigid_box.solver_participation() == SolverParticipation3d::Solid
+            })
             .map(|(id, rigid_box)| {
                 Ok((
                     *id,
@@ -320,9 +350,13 @@ impl RotatingWorld3d {
                         .iter()
                         .any(|(awake_id, awake_bounds)| {
                             self.active.box_by_id(*awake_id).is_some_and(|awake_box| {
-                                awake_box
-                                    .collision_layers()
-                                    .collides_with(parked_box.collision_layers())
+                                self.active
+                                    .interaction_execution_plan_for_bodies(*awake_id, *parked_id)
+                                    .wake_propagation()
+                                    == WakePropagation3d::Full
+                                    && awake_box
+                                        .collision_layers()
+                                        .collides_with(parked_box.collision_layers())
                                     && sweep_bounds_overlap(*awake_bounds, *parked_bounds)
                                     && !crate::linear_contact::sweep_is_passive_support(
                                         awake_box,

@@ -51,6 +51,10 @@ if grep -Eq '(^|/)(rotating_world\.rs)$' <<<"$changed"; then
   run_library_module rotating_world
 fi
 
+if grep -Eq '(^|/)(rotating_world\.rs|rigid_box\.rs|solver_partition_performance\.rs)$' <<<"$changed"; then
+  run_integration solver_partition_performance
+fi
+
 if grep -Eq '(^|/)(current_contact_query\.rs|rotating_world\.rs|stabilized_rotating_world\.rs|relaxed_rotating_world\.rs|support_query\.rs|precise_body_contact_query\.rs)$' <<<"$changed"; then
   run_library_module current_contact_query
   run_integration precise_body_contact_query

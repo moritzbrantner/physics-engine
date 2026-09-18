@@ -1,8 +1,8 @@
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
     BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
-    InteractionCategory3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d,
+    RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -56,6 +56,25 @@ impl EcsRotatingWorld3d {
 
     pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
         self.physics.set_default_interaction_policy(policy);
+    }
+
+    #[must_use]
+    pub fn interaction_policy_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionPolicy3d {
+        self.physics.interaction_policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.physics
+            .interaction_execution_plan_for_bodies(source, target)
     }
 
     pub fn set_pair_interaction_policy(
@@ -183,6 +202,12 @@ impl EcsRotatingWorld3d {
         body: BodyId,
     ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
         self.with_prepared_fixed_geometry(|| self.physics.body_contacts(body))
+    }
+
+    /// Returns exact current overlaps for one known body without promoting those overlaps to solver
+    /// contacts. This is the intended sensor/trigger query.
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        self.with_prepared_fixed_geometry(|| self.physics.body_overlaps(body))
     }
 
     /// Runs the physics system against the single authoritative body state.

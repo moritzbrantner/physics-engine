@@ -1,11 +1,15 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBox3d, OrientedBoxError3d,
-    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
+    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
+    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    SampledContactTime3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
@@ -42,6 +46,10 @@ impl Default for RotatingWorldConfig3d {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RotatingWorldStepStats3d {
     pub body_count: usize,
+    /// Bodies admitted to the expensive rigid-contact event/tail pipeline.
+    pub solver_body_count: usize,
+    /// Bodies excluded from the rigid-contact solver because their participation is overlap-only.
+    pub solver_bypassed_body_count: usize,
     pub sampled_events: usize,
     pub tail_contacts: usize,
     /// Persistent-tail slices actually executed, including discarded replay work.
@@ -313,21 +321,48 @@ impl RotatingWorld3d {
     /// direct exact scan, so the public query contract is unchanged.
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
         oriented_box_vertices(query)?;
-        if let Some(body) = self
-            .boxes
-            .values()
-            .find(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic && rigid_box.oriented_box() == query
-            })
-            .map(|rigid_box| rigid_box.body().id())
-        {
-            return body_current_overlap_ids(&self.boxes, body);
+        if let Some(rigid_box) = self.boxes.values().find(|rigid_box| {
+            rigid_box.body().kind() == BodyKind::Dynamic && rigid_box.oriented_box() == query
+        }) {
+            let body = rigid_box.body().id();
+            if rigid_box.solver_participation() == SolverParticipation3d::Solid {
+                return body_current_overlap_ids(&self.boxes, body);
+            }
+            let mut hits = self.body_overlaps(body)?;
+            hits.push(body);
+            hits.sort_unstable();
+            return Ok(hits);
         }
 
         let mut hits = Vec::new();
         for (id, rigid_box) in &self.boxes {
             if obb_contact_seed(query, rigid_box.oriented_box())?.is_some() {
                 hits.push(*id);
+            }
+        }
+        Ok(hits)
+    }
+
+    /// Returns stable BodyId-ordered overlaps for one known body without treating those overlaps as solver
+    /// contacts. Collision layers still define interaction eligibility, making this the intended query for
+    /// overlap-only sensors and triggers.
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        let subject = self
+            .boxes
+            .get(&body)
+            .ok_or(RotatingWorldError3d::MissingBody(body))?;
+        oriented_box_vertices(subject.oriented_box())?;
+        let mut hits = Vec::new();
+        for (other_id, other) in &self.boxes {
+            if *other_id == body
+                || !subject
+                    .collision_layers()
+                    .collides_with(other.collision_layers())
+            {
+                continue;
+            }
+            if obb_contact_seed(subject.oriented_box(), other.oriented_box())?.is_some() {
+                hits.push(*other_id);
             }
         }
         Ok(hits)
@@ -349,10 +384,19 @@ impl RotatingWorld3d {
             ));
         }
         if timestep_numerator == 0 {
+            let solver_body_count = self
+                .boxes
+                .values()
+                .filter(|rigid_box| {
+                    rigid_box.solver_participation() == SolverParticipation3d::Solid
+                })
+                .count();
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
                 stats: RotatingWorldStepStats3d {
                     body_count: self.boxes.len(),
+                    solver_body_count,
+                    solver_bypassed_body_count: self.boxes.len().saturating_sub(solver_body_count),
                     ..RotatingWorldStepStats3d::default()
                 },
             });
@@ -360,57 +404,87 @@ impl RotatingWorld3d {
 
         let broad_phase_before = self.broad_phase.stats();
         let tail_broad_phase_before = self.tail_broad_phase.stats();
-        // `self.boxes` remains the fail-closed transaction authority for this slice. The working
-        // BodyId-ordered vector is materialized once and then reused by repeated events and the tail.
-        let mut boxes = self.boxes.values().cloned().collect::<Vec<_>>();
         let free_flight = RigidBoxFreeFlightConfig3d::new(
             self.config.gravity,
             timestep_numerator,
             timestep_denominator,
         );
-        let advance = advance_repeated_rotating_events_with_broad_phase(
-            &mut boxes,
-            RepeatedRotatingEventConfig3d::new(
-                RotatingContactSearchConfig3d::new(
-                    free_flight,
-                    self.config.sample_count,
-                    self.config.refinement_steps,
-                ),
-                self.config.solver_passes,
-                self.config.max_events,
-            ),
-            &mut self.broad_phase,
-        )?;
 
-        let sampled_events = advance.events.len();
-        let (boxes, tail) = if advance.remaining.timestep_is_zero() {
-            (boxes, TailStepStats3d::default())
+        // Partition before expensive collision work. Solid bodies preserve stable BodyId order in the
+        // solver working set. Overlap-only dynamics have no collision response by contract, so their exact
+        // full-frame free flight is staged independently and committed only after the solid solver succeeds.
+        let mut solver_boxes = Vec::with_capacity(self.boxes.len());
+        let mut bypassed_updates = Vec::new();
+        for rigid_box in self.boxes.values() {
+            if rigid_box.solver_participation() == SolverParticipation3d::Solid {
+                solver_boxes.push(rigid_box.clone());
+                continue;
+            }
+            if rigid_box.body().kind() != BodyKind::Dynamic {
+                continue;
+            }
+            let next = sample_rigid_box_free_flight(rigid_box, free_flight, 1, 1)?;
+            if next != *rigid_box {
+                bypassed_updates.push(next);
+            }
+        }
+        let solver_body_count = solver_boxes.len();
+        let solver_bypassed_body_count = self.boxes.len().saturating_sub(solver_body_count);
+
+        let (solver_boxes, sampled_events, tail, work) = if solver_boxes.is_empty() {
+            (
+                solver_boxes,
+                0,
+                TailStepStats3d::default(),
+                RepeatedRotatingEventWorkStats3d::default(),
+            )
         } else {
-            consume_tail(
-                boxes,
-                advance.remaining,
-                self.config.solver_passes,
-                &mut self.tail_broad_phase,
-            )?
+            let advance = advance_repeated_rotating_events_with_broad_phase(
+                &mut solver_boxes,
+                RepeatedRotatingEventConfig3d::new(
+                    RotatingContactSearchConfig3d::new(
+                        free_flight,
+                        self.config.sample_count,
+                        self.config.refinement_steps,
+                    ),
+                    self.config.solver_passes,
+                    self.config.max_events,
+                ),
+                &mut self.broad_phase,
+            )?;
+            let sampled_events = advance.events.len();
+            let work = advance.work;
+            let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
+                (solver_boxes, TailStepStats3d::default())
+            } else {
+                consume_tail(
+                    solver_boxes,
+                    advance.remaining,
+                    self.config.solver_passes,
+                    &mut self.tail_broad_phase,
+                )?
+            };
+            (solver_boxes, sampled_events, tail, work)
         };
-        let changed_body_ids = boxes
-            .iter()
-            .filter_map(|rigid_box| {
-                let id = rigid_box.body().id();
-                (self.boxes.get(&id) != Some(rigid_box)).then_some(id)
-            })
-            .collect::<Vec<_>>();
-        self.boxes = boxes
-            .into_iter()
-            .map(|rigid_box| (rigid_box.body().id(), rigid_box))
-            .collect();
+
+        let mut changed_body_ids = BTreeSet::new();
+        for rigid_box in solver_boxes.into_iter().chain(bypassed_updates) {
+            let id = rigid_box.body().id();
+            if self.boxes.get(&id) == Some(&rigid_box) {
+                continue;
+            }
+            self.boxes.insert(id, rigid_box);
+            changed_body_ids.insert(id);
+        }
 
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
-            changed_body_ids,
+            changed_body_ids: changed_body_ids.into_iter().collect(),
             stats: RotatingWorldStepStats3d {
                 body_count: self.boxes.len(),
+                solver_body_count,
+                solver_bypassed_body_count,
                 sampled_events,
                 tail_contacts: tail.contacts,
                 tail_slices: tail.slices,
@@ -449,12 +523,12 @@ impl RotatingWorld3d {
                 broad_phase_partial_body_updates: broad_phase_after
                     .partial_body_updates
                     .saturating_sub(broad_phase_before.partial_body_updates),
-                event_response_passes: advance.work.event_response_passes,
-                stabilization_passes: advance.work.stabilization_passes,
-                stabilizations_hitting_limit: advance.work.stabilizations_hitting_limit,
-                stabilization_candidate_pairs: advance.work.stabilization_candidate_pairs,
-                stabilization_exact_contacts: advance.work.stabilization_exact_contacts,
-                stabilization_active_bodies: advance.work.stabilization_active_bodies,
+                event_response_passes: work.event_response_passes,
+                stabilization_passes: work.stabilization_passes,
+                stabilizations_hitting_limit: work.stabilizations_hitting_limit,
+                stabilization_candidate_pairs: work.stabilization_candidate_pairs,
+                stabilization_exact_contacts: work.stabilization_exact_contacts,
+                stabilization_active_bodies: work.stabilization_active_bodies,
             },
         })
     }

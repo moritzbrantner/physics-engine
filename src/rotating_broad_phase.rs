@@ -7,7 +7,7 @@ use std::{
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
-    rigid_box_free_flight_sweep_bounds,
+    SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
 
 #[path = "rotating_broad_phase_tree.rs"]
@@ -73,6 +73,7 @@ struct BoundedBody3d {
     id: BodyId,
     kind: BodyKind,
     collision_layers: CollisionLayers3d,
+    solver_participation: SolverParticipation3d,
     bounds: RotationalSweepBounds3d,
 }
 
@@ -153,7 +154,9 @@ impl RotatingBroadPhase3d {
             let right_body = exact
                 .get(&right)
                 .expect("indexed broad phase keeps every leaf exact bound");
-            if bounds_overlap(left_body.bounds, right_body.bounds)
+            if left_body.solver_participation == SolverParticipation3d::Solid
+                && right_body.solver_participation == SolverParticipation3d::Solid
+                && bounds_overlap(left_body.bounds, right_body.bounds)
                 && left_body
                     .collision_layers
                     .collides_with(right_body.collision_layers)
@@ -195,7 +198,10 @@ impl RotatingBroadPhase3d {
                     body.id,
                 ));
             };
-            if previous.kind != body.kind || previous.collision_layers != body.collision_layers {
+            if previous.kind != body.kind
+                || previous.collision_layers != body.collision_layers
+                || previous.solver_participation != body.solver_participation
+            {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
                 ));
@@ -253,6 +259,8 @@ impl RotatingBroadPhase3d {
                         .expect("incremental broad phase keeps every leaf exact bound");
                     if !transient_changed_ids.contains(&left)
                         && !transient_changed_ids.contains(&right)
+                        && left_body.solver_participation == SolverParticipation3d::Solid
+                        && right_body.solver_participation == SolverParticipation3d::Solid
                         && bounds_overlap(left_body.bounds, right_body.bounds)
                         && left_body
                             .collision_layers
@@ -275,10 +283,10 @@ impl RotatingBroadPhase3d {
             return false;
         }
         exact.iter().all(|body| {
-            self.exact
-                .get(&body.id)
-                .is_some_and(|previous| previous.kind == body.kind)
-                && self.tree.has_leaf(body.id)
+            self.exact.get(&body.id).is_some_and(|previous| {
+                previous.kind == body.kind
+                    && previous.solver_participation == body.solver_participation
+            }) && self.tree.has_leaf(body.id)
         })
     }
 
@@ -342,6 +350,7 @@ fn bounded_body(
         id: rigid_box.body().id(),
         kind: rigid_box.body().kind(),
         collision_layers: rigid_box.collision_layers(),
+        solver_participation: rigid_box.solver_participation(),
         bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,
     })
 }
@@ -425,7 +434,7 @@ mod tests {
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, BodyKind, Orientation3d, RigidBody, RigidBox3d,
-        RigidBoxFreeFlightConfig3d, RotationalSweepBounds3d, Vec3i,
+        RigidBoxFreeFlightConfig3d, RotationalSweepBounds3d, SolverParticipation3d, Vec3i,
         rigid_box_free_flight_sweep_bounds,
     };
 
@@ -460,6 +469,7 @@ mod tests {
                 id: rigid_box.body().id(),
                 kind: rigid_box.body().kind(),
                 collision_layers: rigid_box.collision_layers(),
+                solver_participation: rigid_box.solver_participation(),
                 bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)
                     .expect("valid brute-force sweep bounds"),
             })
@@ -469,6 +479,11 @@ mod tests {
             let left = bounded[left_index];
             for right in bounded.iter().copied().skip(left_index + 1) {
                 if left.kind == BodyKind::Fixed && right.kind == BodyKind::Fixed {
+                    continue;
+                }
+                if left.solver_participation != SolverParticipation3d::Solid
+                    || right.solver_participation != SolverParticipation3d::Solid
+                {
                     continue;
                 }
                 if !bounds_overlap(left.bounds, right.bounds) {
@@ -531,6 +546,23 @@ mod tests {
             )
             .expect("valid fixed candidates")
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn overlap_only_bodies_are_not_solver_candidates() {
+        let sensor = dynamic(7, Vec3i::ZERO, Vec3i::ZERO).with_overlap_only();
+        let solid = dynamic(8, Vec3i::ZERO, Vec3i::ZERO);
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+
+        assert_eq!(
+            sensor.solver_participation(),
+            SolverParticipation3d::OverlapOnly
+        );
+        assert!(
+            rotational_sweep_candidate_pairs(&[sensor, solid], config)
+                .expect("valid sensor candidate query")
+                .is_empty()
         );
     }
 
@@ -808,6 +840,7 @@ mod tests {
                     id: BodyId(id + 1),
                     kind: BodyKind::Dynamic,
                     collision_layers: crate::CollisionLayers3d::ALL,
+                    solver_participation: SolverParticipation3d::Solid,
                     bounds: RotationalSweepBounds3d {
                         minimum: [coordinate, 0, 0],
                         maximum: [coordinate + 2, 2, 2],
