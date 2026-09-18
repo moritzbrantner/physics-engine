@@ -1,7 +1,8 @@
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
     BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
-    InteractionCategory3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d,
+    RigidBox3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
@@ -65,6 +66,16 @@ impl EcsRotatingWorld3d {
         target: BodyId,
     ) -> InteractionPolicy3d {
         self.physics.interaction_policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.physics
+            .interaction_execution_plan_for_bodies(source, target)
     }
 
     pub fn set_pair_interaction_policy(
