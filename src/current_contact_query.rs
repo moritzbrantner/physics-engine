@@ -264,7 +264,7 @@ fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, ORIENTATION_SCALE, Orientation3d, RigidBody,
@@ -272,7 +272,7 @@ mod tests {
         rotating_world::RotatingWorld3d,
     };
 
-    use super::{body_current_contacts, build_current_contact_graph, cache_stats, reset_cache};
+    use super::{GenerationContactCache3d, build_current_contact_graph};
 
     fn rotating(body: RigidBody) -> RigidBox3d {
         RigidBox3d::new(
@@ -376,7 +376,6 @@ mod tests {
 
     #[test]
     fn repeated_body_queries_reuse_graph_until_geometry_changes() {
-        reset_cache();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::ZERO,
             ..RotatingWorldConfig3d::default()
@@ -398,9 +397,9 @@ mod tests {
                 .expect("cached body overlap");
         }
         assert_eq!(
-            cache_stats().0,
+            world.current_contact_cache_stats().0,
             1,
-            "one stable snapshot should build one graph"
+            "one stable generation should build one graph"
         );
 
         world
@@ -411,9 +410,9 @@ mod tests {
             .overlap_query(first)
             .expect("velocity-only cache reuse");
         assert_eq!(
-            cache_stats().0,
+            world.current_contact_cache_stats().0,
             1,
-            "velocity alone must not rebuild contact geometry"
+            "velocity alone must not advance contact geometry"
         );
 
         let mut moved = world.remove_box(BodyId(1)).expect("body one");
@@ -426,12 +425,72 @@ mod tests {
         world
             .overlap_query(moved_query)
             .expect("moved geometry query");
-        assert_eq!(cache_stats().0, 2, "pose change must refresh the graph");
+        assert_eq!(
+            world.current_contact_cache_stats().0,
+            2,
+            "pose change must refresh the graph"
+        );
+    }
+
+    #[test]
+    fn repeated_precise_subject_query_reuses_generation_until_pose_changes() {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            ..RotatingWorldConfig3d::default()
+        });
+        world
+            .add_box(rotating(RigidBody::dynamic(
+                BodyId(1),
+                Vec3i::ZERO,
+                Vec3i::ZERO,
+                Vec3i::new(2, 2, 2),
+            )))
+            .expect("subject");
+        world
+            .add_box(rotating(RigidBody::fixed(
+                BodyId(2),
+                Vec3i::new(4, 0, 0),
+                Vec3i::new(2, 2, 2),
+            )))
+            .expect("neighbor");
+
+        world.body_contacts(BodyId(1)).expect("first contact query");
+        world
+            .body_contacts(BodyId(1))
+            .expect("cached contact query");
+        assert_eq!(
+            world.current_contact_cache_stats().1,
+            1,
+            "stable generation should compute one precise subject query"
+        );
+
+        world
+            .set_linear_velocity(BodyId(1), Vec3i::new(7, 0, 0))
+            .expect("velocity-only change");
+        world
+            .body_contacts(BodyId(1))
+            .expect("velocity-only cached query");
+        assert_eq!(
+            world.current_contact_cache_stats().1,
+            1,
+            "velocity alone must preserve the contact generation"
+        );
+
+        let mut moved = world.remove_box(BodyId(1)).expect("subject");
+        moved.body.position.x = moved.body.position.x.saturating_add(1);
+        world.add_box(moved).expect("moved subject");
+        world
+            .body_contacts(BodyId(1))
+            .expect("geometry-changed query");
+        assert_eq!(
+            world.current_contact_cache_stats().1,
+            2,
+            "pose change must recompute the subject contact neighborhood"
+        );
     }
 
     #[test]
     fn body_current_contacts_keep_stable_neighbor_order() {
-        reset_cache();
         let subject = rotating(RigidBody::dynamic(
             BodyId(50),
             Vec3i::ZERO,
@@ -451,7 +510,14 @@ mod tests {
             )),
             subject.clone(),
         ];
-        let actual = body_current_contacts(&boxes, subject.body().id()).expect("body contacts");
+        let by_id = boxes
+            .into_iter()
+            .map(|rigid_box| (rigid_box.body().id(), rigid_box))
+            .collect::<BTreeMap<_, _>>();
+        let mut cache = GenerationContactCache3d::default();
+        let actual = cache
+            .body_contacts(&by_id, subject.body().id(), 1)
+            .expect("body contacts");
         assert_eq!(
             actual.iter().map(|entry| entry.other).collect::<Vec<_>>(),
             vec![BodyId(2), BodyId(90)]
@@ -461,7 +527,6 @@ mod tests {
     #[test]
     #[ignore = "release-mode deterministic performance evidence; run explicitly with --ignored --nocapture"]
     fn sleep_style_contact_graph_benchmark() {
-        reset_cache();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::ZERO,
             ..RotatingWorldConfig3d::default()
@@ -502,11 +567,16 @@ mod tests {
             );
         }
         let elapsed = started.elapsed();
-        let (builds, candidate_pairs, exact_pair_tests) = cache_stats();
+        let (builds, subject_builds, candidate_pairs, exact_pair_tests) =
+            world.current_contact_cache_stats();
 
         assert_eq!(
             builds, 1,
             "stable sleep-style traversal should build one graph"
+        );
+        assert_eq!(
+            subject_builds, 0,
+            "whole-world traversal should not pay precise subject scans"
         );
         assert!(
             usize::try_from(exact_pair_tests).unwrap_or(usize::MAX) * 4 < legacy_exact_tests,
