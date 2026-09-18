@@ -899,6 +899,7 @@ fn receives_solver_response(rigid_box: &RigidBox3d) -> bool {
         && rigid_box.motion_authority() == MotionAuthority3d::Physics
 }
 
+#[allow(clippy::too_many_arguments)]
 fn consume_tail_with_ballistics(
     boxes: Vec<RigidBox3d>,
     projectiles: &mut Vec<BallisticSphere3d>,
@@ -1062,10 +1063,9 @@ fn advance_tail_slice_with_ballistics(
             if let Some(world_index) = boxes
                 .iter()
                 .position(|rigid_box| rigid_box.body().id() == candidate.hit.body)
+                && boxes[world_index].body().kind() == BodyKind::Dynamic
             {
-                if boxes[world_index].body().kind() == BodyKind::Dynamic {
-                    journal.record(world_index, &boxes[world_index]);
-                }
+                journal.record(world_index, &boxes[world_index]);
             }
         }
         resolve_ballistic_frontier(
@@ -1097,7 +1097,7 @@ fn stabilize_tail_contacts_in_place(
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
-    mut journal: Option<&mut TailMutationJournal3d>,
+    journal: Option<&mut TailMutationJournal3d>,
 ) -> Result<TailSliceResult3d, RotatingWorldError3d> {
     let contacts = contact_frontier(boxes, broad_phase, stats)?;
     let contact_count = contacts.len();
@@ -1108,7 +1108,7 @@ fn stabilize_tail_contacts_in_place(
         });
     }
 
-    if let Some(journal) = journal.as_deref_mut() {
+    if let Some(journal) = journal {
         for contact in &contacts {
             for id in [contact.pair.left, contact.pair.right] {
                 let world_index = boxes
