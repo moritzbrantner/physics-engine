@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
     InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d,
+    RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
     SolverParticipation3d, Vec3i, WakePropagation3d, rigid_box_free_flight_sweep_bounds,
+    rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -15,8 +16,8 @@ use crate::{
 /// body state only for deliberately parked dynamics, because the active solver currently represents those
 /// bodies with fixed collision proxies. Awake bodies are never mirrored into a second full-world map.
 ///
-/// Before an active step, a conservative free-flight sweep of every awake dynamic is checked against parked
-/// bodies. A parked body whose collision-enabled bounds may be reached is restored to dynamic simulation,
+/// Before an active step, a conservative free-flight sweep of every awake dynamic queries a retained
+/// parked-body bounds index. A parked body whose collision-enabled bounds may be reached is restored to dynamic simulation,
 /// except when the existing linear-actuator policy proves the sweep is only passive support. Passive
 /// supports stay fixed and collision-testable, so character landings do not wake or drop a settled stack.
 /// Newly restored bodies join the same sweep pass so disruptive wake-up propagates through a sleeping
@@ -31,6 +32,7 @@ use crate::{
 pub struct RotatingWorld3d {
     active: StrictRotatingWorld3d,
     parked: BTreeMap<BodyId, RigidBox3d>,
+    parked_wake_index: RotatingBoundsIndex3d,
     active_dynamic_count: usize,
 }
 
@@ -40,6 +42,7 @@ impl RotatingWorld3d {
         Self {
             active: StrictRotatingWorld3d::new(config),
             parked: BTreeMap::new(),
+            parked_wake_index: RotatingBoundsIndex3d::default(),
             active_dynamic_count: 0,
         }
     }
@@ -255,6 +258,7 @@ impl RotatingWorld3d {
                 })
             })
             .collect::<Vec<_>>();
+        let mut parked_any = false;
 
         for id in sleepers {
             let rigid_box = self
@@ -265,13 +269,24 @@ impl RotatingWorld3d {
             self.active.add_box(proxy)?;
             self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
             self.parked.insert(id, rigid_box);
+            parked_any = true;
+        }
+        if parked_any {
+            self.rebuild_parked_wake_index()?;
         }
         Ok(())
     }
 
     fn unpark(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
+        if self.unpark_without_index(id)? {
+            self.rebuild_parked_wake_index()?;
+        }
+        Ok(())
+    }
+
+    fn unpark_without_index(&mut self, id: BodyId) -> Result<bool, RotatingWorldError3d> {
         let Some(original) = self.parked.get(&id).cloned() else {
-            return Ok(());
+            return Ok(false);
         };
         let proxy = self
             .active
@@ -285,15 +300,21 @@ impl RotatingWorld3d {
         }
         self.parked.remove(&id);
         self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
-        Ok(())
+        Ok(true)
     }
 
     fn unpark_all(&mut self) -> Result<(), RotatingWorldError3d> {
         let ids = self.parked.keys().copied().collect::<Vec<_>>();
         for id in ids {
-            self.unpark(id)?;
+            self.unpark_without_index(id)?;
         }
-        Ok(())
+        self.rebuild_parked_wake_index()
+    }
+
+    fn rebuild_parked_wake_index(&mut self) -> Result<(), RotatingWorldError3d> {
+        self.parked_wake_index
+            .rebuild_stationary(self.parked.values())
+            .map_err(map_broad_phase_error)
     }
 
     fn wake_parked_for_sweeps(
@@ -311,7 +332,6 @@ impl RotatingWorld3d {
             timestep_numerator,
             timestep_denominator,
         );
-        let stationary_config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
         let mut awake_bounds = self
             .active
             .boxes()
@@ -326,65 +346,54 @@ impl RotatingWorld3d {
                 ))
             })
             .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;
-        let mut parked_bounds = self
-            .parked
-            .iter()
-            .filter(|(_, rigid_box)| {
-                rigid_box.solver_participation() == SolverParticipation3d::Solid
-            })
-            .map(|(id, rigid_box)| {
-                Ok((
-                    *id,
-                    rigid_box_free_flight_sweep_bounds(rigid_box, stationary_config)?,
-                ))
-            })
-            .collect::<Result<BTreeMap<_, _>, RotatingWorldError3d>>()?;
 
         loop {
-            let newly_awake = self
-                .parked
-                .iter()
-                .filter_map(|(parked_id, parked_box)| {
-                    let parked_bounds = parked_bounds.get(parked_id)?;
-                    awake_bounds
-                        .iter()
-                        .any(|(awake_id, awake_bounds)| {
-                            self.active.box_by_id(*awake_id).is_some_and(|awake_box| {
-                                self.active
-                                    .interaction_execution_plan_for_bodies(*awake_id, *parked_id)
-                                    .wake_propagation()
-                                    == WakePropagation3d::Full
-                                    && awake_box
-                                        .collision_layers()
-                                        .collides_with(parked_box.collision_layers())
-                                    && sweep_bounds_overlap(*awake_bounds, *parked_bounds)
-                                    && !crate::linear_contact::sweep_is_passive_support(
-                                        awake_box,
-                                        *awake_bounds,
-                                        parked_box,
-                                    )
-                            })
-                        })
-                        .then_some(*parked_id)
-                })
-                .collect::<Vec<_>>();
+            let mut newly_awake = BTreeSet::new();
+            for (awake_id, awake_bounds) in &awake_bounds {
+                let Some(awake_box) = self.active.box_by_id(*awake_id) else {
+                    return Err(RotatingWorldError3d::MissingBody(*awake_id));
+                };
+                let candidates = self.parked_wake_index.overlapping_ids(*awake_bounds);
+                let _ = candidates.visited_nodes;
+                for parked_id in candidates.body_ids {
+                    let Some(parked_box) = self.parked.get(&parked_id) else {
+                        continue;
+                    };
+                    if self
+                        .active
+                        .interaction_execution_plan_for_bodies(*awake_id, parked_id)
+                        .wake_propagation()
+                        == WakePropagation3d::Full
+                        && awake_box
+                            .collision_layers()
+                            .collides_with(parked_box.collision_layers())
+                        && !crate::linear_contact::sweep_is_passive_support(
+                            awake_box,
+                            *awake_bounds,
+                            parked_box,
+                        )
+                    {
+                        newly_awake.insert(parked_id);
+                    }
+                }
+            }
             if newly_awake.is_empty() {
                 break;
             }
 
             for id in newly_awake {
-                self.unpark(id)?;
-                awakened.insert(id);
-                parked_bounds.remove(&id);
                 let rigid_box = self
-                    .active
-                    .box_by_id(id)
+                    .parked
+                    .get(&id)
                     .ok_or(RotatingWorldError3d::MissingBody(id))?;
-                awake_bounds.push((
-                    id,
-                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
-                ));
+                let bounds = rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?;
+                self.unpark_without_index(id)?;
+                awakened.insert(id);
+                awake_bounds.push((id, bounds));
             }
+        }
+        if !awakened.is_empty() {
+            self.rebuild_parked_wake_index()?;
         }
         Ok(awakened)
     }
@@ -397,10 +406,14 @@ fn fixed_sleep_proxy(mut rigid_box: RigidBox3d) -> RigidBox3d {
     rigid_box
 }
 
-fn sweep_bounds_overlap(left: RotationalSweepBounds3d, right: RotationalSweepBounds3d) -> bool {
-    (0..3).all(|axis| {
-        left.minimum[axis] <= right.maximum[axis] && right.minimum[axis] <= left.maximum[axis]
-    })
+fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {
+    match error {
+        RotatingBroadPhaseError3d::DuplicateBodyId(id) => RotatingWorldError3d::DuplicateBody(id),
+        RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(id) => {
+            RotatingWorldError3d::MissingBody(id)
+        }
+        RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
+    }
 }
 
 #[cfg(test)]
