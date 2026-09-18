@@ -1078,7 +1078,7 @@ fn fixed_dynamic_pairs(
         .map(|(index, rigid_box)| (rigid_box.body.id, index))
         .collect::<BTreeMap<_, _>>();
     let candidates = broad_phase
-        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
+        .response_candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
         .map_err(map_fixed_boundary_broad_phase_error)?;
     let mut pairs = Vec::with_capacity(candidates.len());
     for pair in candidates {
