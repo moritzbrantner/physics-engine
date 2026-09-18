@@ -21,7 +21,7 @@ test("sandbox adapter emits canonical head and baseline evidence", async () => {
   await writeFile(
     join(evidence, "sandbox.json"),
     JSON.stringify({
-      workload: "sandbox-projectiles-v4",
+      workload: "sandbox-projectiles-v5",
       environment: { node: "v24", v8: "13", platform: "linux", arch: "x64", cpu: "test" },
       head_revision: "head-revision",
       baseline_revision: "base-revision",
