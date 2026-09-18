@@ -337,7 +337,7 @@ fn current_frontier_from_admitted_hit(
     body_index: &RotatingContactResponseScratch3d,
 ) -> Result<RotatingContactFrontier3d, RotatingContactFrontierError3d> {
     let zero_time = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
-    let candidates = broad_phase.candidate_pairs(boxes, zero_time)?;
+    let candidates = broad_phase.response_candidate_pairs(boxes, zero_time)?;
     let mut contacts = Vec::new();
 
     for pair in candidates {
