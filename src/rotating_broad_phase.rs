@@ -537,12 +537,12 @@ mod tests {
         for left_index in 0..bounded.len() {
             let left = bounded[left_index];
             for right in bounded.iter().copied().skip(left_index + 1) {
+                if left.kind == BodyKind::Fixed && right.kind == BodyKind::Fixed {
+                    continue;
+                }
                 if left.solver_participation != SolverParticipation3d::Solid
                     || right.solver_participation != SolverParticipation3d::Solid
                 {
-                    continue;
-                }
-                if !left.receives_solver_response && !right.receives_solver_response {
                     continue;
                 }
                 if !bounds_overlap(left.bounds, right.bounds) {
