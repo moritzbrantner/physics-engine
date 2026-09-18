@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use super::{Sandbox, role_for};
+use super::Sandbox;
 
 pub(super) const STRIDE: usize = 11;
 
@@ -17,7 +17,7 @@ pub(super) fn refresh(sandbox: &Sandbox) -> usize {
             let body = rigid_box.body();
             let angular = rigid_box.angular();
             snapshot.extend_from_slice(&[
-                role_for(body.id()),
+                sandbox.render_role_for(body.id()),
                 body.position().x,
                 body.position().y,
                 body.position().z,
@@ -46,7 +46,6 @@ fn values() -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::{STRIDE, Sandbox, len, refresh, values};
-    use crate::role_for;
 
     #[test]
     fn packed_snapshot_matches_authoritative_body_state() {
@@ -58,7 +57,7 @@ mod tests {
                 let body = rigid_box.body();
                 let angular = rigid_box.angular();
                 [
-                    role_for(body.id()),
+                    sandbox.render_role_for(body.id()),
                     body.position().x,
                     body.position().y,
                     body.position().z,
