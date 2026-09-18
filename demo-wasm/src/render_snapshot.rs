@@ -30,6 +30,23 @@ pub(super) fn refresh(sandbox: &Sandbox) -> usize {
                 angular.orientation.w,
             ]);
         }
+        for projectile in sandbox.world.ballistic_spheres() {
+            let position = projectile.position();
+            let radius = projectile.radius();
+            snapshot.extend_from_slice(&[
+                3,
+                position.x,
+                position.y,
+                position.z,
+                radius,
+                radius,
+                radius,
+                0,
+                0,
+                0,
+                physics_engine::ORIENTATION_SCALE,
+            ]);
+        }
         snapshot.as_ptr() as usize
     })
 }
