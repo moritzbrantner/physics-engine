@@ -1,0 +1,27 @@
+name: Format behavior policy slice
+
+on:
+  push:
+    branches:
+      - feature/interaction-behavior-classes
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+      - name: Apply repository formatting
+        run: cargo fmt --all
+      - name: Commit formatting and remove helper
+        run: |
+          git rm .github/workflows/format-behavior-policy.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Format behavior policy slice"
+          git push origin HEAD:feature/interaction-behavior-classes
