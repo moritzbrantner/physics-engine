@@ -412,7 +412,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             advance_ballistic_spheres_to_time(projectiles, remaining, hit.time, ballistic_work)?;
             let frontier =
                 current_frontier_from_admitted_hit(boxes, hit, broad_phase, response_scratch)?;
-            let (response, modified_body_ids) =
+            let (response, modified_body_ids, geometry_modified_body_ids) =
                 resolve_rotating_contact_frontier_with_activity_and_scratch(
                     boxes,
                     &frontier,
@@ -430,8 +430,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 boxes,
                 config.solver_passes,
                 broad_phase,
-                &modified_body_ids,
-                &response_contacts,
+                StabilizationSeed3d {
+                    active: &modified_body_ids,
+                    geometry_active: &geometry_modified_body_ids,
+                    contacts: &response_contacts,
+                },
                 response_scratch,
                 &mut work,
             )?;
@@ -463,8 +466,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                     boxes,
                     config.solver_passes,
                     broad_phase,
-                    &modified_targets,
-                    &[],
+                    StabilizationSeed3d {
+                        active: &modified_targets,
+                        geometry_active: &modified_targets,
+                        contacts: &[],
+                    },
                     response_scratch,
                     &mut work,
                 )?;
