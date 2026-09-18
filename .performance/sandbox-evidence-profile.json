@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "physics-engine/sandbox-v1",
   "description": "Canonical measurement profile for deterministic physics-engine sandbox performance evidence.",
-  "scenario_id": "physics-engine/sandbox-projectiles-v4",
+  "scenario_id": "physics-engine/sandbox-projectiles-v5",
   "producer_adapters": [
     "scripts/adapt-performance-evidence.mjs:sandbox"
   ],
@@ -132,6 +132,13 @@
       "unit": "body",
       "measurement_type": "counter",
       "source": "sandbox.json trial.work.broad_phase_partial_body_updates"
+    },
+    {
+      "name": "physics.response_scratch_index_rebuilds",
+      "group": "induced_work",
+      "unit": "rebuild",
+      "measurement_type": "counter",
+      "source": "sandbox.json trial.work.response_scratch_index_rebuilds"
     },
     {
       "name": "physics.event_response_passes",

@@ -152,12 +152,12 @@ function sandboxEvidence({ result, side, caseEntry, trial, trialIndex, dimension
   const evidence = {
     schema_version: EVIDENCE_SCHEMA_VERSION,
     scenario: {
-      id: "physics-engine/sandbox-projectiles-v4",
+      id: "physics-engine/sandbox-projectiles-v5",
       description: `Deterministic physics-engine sandbox case ${caseEntry.name}.`,
       workload: {
-        id: result.workload ?? "sandbox-projectiles-v4",
+        id: result.workload ?? "sandbox-projectiles-v5",
         hash: workloadHash({
-          workload: result.workload ?? "sandbox-projectiles-v4",
+          workload: result.workload ?? "sandbox-projectiles-v5",
           case: caseEntry.name,
           trial: trialIndex + 1,
           dimensions,

@@ -1499,9 +1499,10 @@ mod tests {
     };
 
     use super::{
-        RotatingBroadPhase3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
-        TailMutationJournal3d, TailStepStats3d, advance_tail_free_flight_in_place,
-        contact_frontier, tail_motion_within_extent, tail_slice_config,
+        RotatingBroadPhase3d, RotatingContactResponseScratch3d, RotatingWorld3d,
+        RotatingWorldConfig3d, RotatingWorldError3d, TailMutationJournal3d, TailStepStats3d,
+        advance_tail_free_flight_in_place, consume_tail, contact_frontier,
+        tail_motion_within_extent, tail_slice_config,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, half: Vec3i) -> RigidBox3d {
@@ -1716,6 +1717,28 @@ mod tests {
         println!(
             "persistent tail sparse rollback {BODY_COUNT}-body world × {REPLAYS}: full_world_snapshots={snapshot_elapsed:?}, mutation_journal={journal_elapsed:?}, speedup={speedup:.2}x, body_clone_reduction={}x",
             BODY_COUNT / TOUCHED,
+        );
+    }
+
+    #[test]
+    fn tail_reuses_current_contact_evidence_between_slice_boundaries() {
+        let boxes = vec![
+            fixed(1, Vec3i::new(0, -1, 0), Vec3i::new(20, 1, 20)),
+            dynamic(2, Vec3i::new(0, 1, 0), Vec3i::ZERO, Vec3i::new(1, 1, 1)),
+        ];
+        let remaining = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -3_600, 0), 1, 60);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut response_scratch = RotatingContactResponseScratch3d::default();
+
+        let (_, stats) = consume_tail(boxes, remaining, 8, &mut broad_phase, &mut response_scratch)
+            .expect("resting tail");
+
+        assert!(stats.slices > 0, "fixture must exercise sliced tail work");
+        assert_eq!(stats.replays, 0, "fixture should not need a replay");
+        assert!(
+            broad_phase.stats().queries <= stats.slices.saturating_mul(2),
+            "tail re-queried current contacts at both sides of every slice: stats={stats:?}, broad_phase={:?}",
+            broad_phase.stats()
         );
     }
 
