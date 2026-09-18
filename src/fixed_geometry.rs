@@ -9,7 +9,7 @@ use crate::rigid_box_free_flight::{
 };
 use crate::{
     BodyId, BodyKind, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, RigidBox3d,
-    RotationalSweepBounds3d, oriented_box_vertices,
+    RotationalSweepBounds3d, SolverParticipation3d, oriented_box_vertices,
 };
 
 /// Version of the retained fixed-geometry preparation representation.
@@ -165,7 +165,9 @@ impl FixedGeometryPreparationCache3d {
         Arc::make_mut(&mut self.prepared_by_shape).clear();
         if mode == FixedGeometryPreparationMode3d::PrepareAtLoad {
             for rigid_box in boxes {
-                if rigid_box.body().kind() == BodyKind::Fixed {
+                if rigid_box.body().kind() == BodyKind::Fixed
+                    && rigid_box.solver_participation() == SolverParticipation3d::Solid
+                {
                     self.prepare_fixed(rigid_box);
                 }
             }
@@ -175,6 +177,7 @@ impl FixedGeometryPreparationCache3d {
     pub(crate) fn register_fixed(&mut self, rigid_box: &RigidBox3d) {
         if self.mode == FixedGeometryPreparationMode3d::PrepareAtLoad
             && rigid_box.body().kind() == BodyKind::Fixed
+            && rigid_box.solver_participation() == SolverParticipation3d::Solid
         {
             self.prepare_fixed(rigid_box);
         }
