@@ -6,10 +6,9 @@ use std::{
 
 use crate::{
     BallisticSphere3d, BodyId, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
-    RotatingContactFrontier3d,
-    RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
-    sample_rigid_box_free_flight,
+    RotatingContactFrontier3d, RotatingContactFrontierError3d, RotatingContactResponseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
+    obb_contact_seed, sample_rigid_box_free_flight,
 };
 use crate::{
     ballistic_event::{
@@ -135,7 +134,10 @@ impl fmt::Display for RepeatedRotatingEventError3d {
                 "repeated rotating event response failed: {error}"
             ),
             Self::Ballistic(error) => {
-                write!(formatter, "repeated rotating ballistic event failed: {error}")
+                write!(
+                    formatter,
+                    "repeated rotating ballistic event failed: {error}"
+                )
             }
         }
     }
