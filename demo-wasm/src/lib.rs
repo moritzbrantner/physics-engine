@@ -1099,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn sphere_projectile_is_rotation_free_and_transient() {
+    fn sphere_projectile_uses_dedicated_ballistic_state() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Sphere as i32),
@@ -1108,73 +1108,35 @@ mod tests {
         assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+
+        assert!(
+            sandbox.world.box_by_id(id).is_none(),
+            "analytic sphere must not enter the rotating rigid-body collection"
+        );
         let projectile = sandbox
             .world
-            .box_by_id(BodyId(projectile as u64))
-            .expect("spawned sphere projectile");
-        assert_eq!(projectile.body().half_extents(), Vec3i::new(3, 3, 3));
-        assert!(projectile.rotation_locked());
-        assert_eq!(
-            projectile.contact_persistence(),
-            ContactPersistence3d::Transient
-        );
-        assert_eq!(
-            projectile.sleep_mode(),
-            physics_engine::SleepMode3d::Aggressive
-        );
+            .ballistic_sphere_by_id(id)
+            .expect("spawned analytic sphere projectile");
+        assert_eq!(projectile.radius(), 3);
+        assert_eq!(projectile.mass_units(), 1);
+        assert_eq!(sandbox.active_projectile_count(), 1);
     }
 
     #[test]
-    fn settled_sphere_stays_retained_but_leaves_active_projectile_population() {
+    fn analytic_sphere_does_not_enter_rigid_sleep_bookkeeping() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
-        settle_player(&mut sandbox);
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Sphere as i32),
             0
         );
+        let projectile = sandbox.shoot(0, 0, -96);
+        assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
 
-        let id = BodyId(super::PROJECTILE_ID_START);
-        sandbox
-            .world
-            .add_box(
-                rotating_box(
-                    RigidBody::dynamic(
-                        id,
-                        Vec3i::new(400, 3, 400),
-                        Vec3i::ZERO,
-                        Vec3i::new(3, 3, 3),
-                    )
-                    .with_material(Material::new(0)),
-                )
-                .with_rotation_locked()
-                .with_transient_contacts()
-                .with_aggressive_sleep(),
-            )
-            .expect("add resting sphere");
-        sandbox.projectile_ids.push(id);
-
-        assert_eq!(sandbox.projectile_ids.len(), 1);
+        assert!(sandbox.world.ballistic_sphere_by_id(id).is_some());
+        assert!(!sandbox.world.is_sleeping(id));
         assert_eq!(sandbox.active_projectile_count(), 1);
-
-        for _ in 0..30 {
-            assert_eq!(sandbox.step(0, 0, false), 0);
-        }
-
-        assert_eq!(
-            sandbox.projectile_ids.len(),
-            1,
-            "settled projectile remains retained for rendering and later wake-up"
-        );
-        assert!(
-            sandbox.world.box_by_id(id).is_some(),
-            "settled projectile remains in the authoritative world"
-        );
-        assert!(sandbox.world.is_sleeping(id));
-        assert_eq!(
-            sandbox.active_projectile_count(),
-            0,
-            "settled projectile must no longer contribute to the active solver population"
-        );
     }
 
     #[test]
@@ -1241,12 +1203,43 @@ mod tests {
     #[test]
     fn projectile_type_cannot_change_while_projectiles_are_live() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
         assert!(sandbox.shoot(0, 0, -96) >= 0);
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Arrow as i32),
             -1
         );
-        assert_eq!(sandbox.projectile_type, None);
+        assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
+    }
+
+    #[test]
+    fn analytic_sphere_does_not_tunnel_through_thin_target() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        let projectile = sandbox.shoot(0, 0, -96);
+        assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+
+        for _ in 0..7 {
+            assert_eq!(sandbox.step(0, 0, false), 0);
+        }
+
+        let projectile = sandbox
+            .world
+            .ballistic_sphere_by_id(id)
+            .expect("physical sphere remains after bouncing from the thin target");
+        assert!(
+            projectile.position().z > -190,
+            "analytic sphere tunneled through the thin target: {:?}",
+            projectile.position()
+        );
+        assert!(sandbox.last_step_stats.ballistic_query_rounds > 0);
     }
 
     #[test]
