@@ -1,7 +1,7 @@
-use std::{cell::RefCell, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use crate::{
-    BodyId, BodyKind, CollisionLayers3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    BodyId, BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RotatingBroadPhaseError3d, RotatingWorldError3d, SolverParticipation3d, Vec3i,
     obb_contact_seed, rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,
 };
@@ -21,50 +21,111 @@ struct CurrentContactGraph3d {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct CurrentContactCache3d {
-    fingerprint: Vec<(
-        BodyId,
-        BodyKind,
-        CollisionLayers3d,
-        SolverParticipation3d,
-        OrientedBox3d,
-    )>,
+pub(crate) struct GenerationContactCache3d {
+    generation: Option<u64>,
     graph: Option<CurrentContactGraph3d>,
-    builds: u64,
+    body_contacts: BTreeMap<BodyId, Vec<BodyCurrentContact3d>>,
+    graph_builds: u64,
+    subject_builds: u64,
     candidate_pairs: u64,
     exact_pair_tests: u64,
 }
 
-std::thread_local! {
-    static CURRENT_CONTACT_CACHE: RefCell<CurrentContactCache3d> =
-        RefCell::new(CurrentContactCache3d::default());
-}
-
-/// Returns exact current OBB contacts for one existing body after pruning through the engine's zero-time
-/// rotational broad phase.
-///
-/// A deterministic contact graph is cached by the complete BodyId/kind/geometry snapshot. Repeated queries
-/// against the same snapshot therefore reuse one exact-filtered graph instead of repeating an all-body OBB
-/// scan for every subject. Velocity changes do not invalidate the graph; pose, membership, or body-kind
-/// changes do. The graph stores both subject directions with contact axes oriented from each subject toward
-/// its neighbor.
-#[cfg(test)]
-pub(crate) fn body_current_contacts(
-    boxes: &[RigidBox3d],
-    body: BodyId,
-) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
-    let fingerprint = snapshot_fingerprint(boxes.iter());
-    if let Some(contacts) = cached_contacts(&fingerprint, body) {
-        return Ok(contacts);
+impl GenerationContactCache3d {
+    fn activate_generation(&mut self, generation: u64) {
+        if self.generation == Some(generation) {
+            return;
+        }
+        self.generation = Some(generation);
+        self.graph = None;
+        self.body_contacts.clear();
     }
 
-    let graph = build_current_contact_graph(boxes)?;
-    cache_graph(fingerprint, graph.clone());
-    graph
-        .contacts
-        .get(&body)
-        .cloned()
-        .ok_or(RotatingWorldError3d::MissingBody(body))
+    /// Returns exact current contacts for one known body.
+    ///
+    /// One-off callers keep the precise single-subject path. Repeated callers reuse that subject result,
+    /// while a graph already built by overlap traversal becomes the shared authority for all subjects in
+    /// the same geometry generation.
+    pub(crate) fn body_contacts(
+        &mut self,
+        boxes: &BTreeMap<BodyId, RigidBox3d>,
+        body: BodyId,
+        generation: u64,
+    ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        self.activate_generation(generation);
+        if let Some(graph) = &self.graph {
+            return graph
+                .contacts
+                .get(&body)
+                .cloned()
+                .ok_or(RotatingWorldError3d::MissingBody(body));
+        }
+        if let Some(contacts) = self.body_contacts.get(&body) {
+            return Ok(contacts.clone());
+        }
+
+        let contacts = body_current_contacts_for_body(boxes, body)?;
+        self.subject_builds = self.subject_builds.saturating_add(1);
+        self.body_contacts.insert(body, contacts.clone());
+        Ok(contacts)
+    }
+
+    /// Returns the subject plus exact current rigid-contact neighbors in stable BodyId order.
+    ///
+    /// The first whole-world traversal for a geometry generation builds one deterministic broad-phase
+    /// graph. Stable queries validate that graph with a scalar generation comparison instead of rebuilding
+    /// a BodyId/kind/layer/pose fingerprint for every body.
+    pub(crate) fn overlap_ids(
+        &mut self,
+        boxes: &BTreeMap<BodyId, RigidBox3d>,
+        body: BodyId,
+        generation: u64,
+    ) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        let subject = boxes
+            .get(&body)
+            .ok_or(RotatingWorldError3d::MissingBody(body))?;
+        if subject.body().kind() != BodyKind::Dynamic {
+            return Err(RotatingWorldError3d::MissingBody(body));
+        }
+
+        self.activate_generation(generation);
+        if self.graph.is_none() {
+            let snapshot = boxes.values().cloned().collect::<Vec<_>>();
+            let graph = build_current_contact_graph(&snapshot)?;
+            self.graph_builds = self.graph_builds.saturating_add(1);
+            self.candidate_pairs = self
+                .candidate_pairs
+                .saturating_add(u64::try_from(graph.candidate_pairs).unwrap_or(u64::MAX));
+            self.exact_pair_tests = self
+                .exact_pair_tests
+                .saturating_add(u64::try_from(graph.exact_pair_tests).unwrap_or(u64::MAX));
+            self.graph = Some(graph);
+            self.body_contacts.clear();
+        }
+
+        let contacts = self
+            .graph
+            .as_ref()
+            .and_then(|graph| graph.contacts.get(&body))
+            .cloned()
+            .ok_or(RotatingWorldError3d::MissingBody(body))?;
+        let mut ids = Vec::with_capacity(contacts.len().saturating_add(1));
+        ids.push(body);
+        ids.extend(contacts.into_iter().map(|contact| contact.other));
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn stats(&self) -> (u64, u64, u64, u64) {
+        (
+            self.graph_builds,
+            self.subject_builds,
+            self.candidate_pairs,
+            self.exact_pair_tests,
+        )
+    }
 }
 
 /// Computes exact current contacts for one known body without materializing the full-world contact graph.
@@ -72,7 +133,7 @@ pub(crate) fn body_current_contacts(
 /// The subject is looked up directly by `BodyId`. Every unrelated body pays only for its current conservative
 /// bound; exact OBB contact work is performed only for collision-enabled bodies whose current bounds overlap
 /// the subject. This is the precise single-subject counterpart to the cached full contact graph.
-pub(crate) fn body_current_contacts_for_body(
+fn body_current_contacts_for_body(
     boxes: &BTreeMap<BodyId, RigidBox3d>,
     body: BodyId,
 ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
@@ -112,113 +173,6 @@ pub(crate) fn body_current_contacts_for_body(
     }
 
     Ok(contacts)
-}
-
-/// Fast path for an existing dynamic body's exact overlap query.
-///
-/// The map is already BodyId ordered, so a cache hit computes only the small geometry fingerprint and clones
-/// the requested neighbor list. Bodies are cloned for broad-phase construction only when the geometry/kind
-/// snapshot changed.
-pub(crate) fn body_current_overlap_ids(
-    boxes: &BTreeMap<BodyId, RigidBox3d>,
-    body: BodyId,
-) -> Result<Vec<BodyId>, RotatingWorldError3d> {
-    let subject = boxes
-        .get(&body)
-        .ok_or(RotatingWorldError3d::MissingBody(body))?;
-    if subject.body().kind() != BodyKind::Dynamic {
-        return Err(RotatingWorldError3d::MissingBody(body));
-    }
-
-    let fingerprint = snapshot_fingerprint(boxes.values());
-    let contacts = if let Some(contacts) = cached_contacts(&fingerprint, body) {
-        contacts
-    } else {
-        let snapshot = boxes.values().cloned().collect::<Vec<_>>();
-        let graph = build_current_contact_graph(&snapshot)?;
-        let contacts = graph
-            .contacts
-            .get(&body)
-            .cloned()
-            .ok_or(RotatingWorldError3d::MissingBody(body))?;
-        cache_graph(fingerprint, graph);
-        contacts
-    };
-
-    let mut ids = Vec::with_capacity(contacts.len().saturating_add(1));
-    ids.push(body);
-    ids.extend(contacts.into_iter().map(|contact| contact.other));
-    ids.sort_unstable();
-    ids.dedup();
-    Ok(ids)
-}
-
-fn snapshot_fingerprint<'a>(
-    boxes: impl IntoIterator<Item = &'a RigidBox3d>,
-) -> Vec<(
-    BodyId,
-    BodyKind,
-    CollisionLayers3d,
-    SolverParticipation3d,
-    OrientedBox3d,
-)> {
-    let mut fingerprint = boxes
-        .into_iter()
-        .map(|rigid_box| {
-            (
-                rigid_box.body().id(),
-                rigid_box.body().kind(),
-                rigid_box.collision_layers(),
-                rigid_box.solver_participation(),
-                rigid_box.oriented_box(),
-            )
-        })
-        .collect::<Vec<_>>();
-    fingerprint.sort_by_key(|(id, _, _, _, _)| *id);
-    fingerprint
-}
-
-fn cached_contacts(
-    fingerprint: &[(
-        BodyId,
-        BodyKind,
-        CollisionLayers3d,
-        SolverParticipation3d,
-        OrientedBox3d,
-    )],
-    body: BodyId,
-) -> Option<Vec<BodyCurrentContact3d>> {
-    CURRENT_CONTACT_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        if cache.fingerprint != fingerprint {
-            return None;
-        }
-        cache.graph.as_ref()?.contacts.get(&body).cloned()
-    })
-}
-
-fn cache_graph(
-    fingerprint: Vec<(
-        BodyId,
-        BodyKind,
-        CollisionLayers3d,
-        SolverParticipation3d,
-        OrientedBox3d,
-    )>,
-    graph: CurrentContactGraph3d,
-) {
-    CURRENT_CONTACT_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.fingerprint = fingerprint;
-        cache.builds = cache.builds.saturating_add(1);
-        cache.candidate_pairs = cache
-            .candidate_pairs
-            .saturating_add(u64::try_from(graph.candidate_pairs).unwrap_or(u64::MAX));
-        cache.exact_pair_tests = cache
-            .exact_pair_tests
-            .saturating_add(u64::try_from(graph.exact_pair_tests).unwrap_or(u64::MAX));
-        cache.graph = Some(graph);
-    });
 }
 
 fn build_current_contact_graph(
@@ -306,19 +260,6 @@ fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError
         }
         RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
     }
-}
-
-#[cfg(test)]
-fn reset_cache() {
-    CURRENT_CONTACT_CACHE.with(|cache| *cache.borrow_mut() = CurrentContactCache3d::default());
-}
-
-#[cfg(test)]
-fn cache_stats() -> (u64, u64, u64) {
-    CURRENT_CONTACT_CACHE.with(|cache| {
-        let cache = cache.borrow();
-        (cache.builds, cache.candidate_pairs, cache.exact_pair_tests)
-    })
 }
 
 #[cfg(test)]
