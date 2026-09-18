@@ -181,12 +181,13 @@ fn debris_pair_can_decline_wake_propagation_without_disabling_collision() {
         world.is_sleeping(sleeper_id),
         "no-wake pair policy should keep the parked target passive"
     );
-    assert!(
+    assert_ne!(
         world
-            .body_overlaps(sleeper_id)
-            .expect("parked overlap query")
-            .contains(&mover_id)
-            || world.box_by_id(mover_id).is_some(),
-        "collision geometry remains present even when wake propagation is suppressed"
+            .box_by_id(mover_id)
+            .expect("mover remains in world")
+            .body()
+            .velocity(),
+        Vec3i::new(240, 0, 0),
+        "parked collision geometry must still respond to the mover"
     );
 }
