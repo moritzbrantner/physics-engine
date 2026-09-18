@@ -239,12 +239,45 @@ impl From<RotatingContactResponseError3d> for RotatingWorldError3d {
 /// The world retains independent fat-AABB broad-phase trees for sampled sweeps and persistent-tail
 /// current-overlap queries. Exact conservative bounds remain candidate truth in both paths; retained tree
 /// topology only prunes exact OBB work and cannot change collision truth.
+#[derive(Clone, Debug, Default)]
+struct SolverPartitions3d {
+    solid_body_ids: BTreeSet<BodyId>,
+    dynamic_body_ids: BTreeSet<BodyId>,
+    bypassed_dynamic_ids: BTreeSet<BodyId>,
+    response_authority_body_ids: BTreeSet<BodyId>,
+}
+
+impl SolverPartitions3d {
+    fn insert(&mut self, rigid_box: &RigidBox3d) {
+        let id = rigid_box.body().id();
+        if rigid_box.solver_participation() == SolverParticipation3d::Solid {
+            self.solid_body_ids.insert(id);
+        } else if rigid_box.body().kind() == BodyKind::Dynamic {
+            self.bypassed_dynamic_ids.insert(id);
+        }
+        if rigid_box.body().kind() == BodyKind::Dynamic {
+            self.dynamic_body_ids.insert(id);
+        }
+        if receives_solver_response(rigid_box) {
+            self.response_authority_body_ids.insert(id);
+        }
+    }
+
+    fn remove(&mut self, id: BodyId) {
+        self.solid_body_ids.remove(&id);
+        self.dynamic_body_ids.remove(&id);
+        self.bypassed_dynamic_ids.remove(&id);
+        self.response_authority_body_ids.remove(&id);
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
     boxes: BTreeMap<BodyId, RigidBox3d>,
     contact_geometry_generation: u64,
     current_contact_cache: RefCell<GenerationContactCache3d>,
+    solver_partitions: SolverPartitions3d,
     broad_phase: RotatingBroadPhase3d,
     tail_broad_phase: RotatingBroadPhase3d,
 }
@@ -257,6 +290,7 @@ impl RotatingWorld3d {
             boxes: BTreeMap::new(),
             contact_geometry_generation: 0,
             current_contact_cache: RefCell::new(GenerationContactCache3d::default()),
+            solver_partitions: SolverPartitions3d::default(),
             broad_phase: RotatingBroadPhase3d::default(),
             tail_broad_phase: RotatingBroadPhase3d::default(),
         }
@@ -272,6 +306,7 @@ impl RotatingWorld3d {
         if self.boxes.contains_key(&id) {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
+        self.solver_partitions.insert(&rigid_box);
         self.boxes.insert(id, rigid_box);
         self.mark_contact_geometry_changed();
         Ok(())
@@ -280,6 +315,7 @@ impl RotatingWorld3d {
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
         let removed = self.boxes.remove(&id);
         if removed.is_some() {
+            self.solver_partitions.remove(id);
             self.mark_contact_geometry_changed();
         }
         removed
@@ -406,20 +442,12 @@ impl RotatingWorld3d {
             ));
         }
         if timestep_numerator == 0 {
-            let response_authority_body_count = self
-                .boxes
-                .values()
-                .filter(|rigid_box| receives_solver_response(rigid_box))
-                .count();
+            let response_authority_body_count =
+                self.solver_partitions.response_authority_body_ids.len();
             let solver_body_count = if response_authority_body_count == 0 {
                 0
             } else {
-                self.boxes
-                    .values()
-                    .filter(|rigid_box| {
-                        rigid_box.solver_participation() == SolverParticipation3d::Solid
-                    })
-                    .count()
+                self.solver_partitions.solid_body_ids.len()
             };
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
@@ -446,26 +474,40 @@ impl RotatingWorld3d {
         // so every dynamic advances directly and the rigid collision pipeline is skipped entirely. Otherwise
         // solid bodies remain collision inputs for the mutable dynamics, while overlap-only dynamics stay in
         // the cheap free-flight lane.
-        let response_authority_body_count = self
-            .boxes
-            .values()
-            .filter(|rigid_box| receives_solver_response(rigid_box))
-            .count();
-        let mut solver_boxes = Vec::with_capacity(self.boxes.len());
+        let response_authority_body_count =
+            self.solver_partitions.response_authority_body_ids.len();
+        let mut solver_boxes =
+            Vec::with_capacity(self.solver_partitions.solid_body_ids.len());
         let mut bypassed_updates = Vec::new();
-        for rigid_box in self.boxes.values() {
-            if response_authority_body_count > 0
-                && rigid_box.solver_participation() == SolverParticipation3d::Solid
-            {
+
+        if response_authority_body_count > 0 {
+            for id in &self.solver_partitions.solid_body_ids {
+                let rigid_box = self
+                    .boxes
+                    .get(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(*id))?;
                 solver_boxes.push(rigid_box.clone());
-                continue;
             }
-            if rigid_box.body().kind() != BodyKind::Dynamic {
-                continue;
+            for id in &self.solver_partitions.bypassed_dynamic_ids {
+                let rigid_box = self
+                    .boxes
+                    .get(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(*id))?;
+                let next = sample_rigid_box_free_flight(rigid_box, free_flight, 1, 1)?;
+                if next != *rigid_box {
+                    bypassed_updates.push(next);
+                }
             }
-            let next = sample_rigid_box_free_flight(rigid_box, free_flight, 1, 1)?;
-            if next != *rigid_box {
-                bypassed_updates.push(next);
+        } else {
+            for id in &self.solver_partitions.dynamic_body_ids {
+                let rigid_box = self
+                    .boxes
+                    .get(id)
+                    .ok_or(RotatingWorldError3d::MissingBody(*id))?;
+                let next = sample_rigid_box_free_flight(rigid_box, free_flight, 1, 1)?;
+                if next != *rigid_box {
+                    bypassed_updates.push(next);
+                }
             }
         }
         let solver_body_count = solver_boxes.len();
@@ -1280,6 +1322,39 @@ mod tests {
             ))
             .expect("valid overlap query");
         assert_eq!(hits, vec![BodyId(1), BodyId(2)]);
+    }
+
+    #[test]
+    fn persistent_solver_partitions_track_lifecycle_without_frame_rediscovery() {
+        let mut world = world(Vec3i::ZERO);
+        world
+            .add_box(dynamic(1, Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1)))
+            .expect("physics-owned dynamic");
+        world
+            .add_box(
+                dynamic(2, Vec3i::new(100, 0, 0), Vec3i::new(1, 0, 0), Vec3i::new(1, 1, 1))
+                    .with_overlap_only(),
+            )
+            .expect("overlap-only dynamic");
+        world
+            .add_box(fixed(3, Vec3i::new(200, 0, 0), Vec3i::new(1, 1, 1)))
+            .expect("fixed");
+
+        assert_eq!(world.solver_partitions.dynamic_body_ids.len(), 2);
+        assert_eq!(world.solver_partitions.solid_body_ids.len(), 2);
+        assert_eq!(world.solver_partitions.bypassed_dynamic_ids.len(), 1);
+        assert_eq!(world.solver_partitions.response_authority_body_ids.len(), 1);
+
+        let first = world.step(1, 60).expect("partitioned step");
+        let second = world.step(1, 60).expect("stable partitioned step");
+        assert_eq!(first.stats.solver_body_count, 2);
+        assert_eq!(second.stats.solver_body_count, 2);
+
+        world.remove_box(BodyId(1)).expect("remove solver authority");
+        assert!(world.solver_partitions.response_authority_body_ids.is_empty());
+        let bypassed = world.step(1, 60).expect("all-dynamic bypass step");
+        assert_eq!(bypassed.stats.solver_body_count, 0);
+        assert_eq!(bypassed.stats.solver_bypassed_body_count, 2);
     }
 
     #[test]
