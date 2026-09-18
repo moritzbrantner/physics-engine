@@ -295,6 +295,12 @@ function readPhysicsCounter(name) {
 
 function lastPhysicsStepStats() {
   return {
+    solver_body_count: readPhysicsCounter("sandbox_last_solver_body_count"),
+    solver_bypassed_body_count: readPhysicsCounter("sandbox_last_solver_bypassed_body_count"),
+    response_authority_body_count: readPhysicsCounter("sandbox_last_response_authority_body_count"),
+    response_authority_pair_rejections: readPhysicsCounter(
+      "sandbox_last_response_authority_pair_rejections",
+    ),
     sampled_events: readPhysicsCounter("sandbox_last_sampled_events"),
     tail_contacts: readPhysicsCounter("sandbox_last_tail_contacts"),
     tail_slices: readPhysicsCounter("sandbox_last_tail_slices"),
@@ -333,6 +339,13 @@ function lastPhysicsStepStats() {
 }
 
 function simulationStep() {
+  if (scenarioAutomationActive() && scenarioTick % 10 === 0) {
+    const shotIndex = Math.floor(scenarioTick / 10);
+    const velocityX = shotIndex % 2 === 0 ? 38 : -38;
+    const velocityY = shotIndex % 3 === 2 ? -7 : 0;
+    shootVector(velocityX, velocityY, -88, "scenario-projectile");
+  }
+
   const [velocityX, velocityZ] = movementVelocity();
   const started = performance.now();
   const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
@@ -354,8 +367,20 @@ function simulationStep() {
     performanceRecorder.recordMarker("physics-error", { error, detail });
     return;
   }
+  scenarioTick += 1;
   quiescent =
     typeof engine.sandbox_is_quiescent === "function" && engine.sandbox_is_quiescent() === 1;
+}
+
+function shootVector(velocityX, velocityY, velocityZ, marker = "shoot") {
+  if (engine.sandbox_shoot(velocityX, velocityY, velocityZ) < 0) {
+    status.textContent = "The engine rejected projectile creation.";
+    return false;
+  }
+  quiescent = false;
+  renderDirty = true;
+  performanceRecorder.recordMarker(marker);
+  return true;
 }
 
 function shoot() {
@@ -363,13 +388,7 @@ function shoot() {
   const velocityX = Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED);
   const velocityY = Math.round(-Math.sin(pitch) * PROJECTILE_SPEED);
   const velocityZ = Math.round(-Math.cos(yaw) * cosPitch * PROJECTILE_SPEED);
-  if (engine.sandbox_shoot(velocityX, velocityY, velocityZ) < 0) {
-    status.textContent = "The engine rejected projectile creation.";
-    return;
-  }
-  quiescent = false;
-  renderDirty = true;
-  performanceRecorder.recordMarker("shoot");
+  shootVector(velocityX, velocityY, velocityZ);
 }
 
 function normalizeQuaternion(raw) {
@@ -474,8 +493,9 @@ function boxVertices(body) {
 }
 
 function materialFor(body) {
-  if (body.role === 3 || body.role === 4) return 4;
-  if (body.role === 2) return 3;
+  if (body.role === 3 || body.role === 4 || body.role === 6) return 4;
+  if (body.role === 2 || body.role === 8) return 3;
+  if (body.role === 7) return 1;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
   if (body.position[1] < 0 && hx >= 400 && hz >= 400) return 0;
