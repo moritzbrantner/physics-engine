@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
+    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, OrientedBox3d,
+    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
     SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
 
@@ -33,6 +33,9 @@ pub(crate) struct RotatingBroadPhaseStats3d {
     pub partial_body_updates: u64,
     /// Geometrically eligible solid pairs rejected because neither participant can receive solver mutation.
     pub response_authority_pair_rejections: u64,
+    pub fixed_bound_reuses: u64,
+    pub fixed_bound_recomputations: u64,
+    pub dynamic_bound_recomputations: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +83,14 @@ struct BoundedBody3d {
     bounds: RotationalSweepBounds3d,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FixedBoundCacheEntry3d {
+    shape: OrientedBox3d,
+    collision_layers: CollisionLayers3d,
+    solver_participation: SolverParticipation3d,
+    bounded: BoundedBody3d,
+}
+
 /// Persistent deterministic broad phase for rotating rigid boxes.
 ///
 /// The retained fat-AABB tree uses indexed arena nodes, parent links, and a `BodyId -> leaf` index.
@@ -93,6 +104,7 @@ struct BoundedBody3d {
 pub(crate) struct RotatingBroadPhase3d {
     tree: IndexedBvh3d,
     exact: BTreeMap<BodyId, BoundedBody3d>,
+    fixed_bounds: BTreeMap<BodyId, FixedBoundCacheEntry3d>,
     stats: RotatingBroadPhaseStats3d,
 }
 
@@ -124,7 +136,7 @@ impl RotatingBroadPhase3d {
         require_response_authority: bool,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
         self.stats.queries = self.stats.queries.saturating_add(1);
-        let exact = bounded_bodies(boxes, config)?;
+        let exact = self.bounded_bodies(boxes, config)?;
 
         if !self.membership_matches(&exact) {
             self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
@@ -327,6 +339,58 @@ impl RotatingBroadPhase3d {
         self.stats
     }
 
+    fn bounded_bodies(
+        &mut self,
+        boxes: &[RigidBox3d],
+        config: RigidBoxFreeFlightConfig3d,
+    ) -> Result<Vec<BoundedBody3d>, RotatingBroadPhaseError3d> {
+        config.exact_timestep()?;
+        let mut ids = BTreeSet::new();
+        let mut fixed_ids = BTreeSet::new();
+        let mut bounded = Vec::with_capacity(boxes.len());
+
+        for rigid_box in boxes {
+            let id = rigid_box.body().id();
+            if !ids.insert(id) {
+                return Err(RotatingBroadPhaseError3d::DuplicateBodyId(id));
+            }
+            if rigid_box.body().kind() == BodyKind::Fixed {
+                fixed_ids.insert(id);
+                let shape = rigid_box.oriented_box();
+                if let Some(cached) = self.fixed_bounds.get(&id)
+                    && cached.shape == shape
+                    && cached.collision_layers == rigid_box.collision_layers()
+                    && cached.solver_participation == rigid_box.solver_participation()
+                {
+                    self.stats.fixed_bound_reuses = self.stats.fixed_bound_reuses.saturating_add(1);
+                    bounded.push(cached.bounded);
+                    continue;
+                }
+                let body = bounded_body(rigid_box, config)?;
+                self.fixed_bounds.insert(
+                    id,
+                    FixedBoundCacheEntry3d {
+                        shape,
+                        collision_layers: rigid_box.collision_layers(),
+                        solver_participation: rigid_box.solver_participation(),
+                        bounded: body,
+                    },
+                );
+                self.stats.fixed_bound_recomputations =
+                    self.stats.fixed_bound_recomputations.saturating_add(1);
+                bounded.push(body);
+            } else {
+                self.fixed_bounds.remove(&id);
+                self.stats.dynamic_bound_recomputations =
+                    self.stats.dynamic_bound_recomputations.saturating_add(1);
+                bounded.push(bounded_body(rigid_box, config)?);
+            }
+        }
+
+        self.fixed_bounds.retain(|id, _| fixed_ids.contains(id));
+        Ok(bounded)
+    }
+
     fn membership_matches(&self, exact: &[BoundedBody3d]) -> bool {
         if exact.len() != self.exact.len() || exact.len() != self.tree.len() {
             return false;
@@ -439,22 +503,6 @@ pub fn rotational_sweep_candidate_pairs(
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
     RotatingBroadPhase3d::default().candidate_pairs(boxes, config)
-}
-
-fn bounded_bodies(
-    boxes: &[RigidBox3d],
-    config: RigidBoxFreeFlightConfig3d,
-) -> Result<Vec<BoundedBody3d>, RotatingBroadPhaseError3d> {
-    let mut ids = BTreeSet::new();
-    let mut bounded = Vec::with_capacity(boxes.len());
-    for rigid_box in boxes {
-        let body = bounded_body(rigid_box, config)?;
-        if !ids.insert(body.id) {
-            return Err(RotatingBroadPhaseError3d::DuplicateBodyId(body.id));
-        }
-        bounded.push(body);
-    }
-    Ok(bounded)
 }
 
 fn bounded_body(
@@ -1183,6 +1231,37 @@ mod tests {
             query.visited_nodes,
             boxes.len()
         );
+    }
+
+    #[test]
+    fn repeated_queries_reuse_fixed_bounds_but_recompute_dynamic_sweeps() {
+        let mut boxes = (0..128_u64)
+            .map(|index| {
+                fixed(
+                    index + 10,
+                    Vec3i::new(i32::try_from(index).expect("small index") * 8, -10, 0),
+                )
+            })
+            .collect::<Vec<_>>();
+        boxes.push(dynamic(1, Vec3i::ZERO, Vec3i::new(1, 0, 0)));
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("first query");
+        let first = broad_phase.stats();
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("second query");
+        let second = broad_phase.stats();
+
+        assert_eq!(first.fixed_bound_recomputations, 128);
+        assert_eq!(first.fixed_bound_reuses, 0);
+        assert_eq!(first.dynamic_bound_recomputations, 1);
+        assert_eq!(second.fixed_bound_recomputations, 128);
+        assert_eq!(second.fixed_bound_reuses, 128);
+        assert_eq!(second.dynamic_bound_recomputations, 2);
     }
 
     #[test]
