@@ -24,11 +24,26 @@ impl InteractionCategory3d {
     }
 }
 
+/// Controls whether an active body's conservative sweep is allowed to wake a sleeping interaction target.
+///
+/// This is intentionally separate from collision eligibility. `None` keeps the target asleep while it
+/// remains collision-testable through its parked/fixed proxy; it is appropriate only for interactions where
+/// the consumer accepts one-sided/passive response. Topology changes and explicit velocity mutations remain
+/// independent wake authorities.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WakePropagation3d {
+    #[default]
+    Full,
+    None,
+}
+
 /// Pair-specific simulation budget and behavior owned by the physics engine.
 ///
 /// `None` preserves the engine's existing fixed-boundary stabilization budget. `Some(limit)` caps that
 /// stage for the resolved category pair; zero deliberately disables that post-step stabilization stage. A
-/// pair policy may reduce an engine hard limit but can never raise it.
+/// pair policy may reduce an engine hard limit but can never raise it. Wake propagation is independently
+/// selectable so low-value interactions can keep parked targets passive without disabling collision
+/// discovery.
 ///
 /// Additional pair-level knobs should be added here only when an existing physics stage can consume them.
 /// Collision eligibility remains the responsibility of collision layers, and material coefficients remain
@@ -36,6 +51,7 @@ impl InteractionCategory3d {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct InteractionPolicy3d {
     fixed_boundary_stabilization_pass_limit: Option<u8>,
+    wake_propagation: WakePropagation3d,
 }
 
 impl InteractionPolicy3d {
@@ -48,6 +64,17 @@ impl InteractionPolicy3d {
     #[must_use]
     pub const fn configured_fixed_boundary_stabilization_pass_limit(self) -> Option<u8> {
         self.fixed_boundary_stabilization_pass_limit
+    }
+
+    #[must_use]
+    pub const fn with_wake_propagation(mut self, wake_propagation: WakePropagation3d) -> Self {
+        self.wake_propagation = wake_propagation;
+        self
+    }
+
+    #[must_use]
+    pub const fn wake_propagation(self) -> WakePropagation3d {
+        self.wake_propagation
     }
 
     /// Resolves this pair's configured budget against the engine-owned hard limit.
@@ -183,7 +210,9 @@ fn canonical_pair(
 mod tests {
     use crate::BodyId;
 
-    use super::{InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d};
+    use super::{
+        InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, WakePropagation3d,
+    };
 
     const CHARACTER: InteractionCategory3d = InteractionCategory3d::new(1);
     const CRATE: InteractionCategory3d = InteractionCategory3d::new(2);
@@ -241,6 +270,20 @@ mod tests {
         assert_eq!(unrestricted.fixed_boundary_stabilization_pass_limit(16), 16);
         assert_eq!(cheap.fixed_boundary_stabilization_pass_limit(16), 2);
         assert_eq!(oversized.fixed_boundary_stabilization_pass_limit(16), 16);
+    }
+
+    #[test]
+    fn pair_policy_composes_stabilization_and_wake_controls() {
+        let policy = InteractionPolicy3d::default()
+            .with_fixed_boundary_stabilization_pass_limit(2)
+            .with_wake_propagation(WakePropagation3d::None);
+
+        assert_eq!(policy.fixed_boundary_stabilization_pass_limit(16), 2);
+        assert_eq!(policy.wake_propagation(), WakePropagation3d::None);
+        assert_eq!(
+            InteractionPolicy3d::default().wake_propagation(),
+            WakePropagation3d::Full
+        );
     }
 
     #[test]
