@@ -206,7 +206,7 @@ pub fn advance_repeated_rotating_events(
         &mut state,
         config,
         &mut broad_phase,
-        response_scratch,
+        &mut response_scratch,
     )?;
     Ok(RepeatedRotatingEventAdvance3d {
         boxes: state,
