@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
-    InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
+    InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d, OrientedBox3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
     SolverParticipation3d, Vec3i, WakePropagation3d, rigid_box_free_flight_sweep_bounds,
@@ -192,6 +192,16 @@ impl RotatingWorld3d {
     ) -> Result<(), RotatingWorldError3d> {
         self.unpark(id)?;
         self.active.set_linear_velocity(id, velocity)
+    }
+
+    pub fn set_orientations(
+        &mut self,
+        updates: &[(BodyId, Orientation3d)],
+    ) -> Result<(), RotatingWorldError3d> {
+        for (id, _) in updates {
+            self.unpark(*id)?;
+        }
+        self.active.set_orientations(updates)
     }
 
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
