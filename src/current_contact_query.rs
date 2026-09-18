@@ -103,7 +103,7 @@ impl GenerationContactCache3d {
         }
         let candidates = self
             .broad_phase
-            .candidate_pairs_for_changed_current_bodies(changed_boxes)
+            .candidate_pairs_for_changed_current_query_bodies(changed_boxes)
             .map_err(map_broad_phase_error)?;
         self.incremental_candidate_pairs = self
             .incremental_candidate_pairs
