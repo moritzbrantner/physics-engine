@@ -1,10 +1,9 @@
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
     BallisticSphere3d, BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d,
-    FixedGeometryPreparationStats3d,
-    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
-    OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, Vec3i,
+    FixedGeometryPreparationStats3d, InteractionCategory3d, InteractionExecutionPlan3d,
+    InteractionPolicy3d, Orientation3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -151,7 +150,6 @@ impl EcsRotatingWorld3d {
         self.fixed_geometry.unregister(entity);
         Some(removed)
     }
-
 
     pub fn add_ballistic_sphere(
         &mut self,
