@@ -487,8 +487,7 @@ mod tests {
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
         RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotationalSweepBounds3d,
-        SolverParticipation3d, Vec3i,
-        rigid_box_free_flight_sweep_bounds,
+        SolverParticipation3d, Vec3i, rigid_box_free_flight_sweep_bounds,
     };
 
     use super::{
