@@ -16,6 +16,7 @@ const startPerformanceLogButton = document.querySelector("#start-performance-log
 const downloadPerformanceLogButton = document.querySelector("#download-performance-log");
 const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
+const projectileHud = document.querySelector("#projectile-hud");
 
 const FIXED_STEP_MS = 1000 / 60;
 const MAX_CATCH_UP_STEPS = 8;
@@ -35,6 +36,12 @@ const characterModeControl = document.querySelector("#character-mode");
 const uprightCratesControl = document.querySelector("#upright-crates");
 const fixedGeometryControl = document.querySelector("#fixed-geometry-mode");
 const projectileTypeControl = document.querySelector("#projectile-type");
+const projectileShortcuts = new Map(
+  [...projectileHud.querySelectorAll("[data-projectile-shortcut]")].map((element) => [
+    element.dataset.projectileShortcut,
+    element,
+  ]),
+);
 const characterParameters = new URLSearchParams(window.location.search);
 characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
 uprightCratesControl.checked = characterParameters.get("crates") !== "free";
@@ -161,6 +168,21 @@ async function createRenderer() {
   throw new Error("Neither WebGPU nor WebGL2 is available in this browser");
 }
 
+function syncProjectileHud() {
+  for (const [projectileType, element] of projectileShortcuts) {
+    element.classList.toggle("is-selected", projectileType === projectileTypeControl.value);
+  }
+}
+
+function selectProjectileType(projectileType) {
+  if (projectileTypeControl.value === projectileType) {
+    syncProjectileHud();
+    return;
+  }
+  projectileTypeControl.value = projectileType;
+  projectileTypeControl.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 function reset() {
   if (
     engine.sandbox_reset_with_baking_options(
@@ -171,7 +193,14 @@ function reset() {
   ) {
     throw new Error("Unable to initialize the selected physics comparison options");
   }
-  const projectileType = projectileTypeControl.value === "arrow" ? 1 : 0;
+  const projectileType = new Map([
+    ["sphere", 0],
+    ["arrow", 1],
+    ["rigid", 2],
+  ]).get(projectileTypeControl.value);
+  if (projectileType == null) {
+    throw new Error(`Unknown projectile type: ${projectileTypeControl.value}`);
+  }
   if (
     typeof engine.sandbox_set_projectile_type !== "function" ||
     engine.sandbox_set_projectile_type(projectileType) !== 0
@@ -189,6 +218,7 @@ function reset() {
   pendingPhysicsStepStats = [];
   recentPhysicsStepMs = [];
   pauseButton.textContent = "Pause";
+  syncProjectileHud();
   performanceRecorder.recordMarker("reset", performanceScenario());
   status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
@@ -557,7 +587,12 @@ function render() {
     typeof engine.sandbox_last_tail_slices === "function"
       ? ` · tail ${engine.sandbox_last_tail_slices()} slices / ${engine.sandbox_last_tail_candidate_pairs()} candidates`
       : "";
-  const projectileType = projectileTypeControl.value === "arrow" ? "arrow" : "sphere";
+  const projectileType =
+    projectileTypeControl.value === "arrow"
+      ? "arrow"
+      : projectileTypeControl.value === "rigid"
+        ? "rigid reference"
+        : "sphere";
   const averagePhysicsStepMs =
     recentPhysicsStepMs.length === 0
       ? null
@@ -708,6 +743,20 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
   }
   if (event.code === "Space" && !event.repeat) jumpQueued = true;
+  if (!event.repeat) {
+    const projectileType = {
+      Digit1: "sphere",
+      Numpad1: "sphere",
+      Digit2: "arrow",
+      Numpad2: "arrow",
+      Digit3: "rigid",
+      Numpad3: "rigid",
+    }[event.code];
+    if (projectileType) {
+      event.preventDefault();
+      selectProjectileType(projectileType);
+    }
+  }
   if (event.code === "KeyF" && !event.repeat) shoot();
   if (event.code === "KeyR" && !event.repeat) reset();
   if (event.code === "KeyP" && !event.repeat) {
