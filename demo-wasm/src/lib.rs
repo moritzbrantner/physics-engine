@@ -22,10 +22,29 @@ const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(i32)]
+enum ProjectileMode {
+    ReferenceRigid = 0,
+    #[default]
+    OptimizedTransient = 1,
+}
+
+impl ProjectileMode {
+    const fn from_i32(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::ReferenceRigid),
+            1 => Some(Self::OptimizedTransient),
+            _ => None,
+        }
+    }
+}
+
 struct Sandbox {
     world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
+    projectile_mode: ProjectileMode,
     last_rotating_events: usize,
     last_tail_contacts: usize,
     last_step_stats: RotatingWorldStepStats3d,
@@ -126,6 +145,7 @@ impl Sandbox {
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
+            projectile_mode: ProjectileMode::default(),
             last_rotating_events: 0,
             last_tail_contacts: 0,
             last_step_stats: RotatingWorldStepStats3d::default(),
@@ -220,6 +240,17 @@ impl Sandbox {
         0
     }
 
+    fn set_projectile_mode(&mut self, mode: i32) -> i32 {
+        if !self.projectile_ids.is_empty() {
+            return -1;
+        }
+        let Some(mode) = ProjectileMode::from_i32(mode) else {
+            return -1;
+        };
+        self.projectile_mode = mode;
+        0
+    }
+
     fn shoot(&mut self, velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
         let input_velocity = Vec3i::new(
             velocity_x.clamp(-PROJECTILE_SPEED_LIMIT, PROJECTILE_SPEED_LIMIT),
@@ -247,18 +278,17 @@ impl Sandbox {
         self.next_projectile_id = self.next_projectile_id.saturating_add(1);
         let impact_policy = controller::scenario_rules::projectile_impact_policy();
 
-        if self
-            .world
-            .add_box(
-                rotating_box(
-                    RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                        .with_material(Material::new(impact_policy.restitution_milli())),
-                )
-                .with_collision_layers(controller::scenario_rules::projectile_layers())
-                .with_transient_contacts(),
-            )
-            .is_err()
-        {
+        let projectile = rotating_box(
+            RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                .with_material(Material::new(impact_policy.restitution_milli())),
+        )
+        .with_collision_layers(controller::scenario_rules::projectile_layers());
+        let projectile = match self.projectile_mode {
+            ProjectileMode::ReferenceRigid => projectile,
+            ProjectileMode::OptimizedTransient => projectile.with_transient_contacts(),
+        };
+
+        if self.world.add_box(projectile).is_err() {
             self.error_code = 5;
             return -1;
         }
@@ -430,6 +460,16 @@ pub extern "C" fn sandbox_step(move_x: i32, move_z: i32, jump: i32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_step_velocity(velocity_x: i32, velocity_z: i32, jump: i32) -> i32 {
     with_sandbox_mut(|sandbox| sandbox.step_velocity(velocity_x, velocity_z, jump != 0))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_set_projectile_mode(mode: i32) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.set_projectile_mode(mode))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_projectile_mode() -> i32 {
+    with_sandbox(|sandbox| sandbox.projectile_mode as i32)
 }
 
 #[unsafe(no_mangle)]
@@ -708,7 +748,7 @@ mod tests {
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{PLAYER_ID, Sandbox, rotating_box, world_error_detail};
+    use super::{PLAYER_ID, ProjectileMode, Sandbox, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
@@ -896,8 +936,39 @@ mod tests {
     }
 
     #[test]
+    fn reference_projectile_keeps_general_persistent_contact_path() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(
+            sandbox.set_projectile_mode(ProjectileMode::ReferenceRigid as i32),
+            0
+        );
+        let projectile = sandbox.shoot(0, 0, -96);
+        assert!(projectile >= 0);
+        assert_eq!(
+            sandbox
+                .world
+                .box_by_id(BodyId(projectile as u64))
+                .expect("spawned reference projectile")
+                .contact_persistence(),
+            ContactPersistence3d::Persistent
+        );
+    }
+
+    #[test]
+    fn projectile_mode_cannot_change_while_projectiles_are_live() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert!(sandbox.shoot(0, 0, -96) >= 0);
+        assert_eq!(
+            sandbox.set_projectile_mode(ProjectileMode::ReferenceRigid as i32),
+            -1
+        );
+        assert_eq!(sandbox.projectile_mode, ProjectileMode::OptimizedTransient);
+    }
+
+    #[test]
     fn fast_projectile_does_not_tunnel_through_thin_target() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(sandbox.projectile_mode, ProjectileMode::OptimizedTransient);
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
         assert_eq!(
