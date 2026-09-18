@@ -5,9 +5,11 @@ use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
-    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
+    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, MotionAuthority3d,
+    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,
+    RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d, Vec3i,
+    WakePropagation3d,
     obb_contact_seed, obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
@@ -17,6 +19,7 @@ const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
 const SLEEP_STABLE_STEPS_AT_60_HZ: u8 = 12;
 const SLEEP_TIME_SCALE: u128 = 1_u128 << 64;
 const SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 5;
+const AGGRESSIVE_SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 20;
 const SLEEP_LINEAR_SPEED_LIMIT: u32 = 120;
 
 /// Engine-owned rotating world with bounded fixed-boundary stabilization and deterministic sleeping.
@@ -112,6 +115,15 @@ impl RotatingWorld3d {
 
     pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
         self.interaction_policies.set_default_policy(policy);
+    }
+
+    #[must_use]
+    pub fn interaction_policy_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionPolicy3d {
+        self.interaction_policies.policy_for_bodies(source, target)
     }
 
     pub fn set_pair_interaction_policy(
@@ -230,6 +242,10 @@ impl RotatingWorld3d {
         self.inner.body_contacts(body)
     }
 
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        self.inner.body_overlaps(body)
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
@@ -316,7 +332,11 @@ impl RotatingWorld3d {
                 .filter(|id| {
                     sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {
                         awake_bounds.iter().any(|(awake_id, bounds)| {
-                            sweep_bounds_overlap(*bounds, *sleeping_bounds)
+                            self.interaction_policies
+                                .policy_for_bodies(*awake_id, *id)
+                                .wake_propagation()
+                                == WakePropagation3d::Full
+                                && sweep_bounds_overlap(*bounds, *sleeping_bounds)
                                 && !self.inner.box_by_id(*awake_id).is_some_and(|awake| {
                                     self.inner.box_by_id(*id).is_some_and(|sleeping| {
                                         crate::linear_contact::sweep_is_passive_support(
@@ -398,6 +418,7 @@ impl RotatingWorld3d {
                     rigid_box.body.id,
                     low_motion(rigid_box),
                     motion_is_zero(rigid_box),
+                    rigid_box.sleep_mode(),
                     rigid_box.clone(),
                 )
             })
@@ -407,8 +428,12 @@ impl RotatingWorld3d {
         let mut supported_sleep = BTreeSet::new();
         let mut changed_body_ids = BTreeSet::new();
 
-        for (id, is_low_motion, is_stationary, rigid_box) in motion {
+        for (id, is_low_motion, is_stationary, sleep_mode, rigid_box) in motion {
             seen.insert(id);
+            if sleep_mode == SleepMode3d::Never {
+                self.sleep_stable_time_q64.remove(&id);
+                continue;
+            }
             let has_dissipative_contact = if is_low_motion && !is_stationary {
                 self.has_dissipative_sleep_contact(&rigid_box)?
             } else {
@@ -417,7 +442,12 @@ impl RotatingWorld3d {
             if is_low_motion && (is_stationary || has_dissipative_contact) {
                 let stable_time = self.sleep_stable_time_q64.entry(id).or_default();
                 *stable_time = stable_time.saturating_add(sleep_time_increment);
-                if *stable_time >= SLEEP_STABLE_DURATION_Q64 {
+                let stable_duration = match sleep_mode {
+                    SleepMode3d::Normal => SLEEP_STABLE_DURATION_Q64,
+                    SleepMode3d::Aggressive => AGGRESSIVE_SLEEP_STABLE_DURATION_Q64,
+                    SleepMode3d::Never => unreachable!("never-sleep bodies are filtered above"),
+                };
+                if *stable_time >= stable_duration {
                     if self.has_gravity_support_chain(id)? {
                         supported_sleep.insert(id);
                     } else {
@@ -754,7 +784,9 @@ impl RotatingWorld3d {
             let Some(current) = self.inner.box_by_id(id) else {
                 return Err(RotatingWorldError3d::MissingBody(id));
             };
-            if current.body.kind != BodyKind::Dynamic {
+            if current.body.kind != BodyKind::Dynamic
+                || current.motion_authority() == MotionAuthority3d::External
+            {
                 continue;
             }
 
