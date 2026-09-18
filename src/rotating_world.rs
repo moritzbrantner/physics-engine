@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+};
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBox3d, OrientedBoxError3d,
@@ -42,6 +46,10 @@ impl Default for RotatingWorldConfig3d {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RotatingWorldStepStats3d {
     pub body_count: usize,
+    /// Bodies admitted to the expensive rigid-contact event/tail pipeline.
+    pub solver_body_count: usize,
+    /// Bodies advanced outside the rigid solver because their participation is overlap-only.
+    pub solver_bypassed_body_count: usize,
     pub sampled_events: usize,
     pub tail_contacts: usize,
     /// Persistent-tail slices actually executed, including discarded replay work.
@@ -387,16 +395,35 @@ impl RotatingWorld3d {
 
         let broad_phase_before = self.broad_phase.stats();
         let tail_broad_phase_before = self.tail_broad_phase.stats();
-        // `self.boxes` remains the fail-closed transaction authority for this slice. The working
-        // BodyId-ordered vector is materialized once and then reused by repeated events and the tail.
-        let mut boxes = self.boxes.values().cloned().collect::<Vec<_>>();
         let free_flight = RigidBoxFreeFlightConfig3d::new(
             self.config.gravity,
             timestep_numerator,
             timestep_denominator,
         );
+
+        // Partition before expensive collision work. Solid bodies preserve stable BodyId order in the
+        // solver working set. Overlap-only dynamics have no collision response by contract, so their exact
+        // full-frame free flight is staged independently and committed only after the solid solver succeeds.
+        let mut solver_boxes = Vec::with_capacity(self.boxes.len());
+        let mut bypassed_updates = Vec::new();
+        for rigid_box in self.boxes.values() {
+            if rigid_box.solver_participation() == SolverParticipation3d::Solid {
+                solver_boxes.push(rigid_box.clone());
+                continue;
+            }
+            if rigid_box.body().kind() != BodyKind::Dynamic {
+                continue;
+            }
+            let next = sample_rigid_box_free_flight(rigid_box, free_flight, 1, 1)?;
+            if next != *rigid_box {
+                bypassed_updates.push(next);
+            }
+        }
+        let solver_body_count = solver_boxes.len();
+        let solver_bypassed_body_count = self.boxes.len().saturating_sub(solver_body_count);
+
         let advance = advance_repeated_rotating_events_with_broad_phase(
-            &mut boxes,
+            &mut solver_boxes,
             RepeatedRotatingEventConfig3d::new(
                 RotatingContactSearchConfig3d::new(
                     free_flight,
@@ -410,34 +437,35 @@ impl RotatingWorld3d {
         )?;
 
         let sampled_events = advance.events.len();
-        let (boxes, tail) = if advance.remaining.timestep_is_zero() {
-            (boxes, TailStepStats3d::default())
+        let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
+            (solver_boxes, TailStepStats3d::default())
         } else {
             consume_tail(
-                boxes,
+                solver_boxes,
                 advance.remaining,
                 self.config.solver_passes,
                 &mut self.tail_broad_phase,
             )?
         };
-        let changed_body_ids = boxes
-            .iter()
-            .filter_map(|rigid_box| {
-                let id = rigid_box.body().id();
-                (self.boxes.get(&id) != Some(rigid_box)).then_some(id)
-            })
-            .collect::<Vec<_>>();
-        self.boxes = boxes
-            .into_iter()
-            .map(|rigid_box| (rigid_box.body().id(), rigid_box))
-            .collect();
+
+        let mut changed_body_ids = BTreeSet::new();
+        for rigid_box in solver_boxes.into_iter().chain(bypassed_updates) {
+            let id = rigid_box.body().id();
+            if self.boxes.get(&id) == Some(&rigid_box) {
+                continue;
+            }
+            self.boxes.insert(id, rigid_box);
+            changed_body_ids.insert(id);
+        }
 
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
-            changed_body_ids,
+            changed_body_ids: changed_body_ids.into_iter().collect(),
             stats: RotatingWorldStepStats3d {
                 body_count: self.boxes.len(),
+                solver_body_count,
+                solver_bypassed_body_count,
                 sampled_events,
                 tail_contacts: tail.contacts,
                 tail_slices: tail.slices,
