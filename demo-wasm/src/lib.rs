@@ -1197,6 +1197,37 @@ mod tests {
     }
 
     #[test]
+    fn analytic_sphere_stress_lane_completes_without_exhausting_event_budget() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+
+        for tick in 0..240 {
+            if tick < 150 && tick % 5 == 0 {
+                let shot_index = tick / 5;
+                let projectile_x = if shot_index % 2 == 0 { 38 } else { -38 };
+                let projectile_y = if shot_index % 3 == 2 { -7 } else { 0 };
+                assert!(
+                    sandbox.shoot(projectile_x, projectile_y, -88) >= 0,
+                    "projectile creation failed at tick {tick}"
+                );
+            }
+            let (x, z) = if tick >= 80 { (271, -321) } else { (0, -420) };
+            let result = sandbox.step_velocity(x, z, false);
+            assert_eq!(
+                result,
+                0,
+                "sphere stress lane failed at tick {tick} with detail {}, {} ballistic spheres live",
+                sandbox.error_detail,
+                sandbox.world.ballistic_sphere_count(),
+            );
+        }
+    }
+
+    #[test]
     fn analytic_sphere_does_not_enter_rigid_sleep_bookkeeping() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         assert_eq!(
