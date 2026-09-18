@@ -320,6 +320,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         deltas,
         combined,
         modified_body_ids,
+        ..
     } = scratch;
 
     let mut passes_used = 0_u8;
