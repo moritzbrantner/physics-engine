@@ -85,6 +85,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
     broad_phase_rotations: 0,
     broad_phase_partial_queries: 0,
     broad_phase_partial_body_updates: 0,
+    response_scratch_index_rebuilds: 0,
     event_response_passes: 0,
     stabilization_passes: 0,
     stabilizations_hitting_limit: 0,

@@ -800,6 +800,11 @@ pub extern "C" fn sandbox_last_broad_phase_partial_body_updates() -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_scratch_index_rebuilds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.response_scratch_index_rebuilds))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_event_response_passes() -> u32 {
     with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.event_response_passes))
 }
