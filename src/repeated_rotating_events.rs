@@ -361,6 +361,27 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     response_scratch.ensure_body_index(boxes);
 
     while !remaining.timestep_is_zero() {
+        // Preserve the existing persistent-contact authority before searching for a positive-time sphere
+        // impact. Otherwise a ballistic event could advance a resting rigid island before its time-zero
+        // constraints are resolved.
+        let zero_progress = advance_repeated_rotating_events_with_broad_phase(
+            boxes,
+            RepeatedRotatingEventConfig3d {
+                search: RotatingContactSearchConfig3d {
+                    free_flight: RigidBoxFreeFlightConfig3d::new(
+                        config.search.free_flight.gravity,
+                        0,
+                        1,
+                    ),
+                    ..config.search
+                },
+                ..config
+            },
+            broad_phase,
+            response_scratch,
+        )?;
+        accumulate_repeated_work(&mut work, zero_progress.work);
+
         let search = search_with_free_flight(config.search, remaining);
         let rigid_hit = if rigid_event_seen {
             sampled_rotating_recontact_search_with_broad_phase(boxes, search, broad_phase)
@@ -460,6 +481,33 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
         remaining,
         work,
     })
+}
+
+fn accumulate_repeated_work(
+    target: &mut RepeatedRotatingEventWorkStats3d,
+    source: RepeatedRotatingEventWorkStats3d,
+) {
+    target.event_response_passes = target
+        .event_response_passes
+        .saturating_add(source.event_response_passes);
+    target.stabilization_passes = target
+        .stabilization_passes
+        .saturating_add(source.stabilization_passes);
+    target.stabilizations_hitting_limit = target
+        .stabilizations_hitting_limit
+        .saturating_add(source.stabilizations_hitting_limit);
+    target.stabilization_candidate_pairs = target
+        .stabilization_candidate_pairs
+        .saturating_add(source.stabilization_candidate_pairs);
+    target.stabilization_exact_contacts = target
+        .stabilization_exact_contacts
+        .saturating_add(source.stabilization_exact_contacts);
+    target.stabilization_active_bodies = target
+        .stabilization_active_bodies
+        .saturating_add(source.stabilization_active_bodies);
+    target.response_scratch_index_rebuilds = target
+        .response_scratch_index_rebuilds
+        .saturating_add(source.response_scratch_index_rebuilds);
 }
 
 fn advance_state_to_time(
