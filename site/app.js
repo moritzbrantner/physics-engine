@@ -29,6 +29,7 @@ const NEAR_PLANE = 0.8;
 const FAR_PLANE = 1400;
 const ORIENTATION_SCALE = 1 << 30;
 const RENDER_SNAPSHOT_STRIDE = 11;
+const RECENT_PHYSICS_STEP_WINDOW = 60;
 const keys = new Set();
 const characterModeControl = document.querySelector("#character-mode");
 const uprightCratesControl = document.querySelector("#upright-crates");
@@ -68,6 +69,7 @@ let renderHeight = 0;
 let buildProvenance = null;
 let pendingPhysicsStepMs = [];
 let pendingPhysicsStepStats = [];
+let recentPhysicsStepMs = [];
 
 function performanceEnvironment() {
   return {
@@ -185,6 +187,7 @@ function reset() {
   accumulator = 0;
   pendingPhysicsStepMs = [];
   pendingPhysicsStepStats = [];
+  recentPhysicsStepMs = [];
   pauseButton.textContent = "Pause";
   performanceRecorder.recordMarker("reset", performanceScenario());
   status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
@@ -251,6 +254,8 @@ function simulationStep() {
   const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
   const durationMs = performance.now() - started;
   pendingPhysicsStepMs.push(durationMs);
+  recentPhysicsStepMs.push(durationMs);
+  if (recentPhysicsStepMs.length > RECENT_PHYSICS_STEP_WINDOW) recentPhysicsStepMs.shift();
   pendingPhysicsStepStats.push(error === 0 ? lastPhysicsStepStats() : {});
   jumpQueued = false;
   renderDirty = true;
@@ -499,7 +504,15 @@ function render() {
     typeof engine.sandbox_last_tail_slices === "function"
       ? ` · tail ${engine.sandbox_last_tail_slices()} slices / ${engine.sandbox_last_tail_candidate_pairs()} candidates`
       : "";
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const projectileMode =
+    projectileModeControl.value === "rigid" ? "rigid reference" : "optimized transient";
+  const averagePhysicsStepMs =
+    recentPhysicsStepMs.length === 0
+      ? null
+      : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
+  const physicsTiming =
+    averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileMode}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
   return true;
 }
