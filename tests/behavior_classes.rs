@@ -98,8 +98,10 @@ fn overlap_only_dynamic_bypasses_solver_but_keeps_free_flight() {
         Vec3i::new(6, 0, 0)
     );
     assert_eq!(report.stats.body_count, 2);
-    assert_eq!(report.stats.solver_body_count, 1);
-    assert_eq!(report.stats.solver_bypassed_body_count, 1);
+    assert_eq!(report.stats.response_authority_body_count, 0);
+    assert_eq!(report.stats.solver_body_count, 0);
+    assert_eq!(report.stats.solver_bypassed_body_count, 2);
+    assert_eq!(report.stats.broad_phase_queries, 0);
     assert!(report.changed_body_ids.contains(&sensor_id));
 }
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, RigidBox3d,
+    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
     SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
@@ -31,6 +31,8 @@ pub(crate) struct RotatingBroadPhaseStats3d {
     pub rotations: u64,
     pub partial_queries: u64,
     pub partial_body_updates: u64,
+    /// Geometrically eligible solid pairs rejected because neither participant can receive solver mutation.
+    pub response_authority_pair_rejections: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,6 +76,7 @@ struct BoundedBody3d {
     kind: BodyKind,
     collision_layers: CollisionLayers3d,
     solver_participation: SolverParticipation3d,
+    receives_solver_response: bool,
     bounds: RotationalSweepBounds3d,
 }
 
@@ -98,6 +101,27 @@ impl RotatingBroadPhase3d {
         &mut self,
         boxes: &[RigidBox3d],
         config: RigidBoxFreeFlightConfig3d,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.candidate_pairs_with_admission(boxes, config, false)
+    }
+
+    /// Returns only pairs that can mutate at least one physics-owned dynamic body.
+    ///
+    /// Geometric overlap/query callers must use `candidate_pairs` so externally authoritative contacts
+    /// remain visible even when no physical response is possible.
+    pub(crate) fn response_candidate_pairs(
+        &mut self,
+        boxes: &[RigidBox3d],
+        config: RigidBoxFreeFlightConfig3d,
+    ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
+        self.candidate_pairs_with_admission(boxes, config, true)
+    }
+
+    fn candidate_pairs_with_admission(
+        &mut self,
+        boxes: &[RigidBox3d],
+        config: RigidBoxFreeFlightConfig3d,
+        require_response_authority: bool,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
         self.stats.queries = self.stats.queries.saturating_add(1);
         let exact = bounded_bodies(boxes, config)?;
@@ -147,6 +171,7 @@ impl RotatingBroadPhase3d {
 
         let exact = &self.exact;
         let mut pairs = Vec::new();
+        let mut response_authority_rejections = 0_u64;
         self.tree.for_each_candidate_pair(|left, right| {
             let left_body = exact
                 .get(&left)
@@ -154,16 +179,28 @@ impl RotatingBroadPhase3d {
             let right_body = exact
                 .get(&right)
                 .expect("indexed broad phase keeps every leaf exact bound");
-            if left_body.solver_participation == SolverParticipation3d::Solid
-                && right_body.solver_participation == SolverParticipation3d::Solid
-                && bounds_overlap(left_body.bounds, right_body.bounds)
-                && left_body
+            if left_body.solver_participation != SolverParticipation3d::Solid
+                || right_body.solver_participation != SolverParticipation3d::Solid
+                || !bounds_overlap(left_body.bounds, right_body.bounds)
+                || !left_body
                     .collision_layers
                     .collides_with(right_body.collision_layers)
             {
-                pairs.push(RotationalSweepPair3d { left, right });
+                return;
             }
+            if require_response_authority
+                && !left_body.receives_solver_response
+                && !right_body.receives_solver_response
+            {
+                response_authority_rejections = response_authority_rejections.saturating_add(1);
+                return;
+            }
+            pairs.push(RotationalSweepPair3d { left, right });
         });
+        self.stats.response_authority_pair_rejections = self
+            .stats
+            .response_authority_pair_rejections
+            .saturating_add(response_authority_rejections);
         pairs.sort_unstable();
         Ok(pairs)
     }
@@ -201,6 +238,7 @@ impl RotatingBroadPhase3d {
             if previous.kind != body.kind
                 || previous.collision_layers != body.collision_layers
                 || previous.solver_participation != body.solver_participation
+                || previous.receives_solver_response != body.receives_solver_response
             {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
@@ -248,6 +286,7 @@ impl RotatingBroadPhase3d {
 
         let exact = &self.exact;
         let mut pairs = BTreeSet::new();
+        let mut rejected_pairs = BTreeSet::new();
         for id in changed_ids {
             self.tree
                 .for_each_candidate_pair_for_body(id, |left, right| {
@@ -257,19 +296,29 @@ impl RotatingBroadPhase3d {
                     let right_body = exact
                         .get(&right)
                         .expect("incremental broad phase keeps every leaf exact bound");
-                    if !transient_changed_ids.contains(&left)
-                        && !transient_changed_ids.contains(&right)
-                        && left_body.solver_participation == SolverParticipation3d::Solid
-                        && right_body.solver_participation == SolverParticipation3d::Solid
-                        && bounds_overlap(left_body.bounds, right_body.bounds)
-                        && left_body
+                    if transient_changed_ids.contains(&left)
+                        || transient_changed_ids.contains(&right)
+                        || left_body.solver_participation != SolverParticipation3d::Solid
+                        || right_body.solver_participation != SolverParticipation3d::Solid
+                        || !bounds_overlap(left_body.bounds, right_body.bounds)
+                        || !left_body
                             .collision_layers
                             .collides_with(right_body.collision_layers)
                     {
-                        pairs.insert(RotationalSweepPair3d { left, right });
+                        return;
                     }
+                    let pair = RotationalSweepPair3d { left, right };
+                    if !left_body.receives_solver_response && !right_body.receives_solver_response {
+                        rejected_pairs.insert(pair);
+                        return;
+                    }
+                    pairs.insert(pair);
                 });
         }
+        self.stats.response_authority_pair_rejections = self
+            .stats
+            .response_authority_pair_rejections
+            .saturating_add(u64::try_from(rejected_pairs.len()).unwrap_or(u64::MAX));
         Ok(pairs.into_iter().collect())
     }
 
@@ -286,6 +335,7 @@ impl RotatingBroadPhase3d {
             self.exact.get(&body.id).is_some_and(|previous| {
                 previous.kind == body.kind
                     && previous.solver_participation == body.solver_participation
+                    && previous.receives_solver_response == body.receives_solver_response
             }) && self.tree.has_leaf(body.id)
         })
     }
@@ -351,6 +401,8 @@ fn bounded_body(
         kind: rigid_box.body().kind(),
         collision_layers: rigid_box.collision_layers(),
         solver_participation: rigid_box.solver_participation(),
+        receives_solver_response: rigid_box.body().kind() == BodyKind::Dynamic
+            && rigid_box.motion_authority() == MotionAuthority3d::Physics,
         bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,
     })
 }
@@ -433,9 +485,9 @@ mod tests {
     use std::{hint::black_box, time::Instant};
 
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, BodyKind, Orientation3d, RigidBody, RigidBox3d,
-        RigidBoxFreeFlightConfig3d, RotationalSweepBounds3d, SolverParticipation3d, Vec3i,
-        rigid_box_free_flight_sweep_bounds,
+        AngularState3d, AngularVelocity3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
+        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotationalSweepBounds3d,
+        SolverParticipation3d, Vec3i, rigid_box_free_flight_sweep_bounds,
     };
 
     use super::{
@@ -459,6 +511,10 @@ mod tests {
         .expect("valid fixed box")
     }
 
+    fn external(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
+        dynamic(id, position, velocity).with_external_motion()
+    }
+
     fn brute_force_candidate_pairs(
         boxes: &[RigidBox3d],
         config: RigidBoxFreeFlightConfig3d,
@@ -470,6 +526,8 @@ mod tests {
                 kind: rigid_box.body().kind(),
                 collision_layers: rigid_box.collision_layers(),
                 solver_participation: rigid_box.solver_participation(),
+                receives_solver_response: rigid_box.body().kind() == BodyKind::Dynamic
+                    && rigid_box.motion_authority() == MotionAuthority3d::Physics,
                 bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)
                     .expect("valid brute-force sweep bounds"),
             })
@@ -546,6 +604,51 @@ mod tests {
             )
             .expect("valid fixed candidates")
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn no_response_authority_pairs_are_rejected_before_contact_search() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let no_authority = [
+            external(20, Vec3i::ZERO, Vec3i::new(1, 0, 0)),
+            external(21, Vec3i::ZERO, Vec3i::new(-1, 0, 0)),
+            fixed(22, Vec3i::ZERO),
+        ];
+
+        assert_eq!(
+            broad_phase
+                .candidate_pairs(&no_authority, config)
+                .expect("valid geometric query")
+                .len(),
+            3,
+            "geometric queries must retain externally authoritative overlaps"
+        );
+        assert!(
+            broad_phase
+                .response_candidate_pairs(&no_authority, config)
+                .expect("valid response-admitted query")
+                .is_empty()
+        );
+        assert!(
+            broad_phase.stats().response_authority_pair_rejections >= 3,
+            "every overlapping external/external or external/fixed pair should be rejected"
+        );
+
+        assert_eq!(
+            rotational_sweep_candidate_pairs(
+                &[
+                    dynamic(30, Vec3i::ZERO, Vec3i::ZERO),
+                    external(31, Vec3i::ZERO, Vec3i::ZERO),
+                ],
+                config,
+            )
+            .expect("dynamic/external candidate"),
+            vec![RotationalSweepPair3d {
+                left: BodyId(30),
+                right: BodyId(31),
+            }]
         );
     }
 
@@ -841,6 +944,7 @@ mod tests {
                     kind: BodyKind::Dynamic,
                     collision_layers: crate::CollisionLayers3d::ALL,
                     solver_participation: SolverParticipation3d::Solid,
+                    receives_solver_response: true,
                     bounds: RotationalSweepBounds3d {
                         minimum: [coordinate, 0, 0],
                         maximum: [coordinate + 2, 2, 2],

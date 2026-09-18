@@ -143,7 +143,7 @@ pub(crate) fn sampled_rotating_contact_search_profiled(
 ) -> Result<(Option<RotatingContactSearchHit3d>, ContactSearchWork3d), RotatingContactSearchError3d>
 {
     validate_resolution(config)?;
-    let pairs = broad_phase.candidate_pairs(boxes, config.free_flight)?;
+    let pairs = broad_phase.response_candidate_pairs(boxes, config.free_flight)?;
     let mut work = ContactSearchWork3d {
         candidate_pairs: u64::try_from(pairs.len()).unwrap_or(u64::MAX),
         ..ContactSearchWork3d::default()

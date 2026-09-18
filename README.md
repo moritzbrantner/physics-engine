@@ -159,6 +159,20 @@ The existing `ecs-lab` experiments already contain useful evidence for more adva
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 
+## Performance architecture roadmap
+
+Performance work should prefer eliminating or reordering whole stages before optimizing inner-loop math. Each slice should add deterministic operation-count evidence and keep wall-clock timings advisory.
+
+1. **Response-authority partitioning** — admit physical pairs only when at least one participant is a physics-owned dynamic body; reject fixed↔fixed, external↔fixed, and external↔external pairs before sampled CCD/response, and bypass the entire rigid solver when no body can receive solver mutation.
+2. **Parked-body spatial wake index** — replace awake×parked wake scans with spatial queries from awake sweeps into a retained parked-body index; propagate wake only from newly awakened bodies.
+3. **Generation-driven contact/support graph** — replace full-world fingerprints and repeated sleep/support discovery with pose/layer/membership generations and incrementally maintained contact/support edges.
+4. **Persistent solver/lifecycle partitions** — retain active-solid, overlap-only, external/kinematic, parked, and fixed memberships across frames so normal steps do not rediscover and clone their admission sets.
+5. **Delta-driven broad-phase bounds** — retain exact sweep bounds and recompute them only for bodies whose pose, velocity, angular state, collision layers, solver participation, or motion authority changed.
+6. **Persistent contact-search scratch** — reuse body indices, prepared geometry, candidate sets, and sampled rows across repeated events when their dependencies remain valid.
+7. **Dense active-category execution matrix** — compact active interaction categories to stable indices and resolve hot pair execution plans by matrix lookup instead of repeated tree-map resolution.
+8. **Accuracy-aware CCD admission** — route analytic projectiles, rotation-locked/linear bodies, sufficiently slow discrete candidates, and genuinely rotating CCD into separate deterministic lanes before sampled rotational search.
+9. **Admission-funnel Performance Evidence** — report the full work funnel (world bodies → active bodies → solver-authority bodies → candidate pairs → sampled/exact tests → contacts → solver/stabilization work) so structural waste is visible before wall-clock profiling.
+
 ## Validation
 
 `Validate` runs the repository's coding-tooling fast tier, tests the `demo-wasm` adapter natively, and builds the same adapter for `wasm32-unknown-unknown`. GitHub Pages deploys that Rust-backed interactive acceptance sandbox.
