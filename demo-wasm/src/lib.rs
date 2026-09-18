@@ -22,19 +22,18 @@ const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
-enum ProjectileMode {
-    ReferenceRigid = 0,
-    #[default]
-    OptimizedTransient = 1,
+enum ProjectileType {
+    Sphere = 0,
+    Arrow = 1,
 }
 
-impl ProjectileMode {
+impl ProjectileType {
     const fn from_i32(value: i32) -> Option<Self> {
         match value {
-            0 => Some(Self::ReferenceRigid),
-            1 => Some(Self::OptimizedTransient),
+            0 => Some(Self::Sphere),
+            1 => Some(Self::Arrow),
             _ => None,
         }
     }
@@ -44,7 +43,7 @@ struct Sandbox {
     world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
-    projectile_mode: ProjectileMode,
+    projectile_type: Option<ProjectileType>,
     last_rotating_events: usize,
     last_tail_contacts: usize,
     last_step_stats: RotatingWorldStepStats3d,
@@ -145,7 +144,7 @@ impl Sandbox {
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
-            projectile_mode: ProjectileMode::default(),
+            projectile_type: None,
             last_rotating_events: 0,
             last_tail_contacts: 0,
             last_step_stats: RotatingWorldStepStats3d::default(),
@@ -224,6 +223,11 @@ impl Sandbox {
         };
 
         self.last_step_stats = report.stats;
+        if let Err(error) = self.update_arrow_directions() {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
+        }
         self.last_rotating_events = self.last_step_stats.sampled_events;
         self.last_tail_contacts = self.last_step_stats.tail_contacts;
         let collisions = self
@@ -240,15 +244,25 @@ impl Sandbox {
         0
     }
 
-    fn set_projectile_mode(&mut self, mode: i32) -> i32 {
+    fn set_projectile_type(&mut self, projectile_type: i32) -> i32 {
         if !self.projectile_ids.is_empty() {
             return -1;
         }
-        let Some(mode) = ProjectileMode::from_i32(mode) else {
+        let Some(projectile_type) = ProjectileType::from_i32(projectile_type) else {
             return -1;
         };
-        self.projectile_mode = mode;
+        self.projectile_type = Some(projectile_type);
         0
+    }
+
+    fn render_role_for(&self, id: BodyId) -> i32 {
+        if id.0 >= PROJECTILE_ID_START {
+            return match self.projectile_type {
+                Some(ProjectileType::Arrow) => 4,
+                None | Some(ProjectileType::Sphere) => 3,
+            };
+        }
+        role_for(id)
     }
 
     fn shoot(&mut self, velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
@@ -278,14 +292,41 @@ impl Sandbox {
         self.next_projectile_id = self.next_projectile_id.saturating_add(1);
         let impact_policy = controller::scenario_rules::projectile_impact_policy();
 
-        let projectile = rotating_box(
-            RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                .with_material(Material::new(impact_policy.restitution_milli())),
-        )
-        .with_collision_layers(controller::scenario_rules::projectile_layers());
-        let projectile = match self.projectile_mode {
-            ProjectileMode::ReferenceRigid => projectile,
-            ProjectileMode::OptimizedTransient => projectile.with_transient_contacts(),
+        let material = Material::new(impact_policy.restitution_milli());
+        let layers = controller::scenario_rules::projectile_layers();
+        let projectile = match self.projectile_type {
+            None => rotating_box(
+                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                    .with_material(material),
+            )
+            // Keep the pre-selector WASM behavior stable for historical benchmark callers. The browser always
+            // selects a concrete projectile type before shooting.
+            .with_collision_layers(layers)
+            .with_transient_contacts(),
+            Some(ProjectileType::Sphere) => rotating_box(
+                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                    .with_material(material),
+            )
+            // A sphere's collision geometry is rotation-invariant. The current rotating-world adapter still
+            // represents the body through its equal extents, but explicitly removes angular integration and
+            // persistent-contact stabilization from the projectile lane.
+            .with_rotation_locked()
+            .with_collision_layers(layers)
+            .with_transient_contacts(),
+            Some(ProjectileType::Arrow) => RigidBox3d::new(
+                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
+                    .with_material(material),
+                AngularState3d::new(
+                    projectile_direction_orientation(input_velocity),
+                    AngularVelocity3d::default(),
+                ),
+            )
+            .expect("sandbox arrow orientation must be valid")
+            // Arrow roll/tumbling is deliberately omitted. Direction is established from launch velocity;
+            // the shaft therefore keeps only the tilt/yaw state needed by its slender collision proxy.
+            .with_rotation_locked()
+            .with_collision_layers(layers)
+            .with_transient_contacts(),
         };
 
         if self.world.add_box(projectile).is_err() {
@@ -300,6 +341,25 @@ impl Sandbox {
             }
         }
         i32::try_from(id.0).unwrap_or(i32::MAX)
+    }
+
+    fn update_arrow_directions(&mut self) -> Result<(), RotatingWorldError3d> {
+        if self.projectile_type != Some(ProjectileType::Arrow) || self.projectile_ids.is_empty() {
+            return Ok(());
+        }
+        let updates = self
+            .projectile_ids
+            .iter()
+            .copied()
+            .filter_map(|id| {
+                self.world.box_by_id(id).and_then(|rigid_box| {
+                    let velocity = rigid_box.body().velocity();
+                    (velocity != Vec3i::ZERO)
+                        .then_some((id, projectile_direction_orientation(velocity)))
+                })
+            })
+            .collect::<Vec<_>>();
+        self.world.set_orientations(&updates)
     }
 
     fn cleanup_projectiles(&mut self) {
@@ -388,6 +448,42 @@ fn rotating_box(body: RigidBody) -> RigidBox3d {
     .expect("sandbox rotating body must be valid")
 }
 
+fn integer_sqrt(value: u64) -> u32 {
+    let mut low = 0_u64;
+    let mut high = value.saturating_add(1);
+    while low.saturating_add(1) < high {
+        let middle = low + (high - low) / 2;
+        if middle.saturating_mul(middle) <= value {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    u32::try_from(low).unwrap_or(u32::MAX)
+}
+
+fn projectile_direction_orientation(direction: Vec3i) -> Orientation3d {
+    let squared = [direction.x, direction.y, direction.z]
+        .into_iter()
+        .map(|component| i64::from(component).unsigned_abs().pow(2))
+        .sum::<u64>();
+    let length = i32::try_from(integer_sqrt(squared)).unwrap_or(i32::MAX);
+    if direction.x == 0 && direction.y == 0 && direction.z > 0 {
+        return Orientation3d::new(0, 1, 0, 0)
+            .normalized()
+            .expect("180-degree projectile orientation is valid");
+    }
+
+    Orientation3d::new(
+        direction.y,
+        direction.x.saturating_neg(),
+        0,
+        length.saturating_sub(direction.z),
+    )
+    .normalized()
+    .unwrap_or(Orientation3d::IDENTITY)
+}
+
 fn role_for(id: BodyId) -> i32 {
     if id == PLAYER_ID {
         1
@@ -463,13 +559,13 @@ pub extern "C" fn sandbox_step_velocity(velocity_x: i32, velocity_z: i32, jump: 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn sandbox_set_projectile_mode(mode: i32) -> i32 {
-    with_sandbox_mut(|sandbox| sandbox.set_projectile_mode(mode))
+pub extern "C" fn sandbox_set_projectile_type(projectile_type: i32) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.set_projectile_type(projectile_type))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn sandbox_projectile_mode() -> i32 {
-    with_sandbox(|sandbox| sandbox.projectile_mode as i32)
+pub extern "C" fn sandbox_projectile_type() -> i32 {
+    with_sandbox(|sandbox| sandbox.projectile_type.map_or(-1, |value| value as i32))
 }
 
 #[unsafe(no_mangle)]
@@ -527,7 +623,7 @@ pub extern "C" fn sandbox_body_role(index: u32) -> i32 {
     with_sandbox(|sandbox| {
         sandbox
             .body_at(index)
-            .map(|body| role_for(body.id()))
+            .map(|body| sandbox.render_role_for(body.id()))
             .unwrap_or(-1)
     })
 }
@@ -744,11 +840,11 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 #[cfg(test)]
 mod tests {
     use physics_engine::{
-        BodyId, ContactPersistence3d, RepeatedRotatingEventError3d, RigidBody,
+        BodyId, ContactPersistence3d, Orientation3d, RepeatedRotatingEventError3d, RigidBody,
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{PLAYER_ID, ProjectileMode, Sandbox, rotating_box, world_error_detail};
+    use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
@@ -936,39 +1032,82 @@ mod tests {
     }
 
     #[test]
-    fn reference_projectile_keeps_general_persistent_contact_path() {
+    fn sphere_projectile_is_rotation_free_and_transient() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         assert_eq!(
-            sandbox.set_projectile_mode(ProjectileMode::ReferenceRigid as i32),
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
             0
         );
+        assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
+        let projectile = sandbox
+            .world
+            .box_by_id(BodyId(projectile as u64))
+            .expect("spawned sphere projectile");
+        assert_eq!(projectile.body().half_extents(), Vec3i::new(3, 3, 3));
+        assert!(projectile.rotation_locked());
         assert_eq!(
-            sandbox
-                .world
-                .box_by_id(BodyId(projectile as u64))
-                .expect("spawned reference projectile")
-                .contact_persistence(),
-            ContactPersistence3d::Persistent
+            projectile.contact_persistence(),
+            ContactPersistence3d::Transient
         );
     }
 
     #[test]
-    fn projectile_mode_cannot_change_while_projectiles_are_live() {
+    fn arrow_projectile_is_slender_directional_and_transient() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(sandbox.set_projectile_type(ProjectileType::Arrow as i32), 0);
+        let projectile = sandbox.shoot(96, 0, 0);
+        assert!(projectile >= 0);
+        let projectile = sandbox
+            .world
+            .box_by_id(BodyId(projectile as u64))
+            .expect("spawned arrow projectile");
+        assert_eq!(projectile.body().half_extents(), Vec3i::new(2, 2, 12));
+        assert!(projectile.rotation_locked());
+        assert_ne!(projectile.angular().orientation, Orientation3d::IDENTITY);
+        assert!(projectile.angular().angular_velocity.is_zero());
+        assert_eq!(
+            projectile.contact_persistence(),
+            ContactPersistence3d::Transient
+        );
+    }
+
+    #[test]
+    fn arrow_direction_follows_ballistic_velocity_without_angular_velocity() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(sandbox.set_projectile_type(ProjectileType::Arrow as i32), 0);
+        let projectile = sandbox.shoot(96, 0, 0);
+        assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+        let before = sandbox
+            .world
+            .box_by_id(id)
+            .expect("arrow before step")
+            .angular()
+            .orientation;
+
+        assert_eq!(sandbox.step(0, 0, false), 0);
+        let arrow = sandbox.world.box_by_id(id).expect("arrow after step");
+        assert_ne!(arrow.angular().orientation, before);
+        assert!(arrow.angular().angular_velocity.is_zero());
+    }
+
+    #[test]
+    fn projectile_type_cannot_change_while_projectiles_are_live() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         assert!(sandbox.shoot(0, 0, -96) >= 0);
         assert_eq!(
-            sandbox.set_projectile_mode(ProjectileMode::ReferenceRigid as i32),
+            sandbox.set_projectile_type(ProjectileType::Arrow as i32),
             -1
         );
-        assert_eq!(sandbox.projectile_mode, ProjectileMode::OptimizedTransient);
+        assert_eq!(sandbox.projectile_type, None);
     }
 
     #[test]
     fn fast_projectile_does_not_tunnel_through_thin_target() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
-        assert_eq!(sandbox.projectile_mode, ProjectileMode::OptimizedTransient);
+        assert_eq!(sandbox.projectile_type, None);
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
         assert_eq!(

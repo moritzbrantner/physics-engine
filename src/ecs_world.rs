@@ -1,8 +1,9 @@
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
     BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
-    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d,
-    RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
+    OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
@@ -186,6 +187,13 @@ impl EcsRotatingWorld3d {
         velocity: Vec3i,
     ) -> Result<(), RotatingWorldError3d> {
         self.physics.set_linear_velocity(entity, velocity)
+    }
+
+    pub fn set_orientations(
+        &mut self,
+        updates: &[(BodyId, Orientation3d)],
+    ) -> Result<(), RotatingWorldError3d> {
+        self.physics.set_orientations(updates)
     }
 
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {

@@ -34,7 +34,7 @@ const keys = new Set();
 const characterModeControl = document.querySelector("#character-mode");
 const uprightCratesControl = document.querySelector("#upright-crates");
 const fixedGeometryControl = document.querySelector("#fixed-geometry-mode");
-const projectileModeControl = document.querySelector("#projectile-mode");
+const projectileTypeControl = document.querySelector("#projectile-type");
 const characterParameters = new URLSearchParams(window.location.search);
 characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
 uprightCratesControl.checked = characterParameters.get("crates") !== "free";
@@ -95,7 +95,7 @@ function performanceScenario() {
     fixed_geometry: query.get("bake") ?? "load",
     collision_pairs: query.get("collisions") ?? "all",
     projectile_impact: query.get("projectile-impact") ?? "physical",
-    projectile_mode: query.get("projectile-mode") ?? "optimized",
+    projectile_type: query.get("projectile-type") ?? "sphere",
   };
 }
 
@@ -171,12 +171,12 @@ function reset() {
   ) {
     throw new Error("Unable to initialize the selected physics comparison options");
   }
-  const projectileMode = projectileModeControl.value === "rigid" ? 0 : 1;
+  const projectileType = projectileTypeControl.value === "arrow" ? 1 : 0;
   if (
-    typeof engine.sandbox_set_projectile_mode !== "function" ||
-    engine.sandbox_set_projectile_mode(projectileMode) !== 0
+    typeof engine.sandbox_set_projectile_type !== "function" ||
+    engine.sandbox_set_projectile_type(projectileType) !== 0
   ) {
-    throw new Error("Unable to initialize the selected projectile solver");
+    throw new Error("Unable to initialize the selected projectile type");
   }
   yaw = 0;
   pitch = 0;
@@ -390,7 +390,7 @@ function boxVertices(body) {
 }
 
 function materialFor(body) {
-  if (body.role === 3) return 4;
+  if (body.role === 3 || body.role === 4) return 4;
   if (body.role === 2) return 3;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
@@ -446,11 +446,63 @@ function appendVertex(data, position, normal, uv, material, camera) {
   );
 }
 
+function normalizedCross(left, right) {
+  const normal = [
+    left[1] * right[2] - left[2] * right[1],
+    left[2] * right[0] - left[0] * right[2],
+    left[0] * right[1] - left[1] * right[0],
+  ];
+  const length = Math.hypot(...normal);
+  return length === 0 ? [0, 1, 0] : normal.map((value) => value / length);
+}
+
+function appendSphereVertices(data, body, material, camera) {
+  const radius = body.half[0];
+  const local = [
+    [0, radius, 0],
+    [0, -radius, 0],
+    [radius, 0, 0],
+    [-radius, 0, 0],
+    [0, 0, radius],
+    [0, 0, -radius],
+  ];
+  const points = local.map(([x, y, z]) => [
+    body.position[0] + x,
+    body.position[1] + y,
+    body.position[2] + z,
+  ]);
+  const faces = [
+    [0, 2, 4],
+    [0, 4, 3],
+    [0, 3, 5],
+    [0, 5, 2],
+    [1, 4, 2],
+    [1, 3, 4],
+    [1, 5, 3],
+    [1, 2, 5],
+  ];
+
+  for (const [aIndex, bIndex, cIndex] of faces) {
+    const a = points[aIndex];
+    const b = points[bIndex];
+    const c = points[cIndex];
+    const normal = normalizedCross(
+      [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+      [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+    );
+    for (const point of [a, b, c]) appendVertex(data, point, normal, [0, 0], material, camera);
+  }
+}
+
 function buildSceneVertices(bodies, camera) {
   const data = [];
   for (const body of bodies) {
     if (body.role === 1) continue;
     const material = materialFor(body);
+    if (body.role === 3) {
+      appendSphereVertices(data, body, material, camera);
+      continue;
+    }
     const vertices = boxVertices(body);
 
     for (const face of BOX_FACES) {
@@ -504,15 +556,14 @@ function render() {
     typeof engine.sandbox_last_tail_slices === "function"
       ? ` · tail ${engine.sandbox_last_tail_slices()} slices / ${engine.sandbox_last_tail_candidate_pairs()} candidates`
       : "";
-  const projectileMode =
-    projectileModeControl.value === "rigid" ? "rigid reference" : "optimized transient";
+  const projectileType = projectileTypeControl.value === "arrow" ? "arrow" : "sphere";
   const averagePhysicsStepMs =
     recentPhysicsStepMs.length === 0
       ? null
       : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
   const physicsTiming =
     averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileMode}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
   return true;
 }

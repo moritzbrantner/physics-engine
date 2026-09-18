@@ -44,9 +44,9 @@ const SETTINGS_DEFINITIONS = [
     apply_mode: "immediate",
   },
   {
-    id: "simulation.projectile_mode",
-    kind: { type: "choice", options: ["optimized", "rigid"] },
-    default: { type: "choice", value: "optimized" },
+    id: "simulation.projectile_type",
+    kind: { type: "choice", options: ["sphere", "arrow"] },
+    default: { type: "choice", value: "sphere" },
     scope: "save",
     apply_mode: "immediate",
   },
@@ -173,9 +173,9 @@ function applyUrlOverrides() {
     setChoice("simulation.projectile_impact", projectileImpact);
   }
 
-  const projectileMode = url.searchParams.get("projectile-mode");
-  if (projectileMode === "optimized" || projectileMode === "rigid") {
-    setChoice("simulation.projectile_mode", projectileMode);
+  const projectileType = url.searchParams.get("projectile-type");
+  if (projectileType === "sphere" || projectileType === "arrow") {
+    setChoice("simulation.projectile_type", projectileType);
   }
 
   if (url.searchParams.has("bake")) {
@@ -223,14 +223,15 @@ function syncUrl() {
   const characterResponse = effectiveValue("simulation.character_response");
   const crateMotion = effectiveValue("simulation.crate_motion");
   const projectileImpact = effectiveValue("simulation.projectile_impact");
-  const projectileMode = effectiveValue("simulation.projectile_mode");
+  const projectileType = effectiveValue("simulation.projectile_type");
   const fixedGeometry = effectiveValue("engine.fixed_geometry");
   const stabilization = stabilizationToQuery(selectedStabilization());
 
   url.searchParams.set("response", characterResponse);
   url.searchParams.set("crate-motion", crateMotion);
   url.searchParams.set("projectile-impact", projectileImpact);
-  url.searchParams.set("projectile-mode", projectileMode);
+  url.searchParams.set("projectile-type", projectileType);
+  url.searchParams.delete("projectile-mode");
   url.searchParams.set("collisions", enabledPairsToQuery(selectedCollisionPairs()));
   url.searchParams.set("character", characterResponse === "physical" ? "physical" : "linear");
   url.searchParams.set("crates", crateMotion === "upright" ? "upright" : "free");
@@ -246,7 +247,7 @@ function syncUrl() {
 const characterResponse = document.querySelector("#character-response");
 const crateMotion = document.querySelector("#crate-motion");
 const projectileImpact = document.querySelector("#projectile-impact-policy");
-const projectileMode = document.querySelector("#projectile-mode");
+const projectileType = document.querySelector("#projectile-type");
 const fixedGeometrySetting = document.querySelector("#fixed-geometry-setting");
 const fullscreenSetting = document.querySelector("#browser-fullscreen");
 const fullscreenButton = document.querySelector("#fullscreen");
@@ -294,7 +295,7 @@ function syncControls() {
   characterResponse.value = effectiveValue("simulation.character_response");
   crateMotion.value = effectiveValue("simulation.crate_motion");
   projectileImpact.value = effectiveValue("simulation.projectile_impact");
-  projectileMode.value = effectiveValue("simulation.projectile_mode");
+  projectileType.value = effectiveValue("simulation.projectile_type");
   fixedGeometrySetting.value = effectiveValue("engine.fixed_geometry");
 
   for (const [pair] of COLLISION_PAIRS) {
@@ -316,7 +317,7 @@ function enableSettingsControls() {
   characterResponse.disabled = false;
   crateMotion.disabled = false;
   projectileImpact.disabled = false;
-  projectileMode.disabled = false;
+  projectileType.disabled = false;
   fixedGeometrySetting.disabled = false;
   fullscreenSetting.disabled = !document.fullscreenEnabled;
   resetInteractions.disabled = false;
@@ -349,8 +350,8 @@ crateMotion.addEventListener("change", () => {
 projectileImpact.addEventListener("change", () => {
   applyAndReset("simulation.projectile_impact", projectileImpact.value);
 });
-projectileMode.addEventListener("change", () => {
-  applyAndReset("simulation.projectile_mode", projectileMode.value);
+projectileType.addEventListener("change", () => {
+  applyAndReset("simulation.projectile_type", projectileType.value);
 });
 fixedGeometrySetting.addEventListener("change", () => {
   applyAndReset("engine.fixed_geometry", fixedGeometrySetting.value);

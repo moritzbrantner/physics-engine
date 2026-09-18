@@ -6,11 +6,12 @@ use std::{
 };
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, OrientedBox3d, OrientedBoxError3d,
-    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
-    RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, Orientation3d, OrientedBox3d,
+    OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+    RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
+    SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
@@ -138,6 +139,7 @@ pub enum RotatingWorldError3d {
     DuplicateBody(BodyId),
     MissingBody(BodyId),
     FixedBodyVelocity(BodyId),
+    FixedBodyOrientation(BodyId),
     NegativeTimestepNumerator(i32),
     NonPositiveTimestepDenominator(i32),
     PersistentTailResolutionLimit(u32),
@@ -157,6 +159,11 @@ impl fmt::Display for RotatingWorldError3d {
             Self::FixedBodyVelocity(id) => write!(
                 formatter,
                 "fixed rotating body {} cannot receive linear velocity",
+                id.0
+            ),
+            Self::FixedBodyOrientation(id) => write!(
+                formatter,
+                "fixed rotating body {} cannot receive a runtime orientation update",
                 id.0
             ),
             Self::NegativeTimestepNumerator(value) => write!(
@@ -365,6 +372,51 @@ impl RotatingWorld3d {
             return Ok(());
         }
         rigid_box.body.velocity = velocity;
+        Ok(())
+    }
+
+    /// Applies a batch of dynamic-body orientation deltas and invalidates contact geometry once.
+    ///
+    /// This is intended for constrained directional bodies such as arrows whose direction follows
+    /// authoritative linear velocity without participating in full angular integration. The complete batch
+    /// is validated before mutation, so a missing/fixed body or invalid quaternion leaves the world unchanged.
+    pub fn set_orientations(
+        &mut self,
+        updates: &[(BodyId, Orientation3d)],
+    ) -> Result<(), RotatingWorldError3d> {
+        let mut normalized = Vec::with_capacity(updates.len());
+        let mut ids = BTreeSet::new();
+        for (id, orientation) in updates.iter().copied() {
+            if !ids.insert(id) {
+                return Err(RotatingWorldError3d::DuplicateBody(id));
+            }
+            let rigid_box = self
+                .boxes
+                .get(&id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            if rigid_box.body.kind() == BodyKind::Fixed {
+                return Err(RotatingWorldError3d::FixedBodyOrientation(id));
+            }
+            let orientation = orientation.normalized().map_err(|error| {
+                RotatingWorldError3d::Contact(OrientedBoxError3d::Angular(error))
+            })?;
+            normalized.push((id, orientation));
+        }
+
+        let mut changed = BTreeSet::new();
+        for (id, orientation) in normalized {
+            let rigid_box = self
+                .boxes
+                .get_mut(&id)
+                .expect("orientation batch was validated before mutation");
+            if rigid_box.angular.orientation != orientation {
+                rigid_box.angular.orientation = orientation;
+                changed.insert(id);
+            }
+        }
+        if !changed.is_empty() {
+            self.mark_contact_geometry_changed_for(&changed);
+        }
         Ok(())
     }
 
