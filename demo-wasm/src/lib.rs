@@ -1034,7 +1034,10 @@ mod tests {
     #[test]
     fn sphere_projectile_is_rotation_free_and_transient() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
-        assert_eq!(sandbox.set_projectile_type(ProjectileType::Sphere as i32), 0);
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
         assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
