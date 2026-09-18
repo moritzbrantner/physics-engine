@@ -69,6 +69,45 @@ fn overlap_only_sensor_is_queryable_but_never_becomes_a_solver_candidate() {
 }
 
 #[test]
+fn overlap_only_dynamic_bypasses_solver_but_keeps_free_flight() {
+    let sensor_id = BodyId(12);
+    let mut world = world();
+    world
+        .add_box(
+            dynamic(
+                sensor_id.0,
+                Vec3i::ZERO,
+                Vec3i::new(6, 0, 0),
+                Vec3i::new(1, 1, 1),
+            )
+            .with_overlap_only(),
+        )
+        .expect("add moving sensor");
+    world
+        .add_box(fixed(
+            13,
+            Vec3i::new(100, 0, 0),
+            Vec3i::new(2, 2, 2),
+        ))
+        .expect("add solid geometry");
+
+    let report = world.step(1, 1).expect("step partitioned world");
+
+    assert_eq!(
+        world
+            .box_by_id(sensor_id)
+            .expect("moving sensor remains present")
+            .body()
+            .position(),
+        Vec3i::new(6, 0, 0)
+    );
+    assert_eq!(report.stats.body_count, 2);
+    assert_eq!(report.stats.solver_body_count, 1);
+    assert_eq!(report.stats.solver_bypassed_body_count, 1);
+    assert!(report.changed_body_ids.contains(&sensor_id));
+}
+
+#[test]
 fn external_motion_is_one_sided_contact_authority() {
     let kinematic =
         dynamic(1, Vec3i::ZERO, Vec3i::new(20, 0, 0), Vec3i::new(2, 2, 2)).with_external_motion();
