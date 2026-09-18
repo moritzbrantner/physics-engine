@@ -857,7 +857,7 @@ fn contact_frontier(
     stats: &mut TailStepStats3d,
 ) -> Result<Vec<RotatingContactSearchHit3d>, RotatingWorldError3d> {
     let pairs = broad_phase
-        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
+        .response_candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
         .map_err(map_tail_broad_phase_error)?;
     stats.candidate_pairs = stats
         .candidate_pairs
