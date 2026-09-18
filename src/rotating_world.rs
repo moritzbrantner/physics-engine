@@ -7,11 +7,11 @@ use std::{
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, Orientation3d, OrientedBox3d,
-    OrientedBoxError3d,
-    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
-    RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
-    SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+    RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
+    SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
@@ -397,9 +397,9 @@ impl RotatingWorld3d {
             if rigid_box.body.kind() == BodyKind::Fixed {
                 return Err(RotatingWorldError3d::FixedBodyOrientation(id));
             }
-            let orientation = orientation
-                .normalized()
-                .map_err(|error| RotatingWorldError3d::Contact(OrientedBoxError3d::Angular(error)))?;
+            let orientation = orientation.normalized().map_err(|error| {
+                RotatingWorldError3d::Contact(OrientedBoxError3d::Angular(error))
+            })?;
             normalized.push((id, orientation));
         }
 
