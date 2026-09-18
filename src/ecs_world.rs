@@ -58,6 +58,15 @@ impl EcsRotatingWorld3d {
         self.physics.set_default_interaction_policy(policy);
     }
 
+    #[must_use]
+    pub fn interaction_policy_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionPolicy3d {
+        self.physics.interaction_policy_for_bodies(source, target)
+    }
+
     pub fn set_pair_interaction_policy(
         &mut self,
         left: InteractionCategory3d,
@@ -183,6 +192,12 @@ impl EcsRotatingWorld3d {
         body: BodyId,
     ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
         self.with_prepared_fixed_geometry(|| self.physics.body_contacts(body))
+    }
+
+    /// Returns exact current overlaps for one known body without promoting those overlaps to solver
+    /// contacts. This is the intended sensor/trigger query.
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        self.with_prepared_fixed_geometry(|| self.physics.body_overlaps(body))
     }
 
     /// Runs the physics system against the single authoritative body state.
