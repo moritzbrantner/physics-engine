@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, OrientedBoxError3d,
-    RigidBox3d, RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
+    AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, MotionAuthority3d,
+    OrientedBoxError3d, RigidBox3d, RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
     angular::integrate_orientation_exact_ratio,
     oriented_box_vertices,
     rotational_sweep::rotational_sweep_bounds_for_center_interval,
@@ -231,8 +231,13 @@ pub fn sample_rigid_box_free_flight(
     let mut velocity = body.velocity();
     let mut position = body.position();
     for axis in 0..3 {
+        let acceleration = if rigid_box.motion_authority() == MotionAuthority3d::External {
+            0
+        } else {
+            config.gravity.component(axis)
+        };
         let velocity_delta = sample_time
-            .mul_round_i128(i128::from(config.gravity.component(axis)))
+            .mul_round_i128(i128::from(acceleration))
             .map_err(map_ratio_error)?;
         let next_velocity = i128::from(velocity.component(axis))
             .checked_add(velocity_delta)
@@ -273,6 +278,9 @@ pub fn sample_rigid_box_free_flight(
         contact_mode: rigid_box.contact_mode,
         contact_persistence: rigid_box.contact_persistence,
         collision_layers: rigid_box.collision_layers,
+        solver_participation: rigid_box.solver_participation,
+        motion_authority: rigid_box.motion_authority,
+        sleep_mode: rigid_box.sleep_mode,
     })
 }
 
@@ -312,9 +320,14 @@ pub fn rigid_box_free_flight_sweep_bounds(
 
     if rigid_box.body.kind() == BodyKind::Dynamic {
         for axis in 0..3 {
+            let acceleration = if rigid_box.motion_authority() == MotionAuthority3d::External {
+                0
+            } else {
+                config.gravity.component(axis)
+            };
             let displacement = conservative_axis_displacement(
                 rigid_box.body.velocity().component(axis),
-                config.gravity.component(axis),
+                acceleration,
                 timestep,
             )?;
             let displacement = i64::try_from(displacement)
@@ -380,7 +393,8 @@ fn map_ratio_error(_: WideRatioError) -> RigidBoxFreeFlightError3d {
 mod tests {
     use crate::{
         ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BodyId, ContactPersistence3d,
-        Orientation3d, RigidBody, RigidBox3d, Vec3i, World, WorldConfig, oriented_box_vertices,
+        MotionAuthority3d, Orientation3d, RigidBody, RigidBox3d, Vec3i, World, WorldConfig,
+        oriented_box_vertices,
         rotational_sweep_bounds,
     };
 
@@ -395,6 +409,32 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, angular_velocity),
         )
         .expect("valid rotating box")
+    }
+
+    #[test]
+    fn external_motion_ignores_gravity_but_advances_caller_velocity() {
+        let rigid_box = rotating_box(
+            RigidBody::dynamic(
+                BodyId(90),
+                Vec3i::new(10, 20, 30),
+                Vec3i::new(4, 5, -6),
+                Vec3i::new(2, 2, 2),
+            ),
+            AngularVelocity3d::default(),
+        )
+        .with_external_motion();
+
+        let sampled = sample_rigid_box_free_flight(
+            &rigid_box,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -100, 0), 1, 1),
+            1,
+            1,
+        )
+        .expect("valid kinematic sample");
+
+        assert_eq!(sampled.body().position(), Vec3i::new(14, 25, 24));
+        assert_eq!(sampled.body().velocity(), Vec3i::new(4, 5, -6));
+        assert_eq!(sampled.motion_authority(), MotionAuthority3d::External);
     }
 
     #[test]
