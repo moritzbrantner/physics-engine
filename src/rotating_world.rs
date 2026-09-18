@@ -6,7 +6,8 @@ use std::{
 };
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, Orientation3d, OrientedBox3d,
+    ANGULAR_VELOCITY_SCALE, BallisticSphere3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
+    OrientedBox3d,
     OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
     RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
     RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
@@ -15,8 +16,16 @@ use crate::{
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
 };
 use crate::{
+    ballistic_event::{
+        BallisticStepWork3d, advance_ballistic_spheres_full, advance_ballistic_spheres_to_time,
+        earliest_ballistic_frontier, remaining_after as ballistic_remaining_after,
+        resolve_ballistic_frontier,
+    },
     current_contact_query::{BodyCurrentContact3d, GenerationContactCache3d},
-    repeated_rotating_events::advance_repeated_rotating_events_with_broad_phase,
+    repeated_rotating_events::{
+        advance_repeated_rotating_events_with_ballistics,
+        advance_repeated_rotating_events_with_broad_phase,
+    },
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
     rotating_contact_response::RotatingContactResponseScratch3d,
 };
@@ -88,6 +97,16 @@ pub struct RotatingWorldStepStats3d {
     pub stabilization_candidate_pairs: u64,
     pub stabilization_exact_contacts: u64,
     pub stabilization_active_bodies: u64,
+    /// Rotation-invariant spheres currently owned by the analytic projectile lane.
+    pub ballistic_sphere_count: usize,
+    pub ballistic_query_rounds: u64,
+    pub ballistic_target_bound_checks: u64,
+    pub ballistic_broad_phase_candidates: u64,
+    pub ballistic_toi_tests: u64,
+    pub ballistic_feature_tests: u64,
+    pub ballistic_motion_samples: u64,
+    pub ballistic_impacts: u64,
+    pub ballistic_retired: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -285,6 +304,8 @@ impl SolverPartitions3d {
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
     boxes: BTreeMap<BodyId, RigidBox3d>,
+    ballistic_spheres: Vec<BallisticSphere3d>,
+    ballistic_retire_on_contact: BTreeSet<BodyId>,
     contact_geometry_generation: u64,
     current_contact_cache: RefCell<GenerationContactCache3d>,
     solver_partitions: SolverPartitions3d,
@@ -299,6 +320,8 @@ impl RotatingWorld3d {
         Self {
             config,
             boxes: BTreeMap::new(),
+            ballistic_spheres: Vec::new(),
+            ballistic_retire_on_contact: BTreeSet::new(),
             contact_geometry_generation: 0,
             current_contact_cache: RefCell::new(GenerationContactCache3d::default()),
             solver_partitions: SolverPartitions3d::default(),
@@ -315,7 +338,12 @@ impl RotatingWorld3d {
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
         let id = rigid_box.body().id();
-        if self.boxes.contains_key(&id) {
+        if self.boxes.contains_key(&id)
+            || self
+                .ballistic_spheres
+                .iter()
+                .any(|projectile| projectile.id() == id)
+        {
             return Err(RotatingWorldError3d::DuplicateBody(id));
         }
         self.solver_partitions.insert(&rigid_box);
@@ -340,6 +368,54 @@ impl RotatingWorld3d {
 
     pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {
         self.boxes.values()
+    }
+
+
+    pub fn add_ballistic_sphere(
+        &mut self,
+        projectile: BallisticSphere3d,
+        retire_on_contact: bool,
+    ) -> Result<(), RotatingWorldError3d> {
+        let id = projectile.id();
+        if self.boxes.contains_key(&id)
+            || self
+                .ballistic_spheres
+                .iter()
+                .any(|existing| existing.id() == id)
+        {
+            return Err(RotatingWorldError3d::DuplicateBody(id));
+        }
+        self.ballistic_spheres.push(projectile);
+        self.ballistic_spheres.sort_by_key(|projectile| projectile.id());
+        if retire_on_contact {
+            self.ballistic_retire_on_contact.insert(id);
+        }
+        Ok(())
+    }
+
+    pub fn remove_ballistic_sphere(&mut self, id: BodyId) -> Option<BallisticSphere3d> {
+        let index = self
+            .ballistic_spheres
+            .iter()
+            .position(|projectile| projectile.id() == id)?;
+        self.ballistic_retire_on_contact.remove(&id);
+        Some(self.ballistic_spheres.remove(index))
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_by_id(&self, id: BodyId) -> Option<&BallisticSphere3d> {
+        self.ballistic_spheres
+            .iter()
+            .find(|projectile| projectile.id() == id)
+    }
+
+    pub fn ballistic_spheres(&self) -> impl Iterator<Item = &BallisticSphere3d> {
+        self.ballistic_spheres.iter()
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_count(&self) -> usize {
+        self.ballistic_spheres.len()
     }
 
     /// Returns exact current contacts for one known body without discovering that body from query geometry.
