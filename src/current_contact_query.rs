@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::BTreeMap};
 
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingBroadPhaseError3d, RotatingWorldError3d, Vec3i, obb_contact_seed,
+    RotatingBroadPhaseError3d, RotatingWorldError3d, SolverParticipation3d, Vec3i, obb_contact_seed,
     rigid_box_free_flight_sweep_bounds, rotational_sweep_candidate_pairs,
 };
 
@@ -22,7 +22,7 @@ struct CurrentContactGraph3d {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct CurrentContactCache3d {
-    fingerprint: Vec<(BodyId, BodyKind, CollisionLayers3d, OrientedBox3d)>,
+    fingerprint: Vec<(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)>,
     graph: Option<CurrentContactGraph3d>,
     builds: u64,
     candidate_pairs: u64,
@@ -73,12 +73,16 @@ pub(crate) fn body_current_contacts_for_body(
     let subject = boxes
         .get(&body)
         .ok_or(RotatingWorldError3d::MissingBody(body))?;
+    if subject.solver_participation() == SolverParticipation3d::OverlapOnly {
+        return Ok(Vec::new());
+    }
     let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
     let subject_bounds = rigid_box_free_flight_sweep_bounds(subject, zero_time)?;
     let mut contacts = Vec::new();
 
     for (other_id, other) in boxes {
         if *other_id == body
+            || other.solver_participation() == SolverParticipation3d::OverlapOnly
             || !subject
                 .collision_layers()
                 .collides_with(other.collision_layers())
@@ -145,7 +149,7 @@ pub(crate) fn body_current_overlap_ids(
 
 fn snapshot_fingerprint<'a>(
     boxes: impl IntoIterator<Item = &'a RigidBox3d>,
-) -> Vec<(BodyId, BodyKind, CollisionLayers3d, OrientedBox3d)> {
+) -> Vec<(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)> {
     let mut fingerprint = boxes
         .into_iter()
         .map(|rigid_box| {
@@ -153,16 +157,17 @@ fn snapshot_fingerprint<'a>(
                 rigid_box.body().id(),
                 rigid_box.body().kind(),
                 rigid_box.collision_layers(),
+                rigid_box.solver_participation(),
                 rigid_box.oriented_box(),
             )
         })
         .collect::<Vec<_>>();
-    fingerprint.sort_by_key(|(id, _, _, _)| *id);
+    fingerprint.sort_by_key(|(id, _, _, _, _)| *id);
     fingerprint
 }
 
 fn cached_contacts(
-    fingerprint: &[(BodyId, BodyKind, CollisionLayers3d, OrientedBox3d)],
+    fingerprint: &[(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)],
     body: BodyId,
 ) -> Option<Vec<BodyCurrentContact3d>> {
     CURRENT_CONTACT_CACHE.with(|cache| {
@@ -175,7 +180,7 @@ fn cached_contacts(
 }
 
 fn cache_graph(
-    fingerprint: Vec<(BodyId, BodyKind, CollisionLayers3d, OrientedBox3d)>,
+    fingerprint: Vec<(BodyId, BodyKind, CollisionLayers3d, SolverParticipation3d, OrientedBox3d)>,
     graph: CurrentContactGraph3d,
 ) {
     CURRENT_CONTACT_CACHE.with(|cache| {
