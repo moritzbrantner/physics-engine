@@ -308,7 +308,7 @@ impl RotatingWorld3d {
         }
         self.solver_partitions.insert(&rigid_box);
         self.boxes.insert(id, rigid_box);
-        self.mark_contact_geometry_changed();
+        self.mark_contact_membership_changed();
         Ok(())
     }
 
@@ -316,7 +316,7 @@ impl RotatingWorld3d {
         let removed = self.boxes.remove(&id);
         if removed.is_some() {
             self.solver_partitions.remove(id);
-            self.mark_contact_geometry_changed();
+            self.mark_contact_membership_changed();
         }
         removed
     }
@@ -628,20 +628,39 @@ impl RotatingWorld3d {
         })
     }
 
-    fn mark_contact_geometry_changed(&mut self) {
+    fn next_contact_geometry_generation(&mut self) -> u64 {
         if let Some(next) = self.contact_geometry_generation.checked_add(1) {
             self.contact_geometry_generation = next;
-            return;
+            return next;
         }
 
-        // Generation wrap is not allowed to make stale derived contacts look current.
         self.contact_geometry_generation = 0;
         self.current_contact_cache = RefCell::new(GenerationContactCache3d::default());
+        0
+    }
+
+    fn mark_contact_membership_changed(&mut self) {
+        let generation = self.next_contact_geometry_generation();
+        self.current_contact_cache
+            .borrow_mut()
+            .note_membership_generation(generation);
+    }
+
+    fn mark_contact_geometry_changed_for(&mut self, changed: &BTreeSet<BodyId>) {
+        let generation = self.next_contact_geometry_generation();
+        self.current_contact_cache
+            .borrow_mut()
+            .note_changed_generation(generation, changed.iter().copied());
     }
 
     #[cfg(test)]
     pub(crate) fn current_contact_cache_stats(&self) -> (u64, u64, u64, u64) {
         self.current_contact_cache.borrow().stats()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_contact_incremental_stats(&self) -> (u64, u64, u64) {
+        self.current_contact_cache.borrow().incremental_stats()
     }
 }
 
