@@ -181,6 +181,26 @@ Performance work should prefer eliminating or reordering whole stages before opt
 
 Current structural sequence: persistent solver/lifecycle partitions → static/dynamic broad phase → incremental contact/support adjacency → event-driven sleep reevaluation → persistent response scratch → sampled-search scratch → ballistic target indexing.
 
+
+### Near-term implementation sequence
+
+The next work should use the Pages sandbox as an acceptance and explanation surface rather than optimizing invisible internals first:
+
+1. **Analytic sphere world integration** — finish the real `BallisticSphere3d` chronological world lane and preserve the deterministic high-projectile stress trace.
+2. **Pages physics laboratory** — add deterministic scenario presets (projectile storm, tower, debris rain, kinematic crusher, sensor course, CCD gauntlet), a Debug mode that visualizes engine-owned evidence, and a clean Showcase mode. The debug work funnel should expose world bodies → awake/active bodies → response-authority bodies → broad-phase candidates → exact/sample tests → contacts → active solver island → persistent-tail work.
+3. **Tower/event-churn convergence** — repair the 32-body tower acceptance by reducing redundant current-contact/re-contact progression; do not raise the event limit or weaken fail-closed semantics.
+4. **World-owned sampled-search scratch** — retain prepared sampled-search rows, pair indexing, candidate buffers, and geometry-derived search state behind dependency-complete generation invalidation.
+5. **Spatial ballistic target index** — query ballistic sweeps against a retained target BVH before exact rounded-OBB time-of-impact work.
+6. **Horizon-aware dynamic sweep-bound reuse** — retain motion/geometry preparation and reuse exact dynamic sweep bounds within a step when both dependency generation and query horizon match.
+7. **Accuracy-aware CCD lanes** — keep analytic spheres, rotation-locked/linear bodies, and genuinely rotating bodies in distinct deterministic execution lanes so sampled rotational CCD is paid only where required.
+8. **Incremental event-frontier cache** — retain future pair-event candidates and invalidate only entries whose body dependencies changed, while preserving globally earliest deterministic event authority and canonical tie ordering.
+9. **Narrow-phase temporal coherence** — retain the previous separating SAT axis/contact witness per pair and test it first on the next generation; extend this toward a small persistent manifold cache only when exact contact semantics remain unchanged.
+10. **Dense interaction execution matrix** — compact active categories to stable indices and make the compiled category×category execution plan the hot-path lookup.
+11. **Dependency-complete local topology invalidation** — replace conservative global sleeper wake-up only after exact replay evidence proves local invalidation covers every support/contact dependency.
+12. **Persistent fixed-geometry artifacts and SIMD only from evidence** — serialize bake artifacts only if prepare-at-load remains valuable, and introduce SIMD only after the admission-funnel counters show arithmetic rather than avoidable work is dominant.
+
+Each optimization slice must preserve replay/correctness authority and add deterministic induced-work evidence. Pages visualizations consume engine evidence; they must not become a second physics implementation.
+
 ## Validation
 
 `Validate` runs the repository's coding-tooling fast tier, tests the `demo-wasm` adapter natively, and builds the same adapter for `wasm32-unknown-unknown`. GitHub Pages deploys that Rust-backed interactive acceptance sandbox.
