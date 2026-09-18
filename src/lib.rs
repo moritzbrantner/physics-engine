@@ -16,7 +16,10 @@
 //! Reusing one across frames is valid only while those target properties remain unchanged, such as for
 //! fixed scene geometry. Interaction categories and deterministic pair policies are separate from both
 //! collision layers and materials, so consumers can tune simulation budgets without changing collision
-//! eligibility or physical coefficients. The public `RotatingWorld3d` defaults to an ECS-backed
+//! eligibility or physical coefficients. Per-body solver participation, motion authority, and sleep mode
+//! provide orthogonal foundations for overlap-only sensors, externally-driven kinematic bodies, and
+//! aggressively sleeping debris without introducing gameplay-specific body kinds. The public
+//! `RotatingWorld3d` defaults to an ECS-backed
 //! entity/component world that runs the performance-oriented parked-sleep physics system; the raw solver
 //! resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
 //!
@@ -86,7 +89,9 @@ pub use fixed_geometry::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
     FixedGeometryPreparationStats3d, obb_contact_seed, rigid_box_free_flight_sweep_bounds,
 };
-pub use interaction_policy::{InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d};
+pub use interaction_policy::{
+    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, WakePropagation3d,
+};
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
 pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
@@ -101,7 +106,8 @@ pub use repeated_rotating_events::{
     advance_repeated_rotating_events,
 };
 pub use rigid_box::{
-    CollisionLayers3d, ContactMode3d, ContactPersistence3d, RigidBox3d, RigidBoxError3d,
+    CollisionLayers3d, ContactMode3d, ContactPersistence3d, MotionAuthority3d, RigidBox3d,
+    RigidBoxError3d, SleepMode3d, SolverParticipation3d,
 };
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, sample_rigid_box_free_flight,
