@@ -138,6 +138,10 @@ export function createPerformanceSessionRecorder({
         ),
         body_count: optionalCounter(frame.body_count, "body_count"),
         projectile_count: optionalCounter(frame.projectile_count, "projectile_count"),
+        active_projectile_count: optionalCounter(
+          frame.active_projectile_count,
+          "active_projectile_count",
+        ),
         projectiles_retired_on_contact: optionalCounter(
           frame.projectiles_retired_on_contact,
           "projectiles_retired_on_contact",
@@ -183,6 +187,9 @@ export function createPerformanceSessionRecorder({
       const physicsStepStats = frames.flatMap((frame) => frame.physics_step_stats);
       const liveProjectileCounts = frames
         .map((frame) => frame.projectile_count)
+        .filter((value) => value !== null);
+      const activeProjectileCounts = frames
+        .map((frame) => frame.active_projectile_count)
         .filter((value) => value !== null);
       return {
         schema_version: SCHEMA_VERSION,
@@ -232,6 +239,8 @@ export function createPerformanceSessionRecorder({
           projectile_lifecycle: {
             max_live_projectiles:
               liveProjectileCounts.length === 0 ? null : Math.max(...liveProjectileCounts),
+            max_active_projectiles:
+              activeProjectileCounts.length === 0 ? null : Math.max(...activeProjectileCounts),
             retired_on_contact: cumulativeCounterTotal(frames, "projectiles_retired_on_contact"),
             retired_out_of_bounds: cumulativeCounterTotal(
               frames,

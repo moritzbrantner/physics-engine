@@ -312,7 +312,8 @@ impl Sandbox {
             // persistent-contact stabilization from the projectile lane.
             .with_rotation_locked()
             .with_collision_layers(layers)
-            .with_transient_contacts(),
+            .with_transient_contacts()
+            .with_aggressive_sleep(),
             Some(ProjectileType::Arrow) => RigidBox3d::new(
                 RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
                     .with_material(material),
@@ -326,7 +327,8 @@ impl Sandbox {
             // the shaft therefore keeps only the tilt/yaw state needed by its slender collision proxy.
             .with_rotation_locked()
             .with_collision_layers(layers)
-            .with_transient_contacts(),
+            .with_transient_contacts()
+            .with_aggressive_sleep(),
         };
 
         if self.world.add_box(projectile).is_err() {
@@ -408,6 +410,14 @@ impl Sandbox {
 
     fn body_count(&self) -> usize {
         self.world.boxes().count()
+    }
+
+    fn active_projectile_count(&self) -> usize {
+        self.projectile_ids
+            .iter()
+            .copied()
+            .filter(|id| self.world.box_by_id(*id).is_some() && !self.world.is_sleeping(*id))
+            .count()
     }
 
     fn body_at(&self, index: u32) -> Option<&RigidBody> {
@@ -601,6 +611,11 @@ pub extern "C" fn sandbox_body_count() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_projectile_count() -> u32 {
     with_sandbox(|sandbox| u32::try_from(sandbox.projectile_ids.len()).unwrap_or(u32::MAX))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_active_projectile_count() -> u32 {
+    with_sandbox(|sandbox| u32::try_from(sandbox.active_projectile_count()).unwrap_or(u32::MAX))
 }
 
 #[unsafe(no_mangle)]
@@ -840,8 +855,8 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 #[cfg(test)]
 mod tests {
     use physics_engine::{
-        BodyId, ContactPersistence3d, Orientation3d, RepeatedRotatingEventError3d, RigidBody,
-        RotatingWorldError3d, Vec3i,
+        BodyId, ContactPersistence3d, Material, Orientation3d, RepeatedRotatingEventError3d,
+        RigidBody, RotatingWorldError3d, Vec3i,
     };
 
     use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
@@ -1051,6 +1066,63 @@ mod tests {
             projectile.contact_persistence(),
             ContactPersistence3d::Transient
         );
+        assert_eq!(
+            projectile.sleep_mode(),
+            physics_engine::SleepMode3d::Aggressive
+        );
+    }
+
+    #[test]
+    fn settled_sphere_stays_retained_but_leaves_active_projectile_population() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+
+        let id = BodyId(super::PROJECTILE_ID_START);
+        sandbox
+            .world
+            .add_box(
+                rotating_box(
+                    RigidBody::dynamic(
+                        id,
+                        Vec3i::new(400, 3, 400),
+                        Vec3i::ZERO,
+                        Vec3i::new(3, 3, 3),
+                    )
+                    .with_material(Material::new(0)),
+                )
+                .with_rotation_locked()
+                .with_transient_contacts()
+                .with_aggressive_sleep(),
+            )
+            .expect("add resting sphere");
+        sandbox.projectile_ids.push(id);
+
+        assert_eq!(sandbox.projectile_ids.len(), 1);
+        assert_eq!(sandbox.active_projectile_count(), 1);
+
+        for _ in 0..30 {
+            assert_eq!(sandbox.step(0, 0, false), 0);
+        }
+
+        assert_eq!(
+            sandbox.projectile_ids.len(),
+            1,
+            "settled projectile remains retained for rendering and later wake-up"
+        );
+        assert!(
+            sandbox.world.box_by_id(id).is_some(),
+            "settled projectile remains in the authoritative world"
+        );
+        assert!(sandbox.world.is_sleeping(id));
+        assert_eq!(
+            sandbox.active_projectile_count(),
+            0,
+            "settled projectile must no longer contribute to the active solver population"
+        );
     }
 
     #[test]
@@ -1070,6 +1142,10 @@ mod tests {
         assert_eq!(
             projectile.contact_persistence(),
             ContactPersistence3d::Transient
+        );
+        assert_eq!(
+            projectile.sleep_mode(),
+            physics_engine::SleepMode3d::Aggressive
         );
     }
 

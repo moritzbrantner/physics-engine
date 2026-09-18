@@ -622,6 +622,7 @@ function frame(timestamp) {
     dropped_accumulator_ms: droppedAccumulatorMs,
     body_count: readPhysicsCounter("sandbox_body_count"),
     projectile_count: readPhysicsCounter("sandbox_projectile_count"),
+    active_projectile_count: readPhysicsCounter("sandbox_active_projectile_count"),
     projectiles_retired_on_contact: readPhysicsCounter("sandbox_projectiles_retired_on_contact"),
     projectiles_retired_out_of_bounds: readPhysicsCounter(
       "sandbox_projectiles_retired_out_of_bounds",
