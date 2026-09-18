@@ -722,10 +722,14 @@ fn axis_length_squared(axis: [i128; 3]) -> Result<u128, BallisticTimelineError3d
 fn ballistic_time_to_sampled(
     fraction_subticks: u64,
 ) -> Result<SampledContactTime3d, BallisticTimelineError3d> {
-    if fraction_subticks == 0 || fraction_subticks > BALLISTIC_TIME_SCALE {
+    if fraction_subticks > BALLISTIC_TIME_SCALE {
         return Err(BallisticTimelineError3d::ArithmeticOverflow);
     }
-    let numerator = fraction_subticks.div_ceil(2);
+    // The Q32.32 narrow phase can conservatively quantize an impact immediately after the
+    // interval start to zero. The event timeline is Q1.31, so admit that evidence at its
+    // first strictly-positive representable instant instead of treating it as arithmetic
+    // failure. Initial overlap is already rejected by the ballistic narrow phase.
+    let numerator = fraction_subticks.div_ceil(2).max(1);
     let numerator =
         u32::try_from(numerator).map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
     let divisor = gcd_u32(numerator, TIMELINE_TIME_SCALE);
@@ -869,4 +873,16 @@ fn integer_sqrt(value: u128) -> u128 {
         }
     }
     high
+}
+
+#[cfg(test)]
+mod timeline_time_tests {
+    use super::{TIMELINE_TIME_SCALE, ballistic_time_to_sampled};
+
+    #[test]
+    fn zero_q32_hit_rounds_up_to_first_positive_timeline_tick() {
+        let time = ballistic_time_to_sampled(0).expect("quantized immediate hit");
+        assert_eq!(time.numerator, 1);
+        assert_eq!(time.denominator, TIMELINE_TIME_SCALE);
+    }
 }
