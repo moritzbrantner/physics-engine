@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBox3d, OrientedBoxError3d,
+    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, OrientedBox3d,
+    OrientedBoxError3d,
     RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
@@ -48,8 +49,12 @@ pub struct RotatingWorldStepStats3d {
     pub body_count: usize,
     /// Bodies admitted to the expensive rigid-contact event/tail pipeline.
     pub solver_body_count: usize,
-    /// Bodies excluded from the rigid-contact solver because their participation is overlap-only.
+    /// Bodies excluded from the rigid-contact solver for this step.
     pub solver_bypassed_body_count: usize,
+    /// Solid physics-owned dynamics that can actually receive solver mutation.
+    pub response_authority_body_count: usize,
+    /// Geometrically eligible pairs rejected before CCD because neither participant can receive solver mutation.
+    pub response_authority_pair_rejections: u64,
     pub sampled_events: usize,
     pub tail_contacts: usize,
     /// Persistent-tail slices actually executed, including discarded replay work.
@@ -384,19 +389,28 @@ impl RotatingWorld3d {
             ));
         }
         if timestep_numerator == 0 {
-            let solver_body_count = self
+            let response_authority_body_count = self
                 .boxes
                 .values()
-                .filter(|rigid_box| {
-                    rigid_box.solver_participation() == SolverParticipation3d::Solid
-                })
+                .filter(|rigid_box| receives_solver_response(rigid_box))
                 .count();
+            let solver_body_count = if response_authority_body_count == 0 {
+                0
+            } else {
+                self.boxes
+                    .values()
+                    .filter(|rigid_box| {
+                        rigid_box.solver_participation() == SolverParticipation3d::Solid
+                    })
+                    .count()
+            };
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
                 stats: RotatingWorldStepStats3d {
                     body_count: self.boxes.len(),
                     solver_body_count,
                     solver_bypassed_body_count: self.boxes.len().saturating_sub(solver_body_count),
+                    response_authority_body_count,
                     ..RotatingWorldStepStats3d::default()
                 },
             });
@@ -410,13 +424,22 @@ impl RotatingWorld3d {
             timestep_denominator,
         );
 
-        // Partition before expensive collision work. Solid bodies preserve stable BodyId order in the
-        // solver working set. Overlap-only dynamics have no collision response by contract, so their exact
-        // full-frame free flight is staged independently and committed only after the solid solver succeeds.
+        // Partition before expensive collision work. If no solid physics-owned dynamic can receive solver
+        // mutation, fixed and externally authoritative bodies cannot affect one another through the solver,
+        // so every dynamic advances directly and the rigid collision pipeline is skipped entirely. Otherwise
+        // solid bodies remain collision inputs for the mutable dynamics, while overlap-only dynamics stay in
+        // the cheap free-flight lane.
+        let response_authority_body_count = self
+            .boxes
+            .values()
+            .filter(|rigid_box| receives_solver_response(rigid_box))
+            .count();
         let mut solver_boxes = Vec::with_capacity(self.boxes.len());
         let mut bypassed_updates = Vec::new();
         for rigid_box in self.boxes.values() {
-            if rigid_box.solver_participation() == SolverParticipation3d::Solid {
+            if response_authority_body_count > 0
+                && rigid_box.solver_participation() == SolverParticipation3d::Solid
+            {
                 solver_boxes.push(rigid_box.clone());
                 continue;
             }
@@ -485,6 +508,17 @@ impl RotatingWorld3d {
                 body_count: self.boxes.len(),
                 solver_body_count,
                 solver_bypassed_body_count,
+                response_authority_body_count,
+                response_authority_pair_rejections: broad_phase_after
+                    .response_authority_pair_rejections
+                    .saturating_sub(broad_phase_before.response_authority_pair_rejections)
+                    .saturating_add(
+                        tail_broad_phase_after
+                            .response_authority_pair_rejections
+                            .saturating_sub(
+                                tail_broad_phase_before.response_authority_pair_rejections,
+                            ),
+                    ),
                 sampled_events,
                 tail_contacts: tail.contacts,
                 tail_slices: tail.slices,
@@ -532,6 +566,12 @@ impl RotatingWorld3d {
             },
         })
     }
+}
+
+fn receives_solver_response(rigid_box: &RigidBox3d) -> bool {
+    rigid_box.solver_participation() == SolverParticipation3d::Solid
+        && rigid_box.body().kind() == BodyKind::Dynamic
+        && rigid_box.motion_authority() == MotionAuthority3d::Physics
 }
 
 fn consume_tail(
