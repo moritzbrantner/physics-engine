@@ -12,7 +12,7 @@ use crate::{
     RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
     RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
     SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
-    resolve_rotating_contact_frontier, sample_rigid_box_free_flight,
+    sample_rigid_box_free_flight,
 };
 use crate::{
     ballistic_event::{
@@ -26,7 +26,10 @@ use crate::{
         advance_repeated_rotating_events_with_broad_phase,
     },
     rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d},
-    rotating_contact_response::RotatingContactResponseScratch3d,
+    rotating_contact_response::{
+        RotatingContactResponseScratch3d,
+        resolve_rotating_contact_frontier_with_activity_and_scratch,
+    },
 };
 
 const MAX_PERSISTENT_TAIL_SLICES: u32 = 1_024;
@@ -123,6 +126,12 @@ struct TailStepStats3d {
     slices: u64,
     replays: u64,
     candidate_pairs: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TailSliceResult3d {
+    contact_count: usize,
+    reusable_contacts: Option<Vec<RotatingContactSearchHit3d>>,
 }
 
 #[derive(Debug)]
@@ -702,6 +711,7 @@ impl RotatingWorld3d {
                         advance.remaining,
                         self.config.solver_passes,
                         &mut self.tail_broad_phase,
+                        &mut self.response_scratch,
                         &mut ballistic_work,
                     )?
                 };
@@ -739,6 +749,7 @@ impl RotatingWorld3d {
                     advance.remaining,
                     self.config.solver_passes,
                     &mut self.tail_broad_phase,
+                    &mut self.response_scratch,
                 )?
             };
             (solver_boxes, sampled_events, tail, work)
@@ -895,6 +906,7 @@ fn consume_tail_with_ballistics(
     remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
     ballistic_work: &mut BallisticStepWork3d,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
     let mut stats = TailStepStats3d::default();
@@ -902,20 +914,22 @@ fn consume_tail_with_ballistics(
     let initial_contacts = contact_frontier(&current, broad_phase, &mut stats)?;
     if initial_contacts.is_empty() {
         advance_ballistic_spheres_full(projectiles, remaining, ballistic_work)?;
-        let contacts = free_flight_and_stabilize_in_place(
+        let result = free_flight_and_stabilize_in_place(
             &mut current,
             remaining,
             solver_passes,
             broad_phase,
+            response_scratch,
             &mut stats,
             None,
         )?;
-        stats.contacts = contacts;
+        stats.contacts = result.contact_count;
         return Ok((current, stats));
     }
 
     let mut slice_count = persistent_tail_slice_count(&current, remaining, &initial_contacts)?;
     let mut journal = TailMutationJournal3d::new(current.len());
+    let mut reusable_contacts = Some(initial_contacts.clone());
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
         let projectile_start = projectiles.clone();
@@ -924,18 +938,25 @@ fn consume_tail_with_ballistics(
 
         for _ in 0..slice_count {
             stats.slices = stats.slices.saturating_add(1);
-            let (contacts, unsafe_id) = advance_tail_slice_with_ballistics(
+            let current_contacts = match reusable_contacts.take() {
+                Some(contacts) => contacts,
+                None => contact_frontier(&current, broad_phase, &mut stats)?,
+            };
+            let (result, unsafe_id) = advance_tail_slice_with_ballistics(
                 &mut current,
                 projectiles,
                 retire_on_contact,
                 slice_config,
                 solver_passes,
                 broad_phase,
+                response_scratch,
                 &mut stats,
                 &mut journal,
                 ballistic_work,
+                current_contacts,
             )?;
-            contact_count = contact_count.saturating_add(contacts);
+            contact_count = contact_count.saturating_add(result.contact_count);
+            reusable_contacts = result.reusable_contacts;
             if unsafe_id.is_some() {
                 unsafe_body = unsafe_id;
                 break;
@@ -959,6 +980,7 @@ fn consume_tail_with_ballistics(
         let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
         journal.rollback(&mut current);
         *projectiles = projectile_start;
+        reusable_contacts = Some(initial_contacts.clone());
         slice_count = next_slice_count;
     }
 }
@@ -971,37 +993,70 @@ fn advance_tail_slice_with_ballistics(
     mut remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     journal: &mut TailMutationJournal3d,
     ballistic_work: &mut BallisticStepWork3d,
-) -> Result<(usize, Option<BodyId>), RotatingWorldError3d> {
+    initial_contacts: Vec<RotatingContactSearchHit3d>,
+) -> Result<(TailSliceResult3d, Option<BodyId>), RotatingWorldError3d> {
     let mut contact_count = 0_usize;
+    let mut reusable_contacts = Some(initial_contacts);
 
     while !remaining.timestep_is_zero() {
-        let current_contacts = contact_frontier(boxes, broad_phase, stats)?;
+        let current_contacts = match reusable_contacts.take() {
+            Some(contacts) => contacts,
+            None => contact_frontier(boxes, broad_phase, stats)?,
+        };
         if let Some(id) = first_unsafe_tail_body(boxes, remaining, &current_contacts)? {
-            return Ok((contact_count, Some(id)));
+            return Ok((
+                TailSliceResult3d {
+                    contact_count,
+                    reusable_contacts: Some(current_contacts),
+                },
+                Some(id),
+            ));
         }
 
         let Some(frontier) =
             earliest_ballistic_frontier(boxes, projectiles, remaining, ballistic_work)?
         else {
             advance_ballistic_spheres_full(projectiles, remaining, ballistic_work)?;
-            advance_tail_free_flight_in_place(boxes, remaining, Some(journal))?;
-            contact_count = contact_count.saturating_add(stabilize_tail_contacts_in_place(
+            let result = free_flight_and_stabilize_in_place(
                 boxes,
+                remaining,
                 solver_passes,
                 broad_phase,
+                response_scratch,
                 stats,
                 Some(journal),
-            )?);
-            return Ok((contact_count, None));
+            )?;
+            contact_count = contact_count.saturating_add(result.contact_count);
+            return Ok((
+                TailSliceResult3d {
+                    contact_count,
+                    reusable_contacts: result.reusable_contacts,
+                },
+                None,
+            ));
         };
 
         let segment =
             remaining.scaled_fraction(frontier.time.numerator, frontier.time.denominator)?;
         advance_tail_free_flight_in_place(boxes, segment, Some(journal))?;
         advance_ballistic_spheres_to_time(projectiles, remaining, frontier.time, ballistic_work)?;
+
+        // Persistent rigid contacts are authoritative at the admitted sphere time. Resolve them before
+        // applying the projectile impulse, then retain their exact contact evidence only if response did
+        // not move geometry.
+        let pre_impact = stabilize_tail_contacts_in_place(
+            boxes,
+            solver_passes,
+            broad_phase,
+            response_scratch,
+            stats,
+            Some(journal),
+        )?;
+        contact_count = contact_count.saturating_add(pre_impact.contact_count);
 
         for candidate in &frontier.hits {
             if let Some(world_index) = boxes
@@ -1021,30 +1076,36 @@ fn advance_tail_slice_with_ballistics(
             ballistic_work,
         )?;
 
-        contact_count = contact_count.saturating_add(stabilize_tail_contacts_in_place(
-            boxes,
-            solver_passes,
-            broad_phase,
-            stats,
-            Some(journal),
-        )?);
+        // Ballistic response changes velocity/angular velocity but not current geometry, so any exact
+        // contact evidence retained by the pre-impact solve remains valid for the next safety check.
+        reusable_contacts = pre_impact.reusable_contacts;
         remaining = ballistic_remaining_after(remaining, frontier.time)?;
     }
 
-    Ok((contact_count, None))
+    Ok((
+        TailSliceResult3d {
+            contact_count,
+            reusable_contacts,
+        },
+        None,
+    ))
 }
 
 fn stabilize_tail_contacts_in_place(
     boxes: &mut [RigidBox3d],
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     mut journal: Option<&mut TailMutationJournal3d>,
-) -> Result<usize, RotatingWorldError3d> {
+) -> Result<TailSliceResult3d, RotatingWorldError3d> {
     let contacts = contact_frontier(boxes, broad_phase, stats)?;
     let contact_count = contacts.len();
     if contacts.is_empty() {
-        return Ok(0);
+        return Ok(TailSliceResult3d {
+            contact_count: 0,
+            reusable_contacts: Some(contacts),
+        });
     }
 
     if let Some(journal) = journal.as_deref_mut() {
@@ -1067,8 +1128,19 @@ fn stabilize_tail_contacts_in_place(
         contacts,
         remaining_numerator: 0,
     };
-    resolve_rotating_contact_frontier(boxes, &frontier, solver_passes)?;
-    Ok(contact_count)
+    let (_, _, geometry_modified_body_ids) =
+        resolve_rotating_contact_frontier_with_activity_and_scratch(
+            boxes,
+            &frontier,
+            solver_passes,
+            response_scratch,
+        )?;
+    Ok(TailSliceResult3d {
+        contact_count,
+        reusable_contacts: geometry_modified_body_ids
+            .is_empty()
+            .then_some(frontier.contacts),
+    })
 }
 
 fn consume_tail(
@@ -1076,25 +1148,28 @@ fn consume_tail(
     remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
     let mut stats = TailStepStats3d::default();
     let mut current = boxes;
     let initial_contacts = contact_frontier(&current, broad_phase, &mut stats)?;
     if initial_contacts.is_empty() {
-        let contacts = free_flight_and_stabilize_in_place(
+        let result = free_flight_and_stabilize_in_place(
             &mut current,
             remaining,
             solver_passes,
             broad_phase,
+            response_scratch,
             &mut stats,
             None,
         )?;
-        stats.contacts = contacts;
+        stats.contacts = result.contact_count;
         return Ok((current, stats));
     }
 
     let mut slice_count = persistent_tail_slice_count(&current, remaining, &initial_contacts)?;
     let mut journal = TailMutationJournal3d::new(current.len());
+    let mut reusable_contacts = Some(initial_contacts.clone());
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
         let mut contact_count = 0_usize;
@@ -1102,20 +1177,25 @@ fn consume_tail(
 
         for _ in 0..slice_count {
             stats.slices = stats.slices.saturating_add(1);
-            let current_contacts = contact_frontier(&current, broad_phase, &mut stats)?;
+            let current_contacts = match reusable_contacts.take() {
+                Some(contacts) => contacts,
+                None => contact_frontier(&current, broad_phase, &mut stats)?,
+            };
             if let Some(id) = first_unsafe_tail_body(&current, slice_config, &current_contacts)? {
                 unsafe_body = Some(id);
                 break;
             }
-            let contacts = free_flight_and_stabilize_in_place(
+            let result = free_flight_and_stabilize_in_place(
                 &mut current,
                 slice_config,
                 solver_passes,
                 broad_phase,
+                response_scratch,
                 &mut stats,
                 Some(&mut journal),
             )?;
-            contact_count = contact_count.saturating_add(contacts);
+            contact_count = contact_count.saturating_add(result.contact_count);
+            reusable_contacts = result.reusable_contacts;
         }
 
         if unsafe_body.is_none() {
@@ -1133,6 +1213,7 @@ fn consume_tail(
         }
         let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
         journal.rollback(&mut current);
+        reusable_contacts = Some(initial_contacts.clone());
         slice_count = next_slice_count;
     }
 }
@@ -1165,11 +1246,54 @@ fn free_flight_and_stabilize_in_place(
     config: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     mut journal: Option<&mut TailMutationJournal3d>,
-) -> Result<usize, RotatingWorldError3d> {
+) -> Result<TailSliceResult3d, RotatingWorldError3d> {
     advance_tail_free_flight_in_place(boxes, config, journal.as_deref_mut())?;
-    stabilize_tail_contacts_in_place(boxes, solver_passes, broad_phase, stats, journal)
+
+    let contacts = contact_frontier(boxes, broad_phase, stats)?;
+    let contact_count = contacts.len();
+    if contacts.is_empty() {
+        return Ok(TailSliceResult3d {
+            contact_count: 0,
+            reusable_contacts: Some(contacts),
+        });
+    }
+
+    if let Some(journal) = journal {
+        for contact in &contacts {
+            for id in [contact.pair.left, contact.pair.right] {
+                let world_index = boxes
+                    .iter()
+                    .position(|rigid_box| rigid_box.body().id() == id)
+                    .expect("tail contact participant must exist in current world");
+                if boxes[world_index].body().kind() == BodyKind::Dynamic {
+                    journal.record(world_index, &boxes[world_index]);
+                }
+            }
+        }
+    }
+
+    let frontier = RotatingContactFrontier3d {
+        free_flight: RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+        time: SampledContactTime3d::ZERO,
+        contacts,
+        remaining_numerator: 0,
+    };
+    let (_, _, geometry_modified_body_ids) =
+        resolve_rotating_contact_frontier_with_activity_and_scratch(
+            boxes,
+            &frontier,
+            solver_passes,
+            response_scratch,
+        )?;
+    Ok(TailSliceResult3d {
+        contact_count,
+        reusable_contacts: geometry_modified_body_ids
+            .is_empty()
+            .then_some(frontier.contacts),
+    })
 }
 
 fn persistent_tail_slice_count(
