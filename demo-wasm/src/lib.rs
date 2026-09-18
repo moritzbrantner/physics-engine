@@ -833,7 +833,7 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 #[cfg(test)]
 mod tests {
     use physics_engine::{
-        BodyId, ContactPersistence3d, RepeatedRotatingEventError3d, RigidBody,
+        BodyId, ContactPersistence3d, Orientation3d, RepeatedRotatingEventError3d, RigidBody,
         RotatingWorldError3d, Vec3i,
     };
 
