@@ -306,10 +306,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
     frontier: &RotatingContactFrontier3d,
     solver_passes: u8,
     scratch: &mut RotatingContactResponseScratch3d,
-) -> Result<
-    (RotatingContactResponse3d, Vec<BodyId>, Vec<BodyId>),
-    RotatingContactResponseError3d,
-> {
+) -> Result<(RotatingContactResponse3d, Vec<BodyId>, Vec<BodyId>), RotatingContactResponseError3d> {
     if solver_passes == 0 {
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
