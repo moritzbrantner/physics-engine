@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
+    AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind,
+    InteractionCategory3d,
     InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d, OrientedBox3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
@@ -159,6 +160,37 @@ impl RotatingWorld3d {
         Some(removed)
     }
 
+
+    pub fn add_ballistic_sphere(
+        &mut self,
+        projectile: BallisticSphere3d,
+        retire_on_contact: bool,
+    ) -> Result<(), RotatingWorldError3d> {
+        // A newly fired sphere may hit any parked rigid target. Conservatively restore parked bodies now;
+        // the retained wake index can specialize this further once it indexes analytic sphere sweeps.
+        self.unpark_all()?;
+        self.active
+            .add_ballistic_sphere(projectile, retire_on_contact)
+    }
+
+    pub fn remove_ballistic_sphere(&mut self, id: BodyId) -> Option<BallisticSphere3d> {
+        self.active.remove_ballistic_sphere(id)
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_by_id(&self, id: BodyId) -> Option<&BallisticSphere3d> {
+        self.active.ballistic_sphere_by_id(id)
+    }
+
+    pub fn ballistic_spheres(&self) -> impl Iterator<Item = &BallisticSphere3d> {
+        self.active.ballistic_spheres()
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_count(&self) -> usize {
+        self.active.ballistic_sphere_count()
+    }
+
     #[must_use]
     pub fn box_by_id(&self, id: BodyId) -> Option<&RigidBox3d> {
         self.parked.get(&id).or_else(|| self.active.box_by_id(id))
@@ -227,13 +259,19 @@ impl RotatingWorld3d {
         if timestep_numerator < 0 || timestep_denominator <= 0 {
             return self.active.step(timestep_numerator, timestep_denominator);
         }
-        if timestep_numerator == 0 || self.active_dynamic_count == 0 {
+        if timestep_numerator == 0 {
+            return self.active.step(timestep_numerator, timestep_denominator);
+        }
+        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
+        }
+        if self.active.ballistic_sphere_count() > 0 && !self.parked.is_empty() {
+            self.unpark_all()?;
         }
 
         let mut changed_body_ids =
             self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
-        if self.active_dynamic_count == 0 {
+        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
 
@@ -241,7 +279,11 @@ impl RotatingWorld3d {
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         self.park_new_sleepers(&changed_body_ids)?;
         report.changed_body_ids = changed_body_ids.into_iter().collect();
-        report.stats.body_count = self.active.boxes().count();
+        report.stats.body_count = self
+            .active
+            .boxes()
+            .count()
+            .saturating_add(self.active.ballistic_sphere_count());
         Ok(report)
     }
 
@@ -249,7 +291,11 @@ impl RotatingWorld3d {
         RotatingWorldStepReport3d {
             changed_body_ids: Vec::new(),
             stats: RotatingWorldStepStats3d {
-                body_count: self.active.boxes().count(),
+                body_count: self
+                    .active
+                    .boxes()
+                    .count()
+                    .saturating_add(self.active.ballistic_sphere_count()),
                 ..RotatingWorldStepStats3d::default()
             },
         }
