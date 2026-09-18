@@ -1066,7 +1066,10 @@ mod tests {
             projectile.contact_persistence(),
             ContactPersistence3d::Transient
         );
-        assert_eq!(projectile.sleep_mode(), physics_engine::SleepMode3d::Aggressive);
+        assert_eq!(
+            projectile.sleep_mode(),
+            physics_engine::SleepMode3d::Aggressive
+        );
     }
 
     #[test]
@@ -1140,7 +1143,10 @@ mod tests {
             projectile.contact_persistence(),
             ContactPersistence3d::Transient
         );
-        assert_eq!(projectile.sleep_mode(), physics_engine::SleepMode3d::Aggressive);
+        assert_eq!(
+            projectile.sleep_mode(),
+            physics_engine::SleepMode3d::Aggressive
+        );
     }
 
     #[test]
