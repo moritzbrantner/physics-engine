@@ -6,7 +6,8 @@ use physics_engine::{
 use crate::{
     Sandbox,
     controller::scenario_rules::{EXPLICIT_RULES_BIT, ScenarioRules, apply_to_sandbox},
-    role_for, with_sandbox, with_sandbox_mut,
+    lab_scenarios::SandboxScenario,
+    with_sandbox, with_sandbox_mut,
 };
 
 const INTERACTION_POLICY_PACK_BIT: i32 = 1 << 30;
@@ -19,6 +20,9 @@ const INTERACTION_POLICY_KNOWN_BITS: i32 =
 const WORLD_CATEGORY: InteractionCategory3d = InteractionCategory3d::new(1);
 const CHARACTER_CATEGORY: InteractionCategory3d = InteractionCategory3d::new(2);
 const CRATE_CATEGORY: InteractionCategory3d = InteractionCategory3d::new(3);
+const SENSOR_CATEGORY: InteractionCategory3d = InteractionCategory3d::new(4);
+const KINEMATIC_CATEGORY: InteractionCategory3d = InteractionCategory3d::new(5);
+const DEBRIS_CATEGORY: InteractionCategory3d = InteractionCategory3d::new(6);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct PairPolicySettings {
@@ -68,6 +72,9 @@ fn interaction_category_for_role(role: i32) -> InteractionCategory3d {
         0 => WORLD_CATEGORY,
         1 => CHARACTER_CATEGORY,
         2 => CRATE_CATEGORY,
+        6 => SENSOR_CATEGORY,
+        7 => KINEMATIC_CATEGORY,
+        8 => DEBRIS_CATEGORY,
         _ => InteractionCategory3d::DEFAULT,
     }
 }
@@ -98,7 +105,7 @@ fn apply_interaction_policy_settings(
         .boxes()
         .map(|rigid_box| {
             let id = rigid_box.body().id();
-            (id, interaction_category_for_role(role_for(id)))
+            (id, interaction_category_for_role(sandbox.render_role_for(id)))
         })
         .collect::<Vec<_>>();
 
@@ -136,11 +143,11 @@ fn apply_interaction_policy_settings(
 /// explicit rules, old 0/1 callers remain accepted and ignored because crate motion is already encoded in the
 /// first argument; a marked second argument carries the settings-backed pair-policy payload. Fixed geometry
 /// preparation remains a separate performance/storage choice.
-#[unsafe(no_mangle)]
-pub extern "C" fn sandbox_reset_with_baking_options(
+fn reset_with_scenario(
     simulation_rules: i32,
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
+    scenario: SandboxScenario,
 ) -> i32 {
     let explicit_rules = simulation_rules & EXPLICIT_RULES_BIT != 0;
     let (legacy_upright_crates, pair_policy_settings) = if explicit_rules
@@ -173,7 +180,11 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     with_sandbox(|_| ());
 
     let Ok(mut replacement) =
-        Sandbox::with_options(rules.character_linear_push(), rules.upright_crates())
+        Sandbox::with_options_and_scenario(
+            rules.character_linear_push(),
+            rules.upright_crates(),
+            scenario,
+        )
     else {
         return -2;
     };
@@ -187,6 +198,43 @@ pub extern "C" fn sandbox_reset_with_baking_options(
         .set_fixed_geometry_preparation_mode(fixed_geometry_mode);
     with_sandbox_mut(|sandbox| *sandbox = replacement);
     0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_scenario(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        SandboxScenario::Playground,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_lab_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+    scenario: i32,
+) -> i32 {
+    let Some(scenario) = SandboxScenario::from_i32(scenario) else {
+        return -1;
+    };
+    reset_with_scenario(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        scenario,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_scenario() -> i32 {
+    with_sandbox(|sandbox| sandbox.scenario as i32)
 }
 
 #[unsafe(no_mangle)]
