@@ -618,10 +618,18 @@ mod tests {
             fixed(22, Vec3i::ZERO),
         ];
 
-        assert!(
+        assert_eq!(
             broad_phase
                 .candidate_pairs(&no_authority, config)
-                .expect("valid no-authority query")
+                .expect("valid geometric query")
+                .len(),
+            3,
+            "geometric queries must retain externally authoritative overlaps"
+        );
+        assert!(
+            broad_phase
+                .response_candidate_pairs(&no_authority, config)
+                .expect("valid response-admitted query")
                 .is_empty()
         );
         assert!(
