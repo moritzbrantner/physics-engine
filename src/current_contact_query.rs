@@ -3,8 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     BodyId, BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
     RotatingWorldError3d, SolverParticipation3d, Vec3i, obb_contact_seed,
-    rigid_box_free_flight_sweep_bounds,
-    rotating_broad_phase::RotatingBroadPhase3d,
+    rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBroadPhase3d,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,14 +121,22 @@ impl GenerationContactCache3d {
                 continue;
             };
             let reverse_axis = reverse_axis(contact.axis, pair.left)?;
-            graph.contacts.entry(pair.left).or_default().push(BodyCurrentContact3d {
-                other: pair.right,
-                axis: contact.axis,
-            });
-            graph.contacts.entry(pair.right).or_default().push(BodyCurrentContact3d {
-                other: pair.left,
-                axis: reverse_axis,
-            });
+            graph
+                .contacts
+                .entry(pair.left)
+                .or_default()
+                .push(BodyCurrentContact3d {
+                    other: pair.right,
+                    axis: contact.axis,
+                });
+            graph
+                .contacts
+                .entry(pair.right)
+                .or_default()
+                .push(BodyCurrentContact3d {
+                    other: pair.left,
+                    axis: reverse_axis,
+                });
             touched.insert(pair.left);
             touched.insert(pair.right);
         }
@@ -195,10 +202,8 @@ impl GenerationContactCache3d {
         self.activate_generation(generation);
         if self.graph.is_none() {
             let snapshot = boxes.values().cloned().collect::<Vec<_>>();
-            let graph = build_current_contact_graph_with_broad_phase(
-                &snapshot,
-                &mut self.broad_phase,
-            )?;
+            let graph =
+                build_current_contact_graph_with_broad_phase(&snapshot, &mut self.broad_phase)?;
             self.graph_builds = self.graph_builds.saturating_add(1);
             self.candidate_pairs = self
                 .candidate_pairs
@@ -586,7 +591,10 @@ mod tests {
         let report = world.step(1, 60).expect("sparse movement step");
         assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
 
-        let moved_query = world.box_by_id(BodyId(1)).expect("moved body").oriented_box();
+        let moved_query = world
+            .box_by_id(BodyId(1))
+            .expect("moved body")
+            .oriented_box();
         world
             .overlap_query(moved_query)
             .expect("incrementally refreshed graph");
