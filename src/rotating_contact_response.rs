@@ -105,6 +105,10 @@ impl BodyDelta3d {
         self.position == [0; 3] && self.linear_velocity == [0; 3] && self.angular_velocity == [0; 3]
     }
 
+    fn changes_geometry(self) -> bool {
+        self.position != [0; 3]
+    }
+
     fn checked_add(
         &mut self,
         other: Self,
@@ -229,6 +233,7 @@ pub struct RotatingContactResponseScratch3d {
     deltas: Vec<BodyDeltaAccumulator3d>,
     combined: Vec<BodyDelta3d>,
     modified_body_ids: BTreeSet<BodyId>,
+    geometry_modified_body_ids: BTreeSet<BodyId>,
     body_index_rebuilds: u64,
 }
 
@@ -293,7 +298,7 @@ pub fn resolve_rotating_contact_frontier_with_scratch(
         solver_passes,
         scratch,
     )
-    .map(|(response, _)| response)
+    .map(|(response, _, _)| response)
 }
 
 pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
@@ -301,7 +306,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
     frontier: &RotatingContactFrontier3d,
     solver_passes: u8,
     scratch: &mut RotatingContactResponseScratch3d,
-) -> Result<(RotatingContactResponse3d, Vec<BodyId>), RotatingContactResponseError3d> {
+) -> Result<(RotatingContactResponse3d, Vec<BodyId>, Vec<BodyId>), RotatingContactResponseError3d> {
     if solver_passes == 0 {
         return Err(RotatingContactResponseError3d::ZeroSolverPasses);
     }
@@ -320,6 +325,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         deltas,
         combined,
         modified_body_ids,
+        geometry_modified_body_ids,
         ..
     } = scratch;
 
@@ -331,6 +337,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
     combined.clear();
     combined.reserve(island.len());
     modified_body_ids.clear();
+    geometry_modified_body_ids.clear();
 
     for pass in 0..solver_passes {
         for accumulator in deltas.iter_mut() {
@@ -394,6 +401,9 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         for (rigid_box, delta) in island.iter_mut().zip(combined.iter().copied()) {
             if !delta.is_zero() {
                 modified_body_ids.insert(rigid_box.body.id);
+                if delta.changes_geometry() {
+                    geometry_modified_body_ids.insert(rigid_box.body.id);
+                }
                 apply_delta(rigid_box, delta)?;
             }
         }
@@ -423,6 +433,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
     }
 
     let modified = modified_body_ids.iter().copied().collect();
+    let geometry_modified = geometry_modified_body_ids.iter().copied().collect();
     Ok((
         RotatingContactResponse3d {
             time: frontier.time,
@@ -431,6 +442,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
             passes_used,
         },
         modified,
+        geometry_modified,
     ))
 }
 
