@@ -559,7 +559,7 @@ impl RotatingWorld3d {
         }
 
         if !changed_body_ids.is_empty() {
-            self.mark_contact_geometry_changed();
+            self.mark_contact_geometry_changed_for(&changed_body_ids);
         }
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
