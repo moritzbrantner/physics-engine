@@ -244,6 +244,8 @@ function sessionEvidence({ session, sessionPath, sourceDirty, fallbackRevision, 
   const usefulWork = [
     measurement("physics.simulation_steps", summary.physics_step_count, "step", "counter", "Physics steps completed during the browser session."),
     measurement("physics.projectiles_retired_on_contact", summary.projectile_lifecycle?.retired_on_contact, "projectile", "counter", "Projectiles retired by contact policy."),
+    measurement("physics.max_live_projectiles", summary.projectile_lifecycle?.max_live_projectiles, "projectile", "high-water", "Maximum visible retained projectile population."),
+    measurement("physics.max_active_projectiles", summary.projectile_lifecycle?.max_active_projectiles, "projectile", "high-water", "Maximum projectile population still participating in active simulation."),
   ].filter(Boolean);
   const outcomes = [
     measurement("browser.session_duration_ms", session.duration_ms, "ms", "duration", "Browser performance-session duration."),
