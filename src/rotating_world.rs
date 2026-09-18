@@ -5,8 +5,7 @@ use std::{
 };
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, OrientedBox3d,
-    OrientedBoxError3d,
+    ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, MotionAuthority3d, OrientedBox3d, OrientedBoxError3d,
     RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
