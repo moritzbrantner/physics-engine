@@ -3,11 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
     InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, RotationalSweepBounds3d, SolverParticipation3d, Vec3i,
-    WakePropagation3d,
-    rigid_box_free_flight_sweep_bounds,
+    RigidBoxFreeFlightConfig3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotatingWorldStepStats3d, RotationalSweepBounds3d,
+    SolverParticipation3d, Vec3i, WakePropagation3d, rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 

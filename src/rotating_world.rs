@@ -6,9 +6,8 @@ use std::{
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, BodyId, BodyKind, OrientedBox3d, OrientedBoxError3d,
-    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-    RepeatedRotatingEventWorkStats3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
+    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d,
+    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
     RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
     SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     resolve_rotating_contact_frontier, sample_rigid_box_free_flight,

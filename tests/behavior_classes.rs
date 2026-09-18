@@ -84,11 +84,7 @@ fn overlap_only_dynamic_bypasses_solver_but_keeps_free_flight() {
         )
         .expect("add moving sensor");
     world
-        .add_box(fixed(
-            13,
-            Vec3i::new(100, 0, 0),
-            Vec3i::new(2, 2, 2),
-        ))
+        .add_box(fixed(13, Vec3i::new(100, 0, 0), Vec3i::new(2, 2, 2)))
         .expect("add solid geometry");
 
     let report = world.step(1, 1).expect("step partitioned world");

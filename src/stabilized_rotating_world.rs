@@ -5,14 +5,12 @@ use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
-    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d,
-    InteractionPolicy3d, MotionAuthority3d,
-    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotationalSweepBounds3d, SleepMode3d, SolverParticipation3d, Vec3i, WakePropagation3d,
-    obb_contact_seed,
-    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
-    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d, InteractionPolicy3d,
+    MotionAuthority3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d, SolverParticipation3d, Vec3i,
+    WakePropagation3d, obb_contact_seed, obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds, rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;

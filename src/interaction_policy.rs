@@ -163,7 +163,8 @@ pub struct InteractionPolicies3d {
     default_policy: InteractionPolicy3d,
     default_execution_plan: InteractionExecutionPlan3d,
     body_categories: BTreeMap<BodyId, InteractionCategory3d>,
-    symmetric_pairs: BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicyEntry3d>,
+    symmetric_pairs:
+        BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicyEntry3d>,
     directional_pairs:
         BTreeMap<(InteractionCategory3d, InteractionCategory3d), InteractionPolicyEntry3d>,
 }
@@ -212,7 +213,10 @@ impl InteractionPolicies3d {
         policy: InteractionPolicy3d,
     ) -> Option<InteractionPolicy3d> {
         self.symmetric_pairs
-            .insert(canonical_pair(left, right), InteractionPolicyEntry3d::new(policy))
+            .insert(
+                canonical_pair(left, right),
+                InteractionPolicyEntry3d::new(policy),
+            )
             .map(|entry| entry.policy)
     }
 

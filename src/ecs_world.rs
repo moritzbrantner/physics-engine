@@ -2,8 +2,7 @@ use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry
 use crate::{
     BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
     InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d,
-    RigidBox3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
+    RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 

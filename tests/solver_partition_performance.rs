@@ -49,10 +49,7 @@ fn overlap_only_partition_reports_zero_rigid_solver_work() {
 
     assert_eq!(report.stats.body_count, body_count as usize);
     assert_eq!(report.stats.solver_body_count, 0);
-    assert_eq!(
-        report.stats.solver_bypassed_body_count,
-        body_count as usize
-    );
+    assert_eq!(report.stats.solver_bypassed_body_count, body_count as usize);
     assert_eq!(report.stats.broad_phase_queries, 0);
     assert_eq!(report.stats.tail_broad_phase_queries, 0);
     assert_eq!(report.stats.sampled_events, 0);
