@@ -476,8 +476,7 @@ impl RotatingWorld3d {
         // the cheap free-flight lane.
         let response_authority_body_count =
             self.solver_partitions.response_authority_body_ids.len();
-        let mut solver_boxes =
-            Vec::with_capacity(self.solver_partitions.solid_body_ids.len());
+        let mut solver_boxes = Vec::with_capacity(self.solver_partitions.solid_body_ids.len());
         let mut bypassed_updates = Vec::new();
 
         if response_authority_body_count > 0 {
@@ -1332,8 +1331,13 @@ mod tests {
             .expect("physics-owned dynamic");
         world
             .add_box(
-                dynamic(2, Vec3i::new(100, 0, 0), Vec3i::new(1, 0, 0), Vec3i::new(1, 1, 1))
-                    .with_overlap_only(),
+                dynamic(
+                    2,
+                    Vec3i::new(100, 0, 0),
+                    Vec3i::new(1, 0, 0),
+                    Vec3i::new(1, 1, 1),
+                )
+                .with_overlap_only(),
             )
             .expect("overlap-only dynamic");
         world
@@ -1350,8 +1354,15 @@ mod tests {
         assert_eq!(first.stats.solver_body_count, 2);
         assert_eq!(second.stats.solver_body_count, 2);
 
-        world.remove_box(BodyId(1)).expect("remove solver authority");
-        assert!(world.solver_partitions.response_authority_body_ids.is_empty());
+        world
+            .remove_box(BodyId(1))
+            .expect("remove solver authority");
+        assert!(
+            world
+                .solver_partitions
+                .response_authority_body_ids
+                .is_empty()
+        );
         let bypassed = world.step(1, 60).expect("all-dynamic bypass step");
         assert_eq!(bypassed.stats.solver_body_count, 0);
         assert_eq!(bypassed.stats.solver_bypassed_body_count, 2);
