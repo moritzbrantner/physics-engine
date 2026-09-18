@@ -938,7 +938,10 @@ mod tests {
     #[test]
     fn reference_projectile_keeps_general_persistent_contact_path() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
-        assert_eq!(sandbox.set_projectile_mode(ProjectileMode::ReferenceRigid as i32), 0);
+        assert_eq!(
+            sandbox.set_projectile_mode(ProjectileMode::ReferenceRigid as i32),
+            0
+        );
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
         assert_eq!(
