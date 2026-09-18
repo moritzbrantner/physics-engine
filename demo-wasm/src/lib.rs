@@ -1216,11 +1216,21 @@ mod tests {
                 );
             }
             let (x, z) = if tick >= 80 { (271, -321) } else { (0, -420) };
+            let before = sandbox
+                .projectile_ids
+                .first()
+                .and_then(|id| sandbox.world.ballistic_sphere_by_id(*id))
+                .copied();
             let result = sandbox.step_velocity(x, z, false);
+            let after = sandbox
+                .projectile_ids
+                .first()
+                .and_then(|id| sandbox.world.ballistic_sphere_by_id(*id))
+                .copied();
             assert_eq!(
                 result,
                 0,
-                "sphere stress lane failed at tick {tick} with detail {}, {} ballistic spheres live",
+                "sphere stress lane failed at tick {tick} with detail {}, {} ballistic spheres live; before={before:?}; after={after:?}",
                 sandbox.error_detail,
                 sandbox.world.ballistic_sphere_count(),
             );
