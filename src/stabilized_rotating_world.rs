@@ -5,10 +5,12 @@ use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
-    InteractionCategory3d, InteractionPolicies3d, InteractionPolicy3d, MotionAuthority3d,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d,
+    InteractionPolicy3d, MotionAuthority3d,
     OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d,
     RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotationalSweepBounds3d, SleepMode3d, Vec3i, WakePropagation3d, obb_contact_seed,
+    RotationalSweepBounds3d, SleepMode3d, SolverParticipation3d, Vec3i, WakePropagation3d,
+    obb_contact_seed,
     obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
     rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
@@ -123,6 +125,16 @@ impl RotatingWorld3d {
         target: BodyId,
     ) -> InteractionPolicy3d {
         self.interaction_policies.policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.interaction_policies
+            .execution_plan_for_bodies(source, target)
     }
 
     pub fn set_pair_interaction_policy(
@@ -306,7 +318,9 @@ impl RotatingWorld3d {
         let mut sleeper_bounds = BTreeMap::new();
 
         for rigid_box in self.inner.boxes() {
-            if rigid_box.body.kind != BodyKind::Dynamic {
+            if rigid_box.body.kind != BodyKind::Dynamic
+                || rigid_box.solver_participation() != SolverParticipation3d::Solid
+            {
                 continue;
             }
             let id = rigid_box.body.id;
@@ -332,7 +346,7 @@ impl RotatingWorld3d {
                     sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {
                         awake_bounds.iter().any(|(awake_id, bounds)| {
                             self.interaction_policies
-                                .policy_for_bodies(*awake_id, *id)
+                                .execution_plan_for_bodies(*awake_id, *id)
                                 .wake_propagation()
                                 == WakePropagation3d::Full
                                 && sweep_bounds_overlap(*bounds, *sleeping_bounds)
@@ -785,6 +799,7 @@ impl RotatingWorld3d {
             };
             if current.body.kind != BodyKind::Dynamic
                 || current.motion_authority() == MotionAuthority3d::External
+                || current.solver_participation() != SolverParticipation3d::Solid
             {
                 continue;
             }
@@ -814,7 +829,7 @@ impl RotatingWorld3d {
                     }
                     let pass_limit = self
                         .interaction_policies
-                        .policy_for_bodies(id, fixed_id)
+                        .execution_plan_for_bodies(id, fixed_id)
                         .fixed_boundary_stabilization_pass_limit(
                             MAX_FIXED_POSITION_STABILIZATION_PASSES,
                         );
