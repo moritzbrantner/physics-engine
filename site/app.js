@@ -33,6 +33,7 @@ const keys = new Set();
 const characterModeControl = document.querySelector("#character-mode");
 const uprightCratesControl = document.querySelector("#upright-crates");
 const fixedGeometryControl = document.querySelector("#fixed-geometry-mode");
+const projectileModeControl = document.querySelector("#projectile-mode");
 const characterParameters = new URLSearchParams(window.location.search);
 characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
 uprightCratesControl.checked = characterParameters.get("crates") !== "free";
@@ -92,6 +93,7 @@ function performanceScenario() {
     fixed_geometry: query.get("bake") ?? "load",
     collision_pairs: query.get("collisions") ?? "all",
     projectile_impact: query.get("projectile-impact") ?? "physical",
+    projectile_mode: query.get("projectile-mode") ?? "optimized",
   };
 }
 
@@ -166,6 +168,13 @@ function reset() {
     ) !== 0
   ) {
     throw new Error("Unable to initialize the selected physics comparison options");
+  }
+  const projectileMode = projectileModeControl.value === "rigid" ? 0 : 1;
+  if (
+    typeof engine.sandbox_set_projectile_mode !== "function" ||
+    engine.sandbox_set_projectile_mode(projectileMode) !== 0
+  ) {
+    throw new Error("Unable to initialize the selected projectile solver");
   }
   yaw = 0;
   pitch = 0;
