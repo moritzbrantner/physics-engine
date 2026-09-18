@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, RigidBox3d,
-    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
+    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, OrientedBox3d,
+    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
     SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
 
@@ -33,6 +33,12 @@ pub(crate) struct RotatingBroadPhaseStats3d {
     pub partial_body_updates: u64,
     /// Geometrically eligible solid pairs rejected because neither participant can receive solver mutation.
     pub response_authority_pair_rejections: u64,
+    /// Immutable fixed-body bounds reused without recomputing their stationary OBB envelope.
+    pub fixed_bound_reuses: u64,
+    /// Fixed-body bounds prepared because geometry or collision membership changed.
+    pub fixed_bound_recomputations: u64,
+    /// Dynamic/external body sweep bounds recomputed for the current query horizon.
+    pub dynamic_bound_recomputations: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +86,14 @@ struct BoundedBody3d {
     bounds: RotationalSweepBounds3d,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FixedBoundCacheEntry3d {
+    shape: OrientedBox3d,
+    collision_layers: CollisionLayers3d,
+    solver_participation: SolverParticipation3d,
+    bounded: BoundedBody3d,
+}
+
 /// Persistent deterministic broad phase for rotating rigid boxes.
 ///
 /// The retained fat-AABB tree uses indexed arena nodes, parent links, and a `BodyId -> leaf` index.
@@ -93,6 +107,7 @@ struct BoundedBody3d {
 pub(crate) struct RotatingBroadPhase3d {
     tree: IndexedBvh3d,
     exact: BTreeMap<BodyId, BoundedBody3d>,
+    fixed_bounds: BTreeMap<BodyId, FixedBoundCacheEntry3d>,
     stats: RotatingBroadPhaseStats3d,
 }
 
@@ -124,7 +139,7 @@ impl RotatingBroadPhase3d {
         require_response_authority: bool,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
         self.stats.queries = self.stats.queries.saturating_add(1);
-        let exact = bounded_bodies(boxes, config)?;
+        let exact = self.bounded_bodies(boxes, config)?;
 
         if !self.membership_matches(&exact) {
             self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
@@ -327,137 +342,7 @@ impl RotatingBroadPhase3d {
         self.stats
     }
 
-    fn membership_matches(&self, exact: &[BoundedBody3d]) -> bool {
-        if exact.len() != self.exact.len() || exact.len() != self.tree.len() {
-            return false;
-        }
-        exact.iter().all(|body| {
-            self.exact.get(&body.id).is_some_and(|previous| {
-                previous.kind == body.kind
-                    && previous.solver_participation == body.solver_participation
-                    && previous.receives_solver_response == body.receives_solver_response
-            }) && self.tree.has_leaf(body.id)
-        })
-    }
-
-    fn rebuild(&mut self, exact: Vec<BoundedBody3d>) {
-        self.exact = exact.iter().copied().map(|body| (body.id, body)).collect();
-        let mut fat = exact
-            .into_iter()
-            .map(|mut body| {
-                body.bounds = fatten_bounds(body.bounds);
-                body
-            })
-            .collect::<Vec<_>>();
-        self.tree.rebuild(&mut fat);
-    }
-}
-
-/// Retained stationary-bounds index for wrapper-level spatial queries such as parked-body wake discovery.
-///
-/// Membership changes rebuild the deterministic tree once, while ordinary frame queries traverse the retained
-/// topology and exact stationary bounds without reconstructing every parked body's envelope.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct RotatingBoundsIndex3d {
-    tree: IndexedBvh3d,
-    exact: BTreeMap<BodyId, RotationalSweepBounds3d>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct RotatingBoundsQuery3d {
-    pub body_ids: Vec<BodyId>,
-    pub visited_nodes: usize,
-}
-
-impl RotatingBoundsIndex3d {
-    pub(crate) fn rebuild_stationary<'a>(
-        &mut self,
-        boxes: impl IntoIterator<Item = &'a RigidBox3d>,
-    ) -> Result<(), RotatingBroadPhaseError3d> {
-        let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
-        let mut ids = BTreeSet::new();
-        let mut exact = BTreeMap::new();
-        let mut fat = Vec::new();
-
-        for rigid_box in boxes {
-            let id = rigid_box.body().id();
-            if !ids.insert(id) {
-                return Err(RotatingBroadPhaseError3d::DuplicateBodyId(id));
-            }
-            if rigid_box.solver_participation() != SolverParticipation3d::Solid {
-                continue;
-            }
-            let mut body = bounded_body(rigid_box, current)?;
-            exact.insert(body.id, body.bounds);
-            body.bounds = fatten_bounds(body.bounds);
-            fat.push(body);
-        }
-
-        self.exact = exact;
-        self.tree.rebuild(&mut fat);
-        Ok(())
-    }
-
-    #[must_use]
-    pub(crate) fn overlapping_ids(&self, bounds: RotationalSweepBounds3d) -> RotatingBoundsQuery3d {
-        let mut body_ids = Vec::new();
-        let visited_nodes = self.tree.for_each_body_overlapping_bounds(bounds, |id| {
-            if self
-                .exact
-                .get(&id)
-                .is_some_and(|exact| bounds_overlap(bounds, *exact))
-            {
-                body_ids.push(id);
-            }
-        });
-        body_ids.sort_unstable();
-        RotatingBoundsQuery3d {
-            body_ids,
-            visited_nodes,
-        }
-    }
-}
-
-/// Produces a deterministic conservative candidate set for rotating-box contact search.
-///
-/// Every body is first enclosed by [`rigid_box_free_flight_sweep_bounds`], so acceleration, velocity
-/// reversal, and arbitrary orientation change are preserved as broad-phase possibilities. A one-shot
-/// call uses the same indexed AABB BVH implementation as [`RotatingBroadPhase3d`], while world stepping
-/// keeps a persistent instance so repeated search/frontier queries can reuse or incrementally update its
-/// fat-tree topology.
-///
-/// Fixed/fixed pairs are omitted because neither body can respond. Input ordering does not affect output.
-/// This function proves only that emitted pairs *may* contact and that pairs whose conservative envelopes
-/// overlap are retained. It does not evaluate OBB geometry or claim a time of impact.
-///
-/// # Errors
-///
-/// Returns [`RotatingBroadPhaseError3d`] for duplicate body IDs or malformed/overflowing free-flight
-/// sweep inputs.
-pub fn rotational_sweep_candidate_pairs(
-    boxes: &[RigidBox3d],
-    config: RigidBoxFreeFlightConfig3d,
-) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
-    RotatingBroadPhase3d::default().candidate_pairs(boxes, config)
-}
-
-fn bounded_bodies(
-    boxes: &[RigidBox3d],
-    config: RigidBoxFreeFlightConfig3d,
-) -> Result<Vec<BoundedBody3d>, RotatingBroadPhaseError3d> {
-    let mut ids = BTreeSet::new();
-    let mut bounded = Vec::with_capacity(boxes.len());
-    for rigid_box in boxes {
-        let body = bounded_body(rigid_box, config)?;
-        if !ids.insert(body.id) {
-            return Err(RotatingBroadPhaseError3d::DuplicateBodyId(body.id));
-        }
-        bounded.push(body);
-    }
-    Ok(bounded)
-}
-
-fn bounded_body(
+    fn bounded_body(
     rigid_box: &RigidBox3d,
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<BoundedBody3d, RotatingBroadPhaseError3d> {
@@ -1183,6 +1068,41 @@ mod tests {
             query.visited_nodes,
             boxes.len()
         );
+    }
+
+    #[test]
+    fn repeated_queries_reuse_fixed_bounds_but_recompute_dynamic_sweeps() {
+        let mut boxes = (0..128_u64)
+            .map(|index| {
+                fixed(
+                    index + 10,
+                    Vec3i::new(i32::try_from(index).expect("small index") * 8, -10, 0),
+                )
+            })
+            .collect::<Vec<_>>();
+        boxes.push(dynamic(
+            1,
+            Vec3i::ZERO,
+            Vec3i::new(1, 0, 0),
+        ));
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("first broad-phase query");
+        let first = broad_phase.stats();
+        broad_phase
+            .candidate_pairs(&boxes, config)
+            .expect("second broad-phase query");
+        let second = broad_phase.stats();
+
+        assert_eq!(first.fixed_bound_recomputations, 128);
+        assert_eq!(first.fixed_bound_reuses, 0);
+        assert_eq!(first.dynamic_bound_recomputations, 1);
+        assert_eq!(second.fixed_bound_recomputations, 128);
+        assert_eq!(second.fixed_bound_reuses, 128);
+        assert_eq!(second.dynamic_bound_recomputations, 2);
     }
 
     #[test]
