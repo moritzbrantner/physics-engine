@@ -3,8 +3,8 @@ use std::cell::RefCell;
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BallisticSphere3d, BallisticSphereError3d,
     BallisticTimelineError3d, BodyId, BodyKind, Material, Orientation3d,
-    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
+    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
 
 mod controller;
