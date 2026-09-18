@@ -282,9 +282,11 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             boxes,
             config.solver_passes,
             broad_phase,
-            &modified_body_ids,
-            &geometry_modified_body_ids,
-            &response_contacts,
+            StabilizationSeed3d {
+                active: &modified_body_ids,
+                geometry_active: &geometry_modified_body_ids,
+                contacts: &response_contacts,
+            },
             response_scratch,
             &mut work,
         )?;
@@ -410,24 +412,28 @@ fn event_remaining_numerator(
 /// preserving the existing convergence semantics. Contacts in components disconnected from every body changed
 /// by the previous pass are not re-solved. This removes unrelated work without turning island propagation into
 /// one-contact-edge-per-pass behavior.
+struct StabilizationSeed3d<'a> {
+    active: &'a [crate::BodyId],
+    geometry_active: &'a [crate::BodyId],
+    contacts: &'a [RotatingContactSearchHit3d],
+}
+
 fn stabilize_current_contacts(
     boxes: &mut [RigidBox3d],
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
-    initial_active: &[crate::BodyId],
-    initial_geometry_active: &[crate::BodyId],
-    initial_contacts: &[RotatingContactSearchHit3d],
+    seed: StabilizationSeed3d<'_>,
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
 ) -> Result<(), RepeatedRotatingEventError3d> {
     response_scratch.ensure_body_index(boxes);
-    let mut active = initial_active.to_vec();
+    let mut active = seed.active.to_vec();
     active.sort_unstable();
     active.dedup();
-    let mut geometry_active = initial_geometry_active.to_vec();
+    let mut geometry_active = seed.geometry_active.to_vec();
     geometry_active.sort_unstable();
     geometry_active.dedup();
-    let mut contacts = initial_contacts
+    let mut contacts = seed.contacts
         .iter()
         .cloned()
         .map(|mut contact| {
