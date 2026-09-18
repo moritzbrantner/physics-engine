@@ -98,12 +98,7 @@ fn elastic_analytic_sphere_remains_live_and_reverses_after_fixed_impact() {
     let mut world = world();
     let elastic = Material::new(MATERIAL_SCALE);
     world
-        .add_box(fixed(
-            1,
-            Vec3i::ZERO,
-            Vec3i::new(2, 20, 20),
-            elastic,
-        ))
+        .add_box(fixed(1, Vec3i::ZERO, Vec3i::new(2, 20, 20), elastic))
         .expect("add elastic target");
     world
         .add_ballistic_sphere(
