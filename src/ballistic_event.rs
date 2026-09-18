@@ -398,19 +398,13 @@ fn apply_ballistic_target_impulse(
     let closing_speed = normal_velocity
         .checked_neg()
         .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
-    let numerator = checked_mul(
-        closing_speed,
-        i128::from(MATERIAL_SCALE)
-            .checked_add(i128::from(restitution))
-            .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
-    )?;
-    let denominator = checked_mul(i128::from(MATERIAL_SCALE), effective_inverse_mass)?;
     let mut impulse = [0_i128; 3];
     for (output, axis_component) in impulse.iter_mut().zip(axis) {
-        *output = mul_div_round_i128(
-            numerator,
-            checked_mul(axis_component, RESPONSE_SCALE)?,
-            denominator,
+        *output = response_impulse_component(
+            closing_speed,
+            restitution,
+            axis_component,
+            effective_inverse_mass,
         )?;
     }
 
@@ -418,6 +412,38 @@ fn apply_ballistic_target_impulse(
         apply_body_impulse(target, target_offset, negate_axis(impulse)?)?;
     }
     Ok(impulse)
+}
+
+fn response_impulse_component(
+    closing_speed: i128,
+    restitution_milli: u16,
+    axis_component: i128,
+    effective_inverse_mass: i128,
+) -> Result<i128, BallisticTimelineError3d> {
+    if axis_component == 0 {
+        return Ok(0);
+    }
+
+    let material_scale = i128::from(MATERIAL_SCALE);
+    let response_axis = checked_mul(axis_component, RESPONSE_SCALE)?;
+    let divisor = gcd_u128(u128::from(MATERIAL_SCALE), response_axis.unsigned_abs()).max(1);
+    let divisor =
+        i128::try_from(divisor).map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+    let reduced_material_scale = material_scale / divisor;
+    let reduced_response_axis = response_axis / divisor;
+    let denominator = checked_mul(reduced_material_scale, effective_inverse_mass)?;
+    let numerator = checked_mul(
+        closing_speed,
+        material_scale
+            .checked_add(i128::from(restitution_milli))
+            .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
+    )?;
+
+    Ok(mul_div_round_i128(
+        numerator,
+        reduced_response_axis,
+        denominator,
+    )?)
 }
 
 fn apply_projectile_impulse(
@@ -877,12 +903,52 @@ fn integer_sqrt(value: u128) -> u128 {
 
 #[cfg(test)]
 mod timeline_time_tests {
-    use super::{TIMELINE_TIME_SCALE, ballistic_time_to_sampled};
+    use super::{
+        MATERIAL_SCALE, RESPONSE_SCALE, TIMELINE_TIME_SCALE, ballistic_time_to_sampled,
+        checked_add, checked_mul, response_impulse_component,
+    };
 
     #[test]
     fn zero_q32_hit_rounds_up_to_first_positive_timeline_tick() {
         let time = ballistic_time_to_sampled(0).expect("quantized immediate hit");
         assert_eq!(time.numerator, 1);
         assert_eq!(time.denominator, TIMELINE_TIME_SCALE);
+    }
+
+    #[test]
+    fn response_impulse_reduces_q32_normal_scale_before_forming_denominator() {
+        let axis_x = 12_884_901_887_i128;
+        let axis_y = 12_884_901_886_i128;
+        let axis_length_squared = checked_add(
+            checked_mul(axis_x, axis_x).expect("x normal square"),
+            checked_mul(axis_y, axis_y).expect("y normal square"),
+        )
+        .expect("bounded Q32 normal square");
+        let effective_inverse_mass =
+            checked_mul(axis_length_squared, RESPONSE_SCALE).expect("scaled inverse mass");
+
+        assert!(
+            i128::from(MATERIAL_SCALE)
+                .checked_mul(effective_inverse_mass)
+                .is_none(),
+            "the unreduced response denominator must reproduce the former overflow"
+        );
+
+        let closing_speed = checked_mul(5_280, axis_x).expect("closing speed");
+        assert_eq!(
+            response_impulse_component(closing_speed, 0, axis_x, effective_inverse_mass)
+                .expect("inelastic response"),
+            2_640
+        );
+        assert_eq!(
+            response_impulse_component(
+                closing_speed,
+                MATERIAL_SCALE,
+                axis_x,
+                effective_inverse_mass,
+            )
+            .expect("elastic response"),
+            5_280
+        );
     }
 }
