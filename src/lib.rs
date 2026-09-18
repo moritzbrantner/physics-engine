@@ -28,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 mod angular;
+mod ballistic_event;
 mod ballistic_sphere;
 mod body;
 mod collider;
