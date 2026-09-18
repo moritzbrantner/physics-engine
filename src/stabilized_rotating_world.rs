@@ -305,10 +305,7 @@ impl RotatingWorld3d {
         self.restore_sleeping_bodies()?;
         let mut sleep_subjects = self.sleep_candidates.clone();
         sleep_subjects.extend(changed_body_ids.iter().copied());
-        changed_body_ids.extend(self.update_sleep_state(
-            sleep_time_increment,
-            &sleep_subjects,
-        )?);
+        changed_body_ids.extend(self.update_sleep_state(sleep_time_increment, &sleep_subjects)?);
         report.changed_body_ids = changed_body_ids.into_iter().collect();
         Ok(report)
     }
@@ -485,7 +482,10 @@ impl RotatingWorld3d {
                     }
                 }
             } else {
-                self.sleep_candidates.remove(&id);
+                // Motion itself remains a dependency: an awake dynamic can become sleep-eligible on a
+                // later step even when no topology or explicit control delta occurs. Keep the retained
+                // candidate membership, but reset only the stability deadline.
+                self.sleep_candidates.insert(id);
                 self.sleep_stable_time_q64.remove(&id);
             }
         }
@@ -1257,6 +1257,23 @@ mod tests {
             solver_passes: 4,
             max_events: 8,
         })
+    }
+
+    #[test]
+    fn moving_sleep_candidate_stays_scheduled_until_motion_can_settle() {
+        let id = BodyId(1);
+        let mut world = zero_gravity_world();
+        world
+            .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::new(500, 0, 0)))
+            .expect("add moving body");
+
+        world.step(1, 60).expect("moving step");
+
+        assert!(!world.is_sleeping(id));
+        assert!(
+            world.sleep_candidates.contains(&id),
+            "awake dynamics must stay scheduled for later sleep eligibility"
+        );
     }
 
     #[test]
