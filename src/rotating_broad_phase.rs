@@ -488,6 +488,10 @@ mod tests {
         .expect("valid fixed box")
     }
 
+    fn external(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
+        dynamic(id, position, velocity).with_external_motion()
+    }
+
     fn brute_force_candidate_pairs(
         boxes: &[RigidBox3d],
         config: RigidBoxFreeFlightConfig3d,
@@ -577,6 +581,43 @@ mod tests {
             )
             .expect("valid fixed candidates")
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn no_response_authority_pairs_are_rejected_before_contact_search() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 1);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let no_authority = [
+            external(20, Vec3i::ZERO, Vec3i::new(1, 0, 0)),
+            external(21, Vec3i::ZERO, Vec3i::new(-1, 0, 0)),
+            fixed(22, Vec3i::ZERO),
+        ];
+
+        assert!(
+            broad_phase
+                .candidate_pairs(&no_authority, config)
+                .expect("valid no-authority query")
+                .is_empty()
+        );
+        assert!(
+            broad_phase.stats().response_authority_pair_rejections >= 3,
+            "every overlapping external/external or external/fixed pair should be rejected"
+        );
+
+        assert_eq!(
+            rotational_sweep_candidate_pairs(
+                &[
+                    dynamic(30, Vec3i::ZERO, Vec3i::ZERO),
+                    external(31, Vec3i::ZERO, Vec3i::ZERO),
+                ],
+                config,
+            )
+            .expect("dynamic/external candidate"),
+            vec![RotationalSweepPair3d {
+                left: BodyId(30),
+                right: BodyId(31),
+            }]
         );
     }
 
