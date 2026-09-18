@@ -1,6 +1,7 @@
 use crate::{
-    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyKind, MATERIAL_SCALE, ORIENTATION_SCALE,
-    ObbAxisFeature3d, ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d,
+    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyKind, MATERIAL_SCALE, MotionAuthority3d,
+    ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactResponse3d, ObbContactResponseError3d,
+    ObbResolvedContact3d,
     Orientation3d, RigidBox3d, Vec3i, box_inertia, oriented_box_vertices,
     wide_ratio::{mul_div_round_i128, mul_div_round_u128},
 };
@@ -475,7 +476,9 @@ fn body_effective_inverse_mass_scaled(
     axis: [i128; 3],
     axis_length_squared: u128,
 ) -> Result<i128, ObbContactResponseError3d> {
-    if rigid_box.body.kind == BodyKind::Fixed {
+    if rigid_box.body.kind == BodyKind::Fixed
+        || rigid_box.motion_authority() == MotionAuthority3d::External
+    {
         return Ok(0);
     }
     let translational = i128::try_from(mul_div_round_u128(
@@ -513,7 +516,9 @@ fn apply_body_impulse(
     contact_offset: [i64; 3],
     impulse: [i128; 3],
 ) -> Result<(), ObbContactResponseError3d> {
-    if rigid_box.body.kind == BodyKind::Fixed {
+    if rigid_box.body.kind == BodyKind::Fixed
+        || rigid_box.motion_authority() == MotionAuthority3d::External
+    {
         return Ok(());
     }
     let mass_units = rigid_box.body.mass_units;
