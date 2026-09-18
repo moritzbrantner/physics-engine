@@ -1,8 +1,4 @@
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    fmt,
-};
+use std::{collections::BTreeSet, error::Error, fmt};
 
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BallisticSphere3d,
@@ -56,7 +52,11 @@ impl fmt::Display for BallisticTimelineError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateBody(id) => {
-                write!(formatter, "ballistic timeline contains duplicate body id {}", id.0)
+                write!(
+                    formatter,
+                    "ballistic timeline contains duplicate body id {}",
+                    id.0
+                )
             }
             Self::MissingProjectile(id) => {
                 write!(formatter, "ballistic projectile {} is missing", id.0)
@@ -67,7 +67,9 @@ impl fmt::Display for BallisticTimelineError3d {
             Self::FreeFlight(error) => write!(formatter, "ballistic free flight failed: {error}"),
             Self::Ballistic(error) => write!(formatter, "ballistic sphere query failed: {error}"),
             Self::Angular(error) => write!(formatter, "ballistic angular response failed: {error}"),
-            Self::ArithmeticOverflow => write!(formatter, "ballistic timeline arithmetic overflowed"),
+            Self::ArithmeticOverflow => {
+                write!(formatter, "ballistic timeline arithmetic overflowed")
+            }
         }
     }
 }
@@ -228,7 +230,9 @@ pub(crate) fn resolve_ballistic_frontier(
         let projectile_index = projectiles
             .iter()
             .position(|projectile| projectile.id() == candidate.projectile)
-            .ok_or(BallisticTimelineError3d::MissingProjectile(candidate.projectile))?;
+            .ok_or(BallisticTimelineError3d::MissingProjectile(
+                candidate.projectile,
+            ))?;
         let target_index = boxes
             .iter()
             .position(|rigid_box| rigid_box.body().id() == candidate.hit.body)
@@ -307,10 +311,7 @@ fn projected_projectile(
     Ok(projected)
 }
 
-fn displacement_velocity(
-    start: Vec3i,
-    end: Vec3i,
-) -> Result<Vec3i, BallisticTimelineError3d> {
+fn displacement_velocity(start: Vec3i, end: Vec3i) -> Result<Vec3i, BallisticTimelineError3d> {
     Ok(Vec3i::new(
         difference_i32(end.x, start.x)?,
         difference_i32(end.y, start.y)?,
@@ -337,8 +338,8 @@ fn advance_projectile_exact(
         let next_velocity = i128::from(component(velocity, axis))
             .checked_add(timestep.mul_round_i128(i128::from(component(free_flight.gravity, axis)))?)
             .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
-        let next_velocity =
-            i32::try_from(next_velocity).map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+        let next_velocity = i32::try_from(next_velocity)
+            .map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
         set_component(&mut velocity, axis, next_velocity);
         let next_position = i128::from(component(position, axis))
             .checked_add(timestep.mul_round_i128(i128::from(next_velocity))?)
@@ -519,7 +520,8 @@ fn projectile_contact_point(
 ) -> Result<Vec3i, BallisticTimelineError3d> {
     let length_squared = axis_length_squared(normal)?;
     let length = integer_sqrt(length_squared).max(1);
-    let length = i128::try_from(length).map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+    let length =
+        i128::try_from(length).map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
     let radius = i128::from(projectile.radius());
     let center = projectile.position();
     let mut point = [
@@ -615,9 +617,7 @@ fn rotate_forward(
     rotate_with_matrix(rotation_matrix(orientation.normalized()?)?, vector)
 }
 
-fn rotation_matrix(
-    orientation: Orientation3d,
-) -> Result<[[i128; 3]; 3], BallisticTimelineError3d> {
+fn rotation_matrix(orientation: Orientation3d) -> Result<[[i128; 3]; 3], BallisticTimelineError3d> {
     let x = i128::from(orientation.x);
     let y = i128::from(orientation.y);
     let z = i128::from(orientation.z);
@@ -676,10 +676,7 @@ fn scaled_twice(value: i128, scale: i128) -> Result<i128, BallisticTimelineError
     div_round_nearest(checked_mul(value, 2)?, scale)
 }
 
-fn cross_i64_i128(
-    left: [i64; 3],
-    right: [i128; 3],
-) -> Result<[i128; 3], BallisticTimelineError3d> {
+fn cross_i64_i128(left: [i64; 3], right: [i128; 3]) -> Result<[i128; 3], BallisticTimelineError3d> {
     let left = left.map(i128::from);
     Ok([
         checked_sub(
@@ -805,10 +802,7 @@ fn checked_dot(left: [i128; 3], right: [i128; 3]) -> Result<i128, BallisticTimel
     )
 }
 
-fn div_round_nearest(
-    numerator: i128,
-    denominator: i128,
-) -> Result<i128, BallisticTimelineError3d> {
+fn div_round_nearest(numerator: i128, denominator: i128) -> Result<i128, BallisticTimelineError3d> {
     if denominator <= 0 {
         return Err(BallisticTimelineError3d::ArithmeticOverflow);
     }
