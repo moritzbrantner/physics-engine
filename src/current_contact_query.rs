@@ -299,6 +299,7 @@ fn body_current_contacts_for_body(
     Ok(contacts)
 }
 
+#[cfg(test)]
 fn build_current_contact_graph(
     boxes: &[RigidBox3d],
 ) -> Result<CurrentContactGraph3d, RotatingWorldError3d> {
