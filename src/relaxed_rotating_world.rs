@@ -5,7 +5,8 @@ use crate::{
     InteractionExecutionPlan3d, InteractionPolicy3d, OrientedBox3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d,
     RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, RotationalSweepBounds3d, Vec3i, WakePropagation3d,
+    RotatingWorldStepStats3d, RotationalSweepBounds3d, SolverParticipation3d, Vec3i,
+    WakePropagation3d,
     rigid_box_free_flight_sweep_bounds,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
@@ -316,7 +317,10 @@ impl RotatingWorld3d {
         let mut awake_bounds = self
             .active
             .boxes()
-            .filter(|rigid_box| rigid_box.body().kind() == BodyKind::Dynamic)
+            .filter(|rigid_box| {
+                rigid_box.body().kind() == BodyKind::Dynamic
+                    && rigid_box.solver_participation() == SolverParticipation3d::Solid
+            })
             .map(|rigid_box| {
                 Ok((
                     rigid_box.body().id(),
@@ -327,6 +331,9 @@ impl RotatingWorld3d {
         let mut parked_bounds = self
             .parked
             .iter()
+            .filter(|(_, rigid_box)| {
+                rigid_box.solver_participation() == SolverParticipation3d::Solid
+            })
             .map(|(id, rigid_box)| {
                 Ok((
                     *id,
