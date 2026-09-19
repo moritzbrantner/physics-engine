@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{collections::BTreeSet, error::Error, fmt};
 
 use crate::{
     AngularError3d, BodyId, CollisionLayers3d, Material, ORIENTATION_SCALE, Orientation3d,
@@ -339,6 +339,24 @@ impl BallisticSphereStep3d<'_> {
         sphere: BallisticSphere3d,
         stats: &mut BallisticSphereQueryStats3d,
     ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
+        self.earliest_hit_filtered(sphere, None, stats)
+    }
+
+    pub(crate) fn earliest_hit_excluding_pairs(
+        &self,
+        sphere: BallisticSphere3d,
+        excluded_pairs: &BTreeSet<(BodyId, BodyId)>,
+        stats: &mut BallisticSphereQueryStats3d,
+    ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
+        self.earliest_hit_filtered(sphere, Some(excluded_pairs), stats)
+    }
+
+    fn earliest_hit_filtered(
+        &self,
+        sphere: BallisticSphere3d,
+        excluded_pairs: Option<&BTreeSet<(BodyId, BodyId)>>,
+        stats: &mut BallisticSphereQueryStats3d,
+    ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
         if self.timestep_numerator == 0 {
             return Ok(None);
         }
@@ -356,6 +374,7 @@ impl BallisticSphereStep3d<'_> {
             .zip(self.prepared_targets.iter().copied())
         {
             if target.id == sphere.id
+                || excluded_pairs.is_some_and(|pairs| pairs.contains(&(sphere.id, target.id)))
                 || !sphere
                     .collision_layers
                     .collides_with(target.collision_layers)
@@ -939,15 +958,20 @@ fn rotate_fixed_vector(
     matrix: [[i128; 3]; 3],
     vector: [i128; 3],
 ) -> Result<[i128; 3], BallisticSphereError3d> {
+    let scale = i128::from(ORIENTATION_SCALE);
     let mut output = [0_i128; 3];
     for (target, row) in output.iter_mut().zip(matrix) {
-        *target = checked_add(
+        let sum = checked_add(
             checked_add(
                 checked_mul(row[0], vector[0])?,
                 checked_mul(row[1], vector[1])?,
             )?,
             checked_mul(row[2], vector[2])?,
         )?;
+        // The rotation matrix is Q-scaled. Return the rotated direction in the same integer
+        // magnitude domain as the input so downstream impulse math does not accidentally
+        // square the orientation scale as part of the contact normal.
+        *target = div_round_nearest(sum, scale)?;
     }
     primitive_direction(output)
 }
@@ -1269,5 +1293,23 @@ mod tests {
             .expect("hit");
 
         assert_eq!(hit.body, BodyId(10));
+    }
+}
+
+#[cfg(test)]
+mod rotated_normal_scale_tests {
+    use super::{Orientation3d, primitive_direction, rotate_fixed_vector, rotation_matrix};
+
+    #[test]
+    fn rotated_contact_direction_does_not_retain_orientation_matrix_scale() {
+        let orientation = Orientation3d::new(0, 410_903_207, 0, 992_008_094)
+            .normalized()
+            .expect("valid deterministic orientation");
+        let matrix = rotation_matrix(orientation).expect("rotation matrix");
+        let local = primitive_direction([9, 7, 5]).expect("local direction");
+        let world = rotate_fixed_vector(matrix, local).expect("world direction");
+
+        assert!(world.iter().all(|component| component.unsigned_abs() <= 32));
+        assert!(world.iter().any(|component| *component != 0));
     }
 }

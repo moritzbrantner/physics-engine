@@ -92,6 +92,14 @@ test("session output keeps raw timings and derives stable summaries", () => {
     stabilization_candidate_pairs: 0,
     stabilization_exact_contacts: 0,
     stabilization_active_bodies: 0,
+    ballistic_query_rounds: 0,
+    ballistic_target_bound_checks: 0,
+    ballistic_broad_phase_candidates: 0,
+    ballistic_toi_tests: 0,
+    ballistic_feature_tests: 0,
+    ballistic_motion_samples: 0,
+    ballistic_impacts: 0,
+    ballistic_retired: 0,
   });
   assert.deepEqual(result.summary.projectile_lifecycle, {
     max_live_projectiles: 4,

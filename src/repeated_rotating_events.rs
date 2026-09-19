@@ -5,12 +5,18 @@ use std::{
 };
 
 use crate::{
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
-    RotatingContactFrontierError3d, RotatingContactResponseError3d, RotatingContactSearchConfig3d,
-    RotatingContactSearchHit3d, SampledContactTime3d, obb_contact_seed,
-    sample_rigid_box_free_flight,
+    BallisticSphere3d, BodyId, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
+    RotatingContactFrontier3d, RotatingContactFrontierError3d, RotatingContactResponseError3d,
+    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
+    obb_contact_seed, sample_rigid_box_free_flight,
 };
 use crate::{
+    ballistic_event::{
+        BallisticStepWork3d, BallisticTimelineError3d, advance_ballistic_spheres_to_time,
+        compare_time as compare_ballistic_time, earliest_ballistic_frontier,
+        remaining_after as ballistic_remaining_after, resolve_ballistic_frontier,
+        validate_unique_ballistic_ids,
+    },
     rotating_broad_phase::RotatingBroadPhase3d,
     rotating_contact_response::{
         RotatingContactResponseScratch3d,
@@ -82,12 +88,14 @@ pub(crate) struct RepeatedRotatingEventProgress3d {
 pub enum RepeatedRotatingEventError3d {
     ZeroEventLimit,
     EventLimit(u16),
+    BallisticEventLimit(u16),
     NegativeTimestepNumerator(i128),
     NonPositiveTimestepDenominator(i128),
     InvalidRemainder(SampledContactTime3d),
     RatioTooLarge,
     Frontier(RotatingContactFrontierError3d),
     Response(RotatingContactResponseError3d),
+    Ballistic(BallisticTimelineError3d),
 }
 
 impl fmt::Display for RepeatedRotatingEventError3d {
@@ -99,7 +107,11 @@ impl fmt::Display for RepeatedRotatingEventError3d {
             ),
             Self::EventLimit(limit) => write!(
                 formatter,
-                "repeated rotating event advance reached its {limit}-event limit while another sampled event remained"
+                "repeated rotating event advance reached its {limit}-event limit while another sampled rigid event remained"
+            ),
+            Self::BallisticEventLimit(limit) => write!(
+                formatter,
+                "repeated rotating ballistic advance reached its {limit}-event limit while another analytic impact remained"
             ),
             Self::NegativeTimestepNumerator(value) => write!(
                 formatter,
@@ -126,6 +138,12 @@ impl fmt::Display for RepeatedRotatingEventError3d {
                 formatter,
                 "repeated rotating event response failed: {error}"
             ),
+            Self::Ballistic(error) => {
+                write!(
+                    formatter,
+                    "repeated rotating ballistic event failed: {error}"
+                )
+            }
         }
     }
 }
@@ -141,6 +159,12 @@ impl From<RotatingContactFrontierError3d> for RepeatedRotatingEventError3d {
 impl From<RotatingContactResponseError3d> for RepeatedRotatingEventError3d {
     fn from(value: RotatingContactResponseError3d) -> Self {
         Self::Response(value)
+    }
+}
+
+impl From<BallisticTimelineError3d> for RepeatedRotatingEventError3d {
+    fn from(value: BallisticTimelineError3d) -> Self {
+        Self::Ballistic(value)
     }
 }
 
@@ -311,6 +335,157 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         event_time = next_hit.time;
         frontier =
             current_frontier_from_admitted_hit(boxes, next_hit, broad_phase, response_scratch)?;
+    }
+
+    work.response_scratch_index_rebuilds = response_scratch
+        .body_index_rebuilds()
+        .saturating_sub(scratch_rebuilds_before);
+    Ok(RepeatedRotatingEventProgress3d {
+        events,
+        remaining,
+        work,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn advance_repeated_rotating_events_with_ballistics(
+    boxes: &mut [RigidBox3d],
+    projectiles: &mut Vec<BallisticSphere3d>,
+    retire_on_contact: &BTreeSet<BodyId>,
+    config: RepeatedRotatingEventConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+    response_scratch: &mut RotatingContactResponseScratch3d,
+    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
+    ballistic_work: &mut BallisticStepWork3d,
+) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
+    validate_config(config)?;
+    validate_unique_ballistic_ids(boxes, projectiles)?;
+
+    let mut work = RepeatedRotatingEventWorkStats3d::default();
+    let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
+    let mut remaining = config.search.free_flight;
+    let mut events = Vec::new();
+    // Rigid sampled contacts and analytic projectile impacts are independent event lanes.
+    // Keep the historical rigid-event budget intact instead of making projectile traffic consume it,
+    // while still bounding the ballistic lane deterministically.
+    let mut rigid_event_count = 0_usize;
+    let mut ballistic_event_count = 0_usize;
+    let mut rigid_event_seen = false;
+    response_scratch.ensure_body_index(boxes);
+
+    while !remaining.timestep_is_zero() {
+        // The chronological rigid search already admits current contacts at time zero, where they
+        // win ties against ballistic impacts. After either lane responds, its targeted stabilization
+        // owns the affected resting-contact island, so a separate zero-time rigid solve here would
+        // duplicate response authority and broad-phase work.
+        let search = search_with_free_flight(config.search, remaining);
+        let rigid_hit = if rigid_event_seen {
+            sampled_rotating_recontact_search_with_broad_phase(boxes, search, broad_phase)
+                .map_err(RotatingContactFrontierError3d::from)?
+        } else {
+            sampled_rotating_contact_search_with_broad_phase(boxes, search, broad_phase)
+                .map_err(RotatingContactFrontierError3d::from)?
+        };
+        let ballistic_frontier = earliest_ballistic_frontier(
+            boxes,
+            projectiles,
+            remaining,
+            resolved_ballistic_pairs,
+            ballistic_work,
+        )?;
+
+        let choose_rigid = match (rigid_hit.as_ref(), ballistic_frontier.as_ref()) {
+            (None, None) => break,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (Some(rigid), Some(ballistic)) => {
+                compare_ballistic_time(rigid.time, ballistic.time) != std::cmp::Ordering::Greater
+            }
+        };
+
+        if choose_rigid {
+            if rigid_event_count >= usize::from(config.max_events) {
+                return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
+            }
+            let hit = rigid_hit.expect("selected rigid event exists");
+            advance_state_to_time(boxes, search.free_flight, hit.time)?;
+            advance_ballistic_spheres_to_time(projectiles, remaining, hit.time, ballistic_work)?;
+            let frontier =
+                current_frontier_from_admitted_hit(boxes, hit, broad_phase, response_scratch)?;
+            let (response, modified_body_ids, geometry_modified_body_ids) =
+                resolve_rotating_contact_frontier_with_activity_and_scratch(
+                    boxes,
+                    &frontier,
+                    config.solver_passes,
+                    response_scratch,
+                )?;
+            remaining =
+                scale_remaining_time(remaining, event_remaining_numerator(hit.time)?, hit.time)?;
+            let response_contacts = response.contacts;
+            let response_passes = response.passes_used;
+            work.event_response_passes = work
+                .event_response_passes
+                .saturating_add(u64::from(response_passes));
+            stabilize_current_contacts(
+                boxes,
+                config.solver_passes,
+                broad_phase,
+                StabilizationSeed3d {
+                    active: &modified_body_ids,
+                    geometry_active: &geometry_modified_body_ids,
+                    contacts: &response_contacts,
+                },
+                response_scratch,
+                &mut work,
+            )?;
+            events.push(RotatingResolvedEvent3d {
+                time: hit.time,
+                contacts: response_contacts,
+                response_passes,
+            });
+            rigid_event_seen = true;
+            rigid_event_count = rigid_event_count.saturating_add(1);
+        } else {
+            if ballistic_event_count >= usize::from(config.max_events) {
+                return Err(RepeatedRotatingEventError3d::BallisticEventLimit(
+                    config.max_events,
+                ));
+            }
+            let frontier = ballistic_frontier.expect("selected ballistic event exists");
+            advance_state_to_time(boxes, remaining, frontier.time)?;
+            advance_ballistic_spheres_to_time(
+                projectiles,
+                remaining,
+                frontier.time,
+                ballistic_work,
+            )?;
+            remaining = ballistic_remaining_after(remaining, frontier.time)?;
+            let modified_targets = resolve_ballistic_frontier(
+                boxes,
+                projectiles,
+                retire_on_contact,
+                &frontier,
+                ballistic_work,
+            )?;
+            for candidate in &frontier.hits {
+                resolved_ballistic_pairs.insert((candidate.projectile, candidate.hit.body));
+            }
+            if !modified_targets.is_empty() {
+                stabilize_current_contacts(
+                    boxes,
+                    config.solver_passes,
+                    broad_phase,
+                    StabilizationSeed3d {
+                        active: &modified_targets,
+                        geometry_active: &modified_targets,
+                        contacts: &[],
+                    },
+                    response_scratch,
+                    &mut work,
+                )?;
+            }
+            ballistic_event_count = ballistic_event_count.saturating_add(1);
+        }
     }
 
     work.response_scratch_index_rebuilds = response_scratch
@@ -680,19 +855,25 @@ fn scale_remaining_time(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, hint::black_box, time::Instant};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        hint::black_box,
+        time::Instant,
+    };
 
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
-        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BallisticSphere3d, BodyId, MATERIAL_SCALE, Material,
+        Orientation3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d,
+        RotatingContactSearchConfig3d, Vec3i,
         rotating_contact_response::RotatingContactResponseScratch3d,
     };
 
     use super::{
-        RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
-        advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
-        current_contact_frontier, refresh_current_contacts_for_changed_bodies,
-        scale_remaining_time,
+        BallisticStepWork3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+        RotatingBroadPhase3d, advance_repeated_rotating_events,
+        advance_repeated_rotating_events_with_ballistics,
+        advance_repeated_rotating_events_with_broad_phase, current_contact_frontier,
+        refresh_current_contacts_for_changed_bodies, scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -993,6 +1174,49 @@ mod tests {
             advance_repeated_rotating_events(&boxes, config(1)),
             Err(RepeatedRotatingEventError3d::EventLimit(1))
         );
+    }
+
+    #[test]
+    fn ballistic_impact_does_not_consume_the_rigid_event_budget() {
+        let material = Material::new(0);
+        let mut boxes = vec![
+            dynamic(1, Vec3i::ZERO, Vec3i::new(100, 0, 0), material),
+            fixed(2, Vec3i::new(20, 0, 0), material),
+            fixed(3, Vec3i::new(40, 100, 0), material),
+        ];
+        let projectile_id = BodyId(10);
+        let mut projectiles = vec![
+            BallisticSphere3d::new(
+                projectile_id,
+                Vec3i::new(0, 100, 0),
+                Vec3i::new(100, 0, 0),
+                1,
+                1,
+            )
+            .expect("valid ballistic sphere"),
+        ];
+        let retire_on_contact = BTreeSet::from([projectile_id]);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut response_scratch = RotatingContactResponseScratch3d::default();
+        let mut resolved_ballistic_pairs = BTreeSet::new();
+        let mut ballistic_work = BallisticStepWork3d::default();
+
+        let progress = advance_repeated_rotating_events_with_ballistics(
+            &mut boxes,
+            &mut projectiles,
+            &retire_on_contact,
+            config(1),
+            &mut broad_phase,
+            &mut response_scratch,
+            &mut resolved_ballistic_pairs,
+            &mut ballistic_work,
+        )
+        .expect("one rigid event and one ballistic impact use independent budgets");
+
+        assert_eq!(progress.events.len(), 1);
+        assert!(projectiles.is_empty());
+        assert_eq!(ballistic_work.impacts, 1);
+        assert_eq!(ballistic_work.retired, 1);
     }
 
     #[test]

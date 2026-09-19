@@ -28,6 +28,7 @@
 #![forbid(unsafe_code)]
 
 mod angular;
+mod ballistic_event;
 mod ballistic_sphere;
 mod body;
 mod collider;
@@ -74,6 +75,7 @@ pub use angular::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d, BoxInertia3d,
     ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse, integrate_orientation,
 };
+pub use ballistic_event::BallisticTimelineError3d;
 pub use ballistic_sphere::{
     BallisticSphere3d, BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
     BallisticSphereStep3d, BallisticSphereSweepHit3d, BallisticTime3d,

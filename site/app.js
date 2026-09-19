@@ -276,6 +276,17 @@ function lastPhysicsStepStats() {
     stabilization_candidate_pairs: readPhysicsCounter("sandbox_last_stabilization_candidate_pairs"),
     stabilization_exact_contacts: readPhysicsCounter("sandbox_last_stabilization_exact_contacts"),
     stabilization_active_bodies: readPhysicsCounter("sandbox_last_stabilization_active_bodies"),
+    ballistic_sphere_count: readPhysicsCounter("sandbox_last_ballistic_sphere_count"),
+    ballistic_query_rounds: readPhysicsCounter("sandbox_last_ballistic_query_rounds"),
+    ballistic_target_bound_checks: readPhysicsCounter("sandbox_last_ballistic_target_bound_checks"),
+    ballistic_broad_phase_candidates: readPhysicsCounter(
+      "sandbox_last_ballistic_broad_phase_candidates",
+    ),
+    ballistic_toi_tests: readPhysicsCounter("sandbox_last_ballistic_toi_tests"),
+    ballistic_feature_tests: readPhysicsCounter("sandbox_last_ballistic_feature_tests"),
+    ballistic_motion_samples: readPhysicsCounter("sandbox_last_ballistic_motion_samples"),
+    ballistic_impacts: readPhysicsCounter("sandbox_last_ballistic_impacts"),
+    ballistic_retired: readPhysicsCounter("sandbox_last_ballistic_retired"),
   };
 }
 

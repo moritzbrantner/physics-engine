@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, BodyKind, Material, Orientation3d,
+    AngularState3d, AngularVelocity3d, BallisticSphere3d, BallisticSphereError3d,
+    BallisticTimelineError3d, BodyId, BodyKind, Material, Orientation3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
@@ -164,10 +165,11 @@ impl Sandbox {
     }
 
     fn is_quiescent(&self) -> bool {
-        self.world.boxes().all(|rigid_box| {
-            rigid_box.body().kind() == BodyKind::Fixed
-                || self.world.is_sleeping(rigid_box.body().id())
-        })
+        self.world.ballistic_sphere_count() == 0
+            && self.world.boxes().all(|rigid_box| {
+                rigid_box.body().kind() == BodyKind::Fixed
+                    || self.world.is_sleeping(rigid_box.body().id())
+            })
     }
 
     fn step(&mut self, move_x: i32, move_z: i32, jump: bool) -> i32 {
@@ -225,6 +227,9 @@ impl Sandbox {
         };
 
         self.last_step_stats = report.stats;
+        self.projectiles_retired_on_contact = self
+            .projectiles_retired_on_contact
+            .saturating_add(saturating_u32(self.last_step_stats.ballistic_retired));
         if let Err(error) = self.update_arrow_directions() {
             self.error_code = 6;
             self.error_detail = world_error_detail(error);
@@ -234,7 +239,10 @@ impl Sandbox {
         self.last_tail_contacts = self.last_step_stats.tail_contacts;
         let collisions = self
             .last_rotating_events
-            .saturating_add(self.last_tail_contacts);
+            .saturating_add(self.last_tail_contacts)
+            .saturating_add(
+                usize::try_from(self.last_step_stats.ballistic_impacts).unwrap_or(usize::MAX),
+            );
         self.total_collisions = self
             .total_collisions
             .saturating_add(u32::try_from(collisions).unwrap_or(u32::MAX));
@@ -297,58 +305,62 @@ impl Sandbox {
 
         let material = Material::new(impact_policy.restitution_milli());
         let layers = controller::scenario_rules::projectile_layers();
-        let projectile = match self.projectile_type {
-            None => rotating_box(
-                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                    .with_material(material),
-            )
-            // Keep the pre-selector WASM behavior stable for historical benchmark callers. The browser always
-            // selects a concrete projectile type before shooting.
-            .with_collision_layers(layers)
-            .with_transient_contacts(),
-            Some(ProjectileType::Sphere) => rotating_box(
-                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                    .with_material(material),
-            )
-            // A sphere's collision geometry is rotation-invariant. The current rotating-world adapter still
-            // represents the body through its equal extents, but explicitly removes angular integration and
-            // persistent-contact stabilization from the projectile lane.
-            .with_rotation_locked()
-            .with_collision_layers(layers)
-            .with_transient_contacts()
-            .with_aggressive_sleep(),
-            Some(ProjectileType::Arrow) => RigidBox3d::new(
-                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
-                    .with_material(material),
-                AngularState3d::new(
-                    projectile_direction_orientation(input_velocity),
-                    AngularVelocity3d::default(),
-                ),
-            )
-            .expect("sandbox arrow orientation must be valid")
-            // Arrow roll/tumbling is deliberately omitted. Direction is established from launch velocity;
-            // the shaft therefore keeps only the tilt/yaw state needed by its slender collision proxy.
-            .with_rotation_locked()
-            .with_collision_layers(layers)
-            .with_transient_contacts()
-            .with_aggressive_sleep(),
-            Some(ProjectileType::Rigid) => rotating_box(
-                RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
-                    .with_material(material),
-            )
-            // Deliberately retain the full rigid-body reference path for A/B comparison against specialized
-            // projectile archetypes.
-            .with_collision_layers(layers),
+        let added = match self.projectile_type {
+            None => self.world.add_box(
+                rotating_box(
+                    RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_material(material),
+                )
+                // Keep the pre-selector WASM behavior stable for historical benchmark callers.
+                .with_collision_layers(layers)
+                .with_transient_contacts(),
+            ),
+            Some(ProjectileType::Sphere) => {
+                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1) else {
+                    self.error_code = 5;
+                    return -1;
+                };
+                self.world.add_ballistic_sphere(
+                    projectile
+                        .with_material(material)
+                        .with_collision_layers(layers),
+                    impact_policy.retire_on_contact(),
+                )
+            }
+            Some(ProjectileType::Arrow) => self.world.add_box(
+                RigidBox3d::new(
+                    RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
+                        .with_material(material),
+                    AngularState3d::new(
+                        projectile_direction_orientation(input_velocity),
+                        AngularVelocity3d::default(),
+                    ),
+                )
+                .expect("sandbox arrow orientation must be valid")
+                .with_rotation_locked()
+                .with_collision_layers(layers)
+                .with_transient_contacts()
+                .with_aggressive_sleep(),
+            ),
+            Some(ProjectileType::Rigid) => self.world.add_box(
+                rotating_box(
+                    RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_material(material),
+                )
+                .with_collision_layers(layers),
+            ),
         };
 
-        if self.world.add_box(projectile).is_err() {
+        if added.is_err() {
             self.error_code = 5;
             return -1;
         }
         self.projectile_ids.push(id);
         if self.projectile_ids.len() > MAX_PROJECTILES {
             let oldest = self.projectile_ids.remove(0);
-            if self.world.remove_box(oldest).is_some() {
+            if self.world.remove_box(oldest).is_some()
+                || self.world.remove_ballistic_sphere(oldest).is_some()
+            {
                 self.projectiles_evicted_by_cap = self.projectiles_evicted_by_cap.saturating_add(1);
             }
         }
@@ -382,51 +394,76 @@ impl Sandbox {
             .iter()
             .copied()
             .filter_map(|id| {
-                let Some(rigid_box) = self.world.box_by_id(id) else {
-                    return Some((id, false));
-                };
-                let position = rigid_box.body().position();
-                let out_of_bounds = position.x.abs() > 1_200
-                    || position.y < -300
-                    || position.y > 900
-                    || position.z.abs() > 1_200;
-                if out_of_bounds {
-                    return Some((id, false));
+                if let Some(rigid_box) = self.world.box_by_id(id) {
+                    let position = rigid_box.body().position();
+                    let out_of_bounds = position.x.abs() > 1_200
+                        || position.y < -300
+                        || position.y > 900
+                        || position.z.abs() > 1_200;
+                    if out_of_bounds {
+                        return Some((id, 2_u8));
+                    }
+                    if retire_on_contact
+                        && self
+                            .world
+                            .body_contacts(id)
+                            .is_ok_and(|contacts| !contacts.is_empty())
+                    {
+                        return Some((id, 1_u8));
+                    }
+                    return None;
                 }
-                if retire_on_contact
-                    && self
-                        .world
-                        .body_contacts(id)
-                        .is_ok_and(|contacts| !contacts.is_empty())
-                {
-                    return Some((id, true));
+
+                if let Some(projectile) = self.world.ballistic_sphere_by_id(id) {
+                    let position = projectile.position();
+                    let out_of_bounds = position.x.abs() > 1_200
+                        || position.y < -300
+                        || position.y > 900
+                        || position.z.abs() > 1_200;
+                    return out_of_bounds.then_some((id, 2_u8));
                 }
-                None
+
+                // Analytic impact-retire removes the sphere inside the event timeline and records the
+                // lifecycle counter in the step report. Only the demo membership list remains to prune.
+                Some((id, 0_u8))
             })
             .collect::<Vec<_>>();
-        for (id, retired_on_contact) in stale {
-            if self.world.remove_box(id).is_some() {
-                if retired_on_contact {
-                    self.projectiles_retired_on_contact =
-                        self.projectiles_retired_on_contact.saturating_add(1);
-                } else {
+
+        for (id, reason) in stale {
+            match reason {
+                1 => {
+                    if self.world.remove_box(id).is_some() {
+                        self.projectiles_retired_on_contact =
+                            self.projectiles_retired_on_contact.saturating_add(1);
+                    }
+                }
+                2 if self.world.remove_box(id).is_some()
+                    || self.world.remove_ballistic_sphere(id).is_some() =>
+                {
                     self.projectiles_retired_out_of_bounds =
                         self.projectiles_retired_out_of_bounds.saturating_add(1);
                 }
+                _ => {}
             }
             self.projectile_ids.retain(|candidate| *candidate != id);
         }
     }
 
     fn body_count(&self) -> usize {
-        self.world.boxes().count()
+        self.world
+            .boxes()
+            .count()
+            .saturating_add(self.world.ballistic_sphere_count())
     }
 
     fn active_projectile_count(&self) -> usize {
         self.projectile_ids
             .iter()
             .copied()
-            .filter(|id| self.world.box_by_id(*id).is_some() && !self.world.is_sleeping(*id))
+            .filter(|id| {
+                self.world.ballistic_sphere_by_id(*id).is_some()
+                    || (self.world.box_by_id(*id).is_some() && !self.world.is_sleeping(*id))
+            })
             .count()
     }
 
@@ -448,10 +485,35 @@ fn world_error_detail(error: RotatingWorldError3d) -> i32 {
         RotatingWorldError3d::PersistentTailMotionUnsafe(_) => 602,
         RotatingWorldError3d::PersistentTailArithmeticOverflow(_) => 603,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::EventLimit(_)) => 611,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::BallisticEventLimit(_)) => 616,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::RatioTooLarge) => 612,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::InvalidRemainder(_)) => 613,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Frontier(_)) => 614,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Response(_)) => 615,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::DuplicateBody(_),
+        )) => 651,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::MissingProjectile(_),
+        )) => 652,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::MissingTarget(_),
+        )) => 653,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::FreeFlight(_),
+        )) => 654,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::Ballistic(BallisticSphereError3d::ArithmeticOverflow),
+        )) => 655,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::Ballistic(_),
+        )) => 656,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::Angular(_),
+        )) => 657,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Ballistic(
+            BallisticTimelineError3d::ArithmeticOverflow,
+        )) => 658,
         RotatingWorldError3d::Repeated(_) => 610,
         RotatingWorldError3d::FreeFlight(_) => 620,
         RotatingWorldError3d::Contact(_) => 630,
@@ -718,12 +780,14 @@ pub extern "C" fn sandbox_body_orientation_w(index: u32) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_last_collision_events() -> u32 {
     with_sandbox(|sandbox| {
-        u32::try_from(
-            sandbox
-                .last_rotating_events
-                .saturating_add(sandbox.last_tail_contacts),
+        let rigid = sandbox
+            .last_rotating_events
+            .saturating_add(sandbox.last_tail_contacts);
+        saturating_u32(
+            u64::try_from(rigid)
+                .unwrap_or(u64::MAX)
+                .saturating_add(sandbox.last_step_stats.ballistic_impacts),
         )
-        .unwrap_or(u32::MAX)
     })
 }
 
@@ -845,6 +909,53 @@ pub extern "C" fn sandbox_last_stabilization_active_bodies() -> u32 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_sphere_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.ballistic_sphere_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_query_rounds() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_query_rounds))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_target_bound_checks() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_target_bound_checks))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_broad_phase_candidates() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_broad_phase_candidates))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_toi_tests() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_toi_tests))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_feature_tests() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_feature_tests))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_motion_samples() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_motion_samples))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_impacts() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_impacts))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_ballistic_retired() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.ballistic_retired))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sandbox_total_collisions() -> u32 {
     with_sandbox(|sandbox| sandbox.total_collisions)
 }
@@ -870,8 +981,8 @@ pub extern "C" fn sandbox_error_detail() -> i32 {
 #[cfg(test)]
 mod tests {
     use physics_engine::{
-        BodyId, ContactPersistence3d, Material, Orientation3d, RepeatedRotatingEventError3d,
-        RigidBody, RotatingWorldError3d, Vec3i,
+        BodyId, ContactPersistence3d, Orientation3d, RepeatedRotatingEventError3d, RigidBody,
+        RotatingWorldError3d, Vec3i,
     };
 
     use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
@@ -1062,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn sphere_projectile_is_rotation_free_and_transient() {
+    fn sphere_projectile_uses_dedicated_ballistic_state() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Sphere as i32),
@@ -1071,24 +1182,23 @@ mod tests {
         assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
         let projectile = sandbox.shoot(0, 0, -96);
         assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+
+        assert!(
+            sandbox.world.box_by_id(id).is_none(),
+            "analytic sphere must not enter the rotating rigid-body collection"
+        );
         let projectile = sandbox
             .world
-            .box_by_id(BodyId(projectile as u64))
-            .expect("spawned sphere projectile");
-        assert_eq!(projectile.body().half_extents(), Vec3i::new(3, 3, 3));
-        assert!(projectile.rotation_locked());
-        assert_eq!(
-            projectile.contact_persistence(),
-            ContactPersistence3d::Transient
-        );
-        assert_eq!(
-            projectile.sleep_mode(),
-            physics_engine::SleepMode3d::Aggressive
-        );
+            .ballistic_sphere_by_id(id)
+            .expect("spawned analytic sphere projectile");
+        assert_eq!(projectile.radius(), 3);
+        assert_eq!(projectile.mass_units(), 1);
+        assert_eq!(sandbox.active_projectile_count(), 1);
     }
 
     #[test]
-    fn settled_sphere_stays_retained_but_leaves_active_projectile_population() {
+    fn analytic_sphere_stress_lane_completes_without_exhausting_event_budget() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
         assert_eq!(
@@ -1096,48 +1206,64 @@ mod tests {
             0
         );
 
-        let id = BodyId(super::PROJECTILE_ID_START);
-        sandbox
-            .world
-            .add_box(
-                rotating_box(
-                    RigidBody::dynamic(
-                        id,
-                        Vec3i::new(400, 3, 400),
-                        Vec3i::ZERO,
-                        Vec3i::new(3, 3, 3),
-                    )
-                    .with_material(Material::new(0)),
-                )
-                .with_rotation_locked()
-                .with_transient_contacts()
-                .with_aggressive_sleep(),
-            )
-            .expect("add resting sphere");
-        sandbox.projectile_ids.push(id);
-
-        assert_eq!(sandbox.projectile_ids.len(), 1);
-        assert_eq!(sandbox.active_projectile_count(), 1);
-
-        for _ in 0..30 {
-            assert_eq!(sandbox.step(0, 0, false), 0);
+        for tick in 0..240 {
+            if tick < 150 && tick % 5 == 0 {
+                let shot_index = tick / 5;
+                let projectile_x = if shot_index % 2 == 0 { 38 } else { -38 };
+                let projectile_y = if shot_index % 3 == 2 { -7 } else { 0 };
+                assert!(
+                    sandbox.shoot(projectile_x, projectile_y, -88) >= 0,
+                    "projectile creation failed at tick {tick}"
+                );
+            }
+            let (x, z) = if tick >= 80 { (271, -321) } else { (0, -420) };
+            let before = sandbox
+                .projectile_ids
+                .first()
+                .and_then(|id| sandbox.world.ballistic_sphere_by_id(*id))
+                .copied();
+            let result = sandbox.step_velocity(x, z, false);
+            let after = sandbox
+                .projectile_ids
+                .first()
+                .and_then(|id| sandbox.world.ballistic_sphere_by_id(*id))
+                .copied();
+            let crates = (100_u64..=105)
+                .filter_map(|id| {
+                    sandbox.world.box_by_id(BodyId(id)).map(|rigid_box| {
+                        (
+                            id,
+                            rigid_box.body().position(),
+                            rigid_box.body().velocity(),
+                            rigid_box.angular(),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                result,
+                0,
+                "sphere stress lane failed at tick {tick} with detail {}, {} ballistic spheres live; before={before:?}; after={after:?}; crates={crates:?}",
+                sandbox.error_detail,
+                sandbox.world.ballistic_sphere_count(),
+            );
         }
+    }
 
+    #[test]
+    fn analytic_sphere_does_not_enter_rigid_sleep_bookkeeping() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
         assert_eq!(
-            sandbox.projectile_ids.len(),
-            1,
-            "settled projectile remains retained for rendering and later wake-up"
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
         );
-        assert!(
-            sandbox.world.box_by_id(id).is_some(),
-            "settled projectile remains in the authoritative world"
-        );
-        assert!(sandbox.world.is_sleeping(id));
-        assert_eq!(
-            sandbox.active_projectile_count(),
-            0,
-            "settled projectile must no longer contribute to the active solver population"
-        );
+        let projectile = sandbox.shoot(0, 0, -96);
+        assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+
+        assert!(sandbox.world.ballistic_sphere_by_id(id).is_some());
+        assert!(!sandbox.world.is_sleeping(id));
+        assert_eq!(sandbox.active_projectile_count(), 1);
     }
 
     #[test]
@@ -1204,12 +1330,43 @@ mod tests {
     #[test]
     fn projectile_type_cannot_change_while_projectiles_are_live() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
         assert!(sandbox.shoot(0, 0, -96) >= 0);
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Arrow as i32),
             -1
         );
-        assert_eq!(sandbox.projectile_type, None);
+        assert_eq!(sandbox.projectile_type, Some(ProjectileType::Sphere));
+    }
+
+    #[test]
+    fn analytic_sphere_does_not_tunnel_through_thin_target() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        let projectile = sandbox.shoot(0, 0, -96);
+        assert!(projectile >= 0);
+        let id = BodyId(projectile as u64);
+
+        for _ in 0..7 {
+            assert_eq!(sandbox.step(0, 0, false), 0);
+        }
+
+        let projectile = sandbox
+            .world
+            .ballistic_sphere_by_id(id)
+            .expect("physical sphere remains after bouncing from the thin target");
+        assert!(
+            projectile.position().z > -190,
+            "analytic sphere tunneled through the thin target: {:?}",
+            projectile.position()
+        );
+        assert!(sandbox.last_step_stats.ballistic_query_rounds > 0);
     }
 
     #[test]

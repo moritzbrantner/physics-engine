@@ -187,7 +187,7 @@ async function measure(path) {
 }
 const result = {
   workload: "sandbox-projectiles-v5",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v5 adds a deterministic 30-shot walking stress trace while keeping exact within-build replay determinism and scenario/body-count validity, while baseline/head replay differences are recorded rather than rejected so deliberate deterministic physics approximations can be evaluated by behavior and performance evidence.",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v5 adds a deterministic 30-shot walking stress trace while keeping exact within-build replay determinism and scenario validity. Baseline/head replay and final body-count differences are recorded for the analytic sphere stress lane because projectile representation and out-of-bounds retirement are deliberately different.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
@@ -200,12 +200,17 @@ try {
       name: entry.name,
       trials: entry.trials.map((trial, trialIndex) => {
         const baseline = result.baseline.cases[index].trials[trialIndex];
-        if (trial.body_count !== baseline.body_count) {
+        const bodyCountMatches = trial.body_count === baseline.body_count;
+        const representationMayDiffer = entry.name === "thirty-shots-walking";
+        if (!representationMayDiffer && !bodyCountMatches) {
           throw new Error(`baseline/head body-count mismatch for ${entry.name}`);
         }
         return {
           replay_matches: trial.replay_sha256 === baseline.replay_sha256,
-          body_count_matches: true,
+          body_count_matches: bodyCountMatches,
+          head_body_count: trial.body_count,
+          baseline_body_count: baseline.body_count,
+          body_count_delta: trial.body_count - baseline.body_count,
           event_sum_delta: trial.event_sum - baseline.event_sum,
           mean_time_ratio: ratio(trial.steps.mean_ms, baseline.steps.mean_ms),
           p95_time_ratio: ratio(trial.steps.p95_ms, baseline.steps.p95_ms),

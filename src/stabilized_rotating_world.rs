@@ -4,13 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d};
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind,
-    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d, InteractionPolicy3d,
-    MotionAuthority3d, Orientation3d, OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingContactResponseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d, SolverParticipation3d, Vec3i,
-    WakePropagation3d, obb_contact_seed, obb_response::resolve_obb_contact,
-    rigid_box_free_flight_sweep_bounds, rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId,
+    BodyKind, InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d,
+    InteractionPolicy3d, MotionAuthority3d, Orientation3d, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d,
+    SolverParticipation3d, Vec3i, WakePropagation3d, obb_contact_seed,
+    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
+    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
@@ -213,6 +214,33 @@ impl RotatingWorld3d {
         self.sleep_stable_time_q64.remove(&id);
         self.wake_all_sleepers();
         Some(removed)
+    }
+
+    pub fn add_ballistic_sphere(
+        &mut self,
+        projectile: BallisticSphere3d,
+        retire_on_contact: bool,
+    ) -> Result<(), RotatingWorldError3d> {
+        self.inner
+            .add_ballistic_sphere(projectile, retire_on_contact)
+    }
+
+    pub fn remove_ballistic_sphere(&mut self, id: BodyId) -> Option<BallisticSphere3d> {
+        self.inner.remove_ballistic_sphere(id)
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_by_id(&self, id: BodyId) -> Option<&BallisticSphere3d> {
+        self.inner.ballistic_sphere_by_id(id)
+    }
+
+    pub fn ballistic_spheres(&self) -> impl Iterator<Item = &BallisticSphere3d> {
+        self.inner.ballistic_spheres()
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_count(&self) -> usize {
+        self.inner.ballistic_sphere_count()
     }
 
     #[must_use]
