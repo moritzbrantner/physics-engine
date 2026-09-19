@@ -358,7 +358,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
     let mut remaining = config.search.free_flight;
     let mut events = Vec::new();
-    let mut event_count = 0_usize;
+    // Rigid sampled contacts and analytic projectile impacts are independent event lanes.
+    // Keep the historical rigid-event budget intact instead of making projectile traffic consume it,
+    // while still bounding the ballistic lane deterministically.
+    let mut rigid_event_count = 0_usize;
+    let mut ballistic_event_count = 0_usize;
     let mut rigid_event_seen = false;
     response_scratch.ensure_body_index(boxes);
 
@@ -404,11 +408,10 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             }
         };
 
-        if event_count >= usize::from(config.max_events) {
-            return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
-        }
-
         if choose_rigid {
+            if rigid_event_count >= usize::from(config.max_events) {
+                return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
+            }
             let hit = rigid_hit.expect("selected rigid event exists");
             advance_state_to_time(boxes, search.free_flight, hit.time)?;
             advance_ballistic_spheres_to_time(projectiles, remaining, hit.time, ballistic_work)?;
@@ -446,7 +449,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 response_passes,
             });
             rigid_event_seen = true;
+            rigid_event_count = rigid_event_count.saturating_add(1);
         } else {
+            if ballistic_event_count >= usize::from(config.max_events) {
+                return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
+            }
             let frontier = ballistic_frontier.expect("selected ballistic event exists");
             advance_state_to_time(boxes, remaining, frontier.time)?;
             advance_ballistic_spheres_to_time(
@@ -477,8 +484,8 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                     &mut work,
                 )?;
             }
+            ballistic_event_count = ballistic_event_count.saturating_add(1);
         }
-        event_count = event_count.saturating_add(1);
     }
 
     work.response_scratch_index_rebuilds = response_scratch
