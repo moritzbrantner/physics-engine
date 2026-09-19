@@ -17,6 +17,10 @@ const downloadPerformanceLogButton = document.querySelector("#download-performan
 const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
 const projectileHud = document.querySelector("#projectile-hud");
+const scenarioControl = document.querySelector("#lab-scenario");
+const viewModeButton = document.querySelector("#view-mode");
+const scenarioDescription = document.querySelector("#scenario-description");
+const workFunnelRows = document.querySelector("#work-funnel-rows");
 
 const FIXED_STEP_MS = 1000 / 60;
 const MAX_CATCH_UP_STEPS = 8;
@@ -31,6 +35,63 @@ const FAR_PLANE = 1400;
 const ORIENTATION_SCALE = 1 << 30;
 const RENDER_SNAPSHOT_STRIDE = 11;
 const RECENT_PHYSICS_STEP_WINDOW = 60;
+const SCENARIOS = new Map([
+  [
+    "playground",
+    {
+      id: 0,
+      description:
+        "General interaction playground with stacks, steps, and the thin-wall projectile target.",
+    },
+  ],
+  [
+    "projectile-storm",
+    {
+      id: 1,
+      description:
+        "Deterministic projectile stream against dynamic targets; compare Sphere, Arrow, and Rigid lanes with the work funnel.",
+    },
+  ],
+  [
+    "tower",
+    {
+      id: 2,
+      description: "A compact resting stack for persistent-contact and event-churn inspection.",
+    },
+  ],
+  [
+    "debris-rain",
+    {
+      id: 3,
+      description:
+        "Small aggressive-sleep bodies demonstrate how settled debris leaves active solver work.",
+    },
+  ],
+  [
+    "kinematic-crusher",
+    {
+      id: 4,
+      description:
+        "An externally driven crusher pushes physics-owned targets without accepting reciprocal solver mutation.",
+    },
+  ],
+  [
+    "sensor-course",
+    {
+      id: 5,
+      description:
+        "Overlap-only sensor volumes remain visible while bypassing rigid collision solving.",
+    },
+  ],
+  [
+    "ccd-gauntlet",
+    {
+      id: 6,
+      description:
+        "Multiple very thin barriers make continuous collision detection visible under high-speed projectiles.",
+    },
+  ],
+]);
 const keys = new Set();
 const characterModeControl = document.querySelector("#character-mode");
 const uprightCratesControl = document.querySelector("#upright-crates");
@@ -46,17 +107,47 @@ const characterParameters = new URLSearchParams(window.location.search);
 characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
 uprightCratesControl.checked = characterParameters.get("crates") !== "free";
 fixedGeometryControl.value = characterParameters.get("bake") === "runtime" ? "0" : "1";
+scenarioControl.value = SCENARIOS.has(characterParameters.get("scenario"))
+  ? characterParameters.get("scenario")
+  : "playground";
+let showcaseMode = characterParameters.get("view") === "showcase";
+
+function selectedScenario() {
+  return SCENARIOS.get(scenarioControl.value) ?? SCENARIOS.get("playground");
+}
+
+function syncViewMode() {
+  document.body.classList.toggle("showcase-mode", showcaseMode);
+  viewModeButton.textContent = showcaseMode ? "Debug" : "Showcase";
+  viewModeButton.setAttribute("aria-pressed", String(showcaseMode));
+  scenarioDescription.textContent = selectedScenario().description;
+}
+
 function resetInteractionOptions() {
   const url = new URL(window.location.href);
   url.searchParams.set("character", characterModeControl.value === "0" ? "physical" : "linear");
   url.searchParams.set("crates", uprightCratesControl.checked ? "upright" : "free");
   url.searchParams.set("bake", fixedGeometryControl.value === "1" ? "load" : "runtime");
+  url.searchParams.set("scenario", scenarioControl.value);
+  url.searchParams.set("view", showcaseMode ? "showcase" : "debug");
   window.history.replaceState(null, "", url);
   if (engine) reset();
 }
 characterModeControl.addEventListener("change", resetInteractionOptions);
 uprightCratesControl.addEventListener("change", resetInteractionOptions);
 fixedGeometryControl.addEventListener("change", resetInteractionOptions);
+scenarioControl.addEventListener("change", () => {
+  resetInteractionOptions();
+  syncViewMode();
+});
+viewModeButton.addEventListener("click", () => {
+  showcaseMode = !showcaseMode;
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", showcaseMode ? "showcase" : "debug");
+  window.history.replaceState(null, "", url);
+  syncViewMode();
+  renderDirty = true;
+});
 
 let engine = null;
 let renderer = null;
@@ -77,6 +168,8 @@ let buildProvenance = null;
 let pendingPhysicsStepMs = [];
 let pendingPhysicsStepStats = [];
 let recentPhysicsStepMs = [];
+let scenarioTick = 0;
+let workFunnelSignature = "";
 
 function performanceEnvironment() {
   return {
@@ -103,6 +196,8 @@ function performanceScenario() {
     collision_pairs: query.get("collisions") ?? "all",
     projectile_impact: query.get("projectile-impact") ?? "physical",
     projectile_type: query.get("projectile-type") ?? "sphere",
+    lab_scenario: query.get("scenario") ?? "playground",
+    view_mode: query.get("view") ?? "debug",
   };
 }
 
@@ -184,14 +279,17 @@ function selectProjectileType(projectileType) {
 }
 
 function reset() {
+  const scenario = selectedScenario();
   if (
-    engine.sandbox_reset_with_baking_options(
+    typeof engine.sandbox_reset_with_lab_options !== "function" ||
+    engine.sandbox_reset_with_lab_options(
       Number(characterModeControl.value),
       Number(uprightCratesControl.checked),
       Number(fixedGeometryControl.value),
+      scenario.id,
     ) !== 0
   ) {
-    throw new Error("Unable to initialize the selected physics comparison options");
+    throw new Error("Unable to initialize the selected physics lab scenario");
   }
   const projectileType = new Map([
     ["sphere", 0],
@@ -217,8 +315,11 @@ function reset() {
   pendingPhysicsStepMs = [];
   pendingPhysicsStepStats = [];
   recentPhysicsStepMs = [];
+  scenarioTick = 0;
+  workFunnelSignature = "";
   pauseButton.textContent = "Pause";
   syncProjectileHud();
+  syncViewMode();
   performanceRecorder.recordMarker("reset", performanceScenario());
   status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
@@ -236,9 +337,14 @@ function movementVelocity() {
   return [Math.round(moveX), Math.round(moveZ)];
 }
 
+function scenarioAutomationActive() {
+  return scenarioControl.value === "projectile-storm" && scenarioTick < 180;
+}
+
 function simulationInputActive() {
   return (
     jumpQueued ||
+    scenarioAutomationActive() ||
     keys.has("KeyW") ||
     keys.has("KeyA") ||
     keys.has("KeyS") ||
@@ -253,6 +359,12 @@ function readPhysicsCounter(name) {
 
 function lastPhysicsStepStats() {
   return {
+    solver_body_count: readPhysicsCounter("sandbox_last_solver_body_count"),
+    solver_bypassed_body_count: readPhysicsCounter("sandbox_last_solver_bypassed_body_count"),
+    response_authority_body_count: readPhysicsCounter("sandbox_last_response_authority_body_count"),
+    response_authority_pair_rejections: readPhysicsCounter(
+      "sandbox_last_response_authority_pair_rejections",
+    ),
     sampled_events: readPhysicsCounter("sandbox_last_sampled_events"),
     tail_contacts: readPhysicsCounter("sandbox_last_tail_contacts"),
     tail_slices: readPhysicsCounter("sandbox_last_tail_slices"),
@@ -291,6 +403,13 @@ function lastPhysicsStepStats() {
 }
 
 function simulationStep() {
+  if (scenarioAutomationActive() && scenarioTick % 10 === 0) {
+    const shotIndex = Math.floor(scenarioTick / 10);
+    const velocityX = shotIndex % 2 === 0 ? 38 : -38;
+    const velocityY = shotIndex % 3 === 2 ? -7 : 0;
+    shootVector(velocityX, velocityY, -88, "scenario-projectile");
+  }
+
   const [velocityX, velocityZ] = movementVelocity();
   const started = performance.now();
   const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
@@ -312,8 +431,20 @@ function simulationStep() {
     performanceRecorder.recordMarker("physics-error", { error, detail });
     return;
   }
+  scenarioTick += 1;
   quiescent =
     typeof engine.sandbox_is_quiescent === "function" && engine.sandbox_is_quiescent() === 1;
+}
+
+function shootVector(velocityX, velocityY, velocityZ, marker = "shoot") {
+  if (engine.sandbox_shoot(velocityX, velocityY, velocityZ) < 0) {
+    status.textContent = "The engine rejected projectile creation.";
+    return false;
+  }
+  quiescent = false;
+  renderDirty = true;
+  performanceRecorder.recordMarker(marker);
+  return true;
 }
 
 function shoot() {
@@ -321,13 +452,7 @@ function shoot() {
   const velocityX = Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED);
   const velocityY = Math.round(-Math.sin(pitch) * PROJECTILE_SPEED);
   const velocityZ = Math.round(-Math.cos(yaw) * cosPitch * PROJECTILE_SPEED);
-  if (engine.sandbox_shoot(velocityX, velocityY, velocityZ) < 0) {
-    status.textContent = "The engine rejected projectile creation.";
-    return;
-  }
-  quiescent = false;
-  renderDirty = true;
-  performanceRecorder.recordMarker("shoot");
+  shootVector(velocityX, velocityY, velocityZ);
 }
 
 function normalizeQuaternion(raw) {
@@ -432,8 +557,9 @@ function boxVertices(body) {
 }
 
 function materialFor(body) {
-  if (body.role === 3 || body.role === 4) return 4;
-  if (body.role === 2) return 3;
+  if (body.role === 3 || body.role === 4 || body.role === 6) return 4;
+  if (body.role === 2 || body.role === 8) return 3;
+  if (body.role === 7) return 1;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
   if (body.position[1] < 0 && hx >= 400 && hz >= 400) return 0;
@@ -575,6 +701,36 @@ function ensureCrosshair() {
   viewportShell.append(crosshair);
 }
 
+function syncWorkFunnel() {
+  if (showcaseMode) return;
+  const stats = lastPhysicsStepStats();
+  const rows = [
+    ["solver bodies", stats.solver_body_count],
+    ["solver bypassed", stats.solver_bypassed_body_count],
+    ["response authority", stats.response_authority_body_count],
+    ["pair rejects", stats.response_authority_pair_rejections],
+    ["broad-phase queries", stats.broad_phase_queries],
+    ["partial queries", stats.broad_phase_partial_queries],
+    ["ballistic TOI", stats.ballistic_toi_tests],
+    ["ballistic impacts", stats.ballistic_impacts],
+  ];
+  const signature = JSON.stringify(rows);
+  if (signature === workFunnelSignature) return;
+  workFunnelSignature = signature;
+  workFunnelRows.replaceChildren(
+    ...rows.map(([label, value]) => {
+      const row = document.createElement("div");
+      row.className = "work-funnel-row";
+      const name = document.createElement("span");
+      name.textContent = label;
+      const count = document.createElement("strong");
+      count.textContent = value == null ? "—" : String(value);
+      row.append(name, count);
+      return row;
+    }),
+  );
+}
+
 function render() {
   const resized = resizeCanvas();
   if (!renderDirty && !resized) return false;
@@ -610,6 +766,7 @@ function render() {
       : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
   const physicsTiming =
     averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
+  syncWorkFunnel();
   debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
   return true;
@@ -817,7 +974,7 @@ try {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
   if (
-    typeof engine.sandbox_reset_with_baking_options !== "function" ||
+    typeof engine.sandbox_reset_with_lab_options !== "function" ||
     typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
     typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
   ) {
@@ -827,6 +984,8 @@ try {
   characterModeControl.disabled = false;
   uprightCratesControl.disabled = false;
   fixedGeometryControl.disabled = false;
+  scenarioControl.disabled = false;
+  viewModeButton.disabled = false;
   startPerformanceLogButton.disabled = false;
   reset();
   requestAnimationFrame(frame);
