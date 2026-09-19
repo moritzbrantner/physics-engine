@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{collections::BTreeSet, error::Error, fmt};
 
 use crate::{
     AngularError3d, BodyId, CollisionLayers3d, Material, ORIENTATION_SCALE, Orientation3d,
@@ -339,6 +339,24 @@ impl BallisticSphereStep3d<'_> {
         sphere: BallisticSphere3d,
         stats: &mut BallisticSphereQueryStats3d,
     ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
+        self.earliest_hit_filtered(sphere, None, stats)
+    }
+
+    pub(crate) fn earliest_hit_excluding_pairs(
+        &self,
+        sphere: BallisticSphere3d,
+        excluded_pairs: &BTreeSet<(BodyId, BodyId)>,
+        stats: &mut BallisticSphereQueryStats3d,
+    ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
+        self.earliest_hit_filtered(sphere, Some(excluded_pairs), stats)
+    }
+
+    fn earliest_hit_filtered(
+        &self,
+        sphere: BallisticSphere3d,
+        excluded_pairs: Option<&BTreeSet<(BodyId, BodyId)>>,
+        stats: &mut BallisticSphereQueryStats3d,
+    ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
         if self.timestep_numerator == 0 {
             return Ok(None);
         }
@@ -356,6 +374,7 @@ impl BallisticSphereStep3d<'_> {
             .zip(self.prepared_targets.iter().copied())
         {
             if target.id == sphere.id
+                || excluded_pairs.is_some_and(|pairs| pairs.contains(&(sphere.id, target.id)))
                 || !sphere
                     .collision_layers
                     .collides_with(target.collision_layers)
