@@ -9,7 +9,7 @@ import { buildCanonicalPerformanceEvidence } from "./adapt-performance-evidence.
 const GENERATED_FILES = new Set(["README.md", "manifest.json", "provenance.json", "SHA256SUMS"]);
 const CONTRACT = {
   repository: "https://github.com/moritzbrantner/performance-evidence",
-  revision: "294c136eccb78c0614a42f844b02ea306f0c8f2b",
+  revision: "068d880a1b76f41e06548c557af0a7bf8c8057eb",
   schema_version: "1.0.0",
 };
 const SCRIPT_ROOT = dirname(fileURLToPath(import.meta.url));
