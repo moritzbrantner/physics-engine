@@ -485,6 +485,7 @@ fn world_error_detail(error: RotatingWorldError3d) -> i32 {
         RotatingWorldError3d::PersistentTailMotionUnsafe(_) => 602,
         RotatingWorldError3d::PersistentTailArithmeticOverflow(_) => 603,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::EventLimit(_)) => 611,
+        RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::BallisticEventLimit(_)) => 616,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::RatioTooLarge) => 612,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::InvalidRemainder(_)) => 613,
         RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Frontier(_)) => 614,
