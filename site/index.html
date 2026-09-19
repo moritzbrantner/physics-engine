@@ -23,6 +23,13 @@
             <span data-projectile-shortcut="arrow"><kbd>2</kbd> Arrow</span>
             <span data-projectile-shortcut="rigid"><kbd>3</kbd> Rigid</span>
           </div>
+          <aside id="work-funnel" class="work-funnel" aria-label="Physics work funnel">
+            <div class="work-funnel-heading">
+              <span class="eyebrow">Engine work</span>
+              <strong>Work funnel</strong>
+            </div>
+            <div id="work-funnel-rows" class="work-funnel-rows"></div>
+          </aside>
           <div class="help" aria-hidden="true">
             WASD move · Space jump · Mouse / arrows look · Click / F shoot · 1/2/3 projectile · R reset · P pause · N step
           </div>
@@ -34,6 +41,19 @@
             <span class="topbar-title">Interactive sandbox</span>
           </div>
           <div class="actions" aria-label="Simulation controls">
+            <label class="lab-select" for="lab-scenario">
+              <span>Scenario</span>
+              <select id="lab-scenario">
+                <option value="playground">Playground</option>
+                <option value="projectile-storm">Projectile storm</option>
+                <option value="tower">Tower</option>
+                <option value="debris-rain">Debris rain</option>
+                <option value="kinematic-crusher">Kinematic crusher</option>
+                <option value="sensor-course">Sensor course</option>
+                <option value="ccd-gauntlet">CCD gauntlet</option>
+              </select>
+            </label>
+            <button id="view-mode" type="button" aria-pressed="false">Showcase</button>
             <button id="reset" type="button">Reset</button>
             <button id="pause" type="button">Pause</button>
             <button id="single-step" type="button">Step</button>
@@ -45,6 +65,7 @@
         </header>
 
         <div class="stage-status">
+          <p id="scenario-description" class="scenario-description" aria-live="polite"></p>
           <p id="debug" class="debug" aria-live="polite"></p>
           <p id="status" class="status" aria-live="polite">Loading settings and the Rust physics sandbox…</p>
         </div>
