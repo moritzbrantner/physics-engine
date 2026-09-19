@@ -882,19 +882,25 @@ fn scale_remaining_time(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, hint::black_box, time::Instant};
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        hint::black_box,
+        time::Instant,
+    };
 
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, MATERIAL_SCALE, Material, Orientation3d,
-        RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BallisticSphere3d, BodyId, MATERIAL_SCALE, Material,
+        Orientation3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d,
+        RotatingContactSearchConfig3d, Vec3i,
         rotating_contact_response::RotatingContactResponseScratch3d,
     };
 
     use super::{
-        RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RotatingBroadPhase3d,
-        advance_repeated_rotating_events, advance_repeated_rotating_events_with_broad_phase,
-        current_contact_frontier, refresh_current_contacts_for_changed_bodies,
-        scale_remaining_time,
+        BallisticStepWork3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
+        RotatingBroadPhase3d, advance_repeated_rotating_events,
+        advance_repeated_rotating_events_with_ballistics,
+        advance_repeated_rotating_events_with_broad_phase, current_contact_frontier,
+        refresh_current_contacts_for_changed_bodies, scale_remaining_time,
     };
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i, material: Material) -> RigidBox3d {
@@ -1195,6 +1201,47 @@ mod tests {
             advance_repeated_rotating_events(&boxes, config(1)),
             Err(RepeatedRotatingEventError3d::EventLimit(1))
         );
+    }
+
+    #[test]
+    fn ballistic_impact_does_not_consume_the_rigid_event_budget() {
+        let material = Material::new(0);
+        let mut boxes = vec![
+            dynamic(1, Vec3i::ZERO, Vec3i::new(100, 0, 0), material),
+            fixed(2, Vec3i::new(20, 0, 0), material),
+            fixed(3, Vec3i::new(40, 100, 0), material),
+        ];
+        let projectile_id = BodyId(10);
+        let mut projectiles = vec![
+            BallisticSphere3d::new(
+                projectile_id,
+                Vec3i::new(0, 100, 0),
+                Vec3i::new(100, 0, 0),
+                1,
+                1,
+            )
+            .expect("valid ballistic sphere"),
+        ];
+        let retire_on_contact = BTreeSet::from([projectile_id]);
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut response_scratch = RotatingContactResponseScratch3d::default();
+        let mut ballistic_work = BallisticStepWork3d::default();
+
+        let progress = advance_repeated_rotating_events_with_ballistics(
+            &mut boxes,
+            &mut projectiles,
+            &retire_on_contact,
+            config(1),
+            &mut broad_phase,
+            &mut response_scratch,
+            &mut ballistic_work,
+        )
+        .expect("one rigid event and one ballistic impact use independent budgets");
+
+        assert_eq!(progress.events.len(), 1);
+        assert!(projectiles.is_empty());
+        assert_eq!(ballistic_work.impacts, 1);
+        assert_eq!(ballistic_work.retired, 1);
     }
 
     #[test]
