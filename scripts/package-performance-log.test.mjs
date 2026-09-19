@@ -46,7 +46,7 @@ test("bundle records canonical evidence, profiles and raw browser evidence", asy
   assert.equal(manifest.schema_version, 2);
   assert.equal(
     manifest.performance_evidence_contract.revision,
-    "294c136eccb78c0614a42f844b02ea306f0c8f2b",
+    "068d880a1b76f41e06548c557af0a7bf8c8057eb",
   );
   assert.deepEqual(manifest.canonical_evidence, ["canonical/browser/session.evidence.json"]);
   assert.deepEqual(manifest.measurement_profiles, ["profiles/physics-engine-sandbox-v1.json"]);
