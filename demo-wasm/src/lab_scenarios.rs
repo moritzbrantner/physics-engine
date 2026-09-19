@@ -57,6 +57,10 @@ pub(crate) fn apply(
     Ok(())
 }
 
+pub(crate) const fn requires_continuous_step(scenario: SandboxScenario) -> bool {
+    matches!(scenario, SandboxScenario::KinematicCrusher)
+}
+
 pub(crate) fn drive(
     world: &mut RotatingWorld3d,
     scenario: SandboxScenario,
