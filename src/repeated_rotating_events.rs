@@ -88,6 +88,7 @@ pub(crate) struct RepeatedRotatingEventProgress3d {
 pub enum RepeatedRotatingEventError3d {
     ZeroEventLimit,
     EventLimit(u16),
+    BallisticEventLimit(u16),
     NegativeTimestepNumerator(i128),
     NonPositiveTimestepDenominator(i128),
     InvalidRemainder(SampledContactTime3d),
@@ -106,7 +107,11 @@ impl fmt::Display for RepeatedRotatingEventError3d {
             ),
             Self::EventLimit(limit) => write!(
                 formatter,
-                "repeated rotating event advance reached its {limit}-event limit while another sampled event remained"
+                "repeated rotating event advance reached its {limit}-event limit while another sampled rigid event remained"
+            ),
+            Self::BallisticEventLimit(limit) => write!(
+                formatter,
+                "repeated rotating ballistic advance reached its {limit}-event limit while another analytic impact remained"
             ),
             Self::NegativeTimestepNumerator(value) => write!(
                 formatter,
@@ -452,7 +457,9 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             rigid_event_count = rigid_event_count.saturating_add(1);
         } else {
             if ballistic_event_count >= usize::from(config.max_events) {
-                return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
+                return Err(RepeatedRotatingEventError3d::BallisticEventLimit(
+                    config.max_events,
+                ));
             }
             let frontier = ballistic_frontier.expect("selected ballistic event exists");
             advance_state_to_time(boxes, remaining, frontier.time)?;
