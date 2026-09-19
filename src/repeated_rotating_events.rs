@@ -347,6 +347,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     boxes: &mut [RigidBox3d],
     projectiles: &mut Vec<BallisticSphere3d>,
