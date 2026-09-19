@@ -155,6 +155,83 @@ canvas:focus-visible {
   background: rgb(255 255 255 / 14%);
 }
 
+.lab-select {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.lab-select span {
+  opacity: 0.72;
+}
+
+.lab-select select {
+  min-width: 148px;
+  border-color: rgb(255 255 255 / 22%);
+  background: rgb(255 255 255 / 6%);
+  color: inherit;
+}
+
+.work-funnel {
+  position: absolute;
+  z-index: 9;
+  top: 82px;
+  right: 14px;
+  width: min(230px, calc(100% - 28px));
+  padding: 10px 12px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 10px;
+  background: rgb(6 10 15 / 78%);
+  color: #f0f6fc;
+  font-size: 0.76rem;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+}
+
+.work-funnel-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+}
+
+.work-funnel-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.work-funnel-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.work-funnel-row span {
+  opacity: 0.72;
+}
+
+.work-funnel-row strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.scenario-description {
+  margin: 0 0 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.74rem;
+  opacity: 0.78;
+}
+
+.showcase-mode .work-funnel,
+.showcase-mode .help,
+.showcase-mode .stage-status {
+  display: none;
+}
+
 .projectile-hud {
   position: absolute;
   z-index: 9;
@@ -510,6 +587,21 @@ canvas:focus-visible {
 
   .topbar .actions button {
     flex: 1 1 auto;
+  }
+
+  .lab-select {
+    flex: 1 1 100%;
+  }
+
+  .lab-select select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .work-funnel {
+    top: 108px;
+    right: 10px;
+    width: min(210px, calc(100% - 20px));
   }
 
   .help {
