@@ -667,6 +667,7 @@ impl RotatingWorld3d {
         let solver_body_count = solver_boxes.len();
         let solver_bypassed_body_count = total_body_count.saturating_sub(solver_body_count);
         let mut ballistic_work = BallisticStepWork3d::default();
+        let mut resolved_ballistic_pairs = BTreeSet::new();
 
         let (solver_boxes, sampled_events, tail, work) = if mixed_ballistic_step {
             if solver_boxes.is_empty() {
@@ -697,6 +698,7 @@ impl RotatingWorld3d {
                     ),
                     &mut self.broad_phase,
                     &mut self.response_scratch,
+                    &mut resolved_ballistic_pairs,
                     &mut ballistic_work,
                 )?;
                 let sampled_events = advance.events.len();
@@ -712,6 +714,7 @@ impl RotatingWorld3d {
                         self.config.solver_passes,
                         &mut self.tail_broad_phase,
                         &mut self.response_scratch,
+                        &mut resolved_ballistic_pairs,
                         &mut ballistic_work,
                     )?
                 };
@@ -908,6 +911,7 @@ fn consume_tail_with_ballistics(
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
+    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
     let mut stats = TailStepStats3d::default();
@@ -934,6 +938,7 @@ fn consume_tail_with_ballistics(
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
         let projectile_start = projectiles.clone();
+        let resolved_pairs_start = resolved_ballistic_pairs.clone();
         let mut contact_count = 0_usize;
         let mut unsafe_body = None;
 
@@ -953,6 +958,7 @@ fn consume_tail_with_ballistics(
                 response_scratch,
                 &mut stats,
                 &mut journal,
+                resolved_ballistic_pairs,
                 ballistic_work,
                 current_contacts,
             )?;
@@ -981,6 +987,7 @@ fn consume_tail_with_ballistics(
         let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
         journal.rollback(&mut current);
         *projectiles = projectile_start;
+        *resolved_ballistic_pairs = resolved_pairs_start;
         reusable_contacts = Some(initial_contacts.clone());
         slice_count = next_slice_count;
     }
@@ -997,6 +1004,7 @@ fn advance_tail_slice_with_ballistics(
     response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     journal: &mut TailMutationJournal3d,
+    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
     initial_contacts: Vec<RotatingContactSearchHit3d>,
 ) -> Result<(TailSliceResult3d, Option<BodyId>), RotatingWorldError3d> {
@@ -1018,8 +1026,13 @@ fn advance_tail_slice_with_ballistics(
             ));
         }
 
-        let Some(frontier) =
-            earliest_ballistic_frontier(boxes, projectiles, remaining, ballistic_work)?
+        let Some(frontier) = earliest_ballistic_frontier(
+            boxes,
+            projectiles,
+            remaining,
+            resolved_ballistic_pairs,
+            ballistic_work,
+        )?
         else {
             advance_ballistic_spheres_full(projectiles, remaining, ballistic_work)?;
             let result = free_flight_and_stabilize_in_place(
@@ -1075,6 +1088,9 @@ fn advance_tail_slice_with_ballistics(
             &frontier,
             ballistic_work,
         )?;
+        for candidate in &frontier.hits {
+            resolved_ballistic_pairs.insert((candidate.projectile, candidate.hit.body));
+        }
 
         // Ballistic response changes velocity/angular velocity but not current geometry, so any exact
         // contact evidence retained by the pre-impact solve remains valid for the next safety check.
