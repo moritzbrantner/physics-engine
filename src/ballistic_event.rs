@@ -121,6 +121,7 @@ pub(crate) fn earliest_ballistic_frontier(
     boxes: &[RigidBox3d],
     projectiles: &[BallisticSphere3d],
     remaining: RigidBoxFreeFlightConfig3d,
+    resolved_pairs: &BTreeSet<(BodyId, BodyId)>,
     work: &mut BallisticStepWork3d,
 ) -> Result<Option<BallisticFrontier3d>, BallisticTimelineError3d> {
     if projectiles.is_empty() || remaining.timestep_is_zero() {
@@ -140,7 +141,7 @@ pub(crate) fn earliest_ballistic_frontier(
     for projectile in projectiles.iter().copied() {
         let query = projected_projectile(projectile, remaining)?;
         let mut stats = BallisticSphereQueryStats3d::default();
-        let hit = step.earliest_hit(query, &mut stats)?;
+        let hit = step.earliest_hit_excluding_pairs(query, resolved_pairs, &mut stats)?;
         accumulate_query_stats(work, stats);
         let Some(hit) = hit else {
             continue;
