@@ -124,7 +124,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           repository: moritzbrantner/performance-evidence
-          ref: 294c136eccb78c0614a42f844b02ea306f0c8f2b
+          ref: 068d880a1b76f41e06548c557af0a7bf8c8057eb
           path: .performance-evidence-contract
 
       - name: Install Performance Evidence validator
