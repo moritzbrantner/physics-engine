@@ -8,9 +8,11 @@ use physics_engine::{
 };
 
 mod controller;
+mod lab_scenarios;
 mod render_snapshot;
 
 use controller::TICKS_PER_SECOND;
+use lab_scenarios::SandboxScenario;
 pub use controller::controlled_velocity;
 
 const PLAYER_ID: BodyId = BodyId(1);
@@ -47,6 +49,7 @@ struct Sandbox {
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
     projectile_type: Option<ProjectileType>,
+    scenario: SandboxScenario,
     last_rotating_events: usize,
     last_tail_contacts: usize,
     last_step_stats: RotatingWorldStepStats3d,
@@ -68,6 +71,14 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        Self::with_options_and_scenario(linear_push, upright_crates, SandboxScenario::Playground)
+    }
+
+    fn with_options_and_scenario(
+        linear_push: bool,
+        upright_crates: bool,
+        scenario: SandboxScenario,
+    ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
@@ -143,11 +154,14 @@ impl Sandbox {
             })?;
         }
 
+        lab_scenarios::apply(&mut world, scenario)?;
+
         Ok(Self {
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
             projectile_type: None,
+            scenario,
             last_rotating_events: 0,
             last_tail_contacts: 0,
             last_step_stats: RotatingWorldStepStats3d::default(),
@@ -185,7 +199,12 @@ impl Sandbox {
     fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
-        if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
+        if desired_x == 0
+            && desired_z == 0
+            && !jump
+            && !lab_scenarios::requires_continuous_step(self.scenario)
+            && self.is_quiescent()
+        {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
             self.last_step_stats = RotatingWorldStepStats3d::default();
@@ -214,6 +233,12 @@ impl Sandbox {
             && self.world.set_linear_velocity(PLAYER_ID, velocity).is_err()
         {
             self.error_code = 3;
+            return self.error_code;
+        }
+
+        if let Err(error) = lab_scenarios::drive(&mut self.world, self.scenario) {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
             return self.error_code;
         }
 
@@ -273,7 +298,7 @@ impl Sandbox {
                 None | Some(ProjectileType::Sphere) => 3,
             };
         }
-        role_for(id)
+        lab_scenarios::render_role(id).unwrap_or_else(|| role_for(id))
     }
 
     fn shoot(&mut self, velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
@@ -788,6 +813,34 @@ pub extern "C" fn sandbox_last_collision_events() -> u32 {
                 .unwrap_or(u64::MAX)
                 .saturating_add(sandbox.last_step_stats.ballistic_impacts),
         )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_solver_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.solver_body_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_solver_bypassed_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.solver_bypassed_body_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        u32::try_from(sandbox.last_step_stats.response_authority_body_count).unwrap_or(u32::MAX)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_pair_rejections() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.response_authority_pair_rejections)
     })
 }
 
