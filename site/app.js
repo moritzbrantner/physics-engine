@@ -101,7 +101,7 @@ function performanceScenario() {
     crate_motion: query.get("crates") ?? "upright",
     fixed_geometry: query.get("bake") ?? "load",
     collision_pairs: query.get("collisions") ?? "all",
-    projectile_impact: query.get("projectile-impact") ?? "physical",
+    projectile_impact: query.get("projectile-impact") ?? "impact-retire",
     projectile_type: query.get("projectile-type") ?? "sphere",
   };
 }
