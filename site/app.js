@@ -488,51 +488,67 @@ function appendVertex(data, position, normal, uv, material, camera) {
   );
 }
 
-function normalizedCross(left, right) {
-  const normal = [
-    left[1] * right[2] - left[2] * right[1],
-    left[2] * right[0] - left[0] * right[2],
-    left[0] * right[1] - left[1] * right[0],
+const SPHERE_LATITUDE_SEGMENTS = 8;
+const SPHERE_LONGITUDE_SEGMENTS = 12;
+
+function unitSpherePoint(latitudeIndex, longitudeIndex) {
+  const latitude =
+    -Math.PI / 2 + (Math.PI * latitudeIndex) / SPHERE_LATITUDE_SEGMENTS;
+  const longitude =
+    (Math.PI * 2 * longitudeIndex) / SPHERE_LONGITUDE_SEGMENTS;
+  const latitudeRadius = Math.cos(latitude);
+  return [
+    latitudeRadius * Math.cos(longitude),
+    Math.sin(latitude),
+    latitudeRadius * Math.sin(longitude),
   ];
-  const length = Math.hypot(...normal);
-  return length === 0 ? [0, 1, 0] : normal.map((value) => value / length);
 }
+
+const SPHERE_UNIT_TRIANGLE_VERTICES = (() => {
+  const vertices = [];
+  for (let latitudeIndex = 0; latitudeIndex < SPHERE_LATITUDE_SEGMENTS; latitudeIndex += 1) {
+    for (
+      let longitudeIndex = 0;
+      longitudeIndex < SPHERE_LONGITUDE_SEGMENTS;
+      longitudeIndex += 1
+    ) {
+      const nextLongitudeIndex = (longitudeIndex + 1) % SPHERE_LONGITUDE_SEGMENTS;
+      const lowerLeft = unitSpherePoint(latitudeIndex, longitudeIndex);
+      const lowerRight = unitSpherePoint(latitudeIndex, nextLongitudeIndex);
+      const upperLeft = unitSpherePoint(latitudeIndex + 1, longitudeIndex);
+      const upperRight = unitSpherePoint(latitudeIndex + 1, nextLongitudeIndex);
+
+      if (latitudeIndex < SPHERE_LATITUDE_SEGMENTS - 1) {
+        vertices.push(...lowerLeft, ...upperLeft, ...upperRight);
+      }
+      if (latitudeIndex > 0) {
+        vertices.push(...lowerLeft, ...upperRight, ...lowerRight);
+      }
+    }
+  }
+  return new Float32Array(vertices);
+})();
 
 function appendSphereVertices(data, body, material, camera) {
   const radius = body.half[0];
-  const local = [
-    [0, radius, 0],
-    [0, -radius, 0],
-    [radius, 0, 0],
-    [-radius, 0, 0],
-    [0, 0, radius],
-    [0, 0, -radius],
-  ];
-  const points = local.map(([x, y, z]) => [
-    body.position[0] + x,
-    body.position[1] + y,
-    body.position[2] + z,
-  ]);
-  const faces = [
-    [0, 2, 4],
-    [0, 4, 3],
-    [0, 3, 5],
-    [0, 5, 2],
-    [1, 4, 2],
-    [1, 3, 4],
-    [1, 5, 3],
-    [1, 2, 5],
-  ];
-
-  for (const [aIndex, bIndex, cIndex] of faces) {
-    const a = points[aIndex];
-    const b = points[bIndex];
-    const c = points[cIndex];
-    const normal = normalizedCross(
-      [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
-      [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+  for (let index = 0; index < SPHERE_UNIT_TRIANGLE_VERTICES.length; index += 3) {
+    const normal = [
+      SPHERE_UNIT_TRIANGLE_VERTICES[index],
+      SPHERE_UNIT_TRIANGLE_VERTICES[index + 1],
+      SPHERE_UNIT_TRIANGLE_VERTICES[index + 2],
+    ];
+    appendVertex(
+      data,
+      [
+        body.position[0] + normal[0] * radius,
+        body.position[1] + normal[1] * radius,
+        body.position[2] + normal[2] * radius,
+      ],
+      normal,
+      [0, 0],
+      material,
+      camera,
     );
-    for (const point of [a, b, c]) appendVertex(data, point, normal, [0, 0], material, camera);
   }
 }
 
