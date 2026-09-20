@@ -12,8 +12,9 @@ import {
   stabilizationToQuery,
 } from "./simulation-rules-config.mjs";
 
+const LEGACY_SAVE_STORAGE_KEY = "physics-engine.settings.save.v1";
 const STORAGE_KEYS = Object.freeze({
-  save: "physics-engine.settings.save.v1",
+  save: "physics-engine.settings.save.v2",
   device: "physics-engine.settings.device.v1",
 });
 
@@ -39,7 +40,7 @@ const SETTINGS_DEFINITIONS = [
   {
     id: "simulation.projectile_impact",
     kind: { type: "choice", options: [...PROJECTILE_IMPACT_POLICIES.keys()] },
-    default: { type: "choice", value: "physical" },
+    default: { type: "choice", value: "impact-retire" },
     scope: "save",
     apply_mode: "immediate",
   },
@@ -120,27 +121,37 @@ function persistSetting(id) {
   if (scope === "save" || scope === "device") persistScope(scope);
 }
 
-function restoreScope(scope) {
-  const storageKey = STORAGE_KEYS[scope];
-  if (!storageKey) return;
+function importScopeSnapshot(scope, storageKey) {
+  if (!storageKey) return false;
   let snapshot;
   try {
     snapshot = localStorage.getItem(storageKey);
   } catch {
-    return;
+    return false;
   }
-  if (!snapshot) return;
+  if (!snapshot) return false;
   try {
     const diagnostics = session.importScope(scope, snapshot);
     if (diagnostics.length > 0) {
       console.warn(`Settings import for ${scope} reported diagnostics`, diagnostics);
     }
+    return true;
   } catch (error) {
     console.warn(`Ignoring invalid persisted ${scope} settings`, error);
+    return false;
   }
 }
 
-restoreScope("save");
+function restoreScope(scope) {
+  return importScopeSnapshot(scope, STORAGE_KEYS[scope]);
+}
+
+const restoredSave = restoreScope("save");
+if (!restoredSave && importScopeSnapshot("save", LEGACY_SAVE_STORAGE_KEY)) {
+  // v1 used bouncing projectiles as the sandbox default. Migrate the acceptance experience while
+  // retaining every other persisted simulation choice; an explicit URL override still wins below.
+  setChoice("simulation.projectile_impact", "impact-retire");
+}
 restoreScope("device");
 
 function applyUrlOverrides() {

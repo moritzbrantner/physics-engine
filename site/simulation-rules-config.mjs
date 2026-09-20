@@ -54,7 +54,7 @@ export function enabledPairsToQuery(enabledPairs) {
 }
 
 export function projectileImpactPolicyFromQuery(value) {
-  return PROJECTILE_IMPACT_POLICIES.has(value) ? value : "physical";
+  return PROJECTILE_IMPACT_POLICIES.has(value) ? value : "impact-retire";
 }
 
 export function stabilizationFromQuery(value) {
@@ -119,7 +119,7 @@ export function encodeScenarioRules({
   characterResponse,
   crateMotion,
   enabledPairs,
-  projectileImpactPolicy = "physical",
+  projectileImpactPolicy = "impact-retire",
 }) {
   let encoded = EXPLICIT_RULES_BIT | PROJECTILE_POLICY_EXPLICIT_BIT;
   if (characterResponse === "linear") encoded |= CHARACTER_LINEAR_BIT;

@@ -1198,6 +1198,79 @@ mod tests {
     }
 
     #[test]
+    fn single_impact_sphere_does_not_leave_the_crate_stack_bouncing() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, false)
+                .expect("impact-retire scenario rules");
+        super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
+            .expect("apply impact-retire rules");
+        settle_player(&mut sandbox);
+
+        let crate_ids = [BodyId(100), BodyId(101)];
+        let before = crate_ids.map(|id| sandbox.world.box_by_id(id).expect("crate").clone());
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        assert!(sandbox.shoot(-38, 0, -88) >= 0);
+
+        let mut crate_responded = false;
+        for tick in 0..180 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "sphere impact/settling tick {tick}, detail {}",
+                sandbox.error_detail
+            );
+            for (index, id) in crate_ids.into_iter().enumerate() {
+                let current = sandbox.world.box_by_id(id).expect("crate after impact");
+                crate_responded |= current.body().position() != before[index].body().position()
+                    || current.angular() != before[index].angular();
+            }
+            if sandbox.projectiles_retired_on_contact == 1
+                && crate_ids
+                    .into_iter()
+                    .all(|id| sandbox.world.is_sleeping(id))
+            {
+                break;
+            }
+        }
+
+        assert!(
+            crate_responded,
+            "sphere must still transfer impact to the crate"
+        );
+        assert_eq!(sandbox.projectiles_retired_on_contact, 1);
+        assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
+        assert!(
+            crate_ids
+                .into_iter()
+                .all(|id| sandbox.world.is_sleeping(id)),
+            "impacted stack must settle instead of continuing to bounce"
+        );
+
+        let settled =
+            crate_ids.map(|id| sandbox.world.box_by_id(id).expect("settled crate").clone());
+        for tick in 0..60 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "post-settle tick {tick}"
+            );
+        }
+        for (index, id) in crate_ids.into_iter().enumerate() {
+            assert_eq!(
+                sandbox.world.box_by_id(id),
+                Some(&settled[index]),
+                "settled crate {id:?} must retain its exact resting pose"
+            );
+        }
+    }
+
+    #[test]
     fn analytic_sphere_stress_lane_completes_without_exhausting_event_budget() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);

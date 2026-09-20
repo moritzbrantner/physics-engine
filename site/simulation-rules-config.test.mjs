@@ -47,9 +47,20 @@ test("scenario rules encode collision eligibility and projectile response separa
   assert.equal(encoded & (1 << 14), 1 << 14);
 });
 
-test("unknown projectile policy query falls back to physical", () => {
+test("unknown projectile policy query falls back to single-impact behavior", () => {
   assert.equal(projectileImpactPolicyFromQuery("inelastic"), "inelastic");
-  assert.equal(projectileImpactPolicyFromQuery("nonsense"), "physical");
+  assert.equal(projectileImpactPolicyFromQuery("nonsense"), "impact-retire");
+});
+
+test("scenario rules default to impact-and-retire projectiles", () => {
+  const encoded = encodeScenarioRules({
+    characterResponse: "linear",
+    crateMotion: "free",
+    enabledPairs: new Set(COLLISION_PAIRS.map(([key]) => key)),
+  });
+
+  assert.equal((encoded >> 12) & 0b11, 2);
+  assert.equal(encoded & (1 << 14), 1 << 14);
 });
 
 test("stabilization query keeps only supported pairs and pass choices", () => {
