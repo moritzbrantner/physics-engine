@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suite": "physics-engine/sandbox-projectiles-v5",
-  "description": "Representative WASM physics work contract with a deterministic high-projectile stress trace. Correctness/replay remains authoritative; deterministic work counters block architectural regressions while wall-clock timing remains advisory on shared runners.",
+  "description": "Absolute deterministic work ceilings seeded from the corrected architecture/sleeping baseline. The append-only ratchet additionally protects all six replays and native scaling fixtures without requiring a comparison build. Wall-clock timing remains advisory on shared runners.",
   "scenarios": [
     {
       "id": "settled-idle",
@@ -79,7 +79,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 776
           }
         },
         {
@@ -124,7 +124,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 710
           }
         },
         {
@@ -134,7 +134,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 226
           }
         },
         {
@@ -144,7 +144,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 3052
           }
         },
         {
@@ -178,7 +178,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 2718
           }
         },
         {
@@ -188,7 +188,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 3022
           }
         },
         {
@@ -224,7 +224,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 3179
           }
         },
         {
@@ -234,7 +234,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 1051
           }
         },
         {
@@ -244,7 +244,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 476
           }
         },
         {
@@ -254,7 +254,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 4449
           }
         },
         {
@@ -264,7 +264,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 0
           }
         },
         {

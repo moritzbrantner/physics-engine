@@ -60,6 +60,7 @@ fn analytic_sphere_crosses_thin_sweep_and_retires_at_impact() {
 
     assert_eq!(report.stats.ballistic_impacts, 1);
     assert_eq!(report.stats.ballistic_retired, 1);
+    assert!(report.stats.ballistic_target_bound_checks >= report.stats.ballistic_toi_tests);
     assert!(report.stats.ballistic_toi_tests >= 1);
     assert_eq!(world.ballistic_sphere_count(), 0);
     assert!(world.ballistic_sphere_by_id(BodyId(100)).is_none());
@@ -123,4 +124,98 @@ fn elastic_analytic_sphere_remains_live_and_reverses_after_fixed_impact() {
     assert_eq!(report.stats.ballistic_impacts, 1);
     assert_eq!(report.stats.ballistic_retired, 0);
     assert!(sphere.velocity().x < 0);
+}
+
+#[test]
+fn ballistic_impacts_preserve_external_motion_authority() {
+    let mut world = world();
+    let elastic = Material::new(MATERIAL_SCALE);
+    let target = RigidBox3d::new(
+        RigidBody::dynamic(BodyId(1), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(5, 5, 5))
+            .with_material(elastic),
+        AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+    )
+    .expect("valid target")
+    .with_external_motion();
+    world.add_box(target.clone()).expect("add external target");
+    world
+        .add_ballistic_sphere(
+            BallisticSphere3d::new(
+                BodyId(100),
+                Vec3i::new(-30, 4, 0),
+                Vec3i::new(3_600, 0, 0),
+                2,
+                1,
+            )
+            .expect("valid sphere")
+            .with_material(elastic),
+            false,
+        )
+        .expect("add sphere");
+
+    let report = world.step(1, 60).expect("external target impact");
+
+    assert_eq!(report.stats.ballistic_impacts, 1);
+    assert_eq!(world.box_by_id(BodyId(1)), Some(&target));
+    assert_eq!(
+        world
+            .ballistic_sphere_by_id(BodyId(100))
+            .expect("live sphere")
+            .velocity(),
+        Vec3i::new(-3_600, 0, 0),
+    );
+}
+
+fn bouncing_sphere_world(max_events: u16) -> RotatingWorld3d {
+    let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+        max_events,
+        ..world().config()
+    });
+    let elastic = Material::new(MATERIAL_SCALE);
+    for (id, x) in [(1, -10), (2, 10)] {
+        world
+            .add_box(fixed(
+                id,
+                Vec3i::new(x, 0, 0),
+                Vec3i::new(1, 10, 10),
+                elastic,
+            ))
+            .expect("add wall");
+    }
+    world
+        .add_ballistic_sphere(
+            BallisticSphere3d::new(BodyId(100), Vec3i::ZERO, Vec3i::new(100, 0, 0), 1, 1)
+                .expect("valid sphere")
+                .with_material(elastic),
+            false,
+        )
+        .expect("add sphere");
+    world
+}
+
+#[test]
+fn elastic_sphere_can_recontact_the_same_wall_within_one_step() {
+    let mut world = bouncing_sphere_world(32);
+    let report = world.step(1, 1).expect("repeated wall impacts");
+    let sphere = world
+        .ballistic_sphere_by_id(BodyId(100))
+        .expect("live sphere");
+
+    assert_eq!(report.stats.ballistic_impacts, 6);
+    assert!(
+        (-8..=8).contains(&sphere.position().x),
+        "sphere tunneled: {sphere:?}"
+    );
+    assert_eq!(sphere.velocity(), Vec3i::new(100, 0, 0));
+}
+
+#[test]
+fn repeated_ballistic_impacts_still_fail_closed_at_the_event_limit() {
+    let mut world = bouncing_sphere_world(4);
+    assert_eq!(
+        world.step(1, 1),
+        Err(physics_engine::RotatingWorldError3d::Repeated(
+            physics_engine::RepeatedRotatingEventError3d::BallisticEventLimit(4)
+        )),
+    );
 }

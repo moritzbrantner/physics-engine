@@ -24,8 +24,9 @@ run_integration() {
 
 run_library_module() {
   local module="$1"
+  local filter="${2:-${module}::tests::}"
   echo "::group::release performance evidence: library module ${module}"
-  /usr/bin/time -v cargo test --release --locked --lib "${module}::tests::" -- \
+  /usr/bin/time -v cargo test --release --locked --lib "$filter" -- \
     --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${module}.log"
   echo "::endgroup::"
   ran=1
@@ -35,8 +36,9 @@ if grep -Eq '(^|/)(query\.rs|ray_query_performance\.rs)$' <<<"$changed"; then
   run_integration ray_query_performance
 fi
 
-if grep -Eq '(^|/)(ballistic_sphere\.rs|ballistic_sphere_scaling_performance\.rs)$' <<<"$changed"; then
+if grep -Eq '(^|/)(ballistic_sphere\.rs|ballistic_target_index(_tests)?\.rs|ballistic_sphere_scaling_performance\.rs)$' <<<"$changed"; then
   run_integration ballistic_sphere_scaling_performance
+  run_library_module ballistic_sphere ballistic_sphere::indexed_tests::
 fi
 
 if grep -Eq '(^|/)(repeated_rotating_events\.rs)$' <<<"$changed"; then
@@ -80,8 +82,8 @@ if grep -Eq '(^|/)(float_math\.rs|numeric\.rs|wide_ratio\.rs)$' <<<"$changed"; t
   run_library_module float_math
 fi
 
-if grep -Eq '(^|/)(oriented_box\.rs)$' <<<"$changed"; then
-  run_library_module oriented_box
+if grep -Eq '(^|/)(oriented_box(_parity_tests)?\.rs)$' <<<"$changed"; then
+  run_library_module oriented_box oriented_box::
 fi
 
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then

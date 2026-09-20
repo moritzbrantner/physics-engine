@@ -198,6 +198,11 @@ Fast-body CCD must continue to account for motion across the interval rather tha
 
 Performance work should prefer eliminating or reordering whole stages before optimizing inner-loop math. Each slice should add deterministic operation-count evidence and keep wall-clock timings advisory.
 
+The [2026-09-20 architecture review](docs/architecture-review.md) records the collision fixes, indexed
+ballistic queries, wake-propagation improvements, removed search copies, and remaining ownership limits.
+The [performance ratchet](docs/performance-ratchet.md) protects those improvements with deterministic
+work ceilings, repeated replay checks, and an append-only measurement history enforced by CI.
+
 1. **Response-authority partitioning** — admit physical pairs only when at least one participant is a physics-owned dynamic body; reject fixed↔fixed, external↔fixed, and external↔external pairs before sampled CCD/response, and bypass the entire rigid solver when no body can receive solver mutation.
 2. **Parked-body spatial wake index** — replace awake×parked wake scans with spatial queries from awake sweeps into a retained parked-body index; propagate wake only from newly awakened bodies.
 3. **Generation-driven contact/support graph** — replace full-world fingerprints and repeated sleep/support discovery with pose/layer/membership generations and incrementally maintained contact/support edges.

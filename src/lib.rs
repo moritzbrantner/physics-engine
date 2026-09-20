@@ -47,6 +47,8 @@ mod math;
 mod obb_friction;
 mod obb_response;
 mod oriented_box;
+#[cfg(test)]
+mod performance_ratchet;
 mod query;
 mod relaxed_rotating_world;
 mod repeated_rotating_events;
