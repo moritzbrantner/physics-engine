@@ -135,8 +135,7 @@ impl Sandbox {
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
-            )
-            .with_aggressive_sleep();
+            );
             world.add_box(if upright_crates {
                 crate_body.with_rotation_locked()
             } else {
@@ -1203,11 +1202,9 @@ mod tests {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         let all_pair_bits = (1_i32 << 11) - 2;
         let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
-        let rules = super::controller::scenario_rules::ScenarioRules::decode(
-            impact_retire_rules,
-            false,
-        )
-        .expect("impact-retire scenario rules");
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, false)
+                .expect("impact-retire scenario rules");
         super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
             .expect("apply impact-retire rules");
         settle_player(&mut sandbox);
@@ -1242,7 +1239,10 @@ mod tests {
             }
         }
 
-        assert!(crate_responded, "sphere must still transfer impact to the crate");
+        assert!(
+            crate_responded,
+            "sphere must still transfer impact to the crate"
+        );
         assert_eq!(sandbox.projectiles_retired_on_contact, 1);
         assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
         assert!(
@@ -1252,7 +1252,8 @@ mod tests {
             "impacted stack must settle instead of continuing to bounce"
         );
 
-        let settled = crate_ids.map(|id| sandbox.world.box_by_id(id).expect("settled crate").clone());
+        let settled =
+            crate_ids.map(|id| sandbox.world.box_by_id(id).expect("settled crate").clone());
         for tick in 0..60 {
             assert_eq!(
                 sandbox.step_velocity(0, 0, false),
