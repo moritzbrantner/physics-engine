@@ -68,91 +68,11 @@ if grep -Eq '(^|/)(ecs_world\.rs|rotating_world\.rs|stabilized_rotating_world\.r
   run_integration precise_step_writeback
 fi
 
-if grep -Eq '(^|/)(stabilized_rotating_world\.rs|relaxed_rotating_world\.rs|sleep_parking_performance\.rs)
-
-if grep -Eq '(^|/)(stabilized_rotating_world\.rs)$' <<<"$changed"; then
-  run_library_module stabilized_rotating_world
-fi
-
-if grep -Eq '(^|/)(wide_ratio\.rs)$' <<<"$changed"; then
-  run_library_module wide_ratio
-fi
-
-if grep -Eq '(^|/)(oriented_box\.rs)$' <<<"$changed"; then
-  run_library_module oriented_box
-fi
-
-if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
-  run_library_module rotating_broad_phase
-fi
-
-if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_cache_performance\.rs)$' <<<"$changed"; then
-  run_integration rotating_contact_cache_performance
-fi
-
-if grep -Eq '(^|/)(rotating_contact_search\.rs|indexed_contact_cache_performance\.rs|bounded_contact_search_performance\.rs)$' <<<"$changed"; then
-  run_integration indexed_contact_cache_performance
-  run_integration bounded_contact_search_performance
-fi
-
-if grep -Eq '(^|/)(rotating_recontact_search(_ordered)?\.rs|rotating_recontact_cache_performance\.rs|recontact_scaling_performance\.rs|recontact_projectile_lane_performance\.rs)$' <<<"$changed"; then
-  run_integration rotating_recontact_cache_performance
-  run_integration recontact_scaling_performance
-  run_integration recontact_projectile_lane_performance
-fi
-
-if grep -Eq '(^|/)(obb_response\.rs|rotating_contact_response\.rs|contact_solver_scratch_performance\.rs)$' <<<"$changed"; then
-  run_integration contact_solver_scratch_performance
-fi
-
-if [[ "$ran" -eq 0 ]]; then
-  echo "No changed file maps to release performance evidence."
-fi
- <<<"$changed"; then
+if grep -Eq '(^|/)(stabilized_rotating_world\.rs|relaxed_rotating_world\.rs|sleep_parking_performance\.rs)$' <<<"$changed"; then
   run_integration sleep_parking_performance
 fi
 
-if grep -Eq '(^|/)(relaxed_rotating_world\.rs)
-
-if grep -Eq '(^|/)(stabilized_rotating_world\.rs)$' <<<"$changed"; then
-  run_library_module stabilized_rotating_world
-fi
-
-if grep -Eq '(^|/)(wide_ratio\.rs)$' <<<"$changed"; then
-  run_library_module wide_ratio
-fi
-
-if grep -Eq '(^|/)(oriented_box\.rs)$' <<<"$changed"; then
-  run_library_module oriented_box
-fi
-
-if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then
-  run_library_module rotating_broad_phase
-fi
-
-if grep -Eq '(^|/)(rotating_contact_search\.rs|rotating_contact_cache_performance\.rs)$' <<<"$changed"; then
-  run_integration rotating_contact_cache_performance
-fi
-
-if grep -Eq '(^|/)(rotating_contact_search\.rs|indexed_contact_cache_performance\.rs|bounded_contact_search_performance\.rs)$' <<<"$changed"; then
-  run_integration indexed_contact_cache_performance
-  run_integration bounded_contact_search_performance
-fi
-
-if grep -Eq '(^|/)(rotating_recontact_search(_ordered)?\.rs|rotating_recontact_cache_performance\.rs|recontact_scaling_performance\.rs|recontact_projectile_lane_performance\.rs)$' <<<"$changed"; then
-  run_integration rotating_recontact_cache_performance
-  run_integration recontact_scaling_performance
-  run_integration recontact_projectile_lane_performance
-fi
-
-if grep -Eq '(^|/)(obb_response\.rs|rotating_contact_response\.rs|contact_solver_scratch_performance\.rs)$' <<<"$changed"; then
-  run_integration contact_solver_scratch_performance
-fi
-
-if [[ "$ran" -eq 0 ]]; then
-  echo "No changed file maps to release performance evidence."
-fi
- <<<"$changed"; then
+if grep -Eq '(^|/)(relaxed_rotating_world\.rs)$' <<<"$changed"; then
   run_library_module relaxed_rotating_world
 fi
 
