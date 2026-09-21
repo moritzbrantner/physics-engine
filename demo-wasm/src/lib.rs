@@ -9,9 +9,11 @@ use physics_engine::{
 
 mod controller;
 mod render_snapshot;
+mod scenario_presets;
 
 use controller::TICKS_PER_SECOND;
 pub use controller::controlled_velocity;
+use scenario_presets::{DemoScenario, aim_query_hit, build_world};
 
 const PLAYER_ID: BodyId = BodyId(1);
 const PROJECTILE_ID_START: u64 = 1_000;
@@ -43,7 +45,9 @@ impl ProjectileType {
 }
 
 struct Sandbox {
+    scenario: DemoScenario,
     world: RotatingWorld3d,
+    query_hit: Option<BodyId>,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
     projectile_type: Option<ProjectileType>,
@@ -60,7 +64,7 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Result<Self, RotatingWorldError3d> {
-        Self::with_character_mode(false)
+        Self::with_scenario_options(DemoScenario::General, false, false)
     }
 
     fn with_character_mode(linear_push: bool) -> Result<Self, RotatingWorldError3d> {
@@ -68,83 +72,21 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        Self::with_scenario_options(DemoScenario::General, linear_push, upright_crates)
+    }
+
+    fn with_scenario_options(
+        scenario: DemoScenario,
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
-        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
-            gravity: Vec3i::new(0, -3_600, 0),
-            sample_count: 32,
-            refinement_steps: 4,
-            solver_passes: 8,
-            max_events: 32,
-        });
-
-        let fixed_bodies = [
-            (10, Vec3i::new(0, -16, 0), Vec3i::new(520, 16, 520)),
-            (11, Vec3i::new(0, 72, -520), Vec3i::new(520, 72, 8)),
-            (12, Vec3i::new(0, 72, 520), Vec3i::new(520, 72, 8)),
-            (13, Vec3i::new(-520, 72, 0), Vec3i::new(8, 72, 520)),
-            (14, Vec3i::new(520, 72, 0), Vec3i::new(8, 72, 520)),
-            // Deliberately thin target for sampled rotating CCD acceptance.
-            (15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3)),
-            (20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70)),
-            (21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45)),
-            (22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45)),
-            (23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45)),
-            (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
-        ];
-        for (id, position, half_extents) in fixed_bodies {
-            world.add_box(rotating_box(RigidBody::fixed(
-                BodyId(id),
-                position,
-                half_extents,
-            )))?;
-        }
-
-        let player = rotating_box(
-            RigidBody::dynamic(
-                PLAYER_ID,
-                Vec3i::new(0, 38, 320),
-                Vec3i::ZERO,
-                Vec3i::new(12, 20, 12),
-            )
-            .with_mass(4),
-        )
-        .with_rotation_locked();
-        world.add_box(if linear_push {
-            player.with_linear_push(Vec3i::new(0, -1, 0))
-        } else {
-            player
-        })?;
-
-        let crate_positions = [
-            Vec3i::new(-75, 18, 135),
-            Vec3i::new(-75, 54, 135),
-            Vec3i::new(80, 18, 120),
-            Vec3i::new(116, 18, 120),
-            Vec3i::new(98, 54, 120),
-            Vec3i::new(0, 18, -70),
-        ];
-        for (offset, position) in crate_positions.into_iter().enumerate() {
-            let crate_body = rotating_box(
-                RigidBody::dynamic(
-                    BodyId(100 + offset as u64),
-                    position,
-                    Vec3i::ZERO,
-                    Vec3i::new(18, 18, 18),
-                )
-                .with_mass(2)
-                .with_material(
-                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
-                ),
-            );
-            world.add_box(if upright_crates {
-                crate_body.with_rotation_locked()
-            } else {
-                crate_body
-            })?;
-        }
+        let world = build_world(scenario, linear_push, upright_crates)?;
 
         Ok(Self {
+            scenario,
             world,
+            query_hit: None,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
             projectile_type: None,
@@ -158,6 +100,16 @@ impl Sandbox {
             error_code: 0,
             error_detail: 0,
         })
+    }
+
+    fn aim_query(&mut self, direction_x: i32, direction_y: i32, direction_z: i32) -> i32 {
+        self.query_hit = aim_query_hit(
+            &self.world,
+            self.scenario,
+            Vec3i::new(direction_x, direction_y, direction_z),
+        );
+        self.query_hit
+            .map_or(-1, |id| i32::try_from(id.0).unwrap_or(i32::MAX))
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
@@ -266,6 +218,9 @@ impl Sandbox {
     }
 
     fn render_role_for(&self, id: BodyId) -> i32 {
+        if self.query_hit == Some(id) {
+            return 6;
+        }
         if id.0 >= PROJECTILE_ID_START {
             return match self.projectile_type {
                 Some(ProjectileType::Arrow) => 4,
@@ -653,6 +608,15 @@ pub extern "C" fn sandbox_projectile_type() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_shoot(velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
     with_sandbox_mut(|sandbox| sandbox.shoot(velocity_x, velocity_y, velocity_z))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_aim_query(
+    direction_x: i32,
+    direction_y: i32,
+    direction_z: i32,
+) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.aim_query(direction_x, direction_y, direction_z))
 }
 
 #[unsafe(no_mangle)]
