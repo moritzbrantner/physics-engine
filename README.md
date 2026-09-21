@@ -73,6 +73,23 @@ let report = world.step(1)?;
 # Ok::<(), physics_engine::PhysicsError>(())
 ```
 
+## Interactive physics scenarios
+
+GitHub Pages now exposes a scenario catalog backed by the same `demo-wasm` adapter. The general
+first-person sandbox remains the integrated acceptance world, while six focused fixtures make narrower
+engine behaviors observable without duplicating simulation logic in the browser:
+
+- **CCD Gauntlet** — thin-target continuous-collision behavior;
+- **Collision Query Lab** — deterministic engine ray queries with the current hit highlighted;
+- **Off-Centre Impact** — angular response from deliberately offset impacts;
+- **Rotating Box Lab** — free-rotation rigid boxes and upright-lock comparisons;
+- **Tower Stability** — a bounded stacked-contact convergence fixture;
+- **Sleeping World** — distant body clusters for sleeping, quiescence, and locality observation.
+
+The focused routes are generated from one shared page template and select a stable Rust-owned fixture ID.
+The browser remains a consumer: collision detection, response, queries, sleeping, and body state stay in
+`physics-engine`.
+
 ## Interactive acceptance sandbox
 
 GitHub Pages now builds a small first-person acceptance world through `demo-wasm`. The adapter depends on this crate and exposes only the state needed by the browser consumer; it does not reimplement collision detection or response in JavaScript.

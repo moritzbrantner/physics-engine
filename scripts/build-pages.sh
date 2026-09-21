@@ -24,6 +24,8 @@ const exports = instance.exports;
 const requiredFunctions = [
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
+  "sandbox_reset_scenario_with_baking_options",
+  "sandbox_aim_query",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -77,6 +79,18 @@ if (exports.sandbox_reset_with_baking_options(explicitRules, 1, 0) !== 0) {
   throw new Error("legacy explicit-rule compatibility input regressed");
 }
 
+for (let scenario = 0; scenario <= 6; scenario += 1) {
+  if (exports.sandbox_reset_scenario_with_baking_options(scenario, 0, 0, 0) !== 0) {
+    throw new Error(`scenario ${scenario} failed to initialize`);
+  }
+}
+if (exports.sandbox_reset_scenario_with_baking_options(5, 0, 0, 0) !== 0) {
+  throw new Error("collision query lab failed to initialize");
+}
+if (exports.sandbox_aim_query(0, 0, -96) !== 30) {
+  throw new Error("collision query lab did not return the expected engine ray hit");
+}
+
 const pointer = exports.sandbox_refresh_render_snapshot();
 const length = exports.sandbox_render_snapshot_len();
 const stride = exports.sandbox_render_snapshot_stride();
@@ -110,6 +124,35 @@ node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/
 rm -rf pages-dist
 mkdir -p pages-dist/vendor/settings/pkg
 cp -R site/. pages-dist/
+
+node --input-type=module <<'NODE'
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+
+const template = await readFile("pages-dist/scenarios/sandbox/index.html", "utf8");
+const scenarios = [
+  ["ccd-gauntlet", "CCD Gauntlet", "Level 1 · continuous collision detection"],
+  ["rotating-box-lab", "Rotating Box Lab", "Level 2 · rotating bodies"],
+  ["tower-stability", "Tower Stability", "Level 3 · stacked contacts"],
+  ["sleeping-world", "Sleeping World", "Level 4 · sleeping and locality"],
+  ["collision-query-lab", "Collision Query Lab", "Level 1 · spatial queries"],
+  ["off-centre-impact", "Off-Centre Impact", "Level 2 · angular response"],
+];
+
+for (const [slug, title, level] of scenarios) {
+  const html = template
+    .replace("physics-engine · general sandbox scenario", `physics-engine · ${title}`)
+    .replace('data-scenario="sandbox"', `data-scenario="${slug}"`)
+    .replace('data-scenario-title="General sandbox"', `data-scenario-title="${title}"`)
+    .replace('data-scenario-level="Integrated"', `data-scenario-level="${level}"`)
+    .replace('id="scenario-level">Integrated<', `id="scenario-level">${level}<`)
+    .replace('id="scenario-title">General sandbox<', `id="scenario-title">${title}<`)
+    .replace('aria-label="General physics sandbox scenario"', `aria-label="${title} physics scenario"`);
+  const directory = `pages-dist/scenarios/${slug}`;
+  await mkdir(directory, { recursive: true });
+  await writeFile(`${directory}/index.html`, html);
+}
+NODE
+
 cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm pages-dist/
 
 curl --proto '=https' --tlsv1.2 -fsSL \
@@ -155,6 +198,12 @@ NODE
 test -s pages-dist/index.html
 test -s pages-dist/catalog.css
 test -s pages-dist/scenarios/sandbox/index.html
+test -s pages-dist/scenarios/ccd-gauntlet/index.html
+test -s pages-dist/scenarios/rotating-box-lab/index.html
+test -s pages-dist/scenarios/tower-stability/index.html
+test -s pages-dist/scenarios/sleeping-world/index.html
+test -s pages-dist/scenarios/collision-query-lab/index.html
+test -s pages-dist/scenarios/off-centre-impact/index.html
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
 test -s pages-dist/physics-settings.mjs

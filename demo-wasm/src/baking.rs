@@ -4,7 +4,7 @@ use physics_engine::{
 };
 
 use crate::{
-    Sandbox,
+    DemoScenario, Sandbox,
     controller::scenario_rules::{EXPLICIT_RULES_BIT, ScenarioRules, apply_to_sandbox},
     role_for, with_sandbox, with_sandbox_mut,
 };
@@ -136,8 +136,8 @@ fn apply_interaction_policy_settings(
 /// explicit rules, old 0/1 callers remain accepted and ignored because crate motion is already encoded in the
 /// first argument; a marked second argument carries the settings-backed pair-policy payload. Fixed geometry
 /// preparation remains a separate performance/storage choice.
-#[unsafe(no_mangle)]
-pub extern "C" fn sandbox_reset_with_baking_options(
+fn reset_with_baking_options_for_scenario(
+    scenario: DemoScenario,
     simulation_rules: i32,
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
@@ -173,7 +173,11 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     with_sandbox(|_| ());
 
     let Ok(mut replacement) =
-        Sandbox::with_options(rules.character_linear_push(), rules.upright_crates())
+        Sandbox::with_scenario_options(
+            scenario,
+            rules.character_linear_push(),
+            rules.upright_crates(),
+        )
     else {
         return -2;
     };
@@ -187,6 +191,38 @@ pub extern "C" fn sandbox_reset_with_baking_options(
         .set_fixed_geometry_preparation_mode(fixed_geometry_mode);
     with_sandbox_mut(|sandbox| *sandbox = replacement);
     0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options_for_scenario(
+        DemoScenario::General,
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_scenario_with_baking_options(
+    scenario: i32,
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    let Some(scenario) = DemoScenario::from_i32(scenario) else {
+        return -1;
+    };
+    reset_with_baking_options_for_scenario(
+        scenario,
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+    )
 }
 
 #[unsafe(no_mangle)]
