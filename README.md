@@ -156,6 +156,7 @@ The existing `ecs-lab` experiments already contain useful evidence for more adva
 3. joints/constraints and sleeping/islands;
 4. a thin ECS adapter that maps entity IDs/components to engine bodies;
 5. general-purpose WASM bindings beyond the narrow acceptance-demo adapter.
+6. consumer-oriented character-support queries: capsule/sphere casts where the collider foundation permits them, plus stable support/contact point, normal, support identity and slope evidence for character controllers and procedural animation consumers. The engine supplies physical truth only; IK, skeletal pose, foot locking, pelvis correction, motion warping and animation timing remain outside this repository.
 
 The advanced slices should preserve the same rule as the current CCD path: calculate motion over the interval and resolve the first genuine event rather than relying on frame-end overlap. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
 
