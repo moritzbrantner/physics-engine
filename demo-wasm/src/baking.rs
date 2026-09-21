@@ -4,7 +4,7 @@ use physics_engine::{
 };
 
 use crate::{
-    Sandbox,
+    Sandbox, SandboxScenario,
     controller::scenario_rules::{EXPLICIT_RULES_BIT, ScenarioRules, apply_to_sandbox},
     role_for, with_sandbox, with_sandbox_mut,
 };
@@ -136,8 +136,8 @@ fn apply_interaction_policy_settings(
 /// explicit rules, old 0/1 callers remain accepted and ignored because crate motion is already encoded in the
 /// first argument; a marked second argument carries the settings-backed pair-policy payload. Fixed geometry
 /// preparation remains a separate performance/storage choice.
-#[unsafe(no_mangle)]
-pub extern "C" fn sandbox_reset_with_baking_options(
+fn reset_scenario_with_baking_options(
+    scenario: SandboxScenario,
     simulation_rules: i32,
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
@@ -167,14 +167,13 @@ pub extern "C" fn sandbox_reset_with_baking_options(
         return -1;
     };
 
-    // SANDBOX is lazy and its default constructor resets the scenario-rules thread-local. Initialize it
-    // before staging a valid replacement so a first explicit reset cannot erase the rules after they are
-    // applied to the replacement. Invalid inputs still return above without touching the current sandbox.
     with_sandbox(|_| ());
 
-    let Ok(mut replacement) =
-        Sandbox::with_options(rules.character_linear_push(), rules.upright_crates())
-    else {
+    let Ok(mut replacement) = Sandbox::with_scenario_options(
+        scenario,
+        rules.character_linear_push(),
+        rules.upright_crates(),
+    ) else {
         return -2;
     };
     if apply_to_sandbox(&mut replacement, rules).is_err()
@@ -187,6 +186,41 @@ pub extern "C" fn sandbox_reset_with_baking_options(
         .set_fixed_geometry_preparation_mode(fixed_geometry_mode);
     with_sandbox_mut(|sandbox| *sandbox = replacement);
     0
+}
+
+/// Independent sandbox comparison axes. Existing callers remain pinned to the general sandbox.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_scenario_with_baking_options(
+        SandboxScenario::General,
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+    )
+}
+
+/// Pages scenario entry point. Scenario selection changes only the fixture; the same engine-owned
+/// simulation, settings policies, and fixed-geometry preparation paths remain authoritative.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_scenario_with_baking_options(
+    scenario: i32,
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    let Some(scenario) = SandboxScenario::from_i32(scenario) else {
+        return -1;
+    };
+    reset_scenario_with_baking_options(
+        scenario,
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+    )
 }
 
 #[unsafe(no_mangle)]
