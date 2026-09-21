@@ -2,184 +2,39 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color-scheme: light dark;
   line-height: 1.5;
-  --content: 1080px;
+  --content: 1120px;
 }
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  background: Canvas;
-  color: CanvasText;
-}
-
-a {
-  color: inherit;
-}
-
-.catalog-shell {
-  width: min(var(--content), calc(100% - 40px));
-  margin: 0 auto;
-  padding: 72px 0 96px;
-}
-
-.catalog-header {
-  max-width: 760px;
-  padding-bottom: 46px;
-}
-
-.eyebrow,
-.scenario-kicker {
-  margin: 0;
-  font-size: 0.76rem;
-  font-weight: 750;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.62;
-}
-
-h1,
-h2,
-h3,
-p {
-  margin-top: 0;
-}
-
-h1 {
-  margin-bottom: 18px;
-  font-size: clamp(2.6rem, 8vw, 5.5rem);
-  line-height: 0.96;
-  letter-spacing: -0.055em;
-}
-
-h2 {
-  margin-bottom: 0;
-  font-size: clamp(1.45rem, 3vw, 2rem);
-  letter-spacing: -0.025em;
-}
-
-h3 {
-  margin: 5px 0 10px;
-  font-size: clamp(1.35rem, 3vw, 1.8rem);
-  letter-spacing: -0.02em;
-}
-
-.intro,
-.section-note,
-.scenario-copy p,
-.scenario-contract p {
-  color: color-mix(in srgb, CanvasText 72%, transparent);
-}
-
-.intro {
-  max-width: 68ch;
-  margin-bottom: 0;
-  font-size: 1.05rem;
-}
-
-.scenario-section {
-  border-top: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
-}
-
-.section-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 420px);
-  gap: 32px;
-  align-items: end;
-  padding: 28px 0 22px;
-}
-
-.section-note {
-  margin: 0;
-  font-size: 0.9rem;
-}
-
-.scenario-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 32px;
-  align-items: center;
-  padding: 28px 0;
-  border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
-}
-
-.scenario-copy {
-  max-width: 720px;
-}
-
-.scenario-copy p {
-  margin-bottom: 0;
-}
-
-.scenario-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.status {
-  padding: 6px 9px;
-  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
-  border-radius: 999px;
-  font-size: 0.78rem;
-  opacity: 0.72;
-}
-
-.primary-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 42px;
-  padding: 8px 14px;
-  border: 1px solid CanvasText;
-  border-radius: 9px;
-  background: CanvasText;
-  color: Canvas;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.primary-link:hover,
-.primary-link:focus-visible {
-  opacity: 0.82;
-}
-
-.scenario-contract {
-  max-width: 760px;
-  padding-top: 48px;
-}
-
-.scenario-contract h2 {
-  margin: 5px 0 12px;
-}
-
-.scenario-contract p {
-  margin-bottom: 0;
-}
-
-code {
-  padding: 2px 5px;
-  border-radius: 5px;
-  background: color-mix(in srgb, CanvasText 8%, transparent);
-  font: 0.9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-@media (max-width: 760px) {
-  .catalog-shell {
-    width: min(100% - 28px, var(--content));
-    padding: 44px 0 64px;
-  }
-
-  .section-heading,
-  .scenario-row {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-
-  .scenario-actions {
-    justify-content: space-between;
-  }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: Canvas; color: CanvasText; }
+a { color: inherit; }
+.catalog-shell { width: min(var(--content), calc(100% - 40px)); margin: 0 auto; padding: 72px 0 104px; }
+.catalog-header { max-width: 820px; padding-bottom: 54px; }
+.eyebrow,.scenario-kicker { margin: 0; font-size: .76rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; opacity: .62; }
+h1,h2,h3,p { margin-top: 0; }
+h1 { margin-bottom: 18px; font-size: clamp(2.8rem,8vw,5.8rem); line-height: .94; letter-spacing: -.058em; }
+h2 { margin: 3px 0 0; font-size: clamp(1.45rem,3vw,2rem); letter-spacing: -.025em; }
+h3 { margin: 5px 0 9px; font-size: clamp(1.25rem,2.5vw,1.7rem); letter-spacing: -.02em; }
+.intro,.scenario-copy p,.future-copy { color: color-mix(in srgb, CanvasText 72%, transparent); }
+.intro { max-width: 70ch; margin-bottom: 24px; font-size: 1.06rem; }
+.level-key { display: flex; flex-wrap: wrap; gap: 8px; }
+.level-key span { padding: 7px 10px; border: 1px solid color-mix(in srgb, CanvasText 15%, transparent); border-radius: 999px; font-size: .8rem; }
+.level-key strong { display: inline-grid; place-items: center; width: 1.45rem; height: 1.45rem; margin-right: 4px; border-radius: 50%; background: CanvasText; color: Canvas; }
+.level-section { padding: 34px 0 42px; border-top: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+.level-heading { display: grid; grid-template-columns: 48px minmax(0,1fr); gap: 16px; align-items: start; margin-bottom: 18px; }
+.level-number { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid color-mix(in srgb, CanvasText 28%, transparent); border-radius: 50%; font-size: 1.05rem; font-weight: 800; }
+.scenario-list { border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+.scenario-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 32px; align-items: center; padding: 24px 0; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+.scenario-copy { max-width: 760px; }
+.scenario-copy p { margin-bottom: 0; }
+.scenario-actions { display: flex; align-items: center; gap: 10px; }
+.status { padding: 6px 9px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 999px; font-size: .78rem; opacity: .72; }
+.primary-link { display: inline-flex; align-items: center; min-height: 42px; padding: 8px 14px; border: 1px solid CanvasText; border-radius: 9px; background: CanvasText; color: Canvas; font-weight: 700; text-decoration: none; }
+.primary-link:hover,.primary-link:focus-visible { opacity: .82; }
+.future-level { padding-bottom: 0; }
+.future-copy { max-width: 760px; margin: 0 0 0 64px; }
+@media (max-width:760px) {
+  .catalog-shell { width: min(100% - 28px,var(--content)); padding: 44px 0 72px; }
+  .scenario-row { grid-template-columns: 1fr; gap: 15px; }
+  .scenario-actions { justify-content: space-between; }
+  .future-copy { margin-left: 0; }
 }
