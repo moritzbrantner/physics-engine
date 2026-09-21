@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="../../" />
+    <title>physics-engine · general sandbox scenario</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="settings-open">
+    <main class="app-shell">
+      <section class="stage" aria-label="General physics sandbox scenario">
+        <div class="viewport-shell">
+          <canvas
+            id="scene"
+            width="1280"
+            height="720"
+            tabindex="0"
+            aria-label="First-person physics sandbox"
+          ></canvas>
+          <div id="projectile-hud" class="projectile-hud" aria-live="polite">
+            <span class="projectile-hud-label">Projectile</span>
+            <span data-projectile-shortcut="sphere"><kbd>1</kbd> Sphere</span>
+            <span data-projectile-shortcut="arrow"><kbd>2</kbd> Arrow</span>
+            <span data-projectile-shortcut="rigid"><kbd>3</kbd> Rigid</span>
+          </div>
+          <div class="help" aria-hidden="true">
+            WASD move · Space jump · Mouse / arrows look · Click / F shoot · 1/2/3 projectile · R reset · P pause · N step
+          </div>
+        </div>
+
+        <header class="topbar">
+          <div class="brand">
+            <span class="eyebrow">physics-engine</span>
+            <span class="topbar-title">General sandbox</span>
+          </div>
+          <div class="actions" aria-label="Simulation controls">
+            <a class="scenario-nav" href="./">Scenarios</a>
+            <button id="reset" type="button">Reset</button>
+            <button id="pause" type="button">Pause</button>
+            <button id="single-step" type="button">Step</button>
+            <button id="fullscreen" type="button" aria-pressed="false">Fullscreen</button>
+            <button id="open-settings" type="button" aria-controls="settings-panel" aria-expanded="true">
+              Settings
+            </button>
+          </div>
+        </header>
+
+        <div class="stage-status">
+          <p id="debug" class="debug" aria-live="polite"></p>
+          <p id="status" class="status" aria-live="polite">Loading settings and the Rust physics sandbox…</p>
+        </div>
+      </section>
+
+      <button
+        id="settings-scrim"
+        class="settings-scrim"
+        type="button"
+        aria-label="Close settings"
+        tabindex="-1"
+      ></button>
+
+      <aside id="settings-panel" class="settings-panel" aria-labelledby="settings-title">
+        <div class="settings-heading">
+          <div>
+            <p class="eyebrow">moritzbrantner/settings</p>
+            <h1 id="settings-title">Physics settings</h1>
+          </div>
+          <button id="close-settings" type="button" aria-label="Close settings">Close</button>
+        </div>
+
+        <p class="settings-intro">
+          Settings state is validated by the shared settings foundation. The physics engine remains
+          authoritative for collision, response, stabilization, and pair-policy semantics.
+        </p>
+
+        <section class="settings-section" aria-labelledby="simulation-title">
+          <h2 id="simulation-title">Simulation</h2>
+          <div class="setting-grid">
+            <label class="setting-row" for="character-response">
+              <span>
+                <strong>Character response</strong>
+                <small>Choose constrained linear pushing or full rigid-body impact response.</small>
+              </span>
+              <select id="character-response" disabled>
+                <option value="linear">Constrained linear push</option>
+                <option value="physical">Full physical impact</option>
+              </select>
+            </label>
+
+            <label class="setting-row" for="crate-motion">
+              <span>
+                <strong>Crate motion</strong>
+                <small>Allow rigid-body rotation or constrain crates to upright translation.</small>
+              </span>
+              <select id="crate-motion" disabled>
+                <option value="free">Free rigid-body rotation</option>
+                <option value="upright">Translation only · keep upright</option>
+              </select>
+            </label>
+
+            <label class="setting-row" for="projectile-impact-policy">
+              <span>
+                <strong>Projectile impact</strong>
+                <small>Configure bounce/lifecycle independently from pair collision eligibility.</small>
+              </span>
+              <select id="projectile-impact-policy" disabled>
+                <option value="physical">Physical bounce</option>
+                <option value="inelastic">Inelastic impact</option>
+                <option value="impact-retire">Impact and retire</option>
+              </select>
+            </label>
+
+            <label class="setting-row" for="projectile-type">
+              <span>
+                <strong>Projectile type</strong>
+                <small>Compare specialized spheres and arrows with the full rigid-body reference path.</small>
+              </span>
+              <select id="projectile-type" disabled>
+                <option value="sphere">1 · Sphere · rotation-free</option>
+                <option value="arrow">2 · Arrow · directional shaft</option>
+                <option value="rigid">3 · Rigid body · reference</option>
+              </select>
+            </label>
+
+            <label class="setting-row" for="fixed-geometry-setting">
+              <span>
+                <strong>Fixed collision geometry</strong>
+                <small>Preparation is a storage/performance choice, not a gameplay rule.</small>
+              </span>
+              <select id="fixed-geometry-setting" disabled>
+                <option value="runtime">Runtime preparation · reference</option>
+                <option value="load">Prepare fixed geometry at load</option>
+              </select>
+            </label>
+
+            <label class="setting-row" for="browser-fullscreen">
+              <span>
+                <strong>Browser fullscreen</strong>
+                <small>The sandbox layout already fills the viewport; this also requests browser fullscreen.</small>
+              </span>
+              <input id="browser-fullscreen" type="checkbox" disabled />
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section interaction-section" aria-labelledby="interactions-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Pair policies</p>
+              <h2 id="interactions-title">Object interactions</h2>
+            </div>
+            <button id="reset-interactions" type="button" disabled>Reset pairs</button>
+          </div>
+
+          <p>
+            Collision eligibility and response cost are separate controls. Every pair can be enabled or
+            disabled. For fixed-world interactions, the stabilization budget can reduce the engine-owned
+            hard limit of 16 passes. <strong>Engine default</strong> keeps the ordinary budget; <strong>0</strong>
+            disables only post-step fixed-boundary stabilization for that pair.
+          </p>
+
+          <div class="pair-table-wrap">
+            <table class="pair-table">
+              <thead>
+                <tr>
+                  <th scope="col">Object pair</th>
+                  <th scope="col">Collide</th>
+                  <th scope="col">Fixed-boundary stabilization</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">World ↔ World</th>
+                  <td><input type="checkbox" data-collision-pair="world-world" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">World ↔ Character</th>
+                  <td><input type="checkbox" data-collision-pair="world-character" checked disabled /></td>
+                  <td>
+                    <select data-stabilization-pair="world-character" aria-label="World and character stabilization passes" disabled></select>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">World ↔ Crate</th>
+                  <td><input type="checkbox" data-collision-pair="world-crate" checked disabled /></td>
+                  <td>
+                    <select data-stabilization-pair="world-crate" aria-label="World and crate stabilization passes" disabled></select>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">World ↔ Projectile</th>
+                  <td><input type="checkbox" data-collision-pair="world-projectile" checked disabled /></td>
+                  <td>
+                    <select data-stabilization-pair="world-projectile" aria-label="World and projectile stabilization passes" disabled></select>
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Character ↔ Character</th>
+                  <td><input type="checkbox" data-collision-pair="character-character" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Character ↔ Crate</th>
+                  <td><input type="checkbox" data-collision-pair="character-crate" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Character ↔ Projectile</th>
+                  <td><input type="checkbox" data-collision-pair="character-projectile" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Crate ↔ Crate</th>
+                  <td><input type="checkbox" data-collision-pair="crate-crate" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Crate ↔ Projectile</th>
+                  <td><input type="checkbox" data-collision-pair="crate-projectile" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">Projectile ↔ Projectile</th>
+                  <td><input type="checkbox" data-collision-pair="projectile-projectile" checked disabled /></td>
+                  <td><span class="not-applicable">—</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="setting-note">
+            Stabilization budgets do not change material restitution/friction, collision layers, sleep
+            settlement, or the engine hard limit. More pair-policy dimensions can be added here only after
+            the corresponding physics stages consume them.
+          </p>
+        </section>
+
+        <section class="settings-section" aria-labelledby="performance-title">
+          <h2 id="performance-title">Performance evidence</h2>
+          <p>
+            Capture a bounded local browser session with frame/render/physics timings, scenario settings,
+            engine revision, and environment details. Nothing is uploaded automatically.
+          </p>
+          <div class="actions performance-log-actions">
+            <button id="start-performance-log" type="button" disabled>Start performance log</button>
+            <button id="download-performance-log" type="button" disabled>Stop and download JSON</button>
+          </div>
+          <p id="performance-log-status" class="status" aria-live="polite">
+            Start a log before reproducing a slowdown or frame spike.
+          </p>
+          <p class="setting-note">
+            The export contains browser and hardware metadata for comparison. Review it before sharing.
+          </p>
+        </section>
+
+        <select id="fixed-geometry-mode" hidden disabled>
+          <option value="0">Runtime</option>
+          <option value="1">Prepare at load</option>
+        </select>
+        <select id="character-mode" hidden disabled>
+          <option value="1">Linear</option>
+          <option value="0">Physical</option>
+        </select>
+        <input id="upright-crates" type="checkbox" hidden disabled />
+      </aside>
+    </main>
+
+    <script type="module" src="bootstrap.mjs"></script>
+  </body>
+</html>
