@@ -24,6 +24,8 @@ const exports = instance.exports;
 const requiredFunctions = [
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
+  "sandbox_reset_scenario_with_baking_options",
+  "sandbox_sleeping_body_count",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -90,6 +92,17 @@ if (pointer < 0 || byteEnd > exports.memory.buffer.byteLength) {
   );
 }
 new Int32Array(exports.memory.buffer, pointer, length);
+
+for (let scenario = 0; scenario <= 6; scenario += 1) {
+  if (exports.sandbox_reset_scenario_with_baking_options(scenario, 0, 0, 0) !== 0) {
+    throw new Error(`scenario ${scenario} failed to initialize`);
+  }
+  const scenarioLength = exports.sandbox_render_snapshot_len();
+  exports.sandbox_refresh_render_snapshot();
+  if (scenarioLength <= 0 || scenarioLength % stride !== 0) {
+    throw new Error(`scenario ${scenario} returned invalid render snapshot length ${scenarioLength}`);
+  }
+}
 NODE
 
 node --input-type=module --check < site/app.js
@@ -97,6 +110,8 @@ node --input-type=module --check < site/webgpu-renderer.js
 node --input-type=module --check < site/webgl-renderer.js
 node --input-type=module --check < site/physics-error.js
 node --check site/bootstrap.mjs
+node --check site/scenario-config.mjs
+node --check site/scenario-shell.mjs
 node --check site/physics-settings.mjs
 node --check site/physics-error.mjs
 node --check site/interaction-controls.mjs
@@ -105,7 +120,7 @@ node --check site/simulation-rules-config.mjs
 node --check site/performance-log.mjs
 node --check scripts/adapt-performance-evidence.mjs
 node --check scripts/package-performance-log.mjs
-node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs site/performance-log.test.mjs scripts/adapt-performance-evidence.test.mjs scripts/package-performance-log.test.mjs scripts/summarize-cpu-profile.test.mjs
+node --test site/scenario-config.test.mjs site/physics-error.test.mjs site/interaction-controls.test.mjs site/simulation-rules-config.test.mjs site/performance-log.test.mjs scripts/adapt-performance-evidence.test.mjs scripts/package-performance-log.test.mjs scripts/summarize-cpu-profile.test.mjs
 
 rm -rf pages-dist
 mkdir -p pages-dist/vendor/settings/pkg
@@ -155,6 +170,14 @@ NODE
 test -s pages-dist/index.html
 test -s pages-dist/catalog.css
 test -s pages-dist/scenarios/sandbox/index.html
+test -s pages-dist/scenarios/ccd-gauntlet/index.html
+test -s pages-dist/scenarios/collision-query-lab/index.html
+test -s pages-dist/scenarios/off-centre-impact/index.html
+test -s pages-dist/scenarios/rotating-box-lab/index.html
+test -s pages-dist/scenarios/tower-stability/index.html
+test -s pages-dist/scenarios/sleeping-world/index.html
+test -s pages-dist/scenario-config.mjs
+test -s pages-dist/scenario-shell.mjs
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
 test -s pages-dist/physics-settings.mjs
