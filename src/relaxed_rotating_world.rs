@@ -672,17 +672,23 @@ mod tests {
         .expect("valid elastic fixture body")
     }
 
-    fn seed_parked_grid(world: &mut RotatingWorld3d, body_count: u64) {
+    fn seed_parked_grid(
+        world: &mut RotatingWorld3d,
+        body_count: u64,
+        include_collision_proxies: bool,
+    ) {
         const WIDTH: u64 = 512;
         for index in 0..body_count {
             let id = BodyId(10_000 + index);
             let x = 20_000 + i32::try_from(index % WIDTH).expect("bounded fixture x") * 8;
             let z = 20_000 + i32::try_from(index / WIDTH).expect("bounded fixture z") * 8;
             let original = dynamic(id.0, Vec3i::new(x, 0, z), Vec3i::ZERO);
-            world
-                .active
-                .add_box(fixed_sleep_proxy(original.clone()))
-                .expect("add parked proxy");
+            if include_collision_proxies {
+                world
+                    .active
+                    .add_box(fixed_sleep_proxy(original.clone()))
+                    .expect("add parked proxy");
+            }
             assert!(world.parked.insert(id, original).is_none());
         }
         world
@@ -701,7 +707,18 @@ mod tests {
         world
             .add_box(elastic_box(1, Vec3i::ZERO, Vec3i::new(180, 0, 0), false))
             .expect("add local bouncer");
-        seed_parked_grid(&mut world, parked_count);
+        seed_parked_grid(&mut world, parked_count, true);
+        world
+    }
+
+    fn localized_wake_query_world(parked_count: u64) -> RotatingWorld3d {
+        let mut world = world();
+        world
+            .add_box(elastic_box(1, Vec3i::ZERO, Vec3i::new(180, 0, 0), false))
+            .expect("add local wake source");
+        // The scaling benchmark targets only retained parked-wake discovery. The normal 4,096-body
+        // test above retains fixed collision proxies and exercises the complete solver integration.
+        seed_parked_grid(&mut world, parked_count, false);
         world
     }
 
@@ -732,7 +749,7 @@ mod tests {
     #[ignore = "release-mode deterministic locality benchmark; run explicitly with --ignored --nocapture"]
     fn localized_active_island_scaling_benchmark() {
         for parked_count in [1_024_u64, 100_000] {
-            let mut world = localized_bouncer_world(parked_count);
+            let mut world = localized_wake_query_world(parked_count);
             for _ in 0..4 {
                 let (awakened, work) = world
                     .wake_parked_for_sweeps(1, 60)
