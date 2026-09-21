@@ -17,6 +17,7 @@ const downloadPerformanceLogButton = document.querySelector("#download-performan
 const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
 const projectileHud = document.querySelector("#projectile-hud");
+const scenarioId = Number(document.body.dataset.scenarioId ?? 0);
 
 const FIXED_STEP_MS = 1000 / 60;
 const MAX_CATCH_UP_STEPS = 8;
@@ -97,6 +98,8 @@ function performanceEnvironment() {
 function performanceScenario() {
   const query = new URLSearchParams(window.location.search);
   return {
+    scenario_id: scenarioId,
+    scenario_key: document.body.dataset.scenario ?? "sandbox",
     character_response: query.get("character") ?? "linear",
     crate_motion: query.get("crates") ?? "upright",
     fixed_geometry: query.get("bake") ?? "load",
@@ -185,7 +188,8 @@ function selectProjectileType(projectileType) {
 
 function reset() {
   if (
-    engine.sandbox_reset_with_baking_options(
+    engine.sandbox_reset_scenario_with_baking_options(
+      scenarioId,
       Number(characterModeControl.value),
       Number(uprightCratesControl.checked),
       Number(fixedGeometryControl.value),
@@ -432,7 +436,7 @@ function boxVertices(body) {
 }
 
 function materialFor(body) {
-  if (body.role === 3 || body.role === 4) return 4;
+  if (body.role === 3 || body.role === 4 || body.role === 6) return 4;
   if (body.role === 2) return 3;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
@@ -605,7 +609,13 @@ function render() {
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
-  const sleep = quiescent ? " · asleep" : "";
+  const sleepingBodyCount = readPhysicsCounter("sandbox_sleeping_body_count");
+  const sleep =
+    sleepingBodyCount == null
+      ? quiescent
+        ? " · asleep"
+        : ""
+      : ` · ${sleepingBodyCount} sleeping`;
   const fixedGeometry =
     engine.sandbox_fixed_geometry_mode() === 1
       ? ` · fixed prepared ${engine.sandbox_fixed_geometry_prepared_count()} (${engine.sandbox_fixed_geometry_retained_bytes()} B)`
@@ -833,6 +843,7 @@ try {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
   if (
+    typeof engine.sandbox_reset_scenario_with_baking_options !== "function" ||
     typeof engine.sandbox_reset_with_baking_options !== "function" ||
     typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
     typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
