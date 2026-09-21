@@ -423,12 +423,12 @@ impl RotatingWorld3d {
                 };
                 let candidates = self.parked_wake_index.overlapping_ids(*awake_bounds);
                 work.queries = work.queries.saturating_add(1);
-                work.index_nodes_visited = work.index_nodes_visited.saturating_add(
-                    u64::try_from(candidates.visited_nodes).unwrap_or(u64::MAX),
-                );
-                work.candidates = work.candidates.saturating_add(
-                    u64::try_from(candidates.body_ids.len()).unwrap_or(u64::MAX),
-                );
+                work.index_nodes_visited = work
+                    .index_nodes_visited
+                    .saturating_add(u64::try_from(candidates.visited_nodes).unwrap_or(u64::MAX));
+                work.candidates = work
+                    .candidates
+                    .saturating_add(u64::try_from(candidates.body_ids.len()).unwrap_or(u64::MAX));
                 for parked_id in candidates.body_ids {
                     let Some(parked_box) = self.parked.get(&parked_id) else {
                         continue;
@@ -662,13 +662,8 @@ mod tests {
         let body = if fixed_body {
             RigidBody::fixed(BodyId(id), position, Vec3i::new(1, 8, 8)).with_material(material)
         } else {
-            RigidBody::dynamic(
-                BodyId(id),
-                position,
-                velocity,
-                Vec3i::new(1, 1, 1),
-            )
-            .with_material(material)
+            RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(1, 1, 1))
+                .with_material(material)
         };
         RigidBox3d::new(
             body,
@@ -681,10 +676,8 @@ mod tests {
         const WIDTH: u64 = 512;
         for index in 0..body_count {
             let id = BodyId(10_000 + index);
-            let x = 20_000
-                + i32::try_from(index % WIDTH).expect("bounded fixture x") * 8;
-            let z = 20_000
-                + i32::try_from(index / WIDTH).expect("bounded fixture z") * 8;
+            let x = 20_000 + i32::try_from(index % WIDTH).expect("bounded fixture x") * 8;
+            let z = 20_000 + i32::try_from(index / WIDTH).expect("bounded fixture z") * 8;
             let original = dynamic(id.0, Vec3i::new(x, 0, z), Vec3i::ZERO);
             world
                 .active
@@ -706,12 +699,7 @@ mod tests {
             .add_box(elastic_box(101, Vec3i::new(6, 0, 0), Vec3i::ZERO, true))
             .expect("add right wall");
         world
-            .add_box(elastic_box(
-                1,
-                Vec3i::ZERO,
-                Vec3i::new(180, 0, 0),
-                false,
-            ))
+            .add_box(elastic_box(1, Vec3i::ZERO, Vec3i::new(180, 0, 0), false))
             .expect("add local bouncer");
         seed_parked_grid(&mut world, parked_count);
         world
@@ -754,9 +742,8 @@ mod tests {
             let mut max_nodes_visited = 0_u64;
             let mut broad_phase_rebuilds = 0_u64;
             for _ in 0..iterations {
-                let report = std::hint::black_box(
-                    world.step(1, 60).expect("measured local bouncer step"),
-                );
+                let report =
+                    std::hint::black_box(world.step(1, 60).expect("measured local bouncer step"));
                 assert_eq!(report.stats.parked_wake_source_body_checks, 1);
                 assert_eq!(report.stats.parked_wake_queries, 1);
                 assert_eq!(report.stats.parked_wake_candidates, 0);
@@ -781,5 +768,4 @@ mod tests {
             );
         }
     }
-
 }
