@@ -99,6 +99,14 @@ pub struct RotatingWorldStepStats3d {
     pub stabilization_candidate_pairs: u64,
     pub stabilization_exact_contacts: u64,
     pub stabilization_active_bodies: u64,
+    /// Active dynamic bodies examined as sources for parked-body wake discovery.
+    pub parked_wake_source_body_checks: u64,
+    /// Retained parked-body spatial-index queries issued before the strict solver step.
+    pub parked_wake_queries: u64,
+    /// BVH nodes visited by parked-body wake queries. This should scale with the local query, not world size.
+    pub parked_wake_index_nodes_visited: u64,
+    /// Parked bodies whose exact stationary bounds overlapped an awake body's conservative sweep.
+    pub parked_wake_candidates: u64,
     /// Rotation-invariant spheres currently owned by the analytic projectile lane.
     pub ballistic_sphere_count: usize,
     pub ballistic_query_rounds: u64,
@@ -847,6 +855,10 @@ impl RotatingWorld3d {
                 stabilization_candidate_pairs: work.stabilization_candidate_pairs,
                 stabilization_exact_contacts: work.stabilization_exact_contacts,
                 stabilization_active_bodies: work.stabilization_active_bodies,
+                parked_wake_source_body_checks: 0,
+                parked_wake_queries: 0,
+                parked_wake_index_nodes_visited: 0,
+                parked_wake_candidates: 0,
                 ballistic_sphere_count: self.ballistic_spheres.len(),
                 ballistic_query_rounds: ballistic_work.query_rounds,
                 ballistic_target_bound_checks: ballistic_work.target_bound_checks,

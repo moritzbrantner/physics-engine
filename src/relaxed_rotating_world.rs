@@ -33,7 +33,15 @@ pub struct RotatingWorld3d {
     active: StrictRotatingWorld3d,
     parked: BTreeMap<BodyId, RigidBox3d>,
     parked_wake_index: RotatingBoundsIndex3d,
-    active_dynamic_count: usize,
+    active_dynamic_ids: BTreeSet<BodyId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ParkedWakeWork3d {
+    source_body_checks: u64,
+    queries: u64,
+    index_nodes_visited: u64,
+    candidates: u64,
 }
 
 impl RotatingWorld3d {
@@ -43,7 +51,7 @@ impl RotatingWorld3d {
             active: StrictRotatingWorld3d::new(config),
             parked: BTreeMap::new(),
             parked_wake_index: RotatingBoundsIndex3d::default(),
-            active_dynamic_count: 0,
+            active_dynamic_ids: BTreeSet::new(),
         }
     }
 
@@ -136,7 +144,7 @@ impl RotatingWorld3d {
         let dynamic = rigid_box.body().kind() == BodyKind::Dynamic;
         self.active.add_box(rigid_box)?;
         if dynamic {
-            self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
+            self.active_dynamic_ids.insert(id);
         }
         Ok(())
     }
@@ -148,7 +156,7 @@ impl RotatingWorld3d {
         } else {
             let removed = self.active.remove_box(id)?;
             if removed.body().kind() == BodyKind::Dynamic {
-                self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
+                self.active_dynamic_ids.remove(&id);
             }
             removed
         };
@@ -260,16 +268,16 @@ impl RotatingWorld3d {
         if timestep_numerator == 0 {
             return self.active.step(timestep_numerator, timestep_denominator);
         }
-        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
+        if self.active_dynamic_ids.is_empty() && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
         if self.active.ballistic_sphere_count() > 0 && !self.parked.is_empty() {
             self.unpark_all()?;
         }
 
-        let mut changed_body_ids =
+        let (mut changed_body_ids, parked_wake_work) =
             self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
-        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
+        if self.active_dynamic_ids.is_empty() && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
 
@@ -282,6 +290,10 @@ impl RotatingWorld3d {
             .boxes()
             .count()
             .saturating_add(self.active.ballistic_sphere_count());
+        report.stats.parked_wake_source_body_checks = parked_wake_work.source_body_checks;
+        report.stats.parked_wake_queries = parked_wake_work.queries;
+        report.stats.parked_wake_index_nodes_visited = parked_wake_work.index_nodes_visited;
+        report.stats.parked_wake_candidates = parked_wake_work.candidates;
         Ok(report)
     }
 
@@ -321,7 +333,7 @@ impl RotatingWorld3d {
                 .ok_or(RotatingWorldError3d::MissingBody(id))?;
             let proxy = fixed_sleep_proxy(rigid_box.clone());
             self.active.add_box(proxy)?;
-            self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
+            self.active_dynamic_ids.remove(&id);
             self.parked.insert(id, rigid_box);
             parked_any = true;
         }
@@ -353,7 +365,7 @@ impl RotatingWorld3d {
             return Err(error);
         }
         self.parked.remove(&id);
-        self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
+        self.active_dynamic_ids.insert(id);
         Ok(true)
     }
 
@@ -375,10 +387,11 @@ impl RotatingWorld3d {
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
-    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+    ) -> Result<(BTreeSet<BodyId>, ParkedWakeWork3d), RotatingWorldError3d> {
         let mut awakened = BTreeSet::new();
-        if self.parked.is_empty() || self.active_dynamic_count == 0 {
-            return Ok(awakened);
+        let mut work = ParkedWakeWork3d::default();
+        if self.parked.is_empty() || self.active_dynamic_ids.is_empty() {
+            return Ok((awakened, work));
         }
 
         let awake_config = RigidBoxFreeFlightConfig3d::new(
@@ -386,20 +399,21 @@ impl RotatingWorld3d {
             timestep_numerator,
             timestep_denominator,
         );
-        let mut awake_bounds = self
-            .active
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic
-                    && rigid_box.solver_participation() == SolverParticipation3d::Solid
-            })
-            .map(|rigid_box| {
-                Ok((
-                    rigid_box.body().id(),
-                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;
+        let mut awake_bounds = Vec::with_capacity(self.active_dynamic_ids.len());
+        for id in self.active_dynamic_ids.iter().copied() {
+            work.source_body_checks = work.source_body_checks.saturating_add(1);
+            let rigid_box = self
+                .active
+                .box_by_id(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            if rigid_box.solver_participation() != SolverParticipation3d::Solid {
+                continue;
+            }
+            awake_bounds.push((
+                id,
+                rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
+            ));
+        }
 
         loop {
             let mut newly_awake = BTreeSet::new();
@@ -408,7 +422,13 @@ impl RotatingWorld3d {
                     return Err(RotatingWorldError3d::MissingBody(*awake_id));
                 };
                 let candidates = self.parked_wake_index.overlapping_ids(*awake_bounds);
-                let _ = candidates.visited_nodes;
+                work.queries = work.queries.saturating_add(1);
+                work.index_nodes_visited = work
+                    .index_nodes_visited
+                    .saturating_add(u64::try_from(candidates.visited_nodes).unwrap_or(u64::MAX));
+                work.candidates = work
+                    .candidates
+                    .saturating_add(u64::try_from(candidates.body_ids.len()).unwrap_or(u64::MAX));
                 for parked_id in candidates.body_ids {
                     let Some(parked_box) = self.parked.get(&parked_id) else {
                         continue;
@@ -449,7 +469,7 @@ impl RotatingWorld3d {
         if !awakened.is_empty() {
             self.rebuild_parked_wake_index()?;
         }
-        Ok(awakened)
+        Ok((awakened, work))
     }
 }
 
@@ -473,11 +493,11 @@ fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError
 #[cfg(test)]
 mod tests {
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, Orientation3d, RigidBody,
-        RigidBox3d, RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,
+        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, Material, Orientation3d,
+        RigidBody, RigidBox3d, RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,
     };
 
-    use super::RotatingWorld3d;
+    use super::{RotatingWorld3d, fixed_sleep_proxy};
 
     fn dynamic(id: u64, position: Vec3i, velocity: Vec3i) -> RigidBox3d {
         RigidBox3d::new(
@@ -635,5 +655,140 @@ mod tests {
         assert!(world.parked.is_empty());
         assert!(world.active.box_by_id(BodyId(9)).is_some());
         assert_eq!(world.boxes().count(), 1);
+    }
+
+    fn elastic_box(id: u64, position: Vec3i, velocity: Vec3i, fixed_body: bool) -> RigidBox3d {
+        let material = Material::new(1_000);
+        let body = if fixed_body {
+            RigidBody::fixed(BodyId(id), position, Vec3i::new(1, 8, 8)).with_material(material)
+        } else {
+            RigidBody::dynamic(BodyId(id), position, velocity, Vec3i::new(1, 1, 1))
+                .with_material(material)
+        };
+        RigidBox3d::new(
+            body,
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid elastic fixture body")
+    }
+
+    fn seed_parked_grid(
+        world: &mut RotatingWorld3d,
+        body_count: u64,
+        include_collision_proxies: bool,
+    ) {
+        const WIDTH: u64 = 512;
+        for index in 0..body_count {
+            let id = BodyId(10_000 + index);
+            let x = 20_000 + i32::try_from(index % WIDTH).expect("bounded fixture x") * 8;
+            let z = 20_000 + i32::try_from(index / WIDTH).expect("bounded fixture z") * 8;
+            let original = dynamic(id.0, Vec3i::new(x, 0, z), Vec3i::ZERO);
+            if include_collision_proxies {
+                world
+                    .active
+                    .add_box(fixed_sleep_proxy(original.clone()))
+                    .expect("add parked proxy");
+            }
+            assert!(world.parked.insert(id, original).is_none());
+        }
+        world
+            .rebuild_parked_wake_index()
+            .expect("build parked wake index");
+    }
+
+    fn localized_bouncer_world(parked_count: u64) -> RotatingWorld3d {
+        let mut world = world();
+        world
+            .add_box(elastic_box(100, Vec3i::new(-6, 0, 0), Vec3i::ZERO, true))
+            .expect("add left wall");
+        world
+            .add_box(elastic_box(101, Vec3i::new(6, 0, 0), Vec3i::ZERO, true))
+            .expect("add right wall");
+        world
+            .add_box(elastic_box(1, Vec3i::ZERO, Vec3i::new(180, 0, 0), false))
+            .expect("add local bouncer");
+        seed_parked_grid(&mut world, parked_count, true);
+        world
+    }
+
+    fn localized_wake_query_world(parked_count: u64) -> RotatingWorld3d {
+        let mut world = world();
+        world
+            .add_box(elastic_box(1, Vec3i::ZERO, Vec3i::new(180, 0, 0), false))
+            .expect("add local wake source");
+        // The scaling benchmark targets only retained parked-wake discovery. The normal 4,096-body
+        // test above retains fixed collision proxies and exercises the complete solver integration.
+        seed_parked_grid(&mut world, parked_count, false);
+        world
+    }
+
+    #[test]
+    fn localized_active_island_does_not_scan_distant_sleepers() {
+        let parked_count = 4_096_u64;
+        let mut world = localized_bouncer_world(parked_count);
+
+        world.step(1, 60).expect("warm locality fixture");
+        for _ in 0..32 {
+            let report = world.step(1, 60).expect("local bouncer step");
+            assert_eq!(report.stats.parked_wake_source_body_checks, 1);
+            assert_eq!(report.stats.parked_wake_queries, 1);
+            assert_eq!(report.stats.parked_wake_candidates, 0);
+            assert!(
+                report.stats.parked_wake_index_nodes_visited <= 64,
+                "local wake query visited too much of the parked tree: {:?}",
+                report.stats
+            );
+            assert_eq!(
+                world.sleeping_body_count(),
+                usize::try_from(parked_count).expect("bounded fixture")
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "release-mode deterministic locality benchmark; run explicitly with --ignored --nocapture"]
+    fn localized_active_island_scaling_benchmark() {
+        for parked_count in [1_024_u64, 100_000] {
+            let mut world = localized_wake_query_world(parked_count);
+            for _ in 0..4 {
+                let (awakened, work) = world
+                    .wake_parked_for_sweeps(1, 60)
+                    .expect("warm parked-wake locality fixture");
+                assert!(awakened.is_empty());
+                assert_eq!(work.source_body_checks, 1);
+                assert_eq!(work.queries, 1);
+                assert_eq!(work.candidates, 0);
+            }
+
+            let iterations = 240_u32;
+            let start = std::time::Instant::now();
+            let mut max_nodes_visited = 0_u64;
+            for _ in 0..iterations {
+                let (awakened, work) = std::hint::black_box(
+                    world
+                        .wake_parked_for_sweeps(1, 60)
+                        .expect("measured parked-wake locality query"),
+                );
+                assert!(awakened.is_empty());
+                assert_eq!(work.source_body_checks, 1);
+                assert_eq!(work.queries, 1);
+                assert_eq!(work.candidates, 0);
+                max_nodes_visited = max_nodes_visited.max(work.index_nodes_visited);
+            }
+            let elapsed = start.elapsed();
+
+            assert!(
+                max_nodes_visited <= 64,
+                "localized wake query traversed {max_nodes_visited} BVH nodes with {parked_count} sleepers"
+            );
+            assert_eq!(
+                world.sleeping_body_count(),
+                usize::try_from(parked_count).expect("bounded fixture")
+            );
+            println!(
+                "localized parked-wake query: parked={parked_count}, iterations={iterations}, total={elapsed:?}, per_query={:?}, max_wake_nodes={max_nodes_visited}",
+                elapsed / iterations
+            );
+        }
     }
 }
