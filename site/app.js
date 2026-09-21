@@ -17,6 +17,19 @@ const downloadPerformanceLogButton = document.querySelector("#download-performan
 const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
 const projectileHud = document.querySelector("#projectile-hud");
+const scenarioSlug = document.body.dataset.scenario ?? "sandbox";
+const scenarioTitle = document.body.dataset.scenarioTitle ?? "General sandbox";
+const SCENARIO_IDS = new Map([
+  ["sandbox", 0],
+  ["ccd-gauntlet", 1],
+  ["rotating-box-lab", 2],
+  ["tower-stability", 3],
+  ["sleeping-world", 4],
+  ["collision-query-lab", 5],
+  ["off-centre-impact", 6],
+]);
+const scenarioId = SCENARIO_IDS.get(scenarioSlug);
+if (scenarioId == null) throw new Error(`Unknown physics scenario: ${scenarioSlug}`);
 
 const FIXED_STEP_MS = 1000 / 60;
 const MAX_CATCH_UP_STEPS = 8;
@@ -97,6 +110,7 @@ function performanceEnvironment() {
 function performanceScenario() {
   const query = new URLSearchParams(window.location.search);
   return {
+    fixture: scenarioSlug,
     character_response: query.get("character") ?? "linear",
     crate_motion: query.get("crates") ?? "upright",
     fixed_geometry: query.get("bake") ?? "load",
@@ -185,7 +199,8 @@ function selectProjectileType(projectileType) {
 
 function reset() {
   if (
-    engine.sandbox_reset_with_baking_options(
+    engine.sandbox_reset_scenario_with_baking_options(
+      scenarioId,
       Number(characterModeControl.value),
       Number(uprightCratesControl.checked),
       Number(fixedGeometryControl.value),
@@ -220,7 +235,7 @@ function reset() {
   pauseButton.textContent = "Pause";
   syncProjectileHud();
   performanceRecorder.recordMarker("reset", performanceScenario());
-  status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
+  status.textContent = `${scenarioTitle}. Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
 function movementVelocity() {
@@ -432,7 +447,7 @@ function boxVertices(body) {
 }
 
 function materialFor(body) {
-  if (body.role === 3 || body.role === 4) return 4;
+  if (body.role === 3 || body.role === 4 || body.role === 6) return 4;
   if (body.role === 2) return 3;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
@@ -591,10 +606,27 @@ function ensureCrosshair() {
   viewportShell.append(crosshair);
 }
 
+function refreshScenarioQuery() {
+  if (
+    scenarioSlug !== "collision-query-lab" ||
+    typeof engine?.sandbox_aim_query !== "function"
+  ) {
+    return null;
+  }
+
+  const cosPitch = Math.cos(pitch);
+  return engine.sandbox_aim_query(
+    Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED),
+    Math.round(-Math.sin(pitch) * PROJECTILE_SPEED),
+    Math.round(-Math.cos(yaw) * cosPitch * PROJECTILE_SPEED),
+  );
+}
+
 function render() {
   const resized = resizeCanvas();
   if (!renderDirty && !resized) return false;
 
+  const queryHit = refreshScenarioQuery();
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
   if (!player) return false;
@@ -626,7 +658,13 @@ function render() {
       : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
   const physicsTiming =
     averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const queryDiagnostics =
+    scenarioSlug === "collision-query-lab"
+      ? queryHit != null && queryHit >= 0
+        ? ` · ray hit body #${queryHit}`
+        : " · ray clear"
+      : "";
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming}${queryDiagnostics} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   renderDirty = false;
   return true;
 }
@@ -833,11 +871,11 @@ try {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
   if (
-    typeof engine.sandbox_reset_with_baking_options !== "function" ||
+    typeof engine.sandbox_reset_scenario_with_baking_options !== "function" ||
     typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
     typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
   ) {
-    throw new Error("WASM sandbox does not expose fixed geometry comparison controls");
+    throw new Error("WASM sandbox does not expose scenario and fixed geometry controls");
   }
   ensureCrosshair();
   characterModeControl.disabled = false;
