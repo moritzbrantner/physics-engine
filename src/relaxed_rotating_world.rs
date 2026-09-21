@@ -734,23 +734,29 @@ mod tests {
         for parked_count in [1_024_u64, 100_000] {
             let mut world = localized_bouncer_world(parked_count);
             for _ in 0..4 {
-                std::hint::black_box(world.step(1, 60).expect("warm locality fixture"));
+                let (awakened, work) = world
+                    .wake_parked_for_sweeps(1, 60)
+                    .expect("warm parked-wake locality fixture");
+                assert!(awakened.is_empty());
+                assert_eq!(work.source_body_checks, 1);
+                assert_eq!(work.queries, 1);
+                assert_eq!(work.candidates, 0);
             }
 
             let iterations = 240_u32;
             let start = std::time::Instant::now();
             let mut max_nodes_visited = 0_u64;
-            let mut broad_phase_rebuilds = 0_u64;
             for _ in 0..iterations {
-                let report =
-                    std::hint::black_box(world.step(1, 60).expect("measured local bouncer step"));
-                assert_eq!(report.stats.parked_wake_source_body_checks, 1);
-                assert_eq!(report.stats.parked_wake_queries, 1);
-                assert_eq!(report.stats.parked_wake_candidates, 0);
-                max_nodes_visited =
-                    max_nodes_visited.max(report.stats.parked_wake_index_nodes_visited);
-                broad_phase_rebuilds =
-                    broad_phase_rebuilds.saturating_add(report.stats.broad_phase_rebuilds);
+                let (awakened, work) = std::hint::black_box(
+                    world
+                        .wake_parked_for_sweeps(1, 60)
+                        .expect("measured parked-wake locality query"),
+                );
+                assert!(awakened.is_empty());
+                assert_eq!(work.source_body_checks, 1);
+                assert_eq!(work.queries, 1);
+                assert_eq!(work.candidates, 0);
+                max_nodes_visited = max_nodes_visited.max(work.index_nodes_visited);
             }
             let elapsed = start.elapsed();
 
@@ -763,7 +769,7 @@ mod tests {
                 usize::try_from(parked_count).expect("bounded fixture")
             );
             println!(
-                "localized sleeping island: parked={parked_count}, iterations={iterations}, total={elapsed:?}, per_step={:?}, max_wake_nodes={max_nodes_visited}, broad_phase_rebuilds={broad_phase_rebuilds}",
+                "localized parked-wake query: parked={parked_count}, iterations={iterations}, total={elapsed:?}, per_query={:?}, max_wake_nodes={max_nodes_visited}",
                 elapsed / iterations
             );
         }
