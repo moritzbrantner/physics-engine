@@ -1,5 +1,5 @@
 use physics_engine::{
-    BodyId, Material, Ray, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
+    BodyId, Material, Ray, RigidBody, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, Vec3i, World, WorldConfig,
 };
 
