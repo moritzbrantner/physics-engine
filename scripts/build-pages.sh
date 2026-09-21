@@ -153,6 +153,8 @@ await writeFile("pages-dist/build-provenance.json", `${JSON.stringify(provenance
 NODE
 
 test -s pages-dist/index.html
+test -s pages-dist/catalog.css
+test -s pages-dist/scenarios/sandbox/index.html
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
 test -s pages-dist/physics-settings.mjs
