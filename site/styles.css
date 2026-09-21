@@ -573,3 +573,22 @@ canvas:focus-visible {
 .topbar .scenario-nav:focus-visible {
   background: rgb(255 255 255 / 14%);
 }
+
+
+.scenario-level-badge {
+  padding: 3px 7px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0.72;
+}
+
+.scenario-context {
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid color-mix(in srgb, CanvasText 34%, transparent);
+  background: color-mix(in srgb, CanvasText 5%, transparent);
+  color: color-mix(in srgb, CanvasText 78%, transparent);
+}
