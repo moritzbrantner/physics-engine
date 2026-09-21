@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BallisticSphere3d, BallisticSphereError3d,
+    ANGULAR_VELOCITY_SCALE, AngularState3d, AngularVelocity3d, BallisticSphere3d, BallisticSphereError3d,
     BallisticTimelineError3d, BodyId, BodyKind, Material, Orientation3d,
     RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
@@ -42,7 +42,37 @@ impl ProjectileType {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i32)]
+pub(crate) enum SandboxScenario {
+    General = 0,
+    CcdGauntlet = 1,
+    CollisionQueryLab = 2,
+    OffCentreImpact = 3,
+    RotatingBoxLab = 4,
+    TowerStability = 5,
+    SleepingWorld = 6,
+}
+
+impl SandboxScenario {
+    pub(crate) const fn from_i32(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::General),
+            1 => Some(Self::CcdGauntlet),
+            2 => Some(Self::CollisionQueryLab),
+            3 => Some(Self::OffCentreImpact),
+            4 => Some(Self::RotatingBoxLab),
+            5 => Some(Self::TowerStability),
+            6 => Some(Self::SleepingWorld),
+            _ => None,
+        }
+    }
+}
+
+const QUERY_SENSOR_ID: BodyId = BodyId(300);
+
 struct Sandbox {
+    scenario: SandboxScenario,
     world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
@@ -56,11 +86,12 @@ struct Sandbox {
     projectiles_evicted_by_cap: u32,
     error_code: i32,
     error_detail: i32,
+    query_hit_ids: Vec<BodyId>,
 }
 
 impl Sandbox {
     fn new() -> Result<Self, RotatingWorldError3d> {
-        Self::with_character_mode(false)
+        Self::with_scenario_options(SandboxScenario::General, false, false)
     }
 
     fn with_character_mode(linear_push: bool) -> Result<Self, RotatingWorldError3d> {
@@ -68,6 +99,14 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        Self::with_scenario_options(SandboxScenario::General, linear_push, upright_crates)
+    }
+
+    fn with_scenario_options(
+        scenario: SandboxScenario,
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
@@ -77,73 +116,21 @@ impl Sandbox {
             max_events: 32,
         });
 
-        let fixed_bodies = [
-            (10, Vec3i::new(0, -16, 0), Vec3i::new(520, 16, 520)),
-            (11, Vec3i::new(0, 72, -520), Vec3i::new(520, 72, 8)),
-            (12, Vec3i::new(0, 72, 520), Vec3i::new(520, 72, 8)),
-            (13, Vec3i::new(-520, 72, 0), Vec3i::new(8, 72, 520)),
-            (14, Vec3i::new(520, 72, 0), Vec3i::new(8, 72, 520)),
-            // Deliberately thin target for sampled rotating CCD acceptance.
-            (15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3)),
-            (20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70)),
-            (21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45)),
-            (22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45)),
-            (23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45)),
-            (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
-        ];
-        for (id, position, half_extents) in fixed_bodies {
-            world.add_box(rotating_box(RigidBody::fixed(
-                BodyId(id),
-                position,
-                half_extents,
-            )))?;
+        add_floor(&mut world)?;
+        add_player(&mut world, linear_push)?;
+
+        match scenario {
+            SandboxScenario::General => add_general_fixture(&mut world, upright_crates)?,
+            SandboxScenario::CcdGauntlet => add_ccd_gauntlet_fixture(&mut world)?,
+            SandboxScenario::CollisionQueryLab => add_collision_query_fixture(&mut world)?,
+            SandboxScenario::OffCentreImpact => add_off_centre_impact_fixture(&mut world)?,
+            SandboxScenario::RotatingBoxLab => add_rotating_box_fixture(&mut world)?,
+            SandboxScenario::TowerStability => add_tower_fixture(&mut world)?,
+            SandboxScenario::SleepingWorld => add_sleeping_world_fixture(&mut world)?,
         }
 
-        let player = rotating_box(
-            RigidBody::dynamic(
-                PLAYER_ID,
-                Vec3i::new(0, 38, 320),
-                Vec3i::ZERO,
-                Vec3i::new(12, 20, 12),
-            )
-            .with_mass(4),
-        )
-        .with_rotation_locked();
-        world.add_box(if linear_push {
-            player.with_linear_push(Vec3i::new(0, -1, 0))
-        } else {
-            player
-        })?;
-
-        let crate_positions = [
-            Vec3i::new(-75, 18, 135),
-            Vec3i::new(-75, 54, 135),
-            Vec3i::new(80, 18, 120),
-            Vec3i::new(116, 18, 120),
-            Vec3i::new(98, 54, 120),
-            Vec3i::new(0, 18, -70),
-        ];
-        for (offset, position) in crate_positions.into_iter().enumerate() {
-            let crate_body = rotating_box(
-                RigidBody::dynamic(
-                    BodyId(100 + offset as u64),
-                    position,
-                    Vec3i::ZERO,
-                    Vec3i::new(18, 18, 18),
-                )
-                .with_mass(2)
-                .with_material(
-                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
-                ),
-            );
-            world.add_box(if upright_crates {
-                crate_body.with_rotation_locked()
-            } else {
-                crate_body
-            })?;
-        }
-
-        Ok(Self {
+        let mut sandbox = Self {
+            scenario,
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
@@ -157,7 +144,10 @@ impl Sandbox {
             projectiles_evicted_by_cap: 0,
             error_code: 0,
             error_detail: 0,
-        })
+            query_hit_ids: Vec::new(),
+        };
+        sandbox.refresh_scenario_state()?;
+        Ok(sandbox)
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
@@ -247,6 +237,11 @@ impl Sandbox {
             .total_collisions
             .saturating_add(u32::try_from(collisions).unwrap_or(u32::MAX));
         self.cleanup_projectiles();
+        if let Err(error) = self.refresh_scenario_state() {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
+        }
         if self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
@@ -266,6 +261,11 @@ impl Sandbox {
     }
 
     fn render_role_for(&self, id: BodyId) -> i32 {
+        if self.scenario == SandboxScenario::CollisionQueryLab
+            && (id == QUERY_SENSOR_ID || self.query_hit_ids.contains(&id))
+        {
+            return 6;
+        }
         if id.0 >= PROJECTILE_ID_START {
             return match self.projectile_type {
                 Some(ProjectileType::Arrow) => 4,
@@ -449,6 +449,36 @@ impl Sandbox {
         }
     }
 
+    fn refresh_scenario_state(&mut self) -> Result<(), RotatingWorldError3d> {
+        if self.scenario != SandboxScenario::CollisionQueryLab {
+            self.query_hit_ids.clear();
+            return Ok(());
+        }
+
+        let position = self
+            .world
+            .box_by_id(QUERY_SENSOR_ID)
+            .ok_or(RotatingWorldError3d::MissingBody(QUERY_SENSOR_ID))?
+            .body()
+            .position();
+        let velocity_x = if position.x >= 190 {
+            -140
+        } else if position.x <= -190 {
+            140
+        } else {
+            self.world
+                .box_by_id(QUERY_SENSOR_ID)
+                .expect("query sensor must exist")
+                .body()
+                .velocity()
+                .x
+        };
+        self.world
+            .set_linear_velocity(QUERY_SENSOR_ID, Vec3i::new(velocity_x, 0, 0))?;
+        self.query_hit_ids = self.world.body_overlaps(QUERY_SENSOR_ID)?;
+        Ok(())
+    }
+
     fn body_count(&self) -> usize {
         self.world
             .boxes()
@@ -528,6 +558,254 @@ fn rotating_box(body: RigidBody) -> RigidBox3d {
         AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
     )
     .expect("sandbox rotating body must be valid")
+}
+
+
+fn add_floor(world: &mut RotatingWorld3d) -> Result<(), RotatingWorldError3d> {
+    world.add_box(rotating_box(RigidBody::fixed(
+        BodyId(10),
+        Vec3i::new(0, -16, 0),
+        Vec3i::new(520, 16, 520),
+    )))
+}
+
+fn add_player(
+    world: &mut RotatingWorld3d,
+    linear_push: bool,
+) -> Result<(), RotatingWorldError3d> {
+    let player = rotating_box(
+        RigidBody::dynamic(
+            PLAYER_ID,
+            Vec3i::new(0, 38, 320),
+            Vec3i::ZERO,
+            Vec3i::new(12, 20, 12),
+        )
+        .with_mass(4),
+    )
+    .with_rotation_locked();
+    world.add_box(if linear_push {
+        player.with_linear_push(Vec3i::new(0, -1, 0))
+    } else {
+        player
+    })
+}
+
+fn add_general_fixture(
+    world: &mut RotatingWorld3d,
+    upright_crates: bool,
+) -> Result<(), RotatingWorldError3d> {
+    let fixed_bodies = [
+        (11, Vec3i::new(0, 72, -520), Vec3i::new(520, 72, 8)),
+        (12, Vec3i::new(0, 72, 520), Vec3i::new(520, 72, 8)),
+        (13, Vec3i::new(-520, 72, 0), Vec3i::new(8, 72, 520)),
+        (14, Vec3i::new(520, 72, 0), Vec3i::new(8, 72, 520)),
+        (15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3)),
+        (20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70)),
+        (21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45)),
+        (22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45)),
+        (23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45)),
+        (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
+    ];
+    for (id, position, half_extents) in fixed_bodies {
+        world.add_box(rotating_box(RigidBody::fixed(
+            BodyId(id),
+            position,
+            half_extents,
+        )))?;
+    }
+
+    let crate_positions = [
+        Vec3i::new(-75, 18, 135),
+        Vec3i::new(-75, 54, 135),
+        Vec3i::new(80, 18, 120),
+        Vec3i::new(116, 18, 120),
+        Vec3i::new(98, 54, 120),
+        Vec3i::new(0, 18, -70),
+    ];
+    for (offset, position) in crate_positions.into_iter().enumerate() {
+        let crate_body = rotating_box(
+            RigidBody::dynamic(
+                BodyId(100 + offset as u64),
+                position,
+                Vec3i::ZERO,
+                Vec3i::new(18, 18, 18),
+            )
+            .with_mass(2)
+            .with_material(
+                Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
+            ),
+        );
+        world.add_box(if upright_crates {
+            crate_body.with_rotation_locked()
+        } else {
+            crate_body
+        })?;
+    }
+    Ok(())
+}
+
+fn add_ccd_gauntlet_fixture(world: &mut RotatingWorld3d) -> Result<(), RotatingWorldError3d> {
+    let lanes = [(-180, 8), (-60, 4), (60, 2), (180, 1)];
+    for (index, (x, half_depth)) in lanes.into_iter().enumerate() {
+        world.add_box(rotating_box(RigidBody::fixed(
+            BodyId(30 + index as u64),
+            Vec3i::new(x, 62, 30),
+            Vec3i::new(42, 62, half_depth),
+        )))?;
+        world.add_box(rotating_box(
+            RigidBody::dynamic(
+                BodyId(130 + index as u64),
+                Vec3i::new(x, 18, -70),
+                Vec3i::ZERO,
+                Vec3i::new(14, 18, 14),
+            )
+            .with_mass(2),
+        ))?;
+    }
+    Ok(())
+}
+
+fn add_collision_query_fixture(world: &mut RotatingWorld3d) -> Result<(), RotatingWorldError3d> {
+    for (index, x) in [-120, -40, 40, 120].into_iter().enumerate() {
+        world.add_box(rotating_box(RigidBody::fixed(
+            BodyId(140 + index as u64),
+            Vec3i::new(x, 28, 0),
+            Vec3i::new(22, 28, 22),
+        )))?;
+    }
+    world.add_box(
+        rotating_box(
+            RigidBody::dynamic(
+                QUERY_SENSOR_ID,
+                Vec3i::new(-190, 28, 0),
+                Vec3i::new(140, 0, 0),
+                Vec3i::new(18, 18, 18),
+            )
+            .with_mass(1),
+        )
+        .with_rotation_locked()
+        .with_overlap_only()
+        .with_external_motion(),
+    )
+}
+
+fn add_off_centre_impact_fixture(
+    world: &mut RotatingWorld3d,
+) -> Result<(), RotatingWorldError3d> {
+    world.add_box(rotating_box(
+        RigidBody::dynamic(
+            BodyId(160),
+            Vec3i::new(0, 50, 0),
+            Vec3i::ZERO,
+            Vec3i::new(44, 50, 14),
+        )
+        .with_mass(12)
+        .with_material(Material::new(50).with_friction(900)),
+    ))?;
+    world.add_box(rotating_box(RigidBody::fixed(
+        BodyId(161),
+        Vec3i::new(0, 10, -115),
+        Vec3i::new(90, 10, 18),
+    )))?;
+    Ok(())
+}
+
+fn add_rotating_box_fixture(world: &mut RotatingWorld3d) -> Result<(), RotatingWorldError3d> {
+    let boxes = [
+        (
+            170,
+            Vec3i::new(-125, 95, 40),
+            Vec3i::new(55, 10, 14),
+            Vec3i::new(120, 0, -80),
+            AngularVelocity3d::new(0, ANGULAR_VELOCITY_SCALE * 2, ANGULAR_VELOCITY_SCALE),
+        ),
+        (
+            171,
+            Vec3i::new(0, 150, -30),
+            Vec3i::new(12, 58, 14),
+            Vec3i::new(0, -30, 40),
+            AngularVelocity3d::new(ANGULAR_VELOCITY_SCALE, 0, ANGULAR_VELOCITY_SCALE * 2),
+        ),
+        (
+            172,
+            Vec3i::new(130, 115, 35),
+            Vec3i::new(48, 12, 18),
+            Vec3i::new(-100, 0, -70),
+            AngularVelocity3d::new(ANGULAR_VELOCITY_SCALE * 2, ANGULAR_VELOCITY_SCALE, 0),
+        ),
+    ];
+    for (id, position, half_extents, velocity, angular_velocity) in boxes {
+        world.add_box(
+            RigidBox3d::new(
+                RigidBody::dynamic(BodyId(id), position, velocity, half_extents)
+                    .with_mass(5)
+                    .with_material(Material::new(120).with_friction(700)),
+                AngularState3d::new(Orientation3d::IDENTITY, angular_velocity),
+            )
+            .expect("rotating-box lab fixture must be valid"),
+        )?;
+    }
+    for (index, x) in [-170, 0, 170].into_iter().enumerate() {
+        world.add_box(rotating_box(RigidBody::fixed(
+            BodyId(180 + index as u64),
+            Vec3i::new(x, 45, -120),
+            Vec3i::new(16, 45, 16),
+        )))?;
+    }
+    Ok(())
+}
+
+fn add_tower_fixture(world: &mut RotatingWorld3d) -> Result<(), RotatingWorldError3d> {
+    for level in 0..8_u64 {
+        let x = if level % 2 == 0 { -2 } else { 2 };
+        world.add_box(rotating_box(
+            RigidBody::dynamic(
+                BodyId(200 + level),
+                Vec3i::new(x, 18 + i32::try_from(level).expect("small tower") * 36, 0),
+                Vec3i::ZERO,
+                Vec3i::new(18, 18, 18),
+            )
+            .with_mass(2)
+            .with_material(Material::new(0).with_friction(1_000)),
+        ))?;
+    }
+    Ok(())
+}
+
+fn add_sleeping_world_fixture(world: &mut RotatingWorld3d) -> Result<(), RotatingWorldError3d> {
+    let mut id = 220_u64;
+    for row in 0..5_i32 {
+        for column in 0..5_i32 {
+            world.add_box(
+                rotating_box(
+                    RigidBody::dynamic(
+                        BodyId(id),
+                        Vec3i::new(-240 + column * 34, 10, -240 + row * 34),
+                        Vec3i::ZERO,
+                        Vec3i::new(10, 10, 10),
+                    )
+                    .with_mass(1)
+                    .with_material(Material::new(0).with_friction(1_000)),
+                )
+                .with_aggressive_sleep(),
+            )?;
+            id += 1;
+        }
+    }
+    for _ in 0..45 {
+        world.step(1, ROTATING_TICKS_PER_SECOND)?;
+    }
+
+    let bouncer = BallisticSphere3d::new(
+        BodyId(500),
+        Vec3i::new(-210, 110, 180),
+        Vec3i::new(180, 0, -90),
+        7,
+        1,
+    )
+    .expect("sleeping-world sphere must be valid")
+    .with_material(Material::new(820).with_friction(200));
+    world.add_ballistic_sphere(bouncer, false)
 }
 
 fn integer_sqrt(value: u64) -> u32 {
@@ -628,6 +906,16 @@ pub extern "C" fn sandbox_reset_with_options(character_mode: i32, upright_crates
     };
     with_sandbox_mut(|sandbox| *sandbox = replacement);
     0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_scenario() -> i32 {
+    with_sandbox(|sandbox| sandbox.scenario as i32)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_sleeping_body_count() -> u32 {
+    with_sandbox(|sandbox| u32::try_from(sandbox.world.sleeping_body_count()).unwrap_or(u32::MAX))
 }
 
 #[unsafe(no_mangle)]
@@ -985,7 +1273,7 @@ mod tests {
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
+    use super::{PLAYER_ID, ProjectileType, Sandbox, SandboxScenario, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
@@ -1001,6 +1289,46 @@ mod tests {
             )),
             611
         );
+    }
+
+    #[test]
+    fn all_pages_scenarios_construct_with_one_authoritative_player() {
+        for scenario in [
+            SandboxScenario::General,
+            SandboxScenario::CcdGauntlet,
+            SandboxScenario::CollisionQueryLab,
+            SandboxScenario::OffCentreImpact,
+            SandboxScenario::RotatingBoxLab,
+            SandboxScenario::TowerStability,
+            SandboxScenario::SleepingWorld,
+        ] {
+            let sandbox =
+                Sandbox::with_scenario_options(scenario, false, false).expect("valid scenario");
+            assert!(
+                sandbox.world.box_by_id(PLAYER_ID).is_some(),
+                "{scenario:?} must retain the shared viewer/controller body"
+            );
+            assert!(sandbox.body_count() >= 2, "{scenario:?} must expose a real fixture");
+        }
+    }
+
+    #[test]
+    fn collision_query_lab_uses_engine_overlap_queries() {
+        let mut sandbox = Sandbox::with_scenario_options(
+            SandboxScenario::CollisionQueryLab,
+            false,
+            false,
+        )
+        .expect("valid query lab");
+        let mut observed_hit = false;
+        for _ in 0..180 {
+            assert_eq!(sandbox.step_velocity(0, 0, false), 0);
+            observed_hit |= !sandbox.query_hit_ids.is_empty();
+            if observed_hit {
+                break;
+            }
+        }
+        assert!(observed_hit, "moving overlap-only probe never reported an engine overlap");
     }
 
     #[test]
