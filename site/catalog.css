@@ -1,0 +1,185 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: light dark;
+  line-height: 1.5;
+  --content: 1080px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+a {
+  color: inherit;
+}
+
+.catalog-shell {
+  width: min(var(--content), calc(100% - 40px));
+  margin: 0 auto;
+  padding: 72px 0 96px;
+}
+
+.catalog-header {
+  max-width: 760px;
+  padding-bottom: 46px;
+}
+
+.eyebrow,
+.scenario-kicker {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 18px;
+  font-size: clamp(2.6rem, 8vw, 5.5rem);
+  line-height: 0.96;
+  letter-spacing: -0.055em;
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  letter-spacing: -0.025em;
+}
+
+h3 {
+  margin: 5px 0 10px;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  letter-spacing: -0.02em;
+}
+
+.intro,
+.section-note,
+.scenario-copy p,
+.scenario-contract p {
+  color: color-mix(in srgb, CanvasText 72%, transparent);
+}
+
+.intro {
+  max-width: 68ch;
+  margin-bottom: 0;
+  font-size: 1.05rem;
+}
+
+.scenario-section {
+  border-top: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+}
+
+.section-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 420px);
+  gap: 32px;
+  align-items: end;
+  padding: 28px 0 22px;
+}
+
+.section-note {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.scenario-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 32px;
+  align-items: center;
+  padding: 28px 0;
+  border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+}
+
+.scenario-copy {
+  max-width: 720px;
+}
+
+.scenario-copy p {
+  margin-bottom: 0;
+}
+
+.scenario-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status {
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  opacity: 0.72;
+}
+
+.primary-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 8px 14px;
+  border: 1px solid CanvasText;
+  border-radius: 9px;
+  background: CanvasText;
+  color: Canvas;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.primary-link:hover,
+.primary-link:focus-visible {
+  opacity: 0.82;
+}
+
+.scenario-contract {
+  max-width: 760px;
+  padding-top: 48px;
+}
+
+.scenario-contract h2 {
+  margin: 5px 0 12px;
+}
+
+.scenario-contract p {
+  margin-bottom: 0;
+}
+
+code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, CanvasText 8%, transparent);
+  font: 0.9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (max-width: 760px) {
+  .catalog-shell {
+    width: min(100% - 28px, var(--content));
+    padding: 44px 0 64px;
+  }
+
+  .section-heading,
+  .scenario-row {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .scenario-actions {
+    justify-content: space-between;
+  }
+}
