@@ -12,45 +12,111 @@
         <p class="eyebrow">physics-engine</p>
         <h1>Browser scenarios</h1>
         <p class="intro">
-          Open focused browser consumers for exercising physics behavior. Each scenario stays outside
-          the engine authority: Rust owns simulation state and collision semantics; these pages only
-          configure, drive, and visualize it.
+          Focused Rust-backed fixtures progress from isolated collision mechanics to larger worlds.
+          The browser configures, drives, and visualizes them; simulation state, contacts, queries,
+          sleeping, and collision response remain engine authority.
         </p>
       </header>
 
-      <section class="scenario-section" aria-labelledby="scenarios-title">
+      <section class="scenario-section" aria-labelledby="focused-title">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">Available now</p>
-            <h2 id="scenarios-title">Scenarios</h2>
+            <p class="eyebrow">Levels 1–2</p>
+            <h2 id="focused-title">Focused mechanics</h2>
           </div>
-          <p class="section-note">More engine fixtures can be added here without turning the Pages site into a second simulation authority.</p>
+          <p class="section-note">Small fixtures make one physical behavior easy to inspect before larger worlds combine them.</p>
         </div>
 
         <article class="scenario-row">
           <div class="scenario-copy">
-            <p class="scenario-kicker">General interaction</p>
+            <p class="scenario-kicker">Level 1 · continuous collision detection</p>
+            <h3>CCD Gauntlet</h3>
+            <p>Fire fast projectiles through a field of deliberately thin targets to inspect tunnelling resistance and chronological impact handling.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/ccd-gauntlet/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 1 · spatial queries</p>
+            <h3>Collision Query Lab</h3>
+            <p>Aim through a gallery of fixed shapes. The highlighted target is selected by the engine's deterministic ray query, not browser hit testing.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/collision-query-lab/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 2 · angular response</p>
+            <h3>Off-Centre Impact</h3>
+            <p>Shoot a raised rigid box away from its center of mass and inspect translation, rotation, friction, and settling after impact.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/off-centre-impact/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 2 · rotating bodies</p>
+            <h3>Rotating Box Lab</h3>
+            <p>Observe free-rotation boxes with different proportions and offset collisions on separate plinths, then compare against upright locking.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/rotating-box-lab/">Open scenario</a></div>
+        </article>
+      </section>
+
+      <section class="scenario-section" aria-labelledby="world-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Levels 3–4</p>
+            <h2 id="world-title">World behavior</h2>
+          </div>
+          <p class="section-note">These fixtures combine many contacts and bodies so solver convergence, sleeping, and locality become visible.</p>
+        </div>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 3 · stacked contacts</p>
+            <h3>Tower Stability</h3>
+            <p>A compact multi-level stack exercises repeated contacts, stabilization, friction, and deterministic settling without jumping straight to the known 32-body stress case.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/tower-stability/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 4 · sleeping and locality</p>
+            <h3>Sleeping World</h3>
+            <p>Walk between distant clusters of settled bodies to inspect how a larger world becomes quiescent and how local interaction reactivates work.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/sleeping-world/">Open scenario</a></div>
+        </article>
+      </section>
+
+      <section class="scenario-section" aria-labelledby="integrated-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Integrated</p>
+            <h2 id="integrated-title">General sandbox</h2>
+          </div>
+          <p class="section-note">The original acceptance world remains available as the mixed-feature consumer.</p>
+        </div>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Integrated · mixed interaction</p>
             <h3>General sandbox</h3>
-            <p>
-              The existing first-person sandbox, now isolated as one scenario. Test character movement,
-              crate interactions, projectiles, collision-pair policies, fixed-geometry preparation, and
-              browser performance logging in the same world.
-            </p>
+            <p>Character movement, crate interactions, projectiles, collision-pair policies, fixed-geometry preparation, and portable performance logging in one world.</p>
           </div>
-          <div class="scenario-actions">
-            <span class="status">Interactive</span>
-            <a class="primary-link" href="./scenarios/sandbox/">Open scenario</a>
-          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/sandbox/">Open scenario</a></div>
         </article>
       </section>
 
       <section class="scenario-contract" aria-labelledby="contract-title">
         <p class="eyebrow">Scenario contract</p>
-        <h2 id="contract-title">One page per focused fixture</h2>
+        <h2 id="contract-title">One shared browser harness, multiple engine fixtures</h2>
         <p>
-          New scenarios should live under <code>scenarios/&lt;slug&gt;/</code>, reuse the shared browser
-          rendering/settings adapters where appropriate, and obtain authoritative state from the Rust/WASM
-          boundary rather than recreating physics in JavaScript.
+          Focused routes are generated from the same page template and select a Rust fixture by stable
+          scenario ID. JavaScript never reconstructs collision, response, query, or sleep truth.
         </p>
       </section>
     </main>
