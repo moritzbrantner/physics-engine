@@ -436,7 +436,7 @@ pub(crate) fn aim_query_hit(
             .ok()?;
     }
 
-    let origin = player.body().position() + Vec3i::new(0, 13, 0);
+    let player_position = player.body().position();\n    let origin = Vec3i::new(\n        player_position.x,\n        player_position.y.saturating_add(13),\n        player_position.z,\n    );
     snapshot
         .ray_cast_first(Ray::new(origin, direction), 12)
         .ok()
