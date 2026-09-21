@@ -12,7 +12,8 @@ Install the repository's pinned Rust toolchain and its WASM target once:
 rustup target add wasm32-unknown-unknown
 ```
 
-Then run the policy tests and the ratchet from the repository root:
+The runner also requires Node.js and `tar` (available on the CI runner). Then run the policy tests and
+the ratchet from the repository root:
 
 ```bash
 node --test scripts/performance-ratchet.test.mjs
@@ -24,7 +25,7 @@ resolves every input against its own repository, not the caller's working direct
 added to the physics library. The normal fast tier and dedicated replay tests remain required; a lower
 work count is never a substitute for correctness.
 
-`check` runs six selected native fixtures in release mode and the six sandbox scenes twice in WASM.
+`check` runs seven selected native fixtures in release mode and the six sandbox scenes twice in WASM.
 It compares every work count with the latest Git-tracked entry in `.performance/ratchet/history/`.
 Missing metrics/scenarios, failed/skipped fixtures, changed correctness evidence, nondeterministic
 replays, and any increased work count fail. A zero budget stays zero. Timings are advisory because
@@ -38,6 +39,7 @@ shared runners and changing host load do not support reliable absolute milliseco
 | Stationary query cache: 32 / 256 / 2,048 | Bound preparations and subject rebuilds over 64 changing generations; fixed query volume |
 | Touching wake chains: 8 / 32 | Wake queries and number of awakened bodies |
 | Local wake: 32 / 128 sleepers | Neighbor bounds prepared, awake sources visited, query count, remaining sleepers |
+| Repeated wake/park: 32 / 128 / 512 bodies | Subject and graph rebuilds over four cycles; every paired contact remains exact |
 | SAT projection | Actual dot-product calls and parity with eight-vertex projection |
 | Prepared SAT | Query/contact counts; candidate and reference timings recorded |
 | Six sandbox scenes | Every recorded cost counter, step/body/event counts, exact replay hashes |
@@ -89,7 +91,9 @@ metrics. Version the fixture manifest when workload semantics change.
 
 Every run writes to a unique ignored `performance-evidence/ratchet/` directory, including on benchmark
 or comparison failure. It contains the report, native logs, raw sandbox trials, source file hashes,
-copies of measured source inputs (including untracked files), and the tracked diff. The runner rejects
+an archive of measured source inputs (including untracked files), and the tracked diff. Source copies
+stay in `source.tar.gz` so repository discovery cannot mistake archived Cargo manifests for active
+projects. Extract it outside the working repository when reproducing an old run. The runner rejects
 source edits during collection. Dirty measurements are explicitly labeled; a commit SHA alone never
 pretends to identify uncommitted implementations. Set `CONVENTIONS_SOURCE_REVISION` when the shared
 policy resolver is available; otherwise its absence is recorded as `null`.
@@ -103,3 +107,7 @@ Earlier working-tree iterations were not separate commits; their measured before
 correctness changes are documented in [the architecture review](architecture-review.md). They are
 historical evidence, not fabricated ledger revisions or interchangeable replay baselines. From this
 point onward, record each accepted improvement as its own ledger entry to trace it precisely.
+
+The sleep-transition coverage entry adds three scenarios before optimizing them. Its new workload epoch
+preserves all original ceilings and replay fingerprints; the following optimization entry tightens the
+new counters within that epoch. This keeps the measured before/after evidence in the ledger.

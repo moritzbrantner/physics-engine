@@ -250,6 +250,8 @@ impl RotatingBroadPhase3d {
     ///
     /// Resting stabilization deliberately omits transient impact pairs after response; observable contact
     /// queries must retain them so lifecycle consumers can see the impact before removing the body.
+    /// Existing bodies may also change response eligibility (including sleep proxies); update their
+    /// leaves locally so fixed/fixed pruning and ancestor dynamic flags follow the new state.
     pub(crate) fn candidate_pairs_for_changed_current_query_bodies<'a>(
         &mut self,
         changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
@@ -284,22 +286,24 @@ impl RotatingBroadPhase3d {
                     body.id,
                 ));
             };
-            if previous.kind != body.kind
+            let eligibility_changed = previous.kind != body.kind
                 || previous.collision_layers != body.collision_layers
                 || previous.solver_participation != body.solver_participation
-                || previous.receives_solver_response != body.receives_solver_response
-            {
+                || previous.receives_solver_response != body.receives_solver_response;
+            if eligibility_changed && omit_transient_contacts {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
                 ));
             }
+            // A later full query must not reuse a fixed envelope from before this local update.
+            self.fixed_bounds.remove(&body.id);
             self.exact.insert(body.id, body);
             let Some(fat) = self.tree.leaf_bounds(body.id) else {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
                 ));
             };
-            if !contains_bounds(fat, body.bounds) {
+            if eligibility_changed || !contains_bounds(fat, body.bounds) {
                 let mut fat_body = body;
                 fat_body.bounds = fatten_bounds(body.bounds);
                 escaped.push(fat_body);
@@ -357,7 +361,10 @@ impl RotatingBroadPhase3d {
                         return;
                     }
                     let pair = RotationalSweepPair3d { left, right };
-                    if !left_body.receives_solver_response && !right_body.receives_solver_response {
+                    if omit_transient_contacts
+                        && !left_body.receives_solver_response
+                        && !right_body.receives_solver_response
+                    {
                         rejected_pairs.insert(pair);
                         return;
                     }

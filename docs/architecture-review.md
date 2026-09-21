@@ -217,6 +217,44 @@ comparison found zero render-snapshot differences; the repaired grounded flag di
 frames respectively. A further adapter regression asserts unchanged player position and continuous
 ground support during the first 40 ticks after firing a remote projectile.
 
+### Follow-up: contact reuse across sleep transitions
+
+Baseline: `a07f1eeb30f4287d25a5944c47b889ab59fbcbec`; shared convention `sourceRevision` remains
+`e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
+
+Sleep proxies, motion stopping, and fixed-boundary position correction used body removal/reinsertion
+to express local state changes. This discarded contact graphs and subject caches. Parking also used
+the fixed-geometry insertion path, which scanned the entire scene for affected dynamics.
+
+These operations now commit narrow internal body-state deltas. Identity, material, orientation and
+unrelated body state stay in place. Velocity-only stopping preserves geometry evidence; position and
+response-kind changes invalidate only their affected contact neighborhoods. The current-contact broad
+phase updates eligibility-changing leaves locally, including the dynamic flags used for fixed/fixed
+pruning. Parking uses retained contacts to schedule neighboring dynamics for stabilization. Public
+interfaces, body ordering, swept collision discovery and solver event limits are unchanged.
+
+Incremental query admission also now matches full query admission: externally controlled bodies retain
+observable contacts even when neither participant can receive solver impulses. Tests compare warm
+contacts and overlap queries with freshly constructed worlds across motion and proxy transitions.
+
+The added ratchet fixture performs four wake/park cycles among separated touching pairs. Every queried
+body must retain its exact partner. Before optimization, subject rebuilds were 256 / 1,024 / 4,096 at
+32 / 128 / 512 bodies, with four full graph rebuilds. The candidate needs 12 subject rebuilds and zero
+full graph rebuilds at every size. The ledger first records this extended workload before changing the
+implementation, then records the reduced ceilings; existing workload ceilings and replay fingerprints
+are retained.
+
+An initial candidate also removed the strict facade's sleep-timer invalidation on proxy transitions.
+The ratchet rejected this because the sandbox became quiescent earlier. That behavior is preserved:
+timer bookkeeping remains separate from geometry-cache invalidation. This slice optimizes derived-state
+work without changing when existing scenes sleep.
+
+Validation passed: 349 ordinary tests, both dedicated adapter replays, and all 21 ratchet scenarios.
+All six sandbox replay hashes and cost counters match the previous baseline. The new ratchet entry
+tightens six work ceilings. Source archives were verified against their file hashes; snapshots now
+remain compressed so the repository's check runner cannot discover historical Cargo manifests as
+additional live projects.
+
 ## Remaining architectural limits
 
 The [performance ratchet](performance-ratchet.md) now preserves these changes in native scaling
@@ -233,10 +271,9 @@ implementation; future entries record individual improvements without overwritin
 - Ballistic insertion and live ballistic steps conservatively wake every parked body. Replacing this
   with only the initial straight sweep is unsafe: later bounces and target impulses can redirect the
   projectile. Local waking needs event-time ownership or a proven conservative reach bound.
-- Proxy wake/sleep conversion still uses body removal/reinsertion in the strict world. It therefore
-  invalidates current-contact membership globally, and parking goes through fixed-body insertion work.
-  The incremental parked bounds tree fixes wake-index churn, but replacing these structural proxy swaps
-  with explicit state transitions is still needed to preserve contact caches across sleep transitions.
+- Proxy transitions preserve contact caches, but still retain the strict facade's conservative
+  sleep-timer resets for its remaining sleepers. Changing this sleep policy needs separate correctness
+  evidence and an explicit replay-baseline decision. Parked bodies are not part of that strict sleep set.
 - Rotating-box CCD remains sampled, and ballistic target orientation remains frozen over each query
   interval. The target index preserves these existing approximation contracts; it does not provide
   analytic CCD for arbitrary rotating or accelerated targets.

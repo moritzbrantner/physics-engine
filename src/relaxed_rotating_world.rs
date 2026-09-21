@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind,
-    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
-    OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, SolverParticipation3d, Vec3i, WakePropagation3d,
-    rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBoundsIndex3d,
+    BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
+    InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d, OrientedBox3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotatingWorldStepStats3d,
+    SolverParticipation3d, Vec3i, WakePropagation3d, rigid_box_free_flight_sweep_bounds,
+    rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -27,8 +27,8 @@ use crate::{
 /// additions still invalidate parked state conservatively.
 ///
 /// Parking is a bounded representation transition, not a world snapshot. Only the bodies actually parked
-/// have retained original state, and each wake/sleep transition copies at most that body when needed to
-/// preserve the existing fail-closed proxy swap. Ordinary active stepping performs no wrapper-level body
+/// have retained original state. Parking copies that body's dynamic state for public queries; waking
+/// restores its response kind in place. Ordinary active stepping performs no wrapper-level body
 /// synchronization pass.
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
@@ -357,10 +357,10 @@ impl RotatingWorld3d {
         for id in sleepers {
             let rigid_box = self
                 .active
-                .remove_box(id)
+                .box_by_id(id)
+                .cloned()
                 .ok_or(RotatingWorldError3d::MissingBody(id))?;
-            let proxy = fixed_sleep_proxy(rigid_box.clone());
-            self.active.add_box(proxy)?;
+            self.active.transition_parked_body(id, BodyKind::Fixed)?;
             self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
             self.parked.insert(id, rigid_box);
             parked_any = true;
@@ -379,19 +379,10 @@ impl RotatingWorld3d {
     }
 
     fn unpark_without_index(&mut self, id: BodyId) -> Result<bool, RotatingWorldError3d> {
-        let Some(original) = self.parked.get(&id).cloned() else {
+        if !self.parked.contains_key(&id) {
             return Ok(false);
-        };
-        let proxy = self
-            .active
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        if let Err(error) = self.active.add_box(original) {
-            self.active
-                .add_box(proxy)
-                .expect("restoring a previously valid fixed sleep proxy cannot fail");
-            return Err(error);
         }
+        self.active.transition_parked_body(id, BodyKind::Dynamic)?;
         self.parked.remove(&id);
         self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
         Ok(true)
@@ -482,13 +473,6 @@ fn parked_contact_request(error: RotatingWorldError3d) -> Option<BodyId> {
         )) => Some(id),
         _ => None,
     }
-}
-
-fn fixed_sleep_proxy(mut rigid_box: RigidBox3d) -> RigidBox3d {
-    rigid_box.body.kind = BodyKind::Fixed;
-    rigid_box.body.velocity = Vec3i::ZERO;
-    rigid_box.angular.angular_velocity = AngularVelocity3d::default();
-    rigid_box
 }
 
 fn map_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorldError3d {

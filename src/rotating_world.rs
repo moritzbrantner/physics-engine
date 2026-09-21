@@ -304,6 +304,13 @@ struct SolverPartitions3d {
     response_authority_body_ids: BTreeSet<BodyId>,
 }
 
+/// Internal lifecycle/stabilization deltas preserve identity and unrelated body state.
+pub(crate) enum BodyStateChange3d {
+    Position(Vec3i),
+    SleepProxy(BodyKind),
+    StopMotion,
+}
+
 impl SolverPartitions3d {
     fn insert(&mut self, rigid_box: &RigidBox3d) {
         let id = rigid_box.body().id();
@@ -387,6 +394,45 @@ impl RotatingWorld3d {
             self.mark_contact_membership_changed();
         }
         removed
+    }
+
+    pub(crate) fn apply_body_change(
+        &mut self,
+        id: BodyId,
+        change: BodyStateChange3d,
+    ) -> Result<(), RotatingWorldError3d> {
+        let body = self
+            .boxes
+            .get_mut(&id)
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        let old_kind = body.body.kind;
+        let old_position = body.body.position;
+        match change {
+            BodyStateChange3d::Position(position) => body.body.position = position,
+            BodyStateChange3d::SleepProxy(kind) => {
+                body.body.kind = kind;
+                if kind == BodyKind::Fixed {
+                    body.body.velocity = Vec3i::ZERO;
+                    body.angular.angular_velocity = crate::AngularVelocity3d::default();
+                }
+            }
+            BodyStateChange3d::StopMotion => {
+                if body.body.kind == BodyKind::Dynamic {
+                    body.body.velocity = Vec3i::ZERO;
+                    body.angular.angular_velocity = crate::AngularVelocity3d::default();
+                }
+            }
+        }
+        let kind_changed = body.body.kind != old_kind;
+        let position_changed = body.body.position != old_position;
+        if kind_changed {
+            self.solver_partitions.remove(id);
+            self.solver_partitions.insert(body);
+        }
+        if kind_changed || position_changed {
+            self.mark_contact_geometry_changed_for(&BTreeSet::from([id]));
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -1568,6 +1614,10 @@ fn map_tail_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorld
         RotatingBroadPhaseError3d::FreeFlight(error) => RotatingWorldError3d::FreeFlight(error),
     }
 }
+
+#[cfg(test)]
+#[path = "rotating_world_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[cfg(test)]
 mod tests {

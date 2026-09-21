@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { arch, cpus, platform, release } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { arch, cpus, platform, release, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertHistoryPrefix, compareRows, hash, parseNative, sandboxRows, validateHistory } from "./performance-ratchet-lib.mjs";
@@ -100,11 +100,20 @@ const source = {
   conventionsSourceRevision: process.env.CONVENTIONS_SOURCE_REVISION ?? null,
 };
 writeFileSync(join(output, "source-files.json"), `${JSON.stringify(initialSource.files, null, 2)}\n`);
-for (const file of initialSource.files) {
-  if (file.sha256 === null) continue;
-  const destination = join(output, "source", file.path);
-  mkdirSync(dirname(destination), { recursive: true });
-  writeFileSync(destination, readFileSync(join(root, file.path)));
+function archiveSources() {
+  // Keep saved Cargo manifests out of repository discovery, even when tools traverse ignored paths.
+  const staging = mkdtempSync(join(tmpdir(), "physics-ratchet-source-"));
+  try {
+    for (const file of initialSource.files) {
+      if (file.sha256 === null) continue;
+      const destination = join(staging, file.path);
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination, readFileSync(join(root, file.path)));
+    }
+    run("source-archive", "tar", ["-czf", join(output, "source.tar.gz"), "-C", staging, "."]);
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
 }
 writeFileSync(join(output, "fixtures.json"), fixtureBytes);
 writeFileSync(join(output, "source.patch"), git("diff", "HEAD", "--", ".", ":(exclude).performance/ratchet/history"));
@@ -121,6 +130,7 @@ function run(label, executable, argv, overrides = {}) {
 
 const report = { schemaVersion: 1, recordedAt, source, fixtureSha256, status: "failed" };
 try {
+  archiveSources();
   report.environment = {
     platform: platform(), arch: arch(), osRelease: release(), cpu: cpus()[0]?.model ?? "unknown",
     node: process.version, v8: process.versions.v8,
