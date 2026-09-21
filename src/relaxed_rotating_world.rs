@@ -33,7 +33,15 @@ pub struct RotatingWorld3d {
     active: StrictRotatingWorld3d,
     parked: BTreeMap<BodyId, RigidBox3d>,
     parked_wake_index: RotatingBoundsIndex3d,
-    active_dynamic_count: usize,
+    active_dynamic_ids: BTreeSet<BodyId>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ParkedWakeWork3d {
+    source_body_checks: u64,
+    queries: u64,
+    index_nodes_visited: u64,
+    candidates: u64,
 }
 
 impl RotatingWorld3d {
@@ -43,7 +51,7 @@ impl RotatingWorld3d {
             active: StrictRotatingWorld3d::new(config),
             parked: BTreeMap::new(),
             parked_wake_index: RotatingBoundsIndex3d::default(),
-            active_dynamic_count: 0,
+            active_dynamic_ids: BTreeSet::new(),
         }
     }
 
@@ -136,7 +144,7 @@ impl RotatingWorld3d {
         let dynamic = rigid_box.body().kind() == BodyKind::Dynamic;
         self.active.add_box(rigid_box)?;
         if dynamic {
-            self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
+            self.active_dynamic_ids.insert(id);
         }
         Ok(())
     }
@@ -148,7 +156,7 @@ impl RotatingWorld3d {
         } else {
             let removed = self.active.remove_box(id)?;
             if removed.body().kind() == BodyKind::Dynamic {
-                self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
+                self.active_dynamic_ids.remove(&id);
             }
             removed
         };
@@ -260,16 +268,16 @@ impl RotatingWorld3d {
         if timestep_numerator == 0 {
             return self.active.step(timestep_numerator, timestep_denominator);
         }
-        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
+        if self.active_dynamic_ids.is_empty() && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
         if self.active.ballistic_sphere_count() > 0 && !self.parked.is_empty() {
             self.unpark_all()?;
         }
 
-        let mut changed_body_ids =
+        let (mut changed_body_ids, parked_wake_work) =
             self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
-        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
+        if self.active_dynamic_ids.is_empty() && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
 
@@ -282,6 +290,10 @@ impl RotatingWorld3d {
             .boxes()
             .count()
             .saturating_add(self.active.ballistic_sphere_count());
+        report.stats.parked_wake_source_body_checks = parked_wake_work.source_body_checks;
+        report.stats.parked_wake_queries = parked_wake_work.queries;
+        report.stats.parked_wake_index_nodes_visited = parked_wake_work.index_nodes_visited;
+        report.stats.parked_wake_candidates = parked_wake_work.candidates;
         Ok(report)
     }
 
@@ -321,7 +333,7 @@ impl RotatingWorld3d {
                 .ok_or(RotatingWorldError3d::MissingBody(id))?;
             let proxy = fixed_sleep_proxy(rigid_box.clone());
             self.active.add_box(proxy)?;
-            self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
+            self.active_dynamic_ids.remove(&id);
             self.parked.insert(id, rigid_box);
             parked_any = true;
         }
@@ -353,7 +365,7 @@ impl RotatingWorld3d {
             return Err(error);
         }
         self.parked.remove(&id);
-        self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
+        self.active_dynamic_ids.insert(id);
         Ok(true)
     }
 
@@ -375,10 +387,11 @@ impl RotatingWorld3d {
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
-    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+    ) -> Result<(BTreeSet<BodyId>, ParkedWakeWork3d), RotatingWorldError3d> {
         let mut awakened = BTreeSet::new();
-        if self.parked.is_empty() || self.active_dynamic_count == 0 {
-            return Ok(awakened);
+        let mut work = ParkedWakeWork3d::default();
+        if self.parked.is_empty() || self.active_dynamic_ids.is_empty() {
+            return Ok((awakened, work));
         }
 
         let awake_config = RigidBoxFreeFlightConfig3d::new(
@@ -386,20 +399,21 @@ impl RotatingWorld3d {
             timestep_numerator,
             timestep_denominator,
         );
-        let mut awake_bounds = self
-            .active
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic
-                    && rigid_box.solver_participation() == SolverParticipation3d::Solid
-            })
-            .map(|rigid_box| {
-                Ok((
-                    rigid_box.body().id(),
-                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;
+        let mut awake_bounds = Vec::with_capacity(self.active_dynamic_ids.len());
+        for id in self.active_dynamic_ids.iter().copied() {
+            work.source_body_checks = work.source_body_checks.saturating_add(1);
+            let rigid_box = self
+                .active
+                .box_by_id(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            if rigid_box.solver_participation() != SolverParticipation3d::Solid {
+                continue;
+            }
+            awake_bounds.push((
+                id,
+                rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
+            ));
+        }
 
         loop {
             let mut newly_awake = BTreeSet::new();
@@ -408,7 +422,13 @@ impl RotatingWorld3d {
                     return Err(RotatingWorldError3d::MissingBody(*awake_id));
                 };
                 let candidates = self.parked_wake_index.overlapping_ids(*awake_bounds);
-                let _ = candidates.visited_nodes;
+                work.queries = work.queries.saturating_add(1);
+                work.index_nodes_visited = work.index_nodes_visited.saturating_add(
+                    u64::try_from(candidates.visited_nodes).unwrap_or(u64::MAX),
+                );
+                work.candidates = work.candidates.saturating_add(
+                    u64::try_from(candidates.body_ids.len()).unwrap_or(u64::MAX),
+                );
                 for parked_id in candidates.body_ids {
                     let Some(parked_box) = self.parked.get(&parked_id) else {
                         continue;
@@ -449,7 +469,7 @@ impl RotatingWorld3d {
         if !awakened.is_empty() {
             self.rebuild_parked_wake_index()?;
         }
-        Ok(awakened)
+        Ok((awakened, work))
     }
 }
 
