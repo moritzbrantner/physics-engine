@@ -1,12 +1,12 @@
-use super::{Body, Shape, Vector as V, numeric::Scalar};
+use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Point {
     pub ra: V,
     pub rb: V,
     pub separation: Scalar,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Manifold {
     pub normal: V,
     pub points: Vec<Point>,
@@ -87,16 +87,62 @@ fn support(b: &Body, n: V) -> V {
         }
     }
 }
-fn box_manifold(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
+/// Shape/orientation-dependent support projections. Centers are deliberately not cached here.
+#[derive(Clone, Debug, Default)]
+pub(super) struct BoxProjections {
+    axes: Vec<(V, usize, Scalar, Scalar)>,
+}
+impl BoxProjections {
+    pub fn refresh(&mut self, a: &Body, b: &Body, aa: [V; 3], bb: [V; 3]) {
+        self.axes.clear();
+        let Shape::Box(ha) = a.shape else {
+            unreachable!()
+        };
+        let Shape::Box(hb) = b.shape else {
+            unreachable!()
+        };
+        let project = |n: V, axes: [V; 3], h: V| {
+            // Same products, additions and ordering as radius(), not a regrouped expression.
+            n.dot(axes[0]).abs() * h.0 + n.dot(axes[1]).abs() * h.1 + n.dot(axes[2]).abs() * h.2
+        };
+        for (feature, n) in aa.into_iter().chain(bb).enumerate() {
+            self.axes
+                .push((n, feature, project(n, aa, ha), project(n, bb, hb)));
+        }
+        for u in aa {
+            for v in bb {
+                let n = u.cross(v);
+                if n.dot(n) > 1e-12 {
+                    let n = n.unit();
+                    self.axes
+                        .push((n, 6, project(n, aa, ha), project(n, bb, hb)));
+                }
+            }
+        }
+    }
+    pub fn retained_bytes(&self) -> usize {
+        self.axes.capacity() * std::mem::size_of::<(V, usize, Scalar, Scalar)>()
+    }
+}
+
+fn select_axis(
+    a: &Body,
+    b: &Body,
+    margin: Scalar,
+    axes: impl IntoIterator<Item = (V, usize, Scalar, Scalar)>,
+    work: &mut GeometryStats,
+) -> Option<(Scalar, V, usize)> {
+    work.sat_queries += 1;
     let d = b.position - a.position;
     let mut best = (-Scalar::INFINITY, V::X, 0);
-    for (axis, feature) in axes(a, b) {
+    for (axis, feature, ar, br) in axes {
+        work.sat_axes_tested += 1;
         let projected = d.dot(axis);
-        let sep = projected.abs() - radius(a, axis) - radius(b, axis);
+        let sep = projected.abs() - ar - br;
         if sep > margin {
             return None;
         }
-        // Prefer face normals at near ties; the cross-axis fallback is one point.
+        // Prefer face normals at near ties; preserve the original feature order and thresholds.
         if sep
             > best.0
                 + if feature >= 6 {
@@ -112,6 +158,49 @@ fn box_manifold(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
             );
         }
     }
+    Some(best)
+}
+
+fn box_manifold(a: &Body, b: &Body, margin: Scalar, work: &mut GeometryStats) -> Option<Manifold> {
+    let best = select_axis(
+        a,
+        b,
+        margin,
+        axes(a, b)
+            .into_iter()
+            .map(|(n, feature)| (n, feature, radius(a, n), radius(b, n))),
+        work,
+    )?;
+    box_points(
+        a,
+        b,
+        margin,
+        best,
+        [a.orientation.axes(), b.orientation.axes()],
+        work,
+    )
+}
+
+pub(super) fn box_prepared(
+    a: &Body,
+    b: &Body,
+    margin: Scalar,
+    projections: &BoxProjections,
+    frames: [[V; 3]; 2],
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    let best = select_axis(a, b, margin, projections.axes.iter().copied(), work)?;
+    box_points(a, b, margin, best, frames, work)
+}
+
+fn box_points(
+    a: &Body,
+    b: &Body,
+    margin: Scalar,
+    best: (Scalar, V, usize),
+    frames: [[V; 3]; 2],
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
     let (separation, n, feature) = best;
     let mut points = Vec::new();
     if feature < 6 {
@@ -127,8 +216,7 @@ fn box_manifold(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
         let Shape::Box(ih) = incident.shape else {
             unreachable!()
         };
-        let ra = reference.orientation.axes();
-        let ia = incident.orientation.axes();
+        let [ra, ia] = if swap { [frames[1], frames[0]] } else { frames };
         let ref_center = reference.position + rn * rh.at(face);
         let inc_face = (0..3)
             .max_by(|&i, &j| rn.dot(ia[i]).abs().total_cmp(&rn.dot(ia[j]).abs()))
@@ -147,6 +235,7 @@ fn box_manifold(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
             if i != face {
                 for sign in [-1.0, 1.0] {
                     let axis = *basis * sign;
+                    work.clip_passes += 1;
                     poly = clip(&poly, axis, reference.position.dot(axis) + rh.at(i));
                 }
             }
@@ -228,8 +317,19 @@ fn sphere_box(s: &Body, b: &Body, r: Scalar, margin: Scalar) -> Option<Manifold>
     })
 }
 pub(super) fn current(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
+    current_counted(a, b, margin, &mut GeometryStats::default())
+}
+
+pub(super) fn current_counted(
+    a: &Body,
+    b: &Body,
+    margin: Scalar,
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    work.current_queries += 1;
+    work.manifold_refreshes += 1;
     match (a.shape, b.shape) {
-        (Shape::Box(_), Shape::Box(_)) => box_manifold(a, b, margin),
+        (Shape::Box(_), Shape::Box(_)) => box_manifold(a, b, margin, work),
         (Shape::Sphere(r), Shape::Box(_)) => sphere_box(a, b, r, margin),
         (Shape::Box(_), Shape::Sphere(r)) => sphere_box(b, a, r, margin).map(|mut m| {
             m.normal = -m.normal;
@@ -344,7 +444,14 @@ fn roots(a: Scalar, b: Scalar, c: Scalar) -> [Option<Scalar>; 2] {
 }
 /// Translation-only CCD for the current substep. Rotation is integrated between substeps,
 /// not analytically swept: this is an explicit approximation, not general rotational CCD.
-pub(super) fn swept(a: &Body, b: &Body, dt: Scalar, margin: Scalar) -> Option<Manifold> {
+pub(super) fn swept(
+    a: &Body,
+    b: &Body,
+    dt: Scalar,
+    margin: Scalar,
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    work.sweep_queries += 1;
     let time = match (a.shape, b.shape) {
         (Shape::Sphere(r), Shape::Box(_)) => sphere_box_time(a, b, r, dt)?,
         (Shape::Box(_), Shape::Sphere(r)) => sphere_box_time(b, a, r, dt)?,
@@ -390,7 +497,7 @@ pub(super) fn swept(a: &Body, b: &Body, dt: Scalar, margin: Scalar) -> Option<Ma
     let mut bb = b.clone();
     aa.position += a.velocity * (dt * time);
     bb.position += b.velocity * (dt * time);
-    let mut m = current(&aa, &bb, margin.max(1e-6))?;
+    let mut m = current_counted(&aa, &bb, margin.max(1e-6), work)?;
     for p in &mut m.points {
         p.separation -= (b.velocity - a.velocity).dot(m.normal) * dt * time;
     }

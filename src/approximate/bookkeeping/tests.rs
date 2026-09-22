@@ -180,7 +180,7 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
 }
 fn check_bounds(w: &mut World, h: Scalar) {
     let mut out = Vec::new();
-    w.manifolds(h, &mut super::super::Report::default(), &mut out);
+    w.manifolds::<true>(h, &mut super::super::Report::default(), &mut out);
     let mut expected = w
         .bodies
         .iter()

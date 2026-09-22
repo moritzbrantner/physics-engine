@@ -9,8 +9,11 @@
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
 mod bookkeeping;
 mod contact;
+mod geometry;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, SweepRow, push, reserve};
+use geometry::GeometryCache;
+pub use geometry::GeometryStats;
 mod math;
 mod response;
 use crate::{
@@ -243,6 +246,7 @@ pub struct Report {
     pub retired: Vec<BodyId>,
     pub max_penetration: Scalar,
     pub bookkeeping: BookkeepingStats,
+    pub geometry: GeometryStats,
     /// Active response bodies prepared, including newly awakened bodies in the same substep.
     pub response_preparations: u64,
     /// Shape/mass inertia coefficients calculated; independent of contact iteration count.
@@ -287,6 +291,7 @@ pub struct World {
     // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
     responses: Vec<PreparedResponse>,
     bookkeeping: Scratch,
+    geometry: GeometryCache,
     constraints: Vec<Constraint>,
     manifold_scratch: Vec<(usize, usize, contact::Manifold)>,
     pub last_report: Report,
@@ -315,6 +320,7 @@ impl World {
             last_h: 0.0,
             responses: Vec::new(),
             bookkeeping: Scratch::default(),
+            geometry: GeometryCache::default(),
             constraints: Vec::new(),
             manifold_scratch: Vec::new(),
             last_report: Report::default(),
@@ -386,6 +392,7 @@ impl World {
         for n in neighbors {
             self.wake_island(n);
         }
+        self.geometry.remove(id);
         self.cache.retain(|&(a, b), _| a != id && b != id);
         let removed = self.bodies.remove(i);
         self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
@@ -491,11 +498,18 @@ impl World {
 
     // The false specialization is only instantiated by tests, as an unprepared replay oracle.
     fn step_with_preparation<const PREPARED: bool>(&mut self, dt: Scalar) -> Result<Report, Error> {
+        self.step_with_geometry::<PREPARED, true>(dt)
+    }
+    fn step_with_geometry<const PREPARED: bool, const CACHED: bool>(
+        &mut self,
+        dt: Scalar,
+    ) -> Result<Report, Error> {
         if !dt.is_finite() || !(0.0..=0.1).contains(&dt) {
             return Err(Error::InvalidInput);
         }
         if dt == 0.0 {
             self.last_report = Report::default();
+            self.last_report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
             return Ok(self.last_report.clone());
         }
         if dt / self.config.substeps as Scalar == 0.0 {
@@ -540,7 +554,7 @@ impl World {
                 }
             }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
-            self.manifolds(h, &mut report, &mut pairs);
+            self.manifolds::<CACHED>(h, &mut report, &mut pairs);
             let mut roots = std::mem::take(&mut self.bookkeeping.roots);
             roots.clear();
             reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
@@ -583,7 +597,7 @@ impl World {
                         }
                     }
                 }
-                self.manifolds(h, &mut report, &mut pairs);
+                self.manifolds::<CACHED>(h, &mut report, &mut pairs);
             }
             let mut constraints = std::mem::take(&mut self.constraints);
             constraints.clear();
@@ -881,6 +895,7 @@ impl World {
                 if let Ok(i) = self.index(id) {
                     let b = self.bodies.remove(i);
                     self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
+                    self.geometry.remove(id);
                     self.cache.retain(|&(a, b), _| a != id && b != id);
                     self.bookkeeping.layout_changed();
                     report.retired.push(id);
@@ -898,6 +913,7 @@ impl World {
         Ok(report)
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
+        report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
         self.bookkeeping.work.scratch_retained_bytes = (self.bookkeeping.retained_bytes()
             + bookkeeping::bytes(&self.constraints)
             + bookkeeping::bytes(&self.manifold_scratch))
@@ -932,13 +948,16 @@ impl World {
         s.activity.dirty |= slept > 0;
     }
 
-    fn manifolds(
+    fn manifolds<const CACHED: bool>(
         &mut self,
         h: Scalar,
         report: &mut Report,
         out: &mut Vec<(usize, usize, contact::Manifold)>,
     ) {
         let s = &mut self.bookkeeping;
+        if CACHED {
+            self.geometry.begin(self.bodies.len());
+        }
         out.clear();
         if s.bounds.len() != self.bodies.len() {
             reserve(&mut s.bounds, self.bodies.len(), &mut s.work);
@@ -1020,7 +1039,21 @@ impl World {
                     continue;
                 }
                 report.narrow_tests += 1;
-                let m = contact::current(a, b, self.config.contact_slop).or_else(|| {
+                // Avoid pair-cache churn for actively rotating bodies. Their geometry changes
+                // each substep; the original narrow phase is cheaper than retaining stale pairs.
+                let stable_orientation =
+                    |b: &Body| b.mass == 0.0 || b.sleeping || b.rotation_locked;
+                let current = if CACHED && stable_orientation(a) && stable_orientation(b) {
+                    self.geometry.current(
+                        [i, j],
+                        [a, b],
+                        self.config.contact_slop,
+                        &mut report.geometry,
+                    )
+                } else {
+                    contact::current_counted(a, b, self.config.contact_slop, &mut report.geometry)
+                };
+                let m = current.or_else(|| {
                     let travel = (b.velocity - a.velocity).length() * h;
                     if a.ccd
                         || b.ccd
@@ -1031,7 +1064,7 @@ impl World {
                                     .min_component()
                                     .min(b.shape.half_extents().min_component())
                     {
-                        contact::swept(a, b, h, self.config.contact_slop)
+                        contact::swept(a, b, h, self.config.contact_slop, &mut report.geometry)
                     } else {
                         None
                     }
@@ -1040,6 +1073,9 @@ impl World {
                     push(out, (i, j, m), &mut s.work);
                 }
             }
+        }
+        if CACHED {
+            self.geometry.finish(&mut report.geometry);
         }
         // A fast projectile's original trajectory must not activate bodies behind its first hit.
         // Keep all equal-time contacts, but defer later speculative contacts to the next substep,
