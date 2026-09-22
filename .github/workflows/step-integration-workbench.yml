@@ -29,18 +29,26 @@ jobs:
           PY
           git apply --check /tmp/fixed-step.patch
           git apply /tmp/fixed-step.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('site/scenarios/fixed-step/index.html')
+          source=path.read_text()
+          assert source.count('<select id="solver">')==1
+          path.write_text(source.replace('<select id="solver">','<select id="solver" aria-label="Solver">'))
+          PY
           rm -r .agent-transfer
           rm .github/workflows/step-integration-workbench.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'feat: retain sleeping near misses and add bounded f64 fixed-step solver'
-      - name: Repeat focused checks after browser-harness-only repair
+      - name: Repeat focused checks after comparison label repair
         shell: bash
         run: |
           set -euo pipefail
-          # Full default/reference native suites already passed for this identical source patch
-          # in run 35729063796. Normal PR validation remains unchanged and runs before merge.
+          # Full default/reference native suites passed for the identical physics source
+          # in run 35729063796; the WASM matrix passed again in run 35730156280.
+          # This retry adds one HTML aria-label. Normal PR validation stays required.
           cargo fmt --check
           cargo fmt --manifest-path demo-wasm/Cargo.toml --check
           cargo clippy --all-targets -- -D warnings
@@ -48,14 +56,14 @@ jobs:
           cargo test --release --locked --test fixed_step_approximation
           cargo test --release --locked --test projectile_wake_admission
           node --test site/*.test.mjs scripts/*.test.mjs
-      - name: Build actual Pages artifact and benchmark approximation
+      - name: Build actual Pages artifact
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p step-evidence
           bash scripts/build-pages.sh
-          node scripts/benchmark-fixed-step.mjs pages-dist/physics_engine_demo.wasm step-evidence/fixed-step.json
           git rev-parse HEAD > step-evidence/source-revision.txt
+          printf '%s\n' 'WASM paired benchmark passed in run 35730156280 for unchanged physics source; this run checks the HTML label repair.' > step-evidence/previous-matrix.txt
       - name: Capture real browser behavior
         shell: bash
         run: |
