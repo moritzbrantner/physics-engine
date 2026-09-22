@@ -303,6 +303,7 @@ pub fn sample_rigid_box_free_flight(
         solver_participation: rigid_box.solver_participation,
         motion_authority: rigid_box.motion_authority,
         sleep_mode: rigid_box.sleep_mode,
+        retire_on_impact: rigid_box.retire_on_impact,
     })
 }
 

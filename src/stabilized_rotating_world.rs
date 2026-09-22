@@ -225,6 +225,10 @@ impl RotatingWorld3d {
             .add_ballistic_sphere(projectile, retire_on_contact)
     }
 
+    pub(crate) fn ballistic_retires_on_contact(&self, id: BodyId) -> bool {
+        self.inner.ballistic_retires_on_contact(id)
+    }
+
     pub fn remove_ballistic_sphere(&mut self, id: BodyId) -> Option<BallisticSphere3d> {
         self.inner.remove_ballistic_sphere(id)
     }
@@ -329,6 +333,18 @@ impl RotatingWorld3d {
         };
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         fixed_boundary_subjects.extend(changed_body_ids.iter().copied());
+        // In-step impact retirement is a lifecycle delta, not a stale stabilization subject.
+        // Clear only explicitly reported removals; unexpected missing subjects still fail closed.
+        for id in report.changed_body_ids.iter().copied() {
+            if self.inner.box_by_id(id).is_none() {
+                fixed_boundary_subjects.remove(&id);
+                self.pending_fixed_boundary_body_ids.remove(&id);
+                self.sleep_candidates.remove(&id);
+                self.sleeping.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
+                self.clear_body_interaction_category(id);
+            }
+        }
         match self.stabilize_fixed_boundaries(&fixed_boundary_subjects) {
             Ok(stabilized) => {
                 changed_body_ids.extend(stabilized);

@@ -8,6 +8,7 @@ use crate::{
     RotatingWorldStepStats3d, SolverParticipation3d, Vec3i, WakePropagation3d,
     rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
+    wake_prediction::TranslationSweep,
 };
 
 /// Performance-oriented rotating world that parks settled dynamics as persistent fixed proxies.
@@ -21,8 +22,14 @@ use crate::{
 /// except when the existing linear-actuator policy proves the sweep is only passive support. Passive
 /// supports stay fixed and collision-testable, so character landings do not wake or drop a settled stack.
 /// Newly restored bodies join the same sweep pass so disruptive wake-up propagates through a sleeping
-/// island. Fixed geometry additions and any removals wake every parked body conservatively because support
-/// topology may have changed.
+/// island. Fixed geometry additions and contact-relevant removals wake parked bodies conservatively;
+/// removal proven disconnected from parked bounds leaves sleeping bodies untouched.
+///
+/// An isolated translational projectile first gets a read-only floating-point swept-separation test.
+/// A proven miss does not wake the tower. Ballistic prediction includes one following tick to reactivate
+/// constraints ahead of an incoming impact. Spinning bodies, coupled motion, possible impacts and
+/// unbounded ricochets retain conservative wake behavior. This is a miss-admission optimization, not a
+/// replacement for continuous collision detection or contact-island solving.
 ///
 /// Parking is a bounded representation transition, not a world snapshot. Only the bodies actually parked
 /// have retained original state, and each wake/sleep transition copies at most that body when needed to
@@ -142,7 +149,27 @@ impl RotatingWorld3d {
     }
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
-        let removed = if self.parked.contains_key(&id) {
+        // Removal can only break support through an existing contact. If no parked body's bounds
+        // touch the removed collider, it cannot be part of their support graph. Ambiguous geometry
+        // and actual support removal keep the historical conservative wake of all dependents.
+        let affects_parked = self.box_by_id(id).is_some_and(|body| {
+            let current = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+            rigid_box_free_flight_sweep_bounds(body, current).map_or(true, |bounds| {
+                self.parked_wake_index
+                    .overlapping_ids(bounds)
+                    .body_ids
+                    .into_iter()
+                    .any(|other| {
+                        other != id
+                            && self.parked.get(&other).is_some_and(|target| {
+                                body.collision_layers()
+                                    .collides_with(target.collision_layers())
+                            })
+                    })
+            })
+        });
+        let was_parked = self.parked.contains_key(&id);
+        let removed = if was_parked {
             self.active.remove_box(id)?;
             self.parked.remove(&id)?
         } else {
@@ -154,8 +181,12 @@ impl RotatingWorld3d {
         };
         self.active.clear_body_interaction_category(id);
 
-        self.unpark_all()
-            .expect("parked bodies are valid and disjoint from active dynamics");
+        if affects_parked {
+            self.unpark_all().expect("parked bodies remain valid");
+        } else if was_parked {
+            self.rebuild_parked_wake_index()
+                .expect("remaining parked bounds are valid");
+        }
         Some(removed)
     }
 
@@ -164,9 +195,8 @@ impl RotatingWorld3d {
         projectile: BallisticSphere3d,
         retire_on_contact: bool,
     ) -> Result<(), RotatingWorldError3d> {
-        // A newly fired sphere may hit any parked rigid target. Conservatively restore parked bodies now;
-        // the retained wake index can specialize this further once it indexes analytic sphere sweeps.
-        self.unpark_all()?;
+        // Creation has no collision or support effect. Wake admission belongs to the next step,
+        // where both the requested horizon and the projectile's current trajectory are known.
         self.active
             .add_ballistic_sphere(projectile, retire_on_contact)
     }
@@ -263,17 +293,18 @@ impl RotatingWorld3d {
         if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
-        if self.active.ballistic_sphere_count() > 0 && !self.parked.is_empty() {
-            self.unpark_all()?;
-        }
-
         let mut changed_body_ids =
-            self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
+            self.wake_parked_for_ballistics(timestep_numerator, timestep_denominator)?;
+        changed_body_ids
+            .extend(self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?);
         if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
 
         let mut report = self.active.step(timestep_numerator, timestep_denominator)?;
+        self.active_dynamic_count = self
+            .active_dynamic_count
+            .saturating_sub(report.stats.rigid_bodies_retired_on_impact);
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         self.park_new_sleepers(&changed_body_ids)?;
         report.changed_body_ids = changed_body_ids.into_iter().collect();
@@ -371,6 +402,68 @@ impl RotatingWorld3d {
             .map_err(map_broad_phase_error)
     }
 
+    /// Skip the historical conservative wake only when an isolated projectile is proven to miss
+    /// every parked body this step. Ambiguous impacts, ricochets and coupled moving worlds keep
+    /// the old wake behavior: this optimization must not turn a sleeping dynamic into a fixed target.
+    fn wake_parked_for_ballistics(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+    ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
+        let count = self.active.ballistic_sphere_count();
+        if self.parked.is_empty() || count == 0 {
+            return Ok(BTreeSet::new());
+        }
+        if self.active_dynamic_count == 0 && count == 1 {
+            let projectile = *self.active.ballistic_spheres().next().expect("one sphere");
+            // Predict one tick ahead as well as the current tick. Contact constraints may need
+            // to reactivate before an incoming impact, but a lateral miss still has to intersect
+            // the actual swept corridor; proximity alone is never a wake signal.
+            let seconds = 2.0 * f64::from(timestep_numerator) / f64::from(timestep_denominator);
+            let sweep = TranslationSweep::for_sphere(projectile, self.config().gravity, seconds);
+            let candidates = self.parked_wake_index.overlapping_ids(sweep.bounds());
+            let mut might_hit = false;
+            for id in candidates.body_ids {
+                let target = &self.parked[&id];
+                if projectile
+                    .collision_layers()
+                    .collides_with(target.collision_layers())
+                    && sweep.may_reach(target)?
+                {
+                    might_hit = true;
+                    break;
+                }
+            }
+            if !might_hit {
+                // Impact-retire spheres cannot ricochet from a genuine fixed obstacle back into
+                // the tower. Other lifecycle modes require an uninterrupted free-flight proof.
+                let mut might_ricochet = false;
+                if !self.active.ballistic_retires_on_contact(projectile.id()) {
+                    for target in self
+                        .active
+                        .boxes()
+                        .filter(|body| !self.parked.contains_key(&body.body().id()))
+                    {
+                        if projectile
+                            .collision_layers()
+                            .collides_with(target.collision_layers())
+                            && sweep.may_reach(target)?
+                        {
+                            might_ricochet = true;
+                            break;
+                        }
+                    }
+                }
+                if !might_ricochet {
+                    return Ok(BTreeSet::new());
+                }
+            }
+        }
+        let awakened = self.parked.keys().copied().collect();
+        self.unpark_all()?;
+        Ok(awakened)
+    }
+
     fn wake_parked_for_sweeps(
         &mut self,
         timestep_numerator: i32,
@@ -401,12 +494,60 @@ impl RotatingWorld3d {
             })
             .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;
 
+        let mut processed = 0;
         loop {
             let mut newly_awake = BTreeSet::new();
-            for (awake_id, awake_bounds) in &awake_bounds {
+            for (awake_id, awake_bounds) in &awake_bounds[processed..] {
                 let Some(awake_box) = self.active.box_by_id(*awake_id) else {
                     return Err(RotatingWorldError3d::MissingBody(*awake_id));
                 };
+                // Only suppress wake for a proven miss by the sole moving body. Other awake
+                // bodies or intermediate impacts can change its velocity and the global event
+                // segmentation, invalidating a straight free-flight prediction.
+                if self.active_dynamic_count == 1
+                    && self.active.ballistic_sphere_count() == 0
+                    && let Some(sweep) = TranslationSweep::for_box(
+                        awake_box,
+                        self.config().gravity,
+                        f64::from(timestep_numerator) / f64::from(timestep_denominator),
+                    )?
+                {
+                    let mut uninterrupted_miss = true;
+                    for id in self
+                        .parked_wake_index
+                        .overlapping_ids(sweep.bounds())
+                        .body_ids
+                    {
+                        let target = &self.parked[&id];
+                        if awake_box
+                            .collision_layers()
+                            .collides_with(target.collision_layers())
+                            && sweep.may_reach(target)?
+                        {
+                            uninterrupted_miss = false;
+                            break;
+                        }
+                    }
+                    if uninterrupted_miss && !awake_box.retires_on_impact() {
+                        for target in self.active.boxes().filter(|body| {
+                            body.body().id() != *awake_id
+                                && !self.parked.contains_key(&body.body().id())
+                        }) {
+                            if target.solver_participation() == SolverParticipation3d::Solid
+                                && awake_box
+                                    .collision_layers()
+                                    .collides_with(target.collision_layers())
+                                && sweep.may_reach(target)?
+                            {
+                                uninterrupted_miss = false;
+                                break;
+                            }
+                        }
+                    }
+                    if uninterrupted_miss {
+                        continue;
+                    }
+                }
                 let candidates = self.parked_wake_index.overlapping_ids(*awake_bounds);
                 let _ = candidates.visited_nodes;
                 for parked_id in candidates.body_ids {
@@ -431,6 +572,7 @@ impl RotatingWorld3d {
                     }
                 }
             }
+            processed = awake_bounds.len();
             if newly_awake.is_empty() {
                 break;
             }
@@ -536,6 +678,36 @@ mod tests {
         assert_eq!(
             world.body_interaction_category(id),
             InteractionCategory3d::DEFAULT
+        );
+    }
+
+    #[test]
+    fn sphere_creation_and_invalid_steps_do_not_wake_a_parked_world() {
+        let mut world = world();
+        let id = BodyId(1);
+        world.add_box(dynamic(1, Vec3i::ZERO, Vec3i::ZERO)).unwrap();
+        settle(&mut world, id);
+        let before = world.box_by_id(id).unwrap().clone();
+        let sphere = crate::BallisticSphere3d::new(
+            BodyId(2),
+            Vec3i::new(100, 0, 0),
+            Vec3i::new(60, 0, 0),
+            1,
+            1,
+        )
+        .unwrap();
+        world.add_ballistic_sphere(sphere, true).unwrap();
+        assert!(world.is_sleeping(id), "creation is not an impact");
+        assert!(world.add_ballistic_sphere(sphere, true).is_err());
+        assert!(world.step(-1, 60).is_err());
+        assert!(world.step(1, 0).is_err());
+        world.step(0, 60).unwrap();
+        assert!(world.is_sleeping(id));
+        assert_eq!(world.box_by_id(id), Some(&before));
+        world.remove_ballistic_sphere(BodyId(2)).unwrap();
+        assert!(
+            world.is_sleeping(id),
+            "removing a distant sphere is not support removal"
         );
     }
 

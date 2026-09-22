@@ -68,6 +68,7 @@ mod rotating_world;
 mod rotational_sweep;
 #[path = "stabilized_rotating_world.rs"]
 mod strict_stabilized_rotating_world;
+mod wake_prediction;
 mod stabilized_rotating_world {
     pub(crate) use crate::relaxed_rotating_world::RotatingWorld3d;
 }
