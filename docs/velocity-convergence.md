@@ -77,9 +77,8 @@ cargo build --manifest-path demo-wasm/Cargo.toml --locked --release --target was
 TRIALS=6 node scripts/benchmark-convergence.mjs candidate.wasm convergence.json baseline.wasm
 ```
 
-The optional older binary checks exact fixed-reference physical and legacy-work parity; its
-single replay is **not** a timing denominator. Primary timings compare fixed/adaptive policies
-in the same candidate binary, alternating order. All twelve free/upright sphere/arrow/rigid
+The optional older binary checks exact fixed-reference physical and legacy-work parity and
+is measured repeatedly alongside both candidate policies. All twelve free/upright sphere/arrow/rigid
 hit/miss cases must complete, preserve rotation locks and sleeping near misses, satisfy the
 existing 0.5-unit floor-penetration limit, and repeat their same-policy histories and decisions.
 The report records cross-policy position/velocity/quaternion deltas and sleep differences.
@@ -88,3 +87,11 @@ Settling, non-quiescent post-shot calls and quiescent calls are timed separately
 observations and assertions are excluded. Residual checking costs are included. Keep raw
 samples, source and module identity. Do not claim a speedup solely from fewer passes, average
 sleeping ticks into active throughput, or relax physical gates to make early stopping pass.
+
+When a baseline module is supplied, schema v2 measures all three variants repeatedly in
+balanced order: the merged module, candidate fixed-pass reference, and candidate convergence.
+It checks fixed-reference parity on every repeat and retains both time comparisons; same-binary
+policy gains must not conceal an extraction/code-generation regression against the merged module.
+Normal PR CI repeats the two candidate policies twice; detailed investigations supply the older
+module and use six balanced three-way trials. Future intentionally changed contact semantics require
+an explicit new reference-parity contract, not relabeling reference mismatches.

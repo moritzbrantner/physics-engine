@@ -1,4 +1,4 @@
-// Compare stopping policy only: identical fixture, CCD, math and iteration ceiling.
+// Compare stopping policies and the optional merged module on the same fixture and ceiling.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync} from 'node:fs';
@@ -111,32 +111,38 @@ assert.ok(WebAssembly.Module.exports(candidate).some(e=>e.name==='approximate_re
 for(const mode of baseline?['baseline','fixed','adaptive']:['fixed','adaptive'])await replay(mode,false,0,'hit',false);
 const records=[];
 for(const upright of [false,true])for(const [projectile,type] of [['sphere',0],['arrow',1],['rigid',2]])for(const shot of ['hit','miss']) {
-  const runs=[];let baselineRecord=null;
-  // A baseline replay is parity evidence only, not a one-sample speedup denominator.
-  if(baseline){baselineRecord=await replay('baseline',upright,type,shot);delete baselineRecord.history;}
+  const runs=[];
+  const modes=baseline?['baseline','fixed','adaptive']:['fixed','adaptive'];
+  // Balance all three module/policy positions over six trials. The real merged module is
+  // measured repeatedly too: extracting the row kernel could change fixed-path code generation.
+  const orders=baseline?[
+    ['baseline','fixed','adaptive'],['adaptive','fixed','baseline'],
+    ['fixed','baseline','adaptive'],['adaptive','baseline','fixed'],
+    ['baseline','adaptive','fixed'],['fixed','adaptive','baseline'],
+  ]:[['fixed','adaptive'],['adaptive','fixed']];
   for(let trial=0;trial<trials;trial++) {
     const pair={trial};
-    for(const mode of trial%2?['adaptive','fixed']:['fixed','adaptive'])pair[mode]=await replay(mode,upright,type,shot);
-    if(baselineRecord){
-      assert.equal(pair.fixed.physics_hash,baselineRecord.physics_hash,'fixed reference changed baseline physics');
-      assert.equal(pair.fixed.legacy_work_hash,baselineRecord.legacy_work_hash,'fixed reference changed baseline work');
+    for(const mode of orders[trial%orders.length])pair[mode]=await replay(mode,upright,type,shot);
+    if(baseline){
+      assert.equal(pair.fixed.physics_hash,pair.baseline.physics_hash,'fixed reference changed baseline physics');
+      assert.equal(pair.fixed.legacy_work_hash,pair.baseline.legacy_work_hash,'fixed reference changed baseline work');
     }
-    for(const mode of ['fixed','adaptive'])if(trial){
+    for(const mode of modes)if(trial){
       assert.equal(pair[mode].physics_hash,runs[0][mode].physics_hash,`${mode} replay differs`);
       assert.equal(pair[mode].decisions_hash,runs[0][mode].decisions_hash,`${mode} stopping decisions differ`);
     }
     pair.difference=difference(pair.fixed.history,pair.adaptive.history);
-    delete pair.fixed.history;delete pair.adaptive.history;
+    for(const mode of modes)delete pair[mode].history;
     runs.push(pair);
   }
-  const aggregate=Object.fromEntries(phases.map(p=>[p,Object.fromEntries(['fixed','adaptive'].map(m=>[m,summary(runs.flatMap(r=>r[m].phases[p].raw_ms))]))]));
-  const record={crates:upright?'upright':'free',projectile,shot,baseline_parity:baselineRecord?true:null,repeatable:true,passed:true,phases:aggregate,runs};
+  const aggregate=Object.fromEntries(phases.map(p=>[p,Object.fromEntries(modes.map(m=>[m,summary(runs.flatMap(r=>r[m].phases[p].raw_ms))]))]));
+  const record={crates:upright?'upright':'free',projectile,shot,baseline_parity:baseline?true:null,repeatable:true,passed:true,phases:aggregate,runs};
   records.push(record);
   writeFileSync(output+'.partial',JSON.stringify({complete:false,records},null,2)+'\n');
   console.log(JSON.stringify({crates:record.crates,projectile,shot,phases:aggregate,difference:runs[0].difference,
     fixed_work:runs[0].fixed.phases.active.work,adaptive_work:runs[0].adaptive.phases.active.work}));
 }
-writeFileSync(output,JSON.stringify({kind:'fixed-step-convergence-v1',complete:true,cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
+writeFileSync(output,JSON.stringify({kind:'fixed-step-convergence-v2',complete:true,cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
   candidate_sha256:digest(candidateBytes),baseline_sha256:baselineBytes?digest(baselineBytes):null,trials,post_shot_ticks:ticks,settle_ticks:240,
-  note:'Same-binary fixed-eight-pass vs convergence stopping. CPU-call timing excludes setup, snapshots and checks. Active/settling/quiescent phases are separate. Baseline replay verifies reference parity only. Cross-policy hashes may differ; fixed inputs and stopping decisions must repeat within each policy.',
+  note:'Same-binary fixed-eight-pass vs convergence stopping, plus optional repeated merged-module timing. CPU-call timing excludes setup, snapshots and checks. Active/settling/quiescent phases are separate. Baseline verifies fixed-reference parity and is a distinct measured denominator; do not conflate the two comparisons. Cross-policy hashes may differ; fixed inputs and stopping decisions must repeat within each policy.',
   records},null,2)+'\n');
