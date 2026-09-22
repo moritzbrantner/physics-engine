@@ -248,6 +248,9 @@ pub extern "C" fn approximate_is_quiescent() -> i32 {
 /// Stats: 0=time; 1=substeps; 2=pair tests; 3=narrow tests; 4=points; 5=iterations;
 /// 6=integrations; 7=woken bodies; 8=swept points; 9=retired total; 10=max penetration.
 /// 11=response preparations; 12=inertia preparations; 13=inertia applications.
+/// 14..=23: active rebuilds/scans, adjacency rebuilds/edges, island bodies/edges,
+/// bound updates/sorted rows, tracked scratch capacity grows/retained bytes.
+/// 24: bound-order comparisons (even when a full sort is skipped).
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_stat(index: u32) -> f64 {
     read(f64::NAN, |s| {
@@ -267,6 +270,17 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             11 => r.response_preparations as f64,
             12 => r.inertia_preparations as f64,
             13 => r.inertia_applications as f64,
+            14 => r.bookkeeping.active_view_rebuilds as f64,
+            15 => r.bookkeeping.active_body_scans as f64,
+            16 => r.bookkeeping.adjacency_rebuilds as f64,
+            17 => r.bookkeeping.adjacency_edges_indexed as f64,
+            18 => r.bookkeeping.island_body_visits as f64,
+            19 => r.bookkeeping.island_edge_visits as f64,
+            20 => r.bookkeeping.bounds_updates as f64,
+            21 => r.bookkeeping.bound_rows_sorted as f64,
+            22 => r.bookkeeping.scratch_growths as f64,
+            23 => r.bookkeeping.scratch_retained_bytes as f64,
+            24 => r.bookkeeping.bounds_order_checks as f64,
             _ => f64::NAN,
         }
     })

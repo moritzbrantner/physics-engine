@@ -7,6 +7,7 @@ on:
       - "src/approximate/**"
       - "tests/fixed_step_approximation.rs"
       - "scripts/benchmark-fixed-step.mjs"
+      - "scripts/benchmark-prepared-response.mjs"
       - "src/float_math.rs"
       - "src/numeric.rs"
       - "src/contact_wake.rs"

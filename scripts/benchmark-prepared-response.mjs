@@ -4,7 +4,9 @@ import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync} from 'node:fs';
 import os from 'node:os';
 
-const [basePath, candidatePath, output] = process.argv.slice(2);
+const [basePath, candidatePath, output, option] = process.argv.slice(2);
+const bookkeepingMode = option === '--bookkeeping';
+if (option && !bookkeepingMode) throw new Error('Unknown option; expected --bookkeeping');
 if (!basePath || !candidatePath || !output) {
   throw new Error('usage: node scripts/benchmark-prepared-response.mjs base.wasm candidate.wasm result.json');
 }
@@ -40,6 +42,10 @@ async function replay(build, upright, type, shot, measured=true) {
   const trace = createHash('sha256');
   const work = Array(11).fill(0);
   const preparation = {bodies:0,inertias:0,inertia_applications:0};
+  const bookkeepingNames = ['active_view_rebuilds','active_body_scans','adjacency_rebuilds',
+    'adjacency_edges_indexed','island_body_visits','island_edge_visits','bounds_updates',
+    'bound_rows_sorted','scratch_growths','scratch_retained_bytes','bounds_order_checks'];
+  const bookkeeping = Object.fromEntries(['settling','active','sleeping'].map(p=>[p,Array(11).fill(0)]));
   let peakFloor=0, changed=false, rotated=false, peakAwake=0;
   function step(phase) {
     const quiet = e.approximate_is_quiescent()===1;
@@ -61,6 +67,19 @@ async function replay(build, upright, type, shot, measured=true) {
       assert.ok(Number.isFinite(value));
       observations.push(value);
       work[i]+=value;
+    }
+    if (bookkeepingMode) {
+      // Compare all counters introduced by the preceding preparation change too.
+      for (const i of [11,12,13]) {
+        const v=e.approximate_stat(i);assert.ok(Number.isFinite(v));observations.push(v);
+      }
+      if (build==='candidate') {
+        const row=bookkeeping[phase==='settling'?'settling':quiet?'sleeping':'active'];
+        for(let k=0;k<11;k++) {
+          const value=e.approximate_stat(14+k);assert.ok(Number.isFinite(value));
+          row[k]=k===9?Math.max(row[k],value):row[k]+value;
+        }
+      }
     }
     trace.update(JSON.stringify(observations));
     if(build==='candidate') {
@@ -97,7 +116,8 @@ async function replay(build, upright, type, shot, measured=true) {
   assert.ok(!upright||!rotated);
   assert.ok(shot==='hit'?changed:!changed);
   if(shot==='miss')assert.equal(peakAwake,0);
-  return {trace_sha256:trace.digest('hex'),work,preparation:build==='candidate'?preparation:null,
+  return {bookkeeping:bookkeepingMode&&build==='candidate'?Object.fromEntries(Object.entries(bookkeeping).map(([phase,row])=>[phase,Object.fromEntries(bookkeepingNames.map((n,i)=>[n,row[i]]))])):null,
+    trace_sha256:trace.digest('hex'),work,preparation:build==='candidate'?preparation:null,
     max_floor_penetration:peakFloor,crates_changed:changed,crates_rotated:rotated,max_awake_crates:peakAwake,
     quiescent_after:e.approximate_is_quiescent()===1,
     phases:Object.fromEntries(Object.entries(raw).map(([k,v])=>[k,{...summarize(v),raw_ms:v}]))};
@@ -127,7 +147,7 @@ for(const upright of rotations)for(const [projectile,type] of [['sphere',0],['ar
   writeFileSync(output+'.partial',JSON.stringify({complete:false,records},null,2)+'\n');
   console.log(JSON.stringify({crates:record.crates,projectile,shot,bit_identical:true,phases}));
 }
-writeFileSync(output,JSON.stringify({kind:'prepared-response-v1',cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
+writeFileSync(output,JSON.stringify({kind:bookkeepingMode?'fixed-step-bookkeeping-v1':'prepared-response-v1',cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
   base_sha256:hash(bytes.base),candidate_sha256:hash(bytes.candidate),trials,post_shot_ticks:ticks,settle_ticks:240,substeps:4,iterations:8,
   note:'Alternating build order after module warmup. Timings include only calls to approximate_step_velocity, not setup or observations. Settling, non-quiescent post-shot ticks, and quiescent ticks are separate. Raw repetitions retained; no wall-clock gate. Hash includes all visible poses, linear velocities, sleep flags and the pre-existing report counters.',
   crate_mode:crateMode,passed:true,records},null,2)+'\n');

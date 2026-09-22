@@ -7,7 +7,10 @@
 //!
 //! CCD sweeps translation over each substep for fast shapes. Orientations are held fixed during
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
+mod bookkeeping;
 mod contact;
+pub use bookkeeping::BookkeepingStats;
+use bookkeeping::{Scratch, SweepRow, push, reserve};
 mod math;
 mod response;
 use crate::{
@@ -17,7 +20,7 @@ use crate::{
 pub use math::{Quaternion, Vector};
 use numeric::Scalar;
 use response::PreparedResponse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -239,6 +242,7 @@ pub struct Report {
     pub swept_contacts: u64,
     pub retired: Vec<BodyId>,
     pub max_penetration: Scalar,
+    pub bookkeeping: BookkeepingStats,
     /// Active response bodies prepared, including newly awakened bodies in the same substep.
     pub response_preparations: u64,
     /// Shape/mass inertia coefficients calculated; independent of contact iteration count.
@@ -282,6 +286,9 @@ pub struct World {
     last_h: Scalar,
     // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
     responses: Vec<PreparedResponse>,
+    bookkeeping: Scratch,
+    constraints: Vec<Constraint>,
+    manifold_scratch: Vec<(usize, usize, contact::Manifold)>,
     pub last_report: Report,
     elapsed: Scalar,
 }
@@ -307,6 +314,9 @@ impl World {
             cache: BTreeMap::new(),
             last_h: 0.0,
             responses: Vec::new(),
+            bookkeeping: Scratch::default(),
+            constraints: Vec::new(),
+            manifold_scratch: Vec::new(),
             last_report: Report::default(),
             elapsed: 0.0,
         })
@@ -321,7 +331,7 @@ impl World {
         self.elapsed
     }
     pub fn is_quiescent(&self) -> bool {
-        self.bodies.iter().all(|b| b.mass == 0.0 || b.sleeping)
+        self.bookkeeping.activity.count == 0
     }
     pub fn config(&self) -> Config {
         self.config
@@ -358,29 +368,29 @@ impl World {
             self.wake_island(id);
         }
         body.cached_bounds = contact::bounds(&body);
+        self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
         self.bodies.insert(i, body);
+        self.bookkeeping.layout_changed();
         Ok(())
     }
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let i = self.index(id).ok()?;
+        self.bookkeeping.ensure_graph(&self.bodies, &self.cache);
         let neighbors = self
-            .cache
-            .keys()
-            .filter_map(|&(a, b)| {
-                if a == id {
-                    Some(b)
-                } else if b == id {
-                    Some(a)
-                } else {
-                    None
-                }
-            })
+            .bookkeeping
+            .graph
+            .neighbors(i)
+            .iter()
+            .map(|&j| self.bodies[j].id)
             .collect::<Vec<_>>();
         for n in neighbors {
             self.wake_island(n);
         }
         self.cache.retain(|&(a, b), _| a != id && b != id);
-        Some(self.bodies.remove(i))
+        let removed = self.bodies.remove(i);
+        self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
+        self.bookkeeping.layout_changed();
+        Some(removed)
     }
     pub fn set_velocity(&mut self, id: BodyId, v: Vector) -> Result<(), Error> {
         if !v.finite() || v.abs().max_component() >= 1e12 {
@@ -445,33 +455,25 @@ impl World {
         Ok(())
     }
     fn wake_island(&mut self, root: BodyId) -> u64 {
-        let mut frontier = vec![root];
-        let mut seen = BTreeSet::new();
+        let Ok(root) = self.index(root) else {
+            return 0;
+        };
+        let s = &mut self.bookkeeping;
+        s.ensure_graph(&self.bodies, &self.cache);
+        s.traversal.begin(self.bodies.len(), &mut s.work);
+        s.traversal
+            .collect(root, &self.bodies, &s.graph, &mut s.work);
         let mut count = 0;
-        while let Some(id) = frontier.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            let Ok(i) = self.index(id) else {
-                continue;
-            };
+        for &i in &s.traversal.island {
             let b = &mut self.bodies[i];
-            if b.mass == 0.0 || b.external {
-                continue;
-            }
             if b.sleeping {
                 count += 1;
                 b.sleeping = false;
                 b.quiet_time = 0.0;
             }
-            for &(a, b) in self.cache.keys() {
-                if a == id {
-                    frontier.push(b);
-                } else if b == id {
-                    frontier.push(a);
-                }
-            }
         }
+        s.activity.count += count as usize;
+        s.activity.dirty |= count > 0;
         count
     }
     pub fn has_support(&self, id: BodyId) -> bool {
@@ -502,6 +504,7 @@ impl World {
         let mut report = Report::default();
         if self.is_quiescent() {
             self.elapsed += dt;
+            self.finish_bookkeeping(&mut report);
             self.last_report = report.clone();
             return Ok(report);
         }
@@ -536,33 +539,39 @@ impl World {
                     b.angular_velocity += prepared.inertia(b, b.torque, &mut report) * h;
                 }
             }
-            let mut pairs = self.manifolds(h, &mut report);
-            let roots = pairs
-                .iter()
-                .flat_map(|(i, j, m)| {
-                    let a = &self.bodies[*i];
-                    let b = &self.bodies[*j];
-                    let approach = -(b.velocity - a.velocity).dot(m.normal);
-                    let disruptive = m.swept || approach > self.config.sleep_speed;
-                    [
-                        if disruptive && a.sleeping && b.mass > 0.0 {
-                            Some(a.id)
-                        } else {
-                            None
-                        },
-                        if disruptive && b.sleeping && a.mass > 0.0 {
-                            Some(b.id)
-                        } else {
-                            None
-                        },
-                    ]
-                })
-                .flatten()
-                .collect::<Vec<_>>();
+            let mut pairs = std::mem::take(&mut self.manifold_scratch);
+            self.manifolds(h, &mut report, &mut pairs);
+            let mut roots = std::mem::take(&mut self.bookkeeping.roots);
+            roots.clear();
+            reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
+            roots.extend(
+                pairs
+                    .iter()
+                    .flat_map(|(i, j, m)| {
+                        let a = &self.bodies[*i];
+                        let b = &self.bodies[*j];
+                        let approach = -(b.velocity - a.velocity).dot(m.normal);
+                        let disruptive = m.swept || approach > self.config.sleep_speed;
+                        [
+                            if disruptive && a.sleeping && b.mass > 0.0 {
+                                Some(a.id)
+                            } else {
+                                None
+                            },
+                            if disruptive && b.sleeping && a.mass > 0.0 {
+                                Some(b.id)
+                            } else {
+                                None
+                            },
+                        ]
+                    })
+                    .flatten(),
+            );
             let mut woke = 0;
-            for root in roots {
+            for root in roots.drain(..) {
                 woke += self.wake_island(root);
             }
+            self.bookkeeping.roots = roots;
             report.woken_bodies += woke;
             if woke > 0 {
                 // Wake admission changes inverse response before the contact's impulse, not next tick.
@@ -574,10 +583,16 @@ impl World {
                         }
                     }
                 }
-                pairs = self.manifolds(h, &mut report);
+                self.manifolds(h, &mut report, &mut pairs);
             }
-            let mut constraints = Vec::new();
-            for (i, j, m) in pairs {
+            let mut constraints = std::mem::take(&mut self.constraints);
+            constraints.clear();
+            reserve(
+                &mut constraints,
+                pairs.iter().map(|(_, _, m)| m.points.len()).sum(),
+                &mut self.bookkeeping.work,
+            );
+            for (i, j, m) in pairs.drain(..) {
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
                 let n = m.normal;
@@ -599,7 +614,9 @@ impl World {
                     n.cross(Vector::Y).unit()
                 };
                 let t2 = n.cross(t1);
-                let mut used = BTreeSet::new();
+                let used = &mut self.bookkeeping.used;
+                used.clear();
+                reserve(used, m.points.len(), &mut self.bookkeeping.work);
                 for point in m.points {
                     let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
                     let arms = [point.ra, point.rb];
@@ -698,7 +715,7 @@ impl World {
                             && (p.a - la).length() + (p.b - lb).length()
                                 < 0.1 * a.shape.radius().min(b.shape.radius())
                         {
-                            used.insert(idx);
+                            used.push(idx);
                             let scale = (h / self.last_h).clamp(0.0, 2.0);
                             c.normal_impulse = p.impulse * scale;
                             c.tangent_impulse =
@@ -710,6 +727,7 @@ impl World {
                     constraints.push(c);
                 }
             }
+            self.manifold_scratch = pairs;
             report.contact_points += constraints.len() as u64;
             for c in &constraints {
                 apply::<PREPARED>(
@@ -750,33 +768,52 @@ impl World {
                     apply::<PREPARED>(&mut self.bodies, &self.responses, c, jt, &mut report);
                 }
             }
-            let mut retired = BTreeSet::new();
-            let mut support_edges = Vec::new();
-            let sleeping_ids = self
-                .bodies
-                .iter()
-                .filter(|b| b.mass == 0.0 || b.sleeping)
-                .map(|b| b.id)
-                .collect::<BTreeSet<_>>();
-            self.cache
-                .retain(|&(a, b), _| sleeping_ids.contains(&a) && sleeping_ids.contains(&b));
-            let mut fresh: BTreeMap<(BodyId, BodyId), Vec<CachedPoint>> = BTreeMap::new();
+            let scratch = &mut self.bookkeeping;
+            scratch.retired.clear();
+            scratch.support_edges.clear();
+            reserve(&mut scratch.supported, self.bodies.len(), &mut scratch.work);
+            scratch.supported.clear();
+            scratch
+                .supported
+                .extend(self.bodies.iter().map(|b| b.mass == 0.0 || b.sleeping));
+            // Reuse point allocations when the pair survives. Warm starting has already read the
+            // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
+            for (&(a, b), points) in &mut self.cache {
+                let a = self
+                    .bodies
+                    .binary_search_by_key(&a, |b| b.id)
+                    .expect("live contact");
+                let b = self
+                    .bodies
+                    .binary_search_by_key(&b, |b| b.id)
+                    .expect("live contact");
+                if !scratch.supported[a] || !scratch.supported[b] {
+                    points.clear();
+                }
+            }
             for c in &constraints {
                 let a = &self.bodies[c.a];
                 let b = &self.bodies[c.b];
                 if c.normal_impulse > 0.0 {
                     if a.retire_on_impact {
-                        retired.insert(a.id);
+                        push(&mut scratch.retired, a.id, &mut scratch.work);
                     }
                     if b.retire_on_impact {
-                        retired.insert(b.id);
+                        push(&mut scratch.retired, b.id, &mut scratch.work);
                     }
                     if c.swept {
                         report.swept_contacts += 1;
                     }
                 }
                 if c.sep <= self.config.contact_slop * 2.0 {
-                    fresh.entry((a.id, b.id)).or_default().push(CachedPoint {
+                    let points = match self.cache.entry((a.id, b.id)) {
+                        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            scratch.graph.dirty = true;
+                            entry.insert(Vec::new())
+                        }
+                    };
+                    points.push(CachedPoint {
                         a: a.orientation.inverse_rotate(c.ra),
                         b: b.orientation.inverse_rotate(c.rb),
                         normal: c.n,
@@ -784,30 +821,36 @@ impl World {
                         tangent: c.t1 * c.tangent_impulse[0] + c.t2 * c.tangent_impulse[1],
                     });
                     if c.n.dot((-self.config.gravity).unit()) > 0.5 {
-                        support_edges.push((a.id, b.id));
+                        push(&mut scratch.support_edges, (c.a, c.b), &mut scratch.work);
                     }
                     if c.n.dot((-self.config.gravity).unit()) < -0.5 {
-                        support_edges.push((b.id, a.id));
+                        push(&mut scratch.support_edges, (c.b, c.a), &mut scratch.work);
                     }
                 }
             }
-            self.cache.extend(fresh);
-            let mut supported = sleeping_ids;
+            self.cache.retain(|_, points| {
+                if points.is_empty() {
+                    scratch.graph.dirty = true;
+                    false
+                } else {
+                    true
+                }
+            });
             for _ in 0..self.bodies.len() {
-                let old = supported.len();
-                for &(lower, upper) in &support_edges {
-                    if supported.contains(&lower) {
-                        supported.insert(upper);
+                let mut changed = false;
+                for &(lower, upper) in &scratch.support_edges {
+                    if scratch.supported[lower] && !scratch.supported[upper] {
+                        scratch.supported[upper] = true;
+                        changed = true;
                     }
                 }
-                if old == supported.len() {
+                if !changed {
                     break;
                 }
             }
-            for b in &mut self.bodies {
-                if b.mass == 0.0 || b.sleeping {
-                    continue;
-                }
+            scratch.activity.refresh(&self.bodies, &mut scratch.work);
+            for &i in &scratch.activity.indices {
+                let b = &mut self.bodies[i];
                 report.integrated_bodies += 1;
                 b.position += b.velocity * h;
                 if !b.rotation_locked {
@@ -818,7 +861,7 @@ impl World {
                 }
                 if b.movable()
                     && b.sleep_allowed
-                    && supported.contains(&b.id)
+                    && scratch.supported[i]
                     && b.velocity.length() + b.angular_velocity.length() * b.shape.radius()
                         < self.config.sleep_speed
                 {
@@ -828,12 +871,18 @@ impl World {
                 }
                 b.cached_bounds = contact::bounds(b);
             }
+            self.constraints = constraints;
             self.sleep_quiet_islands();
-            // Retirement is local. Projectiles never silently invalidate all sleeping islands.
-            for id in retired {
+            // Retirement is local; remove all affected cached edges before indexed graph reuse.
+            self.bookkeeping.retired.sort_unstable();
+            self.bookkeeping.retired.dedup();
+            for n in 0..self.bookkeeping.retired.len() {
+                let id = self.bookkeeping.retired[n];
                 if let Ok(i) = self.index(id) {
-                    self.bodies.remove(i);
+                    let b = self.bodies.remove(i);
+                    self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                     self.cache.retain(|&(a, b), _| a != id && b != id);
+                    self.bookkeeping.layout_changed();
                     report.retired.push(id);
                 }
             }
@@ -844,76 +893,111 @@ impl World {
             b.torque = Vector::ZERO;
         }
         self.elapsed += dt;
+        self.finish_bookkeeping(&mut report);
         self.last_report = report.clone();
         Ok(report)
     }
+    fn finish_bookkeeping(&mut self, report: &mut Report) {
+        self.bookkeeping.work.scratch_retained_bytes = (self.bookkeeping.retained_bytes()
+            + bookkeeping::bytes(&self.constraints)
+            + bookkeeping::bytes(&self.manifold_scratch))
+            as u64;
+        report.bookkeeping = std::mem::take(&mut self.bookkeeping.work);
+    }
     fn sleep_quiet_islands(&mut self) {
-        let mut visited = BTreeSet::new();
-        for index in 0..self.bodies.len() {
-            let root = self.bodies[index].id;
-            if !self.bodies[index].movable() || visited.contains(&root) {
-                continue;
-            }
-            let mut frontier = vec![root];
-            let mut island = Vec::new();
-            while let Some(id) = frontier.pop() {
-                let Ok(i) = self.index(id) else {
-                    continue;
-                };
-                if !self.bodies[i].movable() || !visited.insert(id) {
-                    continue;
-                }
-                island.push(i);
-                for &(a, b) in self.cache.keys() {
-                    if a == id {
-                        frontier.push(b);
-                    } else if b == id {
-                        frontier.push(a);
-                    }
-                }
-            }
-            if island.iter().all(|&i| {
-                self.bodies[i].sleeping
-                    || (self.bodies[i].sleep_allowed
-                        && self.bodies[i].quiet_time >= self.config.sleep_seconds)
+        let s = &mut self.bookkeeping;
+        s.activity.refresh(&self.bodies, &mut s.work);
+        s.ensure_graph(&self.bodies, &self.cache);
+        s.traversal.begin(self.bodies.len(), &mut s.work);
+        let mut slept = 0;
+        // Fully sleeping components need no rediscovery. An awake root still reaches every
+        // dynamic neighbor, including sleeping members, so support and wake semantics are unchanged.
+        for &root in &s.activity.indices {
+            s.traversal
+                .collect(root, &self.bodies, &s.graph, &mut s.work);
+            if s.traversal.island.iter().all(|&i| {
+                let b = &self.bodies[i];
+                b.sleeping || (b.sleep_allowed && b.quiet_time >= self.config.sleep_seconds)
             }) {
-                for i in island {
+                for &i in &s.traversal.island {
                     let b = &mut self.bodies[i];
+                    slept += usize::from(!b.sleeping);
                     b.sleeping = true;
                     b.velocity = Vector::ZERO;
                     b.angular_velocity = Vector::ZERO;
                 }
             }
         }
+        s.activity.count -= slept;
+        s.activity.dirty |= slept > 0;
     }
 
-    fn manifolds(&self, h: Scalar, report: &mut Report) -> Vec<(usize, usize, contact::Manifold)> {
-        let mut bounds = self
-            .bodies
-            .iter()
-            .enumerate()
-            .map(|(i, b)| {
-                let (lo, hi) = b.cached_bounds;
-                let delta = if b.sleeping {
-                    Vector::ZERO
-                } else {
-                    b.velocity * h
-                };
-                let angular = b.angular_velocity.length() * b.shape.radius() * h;
-                let pad = Vector(angular, angular, angular)
-                    + Vector(1.0, 1.0, 1.0) * self.config.contact_slop;
-                (i, lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
-            })
-            .collect::<Vec<_>>();
-        bounds.sort_by(|a, b| {
-            a.1.0
-                .total_cmp(&b.1.0)
-                .then_with(|| self.bodies[a.0].id.cmp(&self.bodies[b.0].id))
+    fn manifolds(
+        &mut self,
+        h: Scalar,
+        report: &mut Report,
+        out: &mut Vec<(usize, usize, contact::Manifold)>,
+    ) {
+        let s = &mut self.bookkeeping;
+        out.clear();
+        if s.bounds.len() != self.bodies.len() {
+            reserve(&mut s.bounds, self.bodies.len(), &mut s.work);
+            s.bounds.clear();
+            s.bounds
+                .extend((0..self.bodies.len()).map(|index| SweepRow {
+                    index,
+                    lo: Vector::ZERO,
+                    hi: Vector::ZERO,
+                    active: true,
+                }));
+        }
+        for row in &mut s.bounds {
+            let b = &self.bodies[row.index];
+            let active = b.mass > 0.0 && !b.sleeping;
+            if !active && !row.active {
+                continue;
+            }
+            let (lo, hi) = b.cached_bounds;
+            let delta = if b.sleeping {
+                Vector::ZERO
+            } else {
+                b.velocity * h
+            };
+            let angular = b.angular_velocity.length() * b.shape.radius() * h;
+            let pad = Vector(angular, angular, angular)
+                + Vector(1.0, 1.0, 1.0) * self.config.contact_slop;
+            row.lo = lo.min(lo + delta) - pad;
+            row.hi = hi.max(hi + delta) + pad;
+            row.active = active;
+            s.work.bounds_updates += 1;
+        }
+        // The key is total and unique (BodyId), so unstable sort preserves canonical pair order
+        // while avoiding stable-sort allocation. Stationary rows retain their valid padded bounds.
+        let compare = |a: &SweepRow, b: &SweepRow| {
+            a.lo.0
+                .total_cmp(&b.lo.0)
+                .then_with(|| self.bodies[a.index].id.cmp(&self.bodies[b.index].id))
+        };
+        let ordered = s.bounds.windows(2).all(|rows| {
+            s.work.bounds_order_checks += 1;
+            !compare(&rows[0], &rows[1]).is_gt()
         });
-        let mut out = Vec::new();
+        if !ordered {
+            s.bounds.sort_unstable_by(compare);
+            s.work.bound_rows_sorted += s.bounds.len() as u64;
+        }
+        let bounds = &s.bounds;
         for p in 0..bounds.len() {
-            let (i, lo, hi) = bounds[p];
-            for &(j, bl, bh) in bounds.iter().skip(p + 1) {
+            let SweepRow {
+                index: i, lo, hi, ..
+            } = bounds[p];
+            for &SweepRow {
+                index: j,
+                lo: bl,
+                hi: bh,
+                ..
+            } in bounds.iter().skip(p + 1)
+            {
                 if bl.0 > hi.0 {
                     break;
                 }
@@ -953,31 +1037,29 @@ impl World {
                     }
                 });
                 if let Some(m) = m {
-                    out.push((i, j, m));
+                    push(out, (i, j, m), &mut s.work);
                 }
             }
         }
         // A fast projectile's original trajectory must not activate bodies behind its first hit.
         // Keep all equal-time contacts, but defer later speculative contacts to the next substep,
         // where the already-updated velocity becomes authoritative. No event-restart loop is added.
-        let mut earliest: BTreeMap<usize, Scalar> = BTreeMap::new();
-        for (i, j, m) in &out {
+        reserve(&mut s.earliest, self.bodies.len(), &mut s.work);
+        s.earliest.clear();
+        s.earliest.resize(self.bodies.len(), Scalar::INFINITY);
+        for (i, j, m) in out.iter() {
             for index in [*i, *j] {
                 if self.bodies[index].ccd {
-                    earliest
-                        .entry(index)
-                        .and_modify(|t| *t = t.min(m.time))
-                        .or_insert(m.time);
+                    s.earliest[index] = s.earliest[index].min(m.time);
                 }
             }
         }
         out.retain(|(i, j, m)| {
             [i, j]
                 .into_iter()
-                .all(|index| earliest.get(index).is_none_or(|t| m.time <= *t + 1e-7))
+                .all(|index| m.time <= s.earliest[*index] + 1e-7)
         });
-        out.sort_by_key(|(i, j, _)| (self.bodies[*i].id, self.bodies[*j].id));
-        out
+        out.sort_unstable_by_key(|(i, j, _)| (self.bodies[*i].id, self.bodies[*j].id));
     }
 }
 fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
