@@ -21,6 +21,7 @@ pub struct BallisticSphere3d {
     velocity: Vec3i,
     radius: i32,
     mass_units: u32,
+    response_mass_milli_units: u32,
     material: Material,
     collision_layers: CollisionLayers3d,
 }
@@ -39,12 +40,16 @@ impl BallisticSphere3d {
         if mass_units == 0 {
             return Err(BallisticSphereError3d::ZeroMass(id));
         }
+        let response_mass_milli_units = mass_units
+            .checked_mul(1_000)
+            .ok_or(BallisticSphereError3d::ArithmeticOverflow)?;
         Ok(Self {
             id,
             position,
             velocity,
             radius,
             mass_units,
+            response_mass_milli_units,
             material: Material::default(),
             collision_layers: CollisionLayers3d::default(),
         })
@@ -73,6 +78,22 @@ impl BallisticSphere3d {
     #[must_use]
     pub const fn mass_units(self) -> u32 {
         self.mass_units
+    }
+
+    #[must_use]
+    pub const fn response_mass_milli_units(self) -> u32 {
+        self.response_mass_milli_units
+    }
+
+    pub fn with_response_mass_milli_units(
+        mut self,
+        response_mass_milli_units: u32,
+    ) -> Result<Self, BallisticSphereError3d> {
+        if response_mass_milli_units == 0 {
+            return Err(BallisticSphereError3d::ZeroMass(self.id));
+        }
+        self.response_mass_milli_units = response_mass_milli_units;
+        Ok(self)
     }
 
     #[must_use]
