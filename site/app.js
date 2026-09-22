@@ -42,10 +42,18 @@ const projectileShortcuts = new Map(
     element,
   ]),
 );
+const scenarioId = document.body.dataset.scenario ?? "sandbox";
+const scenarioDefaults =
+  scenarioId === "tower"
+    ? { character: "physical", crates: "free", bake: "load" }
+    : { character: "linear", crates: "upright", bake: "load" };
 const characterParameters = new URLSearchParams(window.location.search);
-characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
-uprightCratesControl.checked = characterParameters.get("crates") !== "free";
-fixedGeometryControl.value = characterParameters.get("bake") === "runtime" ? "0" : "1";
+const characterResponse = characterParameters.get("character") ?? scenarioDefaults.character;
+const crateMotion = characterParameters.get("crates") ?? scenarioDefaults.crates;
+const fixedGeometry = characterParameters.get("bake") ?? scenarioDefaults.bake;
+characterModeControl.value = characterResponse === "physical" ? "0" : "1";
+uprightCratesControl.checked = crateMotion !== "free";
+fixedGeometryControl.value = fixedGeometry === "runtime" ? "0" : "1";
 function resetInteractionOptions() {
   const url = new URL(window.location.href);
   url.searchParams.set("character", characterModeControl.value === "0" ? "physical" : "linear");
@@ -97,9 +105,10 @@ function performanceEnvironment() {
 function performanceScenario() {
   const query = new URLSearchParams(window.location.search);
   return {
-    character_response: query.get("character") ?? "linear",
-    crate_motion: query.get("crates") ?? "upright",
-    fixed_geometry: query.get("bake") ?? "load",
+    id: scenarioId,
+    character_response: characterModeControl.value === "0" ? "physical" : "linear",
+    crate_motion: uprightCratesControl.checked ? "upright" : "free",
+    fixed_geometry: fixedGeometryControl.value === "0" ? "runtime" : "load",
     collision_pairs: query.get("collisions") ?? "all",
     projectile_impact: query.get("projectile-impact") ?? "impact-retire",
     projectile_type: query.get("projectile-type") ?? "sphere",
@@ -184,14 +193,19 @@ function selectProjectileType(projectileType) {
 }
 
 function reset() {
+  const resetWithOptions =
+    scenarioId === "tower"
+      ? engine.sandbox_reset_tower_with_baking_options
+      : engine.sandbox_reset_with_baking_options;
   if (
-    engine.sandbox_reset_with_baking_options(
+    typeof resetWithOptions !== "function" ||
+    resetWithOptions(
       Number(characterModeControl.value),
       Number(uprightCratesControl.checked),
       Number(fixedGeometryControl.value),
     ) !== 0
   ) {
-    throw new Error("Unable to initialize the selected physics comparison options");
+    throw new Error(`Unable to initialize the selected ${scenarioId} physics options`);
   }
   const projectileType = new Map([
     ["sphere", 0],
@@ -220,7 +234,10 @@ function reset() {
   pauseButton.textContent = "Pause";
   syncProjectileHud();
   performanceRecorder.recordMarker("reset", performanceScenario());
-  status.textContent = `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
+  status.textContent =
+    scenarioId === "tower"
+      ? `Tower ready. Shoot or push the 32 Rust-owned crates to inspect stack stability and collapse. Rendering with ${renderer.backend}.`
+      : `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
 function movementVelocity() {
@@ -834,6 +851,8 @@ try {
   }
   if (
     typeof engine.sandbox_reset_with_baking_options !== "function" ||
+    (scenarioId === "tower" &&
+      typeof engine.sandbox_reset_tower_with_baking_options !== "function") ||
     typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
     typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
   ) {

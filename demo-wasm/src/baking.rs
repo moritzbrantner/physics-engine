@@ -136,11 +136,11 @@ fn apply_interaction_policy_settings(
 /// explicit rules, old 0/1 callers remain accepted and ignored because crate motion is already encoded in the
 /// first argument; a marked second argument carries the settings-backed pair-policy payload. Fixed geometry
 /// preparation remains a separate performance/storage choice.
-#[unsafe(no_mangle)]
-pub extern "C" fn sandbox_reset_with_baking_options(
+fn reset_with_baking_options(
     simulation_rules: i32,
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
+    build_layout: fn(bool, bool) -> Result<Sandbox, RotatingWorldError3d>,
 ) -> i32 {
     let explicit_rules = simulation_rules & EXPLICIT_RULES_BIT != 0;
     let (legacy_upright_crates, pair_policy_settings) = if explicit_rules
@@ -172,8 +172,7 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     // applied to the replacement. Invalid inputs still return above without touching the current sandbox.
     with_sandbox(|_| ());
 
-    let Ok(mut replacement) =
-        Sandbox::with_options(rules.character_linear_push(), rules.upright_crates())
+    let Ok(mut replacement) = build_layout(rules.character_linear_push(), rules.upright_crates())
     else {
         return -2;
     };
@@ -187,6 +186,36 @@ pub extern "C" fn sandbox_reset_with_baking_options(
         .set_fixed_geometry_preparation_mode(fixed_geometry_mode);
     with_sandbox_mut(|sandbox| *sandbox = replacement);
     0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        Sandbox::with_options,
+    )
+}
+
+/// Reset the shared Rust/WASM sandbox with the deterministic 32-crate tower layout.
+/// Layout selection stays separate from simulation rules so the browser remains an advisory consumer.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_tower_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        Sandbox::with_tower_options,
+    )
 }
 
 #[unsafe(no_mangle)]
