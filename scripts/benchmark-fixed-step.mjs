@@ -1,4 +1,4 @@
-// Paired actual-WASM acceptance. A failed event run is reported, never a speedup denominator.
+// Paired actual-WASM acceptance. Older references explicitly report unavailable sleep telemetry as null. A failed event run is reported, never a speedup denominator.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -33,10 +33,11 @@ for (const mode of ['event', 'approximate']) {
         const ptr=e.sandbox_refresh_render_snapshot();
         return rows(new Int32Array(e.memory.buffer,ptr,e.sandbox_render_snapshot_len()).slice()).map(r=>r.map((v,i)=>i>=7?v/(2**30):v));
       };
-      const asleep=i=>approx ? e.approximate_body_sleeping(i)===1 : e.sandbox_body_sleeping(i)===1;
+      const sleepStatusAvailable=approx || typeof e.sandbox_body_sleeping==='function';
+      const asleep=i=>approx ? e.approximate_body_sleeping(i)===1 : sleepStatusAvailable ? e.sandbox_body_sleeping(i)===1 : null;
       const quiet=()=>approx ? e.approximate_is_quiescent()===1 : e.sandbox_is_quiescent()===1;
       const trace=createHash('sha256');
-      let failure=null, complete=0, peakFloor=0, peakAwake=0, changed=false, rotated=false, peakSubsteps=0, peakIterations=0, peakEvents=0, peakSwept=0;
+      let failure=null, complete=0, peakFloor=0, peakAwake=sleepStatusAvailable?0:null, changed=false, rotated=false, peakSubsteps=0, peakIterations=0, peakEvents=0, peakSwept=0;
       for(let t=0;t<240;t++){const error=step(); if(error){failure={phase:'settle',tick:t,error,detail:approx?null:e.sandbox_error_detail()};break;}}
       const initial=snapshot(), crateIndices=initial.map((r,i)=>r[0]===2?i:-1).filter(i=>i>=0);
       if(crateIndices.length!==32) throw new Error('must import all 32 crates');
@@ -60,9 +61,9 @@ for (const mode of ['event', 'approximate']) {
             peakFloor=Math.max(peakFloor,-bottom(r));
             changed ||= r.slice(1).some((v,k)=>Math.abs(v-before[k+1])>1e-6);
             rotated ||= r.slice(7).some((v,k)=>Math.abs(v-before[k+7])>1e-5);
-            if(!asleep(i))awake++;
+            if(asleep(i)===false)awake++;
           }
-          peakAwake=Math.max(peakAwake,awake);
+          if(sleepStatusAvailable)peakAwake=Math.max(peakAwake,awake);
           if(approx){
             peakSubsteps=Math.max(peakSubsteps,e.approximate_stat(1));
             peakIterations=Math.max(peakIterations,e.approximate_stat(5));
@@ -70,8 +71,8 @@ for (const mode of ['event', 'approximate']) {
           }else peakEvents=Math.max(peakEvents,e.sandbox_last_sampled_events?.() ?? 0);
         }
       }
-      const checks={ completed:complete===ticks, changed_on_hit:shot!=='hit'||changed, unchanged_on_miss:shot!=='miss'||!changed, sleeping_on_miss:shot!=='miss'||peakAwake===0, upright_preserved:!upright||!rotated, floor_penetration_bounded:peakFloor<=0.5, bounded_work:!approx||(peakSubsteps<=4&&peakIterations<=32)};
-      runs.push({trial,passed:!failure&&Object.values(checks).every(Boolean),failure,checks,completed_ticks:complete,settled_before:settled,quiescent_after:quiet(),crates_changed:changed,crates_rotated:rotated,max_floor_penetration:peakFloor,max_awake_crates:peakAwake,max_substeps:peakSubsteps,max_impulse_iterations:peakIterations,max_sampled_events:peakEvents,max_swept_contacts:peakSwept,simulated_seconds:approx?e.approximate_stat(0):(240+complete)/60,steps_ms:{mean:times.length?times.reduce((a,b)=>a+b,0)/times.length:null,p95:quantile(times,.95),max:times.length?Math.max(...times):null},replay_sha256:trace.digest('hex'),raw_ms:times});
+      const checks={ completed:complete===ticks, changed_on_hit:shot!=='hit'||changed, unchanged_on_miss:shot!=='miss'||!changed, sleeping_on_miss:shot!=='miss'||(sleepStatusAvailable ? peakAwake===0 : null), upright_preserved:!upright||!rotated, floor_penetration_bounded:peakFloor<=0.5, bounded_work:!approx||(peakSubsteps<=4&&peakIterations<=32)};
+      runs.push({trial,passed:!failure&&Object.values(checks).every(value=>value===true||value===null),failure,checks,unavailable_checks:Object.keys(checks).filter(key=>checks[key]===null),sleep_status_available:sleepStatusAvailable,completed_ticks:complete,settled_before:settled,quiescent_after:quiet(),crates_changed:changed,crates_rotated:rotated,max_floor_penetration:peakFloor,max_awake_crates:peakAwake,max_substeps:peakSubsteps,max_impulse_iterations:peakIterations,max_sampled_events:peakEvents,max_swept_contacts:peakSwept,simulated_seconds:approx?e.approximate_stat(0):(240+complete)/60,steps_ms:{mean:times.length?times.reduce((a,b)=>a+b,0)/times.length:null,p95:quantile(times,.95),max:times.length?Math.max(...times):null},replay_sha256:trace.digest('hex'),raw_ms:times});
     }
     const record={mode,crates:upright?'upright':'free',projectile:kind,shot,runs,repeatable:runs.every(r=>r.replay_sha256===runs[0].replay_sha256),passed:runs.every(r=>r.passed)};
     records.push(record); console.log(JSON.stringify({...record,runs:runs.map(({raw_ms,...r})=>r)}));
