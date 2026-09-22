@@ -26,6 +26,19 @@ fn write(f: impl FnOnce(&mut Experiment) -> i32) -> i32 {
 /// there is no legacy state roundtrip during any approximate tick.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_reset_from_sandbox(substeps: i32, iterations: i32) -> i32 {
+    reset_with_convergence(substeps, iterations, true)
+}
+
+/// Fixed-pass diagnostic reference; same fixture, math and collision path, no early termination.
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_reset_fixed_iterations_from_sandbox(
+    substeps: i32,
+    iterations: i32,
+) -> i32 {
+    reset_with_convergence(substeps, iterations, false)
+}
+
+fn reset_with_convergence(substeps: i32, iterations: i32, early: bool) -> i32 {
     let Ok(substeps) = u8::try_from(substeps) else {
         return -1;
     };
@@ -37,6 +50,7 @@ pub extern "C" fn approximate_reset_from_sandbox(substeps: i32, iterations: i32)
             gravity: s.world.config().gravity.into(),
             substeps,
             velocity_iterations,
+            convergence: early.then(Default::default),
             ..Config::default()
         })?;
         for b in s.world.boxes() {
@@ -252,6 +266,7 @@ pub extern "C" fn approximate_is_quiescent() -> i32 {
 /// bound updates/sorted rows, tracked scratch capacity grows/retained bytes.
 /// 24: bound-order comparisons (even when a full sort is skipped).
 /// 25..=39: contact-geometry reuse counters; see docs/contact-geometry-reuse.md.
+/// 40..=51: bounded convergence work/exit diagnostics; see docs/velocity-convergence.md.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_stat(index: u32) -> f64 {
     read(f64::NAN, |s| {
@@ -297,6 +312,18 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             37 => r.geometry.pair_invalidations as f64,
             38 => r.geometry.cached_pairs_peak as f64,
             39 => r.geometry.retained_bytes as f64,
+            40 => r.convergence.constraint_visits as f64,
+            41 => r.convergence.residual_checks as f64,
+            42 => r.convergence.residual_constraint_visits as f64,
+            43 => r.convergence.converged_substeps as f64,
+            44 => r.convergence.capped_substeps as f64,
+            45 => r.convergence.empty_substeps as f64,
+            46 => r.convergence.skipped_iterations as f64,
+            47 => r.convergence.max_exit_impulse_delta,
+            48 => r.convergence.max_exit_velocity_residual,
+            49 => r.convergence.fixed_substeps as f64,
+            50 => r.convergence.probe_passes as f64,
+            51 => r.convergence.delta_constraint_checks as f64,
             _ => f64::NAN,
         }
     })

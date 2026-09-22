@@ -21,8 +21,10 @@ There is no integer pose write-back during this path. IDs, masks and work counte
 
 A stack cannot calculate every contact impulse independently: changing one body's velocity
 changes the velocity seen at its other contacts. The approximation therefore uses a **bounded**
-sequential-impulse constraint solve. The default is four substeps and eight velocity iterations
-per substep. Each iteration updates velocities using incremental impulses; accumulated normal
+sequential-impulse constraint solve. The default is four substeps and at most eight velocity iterations
+per substep. Convergence probes can end the solve early; `Config::convergence = None`
+retains the fixed-pass reference. See `docs/velocity-convergence.md` for the residual
+checks, tolerances, probe schedule and comparison evidence. Each iteration updates velocities using incremental impulses; accumulated normal
 impulses clamp at zero, and accumulated tangential impulses clamp to the Coulomb friction disk.
 Prepared contact points and effective masses are reused for those iterations. Local contact
 anchors and impulses survive for warm starting on the next substep.
@@ -35,7 +37,7 @@ anchors and impulses survive for warm starting on the next substep.
    edge and sphere contacts. Only real contact or an admitted translation sweep wakes an island.
 4. Retain the first/equal-time swept contacts of each CCD projectile, so a nearer wall shields
    a target even when the target's BodyId sorts first. Re-evaluate new motion next substep.
-5. Apply cached impulses, run eight contact iterations, then integrate updated velocity and
+5. Apply cached impulses, run at most eight contact iterations, then integrate updated velocity and
    orientation for the entire substep. No chronological event restart or rational tail exists.
 6. Cache contact anchors/impulses. Quiet connected dynamic islands sleep together. Fixed floors
    are boundaries, not bridges connecting unrelated sleeping islands. Retire impacted projectiles
