@@ -370,7 +370,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     // while still bounding the ballistic lane deterministically.
     let mut rigid_event_count = 0_usize;
     let mut ballistic_event_count = 0_usize;
-    let mut rigid_event_seen = false;
+    let mut current_contacts_resolved = false;
     response_scratch.ensure_body_index(boxes);
 
     while !remaining.timestep_is_zero() {
@@ -379,7 +379,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
         // owns the affected resting-contact island, so a separate zero-time rigid solve here would
         // duplicate response authority and broad-phase work.
         let search = search_with_free_flight(config.search, remaining);
-        let rigid_hit = if rigid_event_seen {
+        let rigid_hit = if current_contacts_resolved {
             sampled_rotating_recontact_search_with_broad_phase(boxes, search, broad_phase)
                 .map_err(RotatingContactFrontierError3d::from)?
         } else {
@@ -443,7 +443,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 contacts: response_contacts,
                 response_passes,
             });
-            rigid_event_seen = true;
+            current_contacts_resolved = true;
             rigid_event_count = rigid_event_count.saturating_add(1);
         } else {
             if ballistic_event_count >= usize::from(config.max_events) {
@@ -484,6 +484,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                     &mut work,
                 )?;
             }
+            // The ballistic lane has now resolved and stabilized all current contacts reachable from
+            // its modified targets. Continuing with the ordinary first-contact search would admit those
+            // persistent time-zero contacts again as fresh rigid events. Recontact search preserves only
+            // contacts that genuinely clear and return, matching the same post-response rule as a rigid event.
+            current_contacts_resolved = true;
             ballistic_event_count = ballistic_event_count.saturating_add(1);
         }
     }
