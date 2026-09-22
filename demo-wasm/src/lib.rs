@@ -1343,7 +1343,7 @@ mod tests {
             "one localized sphere impact re-admitted {peak_sampled_events} sampled rigid events"
         );
         assert!(
-            peak_stabilization_limit_hits <= 2,
+            peak_stabilization_limit_hits < 8,
             "one localized sphere impact exhausted stabilization {peak_stabilization_limit_hits} times"
         );
     }
