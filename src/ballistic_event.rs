@@ -377,10 +377,13 @@ fn apply_ballistic_target_impulse(
         return Ok([0; 3]);
     }
 
+    let response_scale_milli = (RESPONSE_SCALE as u128)
+        .checked_mul(u128::from(MATERIAL_SCALE))
+        .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
     let sphere_inverse_mass = i128::try_from(mul_div_round_u128(
         axis_length_squared,
-        RESPONSE_SCALE as u128,
-        u128::from(projectile.mass_units()),
+        response_scale_milli,
+        u128::from(projectile.response_mass_milli_units()),
     )?)
     .map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
     let target_inverse_mass =
@@ -451,12 +454,12 @@ fn apply_projectile_impulse(
     projectile: &mut BallisticSphere3d,
     impulse: [i128; 3],
 ) -> Result<(), BallisticTimelineError3d> {
-    let mass = i128::from(projectile.mass_units());
+    let mass_milli = i128::from(projectile.response_mass_milli_units());
     let velocity = projectile.velocity();
     projectile.set_velocity(Vec3i::new(
-        add_impulse_axis(velocity.x, impulse[0], mass)?,
-        add_impulse_axis(velocity.y, impulse[1], mass)?,
-        add_impulse_axis(velocity.z, impulse[2], mass)?,
+        add_impulse_axis_milli(velocity.x, impulse[0], mass_milli)?,
+        add_impulse_axis_milli(velocity.y, impulse[1], mass_milli)?,
+        add_impulse_axis_milli(velocity.z, impulse[2], mass_milli)?,
     ));
     Ok(())
 }
@@ -782,6 +785,19 @@ fn add_impulse_axis(
     to_i32(
         i128::from(current)
             .checked_add(div_round_nearest(impulse, mass)?)
+            .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
+    )
+}
+
+fn add_impulse_axis_milli(
+    current: i32,
+    impulse: i128,
+    mass_milli: i128,
+) -> Result<i32, BallisticTimelineError3d> {
+    let delta = mul_div_round_i128(impulse, i128::from(MATERIAL_SCALE), mass_milli)?;
+    to_i32(
+        i128::from(current)
+            .checked_add(delta)
             .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
     )
 }
