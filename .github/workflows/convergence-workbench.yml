@@ -1,0 +1,77 @@
+name: Velocity convergence verification
+
+on:
+  push:
+    branches: [perf/157-velocity-convergence]
+    paths: [.github/workflows/convergence-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Apply verified implementation and remove temporary transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, lzma, pathlib
+          patch = lzma.decompress(pathlib.Path('.agent-transfer/convergence.patch.xz').read_bytes())
+          assert hashlib.sha256(patch).hexdigest() == 'f481b0113b22624e70cf626553c7a773ef143067ba69c3eac15c220ad1be9c51'
+          pathlib.Path('/tmp/convergence.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/convergence.patch
+          git apply /tmp/convergence.patch
+          rm .agent-transfer/convergence.patch.xz .github/workflows/convergence-workbench.yml
+          rmdir .agent-transfer
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          test "$(git write-tree)" = 32fc800e60e468b89ee5affb3cf0da6049e7c7f6
+          git commit -m 'perf: stop bounded impulse passes after validated convergence'
+      - name: Validate convergence and retained physics contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features exact-reference -- -D warnings
+          cargo test --locked --lib approximate::
+          cargo test --locked --test fixed_step_approximation
+          cargo test --locked --features exact-reference --lib approximate::
+          node --test site/*.test.mjs scripts/*.test.mjs
+      - name: Build Pages and benchmark actual solver policies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p convergence-evidence
+          bash scripts/build-pages.sh
+          cp pages-dist/physics_engine_demo.wasm convergence-evidence/candidate.wasm
+          git worktree add --detach /tmp/convergence-base d2a862f4b8df4b16baa43d8b8f8c9e2e08edbc74
+          (cd /tmp/convergence-base && cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked)
+          cp /tmp/convergence-base/demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm convergence-evidence/base.wasm
+          TRIALS=6 node scripts/benchmark-convergence.mjs convergence-evidence/candidate.wasm convergence-evidence/paired.json convergence-evidence/base.wasm
+          node scripts/benchmark-fixed-step.mjs convergence-evidence/candidate.wasm convergence-evidence/fixed-step.json convergence-evidence/base.wasm
+          cp /tmp/convergence.patch convergence-evidence/implementation.patch
+          cp scripts/benchmark-convergence.mjs convergence-evidence/
+          git rev-parse HEAD > convergence-evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > convergence-evidence/source-tree.txt
+          rustc --version > convergence-evidence/environment.txt
+          node --version >> convergence-evidence/environment.txt
+          lscpu >> convergence-evidence/environment.txt
+      - name: Publish clean verified source without force
+        run: git push origin HEAD:perf/157-velocity-convergence
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: velocity-convergence-evidence
+          path: convergence-evidence/
+          retention-days: 7

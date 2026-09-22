@@ -7,6 +7,7 @@ on:
       - "src/approximate/**"
       - "tests/fixed_step_approximation.rs"
       - "scripts/benchmark-fixed-step.mjs"
+      - "scripts/benchmark-convergence.mjs"
       - "scripts/benchmark-prepared-response.mjs"
       - "src/float_math.rs"
       - "src/numeric.rs"
@@ -102,6 +103,8 @@ jobs:
 
       - name: Compare fixed-step approximation with event solver
         run: node scripts/benchmark-fixed-step.mjs performance-evidence/head.wasm performance-evidence/fixed-step.json performance-evidence/base.wasm
+      - name: Compare convergence with fixed-pass reference
+        run: TRIALS=2 node scripts/benchmark-convergence.mjs performance-evidence/head.wasm performance-evidence/convergence.json
 
       - name: Record independent character gameplay options
         run: |
