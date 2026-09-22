@@ -1,0 +1,45 @@
+--- a/site/physics-settings.mjs
++++ b/site/physics-settings.mjs
+@@ -412,6 +412,8 @@
+ function closeSettingsPanel() {
+   document.body.classList.remove("settings-open");
+   openSettings.setAttribute("aria-expanded", "false");
++  // The hidden panel suppresses game key events. Return focus to the visible play surface.
++  document.querySelector("#scene")?.focus({ preventScroll: true });
+ }
+ 
+ openSettings.addEventListener("click", openSettingsPanel);
+--- a/site/app.js
++++ b/site/app.js
+@@ -833,7 +833,7 @@
+   }
+   if (event.code === "KeyF" && !event.repeat) shoot();
+   if (event.code === "KeyR" && !event.repeat) reset();
+-  if (event.code === "KeyP" && !event.repeat) {
++  if (event.code === "KeyP" && !event.repeat && !simulationError) {
+     paused = !paused;
+     pauseButton.textContent = paused ? "Resume" : "Pause";
+     renderDirty = true;
+--- a/scripts/test-tower-browser.py
++++ b/scripts/test-tower-browser.py
+@@ -31,6 +31,7 @@
+         before = state()
+         assert before['solver'] == 'fixed-step-f64' and not before['error'] and before['awake'] == 0, before
+         page.locator('#close-settings').click()
++        assert page.evaluate('document.activeElement.id') == 'scene'
+         page.clock.run_for(32)
+         page.screenshot(path=str(out / 'tower-ready.png'), full_page=True)
+         # Change type with a shot still in flight: no fixture reset and per-shot shapes survive.
+--- a/site/tower-runtime.test.mjs
++++ b/site/tower-runtime.test.mjs
+@@ -30,3 +30,10 @@
+   const settings=readFileSync(new URL('./physics-settings.mjs',import.meta.url),'utf8');
+   assert.match(settings,/fixedStepTower && id === "simulation.projectile_type"/);
+ });
++
++test('closing settings restores gameplay focus and keyboard pause cannot hide a failed state', () => {
++  const settings = readFileSync(new URL('./physics-settings.mjs', import.meta.url), 'utf8');
++  const app = readFileSync(new URL('./app.js', import.meta.url), 'utf8');
++  assert.match(settings, /document\.querySelector\("#scene"\)\?\.focus\(\{ preventScroll: true \}\)/);
++  assert.match(app, /event\.code === "KeyP" && !event\.repeat && !simulationError/);
++});
