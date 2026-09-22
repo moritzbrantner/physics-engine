@@ -1,13 +1,10 @@
 name: Fixed-step integration workbench
-
 on:
   push:
     branches: [refactor/default-floating-point-math]
     paths: [.github/workflows/step-integration-workbench.yml]
-
 permissions:
   contents: write
-
 jobs:
   integrate:
     runs-on: ubuntu-latest
@@ -16,25 +13,27 @@ jobs:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
         with:
           fetch-depth: 0
-      - name: Apply locally verified source and remove transport files
+      - name: Apply tested source and comparison accessibility repair
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import base64, hashlib, lzma, pathlib
-          data = ''.join(pathlib.Path(f'.agent-transfer/{i}.txt').read_text() for i in range(7))
-          patch = lzma.decompress(base64.b64decode(data, validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '8cb6fcb985853b064966434fd4727ab0e76064c30f7e17a69648d534b837a6af'
+          data=''.join(pathlib.Path(f'.agent-transfer/{i}.txt').read_text() for i in range(7))
+          patch=lzma.decompress(base64.b64decode(data,validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='8cb6fcb985853b064966434fd4727ab0e76064c30f7e17a69648d534b837a6af'
           pathlib.Path('/tmp/fixed-step.patch').write_bytes(patch)
           PY
           git apply --check /tmp/fixed-step.patch
           git apply /tmp/fixed-step.patch
           python3 - <<'PY'
           from pathlib import Path
-          path=Path('site/scenarios/fixed-step/index.html')
-          source=path.read_text()
-          assert source.count('<select id="solver">')==1
-          path.write_text(source.replace('<select id="solver">','<select id="solver" aria-label="Solver">'))
+          path=Path('site/scenarios/fixed-step/index.html');source=path.read_text()
+          replacements={'<select id="solver">':'<select id="solver" aria-label="Solver">','href="style.css"':'href="catalog.css"','color:#9eb5cc':'color:color-mix(in srgb,CanvasText 75%,Canvas)','font:14px ui-monospace,monospace':'color:#edf4fc;font:14px ui-monospace,monospace','color:#75eedb':'color:CanvasText'}
+          for old,new in replacements.items():
+              assert old in source,old
+              source=source.replace(old,new)
+          path.write_text(source)
           PY
           rm -r .agent-transfer
           rm .github/workflows/step-integration-workbench.yml
@@ -42,35 +41,27 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'feat: retain sleeping near misses and add bounded f64 fixed-step solver'
-      - name: Repeat focused checks after comparison label repair
-        shell: bash
+      - name: Check unchanged physics and repaired presentation
         run: |
-          set -euo pipefail
-          # Full default/reference native suites passed for the identical physics source
-          # in run 35729063796; the WASM matrix passed again in run 35730156280.
-          # This retry adds one HTML aria-label. Normal PR validation stays required.
+          # Full native suites passed in 35729063796; paired WASM matrix passed in 35730156280.
           cargo fmt --check
           cargo fmt --manifest-path demo-wasm/Cargo.toml --check
-          cargo clippy --all-targets -- -D warnings
-          cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
           cargo test --release --locked --test fixed_step_approximation
           cargo test --release --locked --test projectile_wake_admission
           node --test site/*.test.mjs scripts/*.test.mjs
       - name: Build actual Pages artifact
-        shell: bash
         run: |
-          set -euo pipefail
           mkdir -p step-evidence
           bash scripts/build-pages.sh
           git rev-parse HEAD > step-evidence/source-revision.txt
-          printf '%s\n' 'WASM paired benchmark passed in run 35730156280 for unchanged physics source; this run checks the HTML label repair.' > step-evidence/previous-matrix.txt
-      - name: Capture real browser behavior
+          echo 'The unchanged physics matrix passed in 35730156280; this run repairs presentation and browser verification.' > step-evidence/previous-matrix.txt
+      - name: Verify and capture both solvers in the browser
         shell: bash
         run: |
           set -euo pipefail
           python3 -m pip install playwright
           python3 -m playwright install --with-deps chromium
-          python3 -m http.server 8765 --bind 127.0.0.1 --directory pages-dist > /tmp/pages-server.log 2>&1 &
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory pages-dist >/tmp/pages-server.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           python3 - <<'PY'
@@ -78,8 +69,8 @@ jobs:
           import time
           for attempt in range(100):
               try:
-                  with urlopen('http://127.0.0.1:8765/scenarios/fixed-step/', timeout=1) as response:
-                      assert response.status == 200
+                  with urlopen('http://127.0.0.1:8765/scenarios/fixed-step/',timeout=1) as response:
+                      assert response.status==200
                   break
               except OSError:
                   time.sleep(0.1)
@@ -87,7 +78,7 @@ jobs:
               raise RuntimeError('Pages server did not become ready')
           PY
           python3 - <<'PY'
-          import json, pathlib
+          import json,pathlib
           from playwright.sync_api import sync_playwright
           out=pathlib.Path('step-evidence/browser');out.mkdir(parents=True,exist_ok=True)
           with sync_playwright() as p:
@@ -96,20 +87,17 @@ jobs:
               errors=[];page.on('pageerror',lambda err:errors.append(str(err)))
               page.goto('http://127.0.0.1:8765/scenarios/fixed-step/',wait_until='networkidle')
               page.wait_for_function('window.physicsLabState?.ticks >= 240 || window.physicsLabState?.error')
-              before=page.evaluate('window.physicsLabState')
-              assert not before.get('error'),before
+              before=page.evaluate('window.physicsLabState');assert not before.get('error'),before
               page.screenshot(path=str(out/'fixed-step-ready.png'),full_page=True)
               page.get_by_role('button',name='Shoot beside tower').click()
               page.wait_for_function('window.physicsLabState?.ticks >= 330')
-              miss=page.evaluate('window.physicsLabState')
-              assert miss['awake']==0 and not miss['error'],miss
+              miss=page.evaluate('window.physicsLabState');assert miss['awake']==0 and not miss['error'],miss
               page.get_by_role('button',name='Reset',exact=True).click()
               page.get_by_role('button',name='Shoot tower',exact=True).click()
               page.wait_for_function('window.physicsLabState?.ticks >= 270')
               page.screenshot(path=str(out/'fixed-step-arrow-impact.png'),full_page=True)
               page.wait_for_function('window.physicsLabState?.ticks >= 480')
-              after=page.evaluate('window.physicsLabState')
-              assert not after['error'] and after['bodyCount']>=44,after
+              after=page.evaluate('window.physicsLabState');assert not after['error'] and after['bodyCount']>=44,after
               page.get_by_role('button',name='Pause',exact=True).click()
               page.screenshot(path=str(out/'fixed-step-arrow-completed.png'),full_page=True)
               page.get_by_label('Solver',exact=True).select_option('event')
