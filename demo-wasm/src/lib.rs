@@ -22,6 +22,12 @@ const PROJECTILE_SPEED_LIMIT: i32 = 120;
 const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
+// Mass units are relative. Scale every rigid sandbox participant together so rigid-vs-rigid
+// behavior stays unchanged while the tiny analytic sphere remains meaningfully lighter than a crate.
+const SANDBOX_RIGID_MASS_SCALE: u32 = 8;
+const PLAYER_MASS_UNITS: u32 = 4 * SANDBOX_RIGID_MASS_SCALE;
+const CRATE_MASS_UNITS: u32 = 2 * SANDBOX_RIGID_MASS_SCALE;
+const RIGID_PROJECTILE_MASS_UNITS: u32 = SANDBOX_RIGID_MASS_SCALE;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -106,7 +112,7 @@ impl Sandbox {
                 Vec3i::ZERO,
                 Vec3i::new(12, 20, 12),
             )
-            .with_mass(4),
+            .with_mass(PLAYER_MASS_UNITS),
         )
         .with_rotation_locked();
         world.add_box(if linear_push {
@@ -131,7 +137,7 @@ impl Sandbox {
                     Vec3i::ZERO,
                     Vec3i::new(18, 18, 18),
                 )
-                .with_mass(2)
+                .with_mass(CRATE_MASS_UNITS)
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
@@ -309,6 +315,7 @@ impl Sandbox {
             None => self.world.add_box(
                 rotating_box(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_mass(RIGID_PROJECTILE_MASS_UNITS)
                         .with_material(material),
                 )
                 // Keep the pre-selector WASM behavior stable for historical benchmark callers.
@@ -330,6 +337,7 @@ impl Sandbox {
             Some(ProjectileType::Arrow) => self.world.add_box(
                 RigidBox3d::new(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
+                        .with_mass(RIGID_PROJECTILE_MASS_UNITS)
                         .with_material(material),
                     AngularState3d::new(
                         projectile_direction_orientation(input_velocity),
@@ -345,6 +353,7 @@ impl Sandbox {
             Some(ProjectileType::Rigid) => self.world.add_box(
                 rotating_box(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_mass(RIGID_PROJECTILE_MASS_UNITS)
                         .with_material(material),
                 )
                 .with_collision_layers(layers),
@@ -1137,7 +1146,7 @@ mod tests {
                     Vec3i::ZERO,
                     Vec3i::new(18, 18, 18),
                 )
-                .with_mass(2),
+                .with_mass(CRATE_MASS_UNITS),
             ))
             .expect("test crate");
         let before = sandbox
@@ -1268,6 +1277,70 @@ mod tests {
                 "settled crate {id:?} must retain its exact resting pose"
             );
         }
+    }
+
+    #[test]
+    fn single_impact_sphere_does_not_launch_the_three_crate_pyramid() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, false)
+                .expect("impact-retire scenario rules");
+        super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
+            .expect("apply impact-retire rules");
+        settle_player(&mut sandbox);
+
+        let crate_ids = [BodyId(102), BodyId(103), BodyId(104)];
+        let before = crate_ids.map(|id| sandbox.world.box_by_id(id).expect("pyramid crate").clone());
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        assert!(sandbox.shoot(42, 0, -86) >= 0);
+
+        let mut crate_responded = false;
+        let mut max_horizontal_excursion = 0_i32;
+        for tick in 0..180 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "pyramid impact/settling tick {tick}, detail {}",
+                sandbox.error_detail
+            );
+            for (index, id) in crate_ids.into_iter().enumerate() {
+                let current = sandbox.world.box_by_id(id).expect("pyramid crate after impact");
+                crate_responded |= current.body().position() != before[index].body().position()
+                    || current.angular() != before[index].angular();
+                let delta = current.body().position() - before[index].body().position();
+                max_horizontal_excursion =
+                    max_horizontal_excursion.max(delta.x.abs()).max(delta.z.abs());
+            }
+            if sandbox.projectiles_retired_on_contact == 1
+                && crate_ids
+                    .into_iter()
+                    .all(|id| sandbox.world.is_sleeping(id))
+            {
+                break;
+            }
+        }
+
+        assert!(
+            crate_responded,
+            "sphere must still transfer a visible impact to the pyramid"
+        );
+        assert_eq!(sandbox.projectiles_retired_on_contact, 1);
+        assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
+        assert!(
+            max_horizontal_excursion <= 108,
+            "single-impact sphere launched a pyramid crate {max_horizontal_excursion} units from its start"
+        );
+        assert!(
+            crate_ids
+                .into_iter()
+                .all(|id| sandbox.world.is_sleeping(id)),
+            "impacted pyramid must settle after the shot"
+        );
     }
 
     #[test]
