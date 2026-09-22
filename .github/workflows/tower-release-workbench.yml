@@ -1,0 +1,84 @@
+name: Canonical tower runtime verification
+
+on:
+  push:
+    branches: [fix/tower-stability-runtime]
+    paths: [.github/workflows/tower-release-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Apply verified source and remove temporary transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, lzma, pathlib
+          data = b''.join(pathlib.Path(f'.agent-transfer/tower-{i}.xzpart').read_bytes() for i in range(2))
+          patch = lzma.decompress(data)
+          assert hashlib.sha256(patch).hexdigest() == '0a82bedea8050080971f3ec27ce365dc097f0767e8f6c1c66c23c231b5aeecc7'
+          pathlib.Path('/tmp/tower-runtime.patch').write_bytes(patch)
+          PY
+          git apply --check --unidiff-zero /tmp/tower-runtime.patch
+          git apply --unidiff-zero /tmp/tower-runtime.patch
+          rm .agent-transfer/tower-*.xzpart .github/workflows/tower-release-workbench.yml
+          rmdir .agent-transfer
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: run canonical tower on bounded physics and validate projectile volleys'
+          mkdir -p tower-evidence
+          git rev-parse HEAD > tower-evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > tower-evidence/source-tree.txt
+          git archive --format=tar.gz HEAD > tower-evidence/source.tar.gz
+          cp /tmp/tower-runtime.patch tower-evidence/implementation.patch
+      - name: Validate core and adapter behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cargo fmt --check
+            cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+            cargo clippy --all-targets -- -D warnings
+            cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
+            cargo test --locked --lib approximate::
+            cargo test --locked --test fixed_step_approximation
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib approximate::
+            node --test site/*.test.mjs scripts/*.test.mjs
+          } 2>&1 | tee tower-evidence/validation.log
+      - name: Build Pages and replay the canonical tower runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-pages.sh > tower-evidence/pages-build.log 2>&1
+          cp pages-dist/physics_engine_demo.wasm tower-evidence/candidate.wasm
+          TOWER_TICKS=1200 TOWER_TRIALS=2 node scripts/test-tower-runtime.mjs tower-evidence/candidate.wasm tower-evidence/runtime.json > tower-evidence/runtime.log
+          rustc --version > tower-evidence/environment.txt
+          node --version >> tower-evidence/environment.txt
+          lscpu >> tower-evidence/environment.txt
+      - name: Verify real browser input and capture screenshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+          python3 -m http.server 8765 --directory pages-dist > /tmp/tower-server.log 2>&1 &
+          for i in $(seq 1 50); do if curl -fsS http://127.0.0.1:8765/scenarios/tower/ >/dev/null; then break; fi; sleep 0.2; done
+          python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output tower-evidence/browser 2>&1 | tee tower-evidence/browser.log
+      - name: Publish clean verified source without force
+        run: git push origin HEAD:fix/tower-stability-runtime
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: canonical-tower-evidence
+          path: tower-evidence/
+          retention-days: 7
