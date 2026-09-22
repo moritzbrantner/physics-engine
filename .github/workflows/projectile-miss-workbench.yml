@@ -1,0 +1,117 @@
+name: Projectile miss verification
+on:
+  push:
+    branches: [work/projectile-miss-verification]
+    paths: [.github/workflows/projectile-miss-workbench.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+      - name: Apply locally verified source without temporary workbench files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64,hashlib,lzma,os
+          from pathlib import Path
+          parts=sorted(Path('.workbench').glob('wake-patch-*.b64'))
+          assert len(parts)==4
+          raw=lzma.decompress(base64.b64decode(''.join(p.read_text().strip() for p in parts)))
+          assert hashlib.sha256(raw).hexdigest()=='19eaf79f339e5932f8f821e16a17ae7dcfc93434018ef68baaefcb6a194b1148'
+          Path(os.environ['RUNNER_TEMP'],'wake.patch').write_bytes(raw)
+          PY
+          git checkout --detach 330592ca3c40ac825347d7d17ed71946c43042e8
+          git apply --check "$RUNNER_TEMP/wake.patch"
+          git apply "$RUNNER_TEMP/wake.patch"
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src demo-wasm/src scripts/benchmark-projectile-misses.mjs tests/projectile_impact_retirement.rs docs/projectile-wake-admission.md
+          git commit -m 'perf: preserve sleeping towers for proven projectile misses'
+          mkdir -p wake-evidence
+          git rev-parse HEAD > wake-evidence/source-commit.txt
+      - name: Verify native behavior and both numerical paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+          cargo test --release --locked 2>&1 | tee wake-evidence/core-tests.log
+          cargo test --release --locked --features exact-reference 2>&1 | tee wake-evidence/reference-tests.log
+          cargo test --manifest-path demo-wasm/Cargo.toml --release --locked 2>&1 | tee wake-evidence/demo-tests.log
+          cargo test --manifest-path demo-wasm/Cargo.toml --release --locked --test pages_adapter_long_run -- --ignored
+          cargo test --manifest-path demo-wasm/Cargo.toml --release --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --all-targets --features exact-reference -- -D warnings
+          cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
+      - name: Build real Pages and exercise near-miss exports
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-pages.sh 2>&1 | tee wake-evidence/pages-build.log
+          node scripts/benchmark-projectile-misses.mjs pages-dist/physics_engine_demo.wasm wake-evidence/near-misses.json > wake-evidence/near-misses.log
+          TRIALS=1 node scripts/benchmark-tower.mjs pages-dist/physics_engine_demo.wasm wake-evidence/direct-impacts.json --report-only > wake-evidence/direct-impacts.log
+      - name: Capture real arrow near miss in Chrome
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/wake-browser"
+          "$RUNNER_TEMP/wake-browser/bin/pip" install playwright
+          export CHROME_BIN="$(command -v google-chrome || command -v chromium)"
+          "$RUNNER_TEMP/wake-browser/bin/python" - <<'PY'
+          import os,json,threading,http.server,functools
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          root=Path('pages-dist').resolve()
+          class Handler(http.server.SimpleHTTPRequestHandler):
+              def log_message(self,*args): pass
+          server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(root)))
+          threading.Thread(target=server.serve_forever,daemon=True).start()
+          out=Path('wake-evidence/browser');out.mkdir(parents=True,exist_ok=True)
+          with sync_playwright() as pw:
+              browser=pw.chromium.launch(executable_path=os.environ['CHROME_BIN'],headless=True,args=['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader','--disable-dev-shm-usage'])
+              page=browser.new_page(viewport={'width':1440,'height':900},device_scale_factor=1)
+              errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+              page.add_init_script('''
+              for (const name of ['instantiate','instantiateStreaming']) {
+                const original=WebAssembly[name].bind(WebAssembly);
+                WebAssembly[name]=async (...args)=>{
+                  const result=await original(...args); const instance=result.instance ?? result;
+                  if(instance.exports.sandbox_reset_tower_with_baking_options) window.__engine=instance.exports;
+                  return result;
+                };
+              }
+              ''')
+              page.goto(f'http://127.0.0.1:{server.server_port}/scenarios/tower/?renderer=webgl&character=physical&crates=free&projectile-type=arrow&projectile-impact=impact-retire',wait_until='networkidle')
+              page.wait_for_function('window.__engine?.sandbox_is_quiescent() === 1',timeout=30000)
+              snapshot='''() => { const e=window.__engine;const ptr=e.sandbox_refresh_render_snapshot();const a=new Int32Array(e.memory.buffer,ptr,e.sandbox_render_snapshot_len());let crates=[];for(let i=0;i<a.length;i+=11)if(a[i]===2)crates.push(...a.slice(i,i+11));return {crates,sleeping:e.sandbox_sleeping_body_count(),body_count:e.sandbox_body_count(),error:e.sandbox_error_code(),retired:e.sandbox_projectiles_retired_on_contact(),backend:e.sandbox_numeric_backend()};}'''
+              before=page.evaluate(snapshot)
+              page.locator('#scene').focus()
+              page.keyboard.press('2')
+              page.keyboard.down('ArrowRight')
+              page.wait_for_function('Number(document.querySelector("#debug").textContent.match(/yaw ([0-9.]+)/)?.[1] ?? 0) >= 29',timeout=10000)
+              page.keyboard.up('ArrowRight')
+              page.keyboard.press('f')
+              page.wait_for_function('window.__engine.sandbox_projectiles_retired_on_contact() === 1 && window.__engine.sandbox_is_quiescent() === 1',timeout=30000)
+              after=page.evaluate(snapshot)
+              page.screenshot(path=str(out/'tower-arrow-near-miss.png'),full_page=True)
+              result={'source_commit':Path('wake-evidence/source-commit.txt').read_text().strip(),'note':'Actual Pages artifact, keyboard arrow aiming and F shooting; no mocked physics or rendering.','before':before,'after':after,'crates_unchanged':before['crates']==after['crates'],'page_errors':errors,'status':page.locator('#status').inner_text(),'debug':page.locator('#debug').inner_text()}
+              (out/'result.json').write_text(json.dumps(result,indent=2))
+              assert result['crates_unchanged'] and after['sleeping']==33 and after['error']==0 and after['retired']==1 and after['backend']==64 and not errors
+              browser.close()
+          server.shutdown()
+          PY
+      - name: Publish verified implementation branch without force
+        run: git push origin HEAD:refs/heads/perf/projectile-miss-admission
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: projectile-miss-evidence
+          path: wake-evidence
+          retention-days: 7
