@@ -9,12 +9,14 @@
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
 mod contact;
 mod math;
+mod response;
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, ContactMode3d, MotionAuthority3d, RigidBox3d, SleepMode3d,
     SolverParticipation3d, numeric,
 };
 pub use math::{Quaternion, Vector};
 use numeric::Scalar;
+use response::PreparedResponse;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -146,6 +148,7 @@ impl Body {
             0.0
         }
     }
+    #[cfg(test)]
     fn inverse_inertia(&self, v: Vector) -> Vector {
         if self.inverse_mass() == 0.0 || self.rotation_locked {
             return Vector::ZERO;
@@ -236,6 +239,12 @@ pub struct Report {
     pub swept_contacts: u64,
     pub retired: Vec<BodyId>,
     pub max_penetration: Scalar,
+    /// Active response bodies prepared, including newly awakened bodies in the same substep.
+    pub response_preparations: u64,
+    /// Shape/mass inertia coefficients calculated; independent of contact iteration count.
+    pub inertia_preparations: u64,
+    /// Inverse-inertia vector evaluations (preparation is reused for these).
+    pub inertia_applications: u64,
 }
 #[derive(Clone, Debug)]
 struct CachedPoint {
@@ -271,6 +280,8 @@ pub struct World {
     bodies: Vec<Body>,
     cache: BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
     last_h: Scalar,
+    // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
+    responses: Vec<PreparedResponse>,
     pub last_report: Report,
     elapsed: Scalar,
 }
@@ -295,6 +306,7 @@ impl World {
             bodies: Vec::new(),
             cache: BTreeMap::new(),
             last_h: 0.0,
+            responses: Vec::new(),
             last_report: Report::default(),
             elapsed: 0.0,
         })
@@ -472,6 +484,11 @@ impl World {
     }
     /// Advance up to 0.1 seconds in a bounded number of substeps. No dropped remainder.
     pub fn step(&mut self, dt: Scalar) -> Result<Report, Error> {
+        self.step_with_preparation::<true>(dt)
+    }
+
+    // The false specialization is only instantiated by tests, as an unprepared replay oracle.
+    fn step_with_preparation<const PREPARED: bool>(&mut self, dt: Scalar) -> Result<Report, Error> {
         if !dt.is_finite() || !(0.0..=0.1).contains(&dt) {
             return Err(Error::InvalidInput);
         }
@@ -488,21 +505,35 @@ impl World {
             self.last_report = report.clone();
             return Ok(report);
         }
-        for b in &mut self.bodies {
-            if b.movable() {
-                b.velocity += b.impulse * b.inverse_mass();
-                b.angular_velocity += b.inverse_inertia(b.angular_impulse);
-            }
-            b.impulse = Vector::ZERO;
-            b.angular_impulse = Vector::ZERO;
-        }
         let h = dt / self.config.substeps as Scalar;
-        for _ in 0..self.config.substeps {
+        for substep in 0..self.config.substeps {
             report.substeps += 1;
-            for b in &mut self.bodies {
+            self.responses
+                .resize(self.bodies.len(), PreparedResponse::default());
+            for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
+                *prepared = if PREPARED {
+                    PreparedResponse::new(b, &mut report)
+                } else {
+                    PreparedResponse::default()
+                };
+            }
+            // External impulses still apply exactly once, before the first force integration.
+            if substep == 0 {
+                for (b, cached) in self.bodies.iter_mut().zip(&self.responses) {
+                    if b.movable() {
+                        let prepared = cached.select::<PREPARED>(b, &mut report);
+                        b.velocity += b.impulse * prepared.inverse_mass;
+                        b.angular_velocity += prepared.inertia(b, b.angular_impulse, &mut report);
+                    }
+                    b.impulse = Vector::ZERO;
+                    b.angular_impulse = Vector::ZERO;
+                }
+            }
+            for (b, cached) in self.bodies.iter_mut().zip(&self.responses) {
                 if b.movable() && !b.sleeping {
+                    let prepared = cached.select::<PREPARED>(b, &mut report);
                     b.velocity += (self.config.gravity + b.force / b.mass) * h;
-                    b.angular_velocity += b.inverse_inertia(b.torque) * h;
+                    b.angular_velocity += prepared.inertia(b, b.torque, &mut report) * h;
                 }
             }
             let mut pairs = self.manifolds(h, &mut report);
@@ -534,6 +565,15 @@ impl World {
             }
             report.woken_bodies += woke;
             if woke > 0 {
+                // Wake admission changes inverse response before the contact's impulse, not next tick.
+                // Pose/shape/mass cannot otherwise change during these velocity iterations.
+                if PREPARED {
+                    for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
+                        if prepared.inverse_mass == 0.0 && b.movable() && !b.sleeping {
+                            *prepared = PreparedResponse::new(b, &mut report);
+                        }
+                    }
+                }
                 pairs = self.manifolds(h, &mut report);
             }
             let mut constraints = Vec::new();
@@ -561,7 +601,16 @@ impl World {
                 let t2 = n.cross(t1);
                 let mut used = BTreeSet::new();
                 for point in m.points {
-                    let k = effective_mass(a, b, point.ra, point.rb, n, response, !linear);
+                    let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
+                    let arms = [point.ra, point.rb];
+                    let k = effective_mass::<PREPARED>(
+                        response_bodies,
+                        arms,
+                        n,
+                        response,
+                        !linear,
+                        &mut report,
+                    );
                     if k <= 1e-14 {
                         continue;
                     }
@@ -598,8 +647,24 @@ impl World {
                         t2,
                         normal_mass: 1.0 / k,
                         tangent_mass: [
-                            effective_mass(a, b, point.ra, point.rb, t1, response, !linear).recip(),
-                            effective_mass(a, b, point.ra, point.rb, t2, response, !linear).recip(),
+                            effective_mass::<PREPARED>(
+                                response_bodies,
+                                arms,
+                                t1,
+                                response,
+                                !linear,
+                                &mut report,
+                            )
+                            .recip(),
+                            effective_mass::<PREPARED>(
+                                response_bodies,
+                                arms,
+                                t2,
+                                response,
+                                !linear,
+                                &mut report,
+                            )
+                            .recip(),
                         ],
                         bias,
                         friction: if linear {
@@ -647,12 +712,14 @@ impl World {
             }
             report.contact_points += constraints.len() as u64;
             for c in &constraints {
-                apply(
+                apply::<PREPARED>(
                     &mut self.bodies,
+                    &self.responses,
                     c,
                     c.n * c.normal_impulse
                         + c.t1 * c.tangent_impulse[0]
                         + c.t2 * c.tangent_impulse[1],
+                    &mut report,
                 );
             }
             for _ in 0..self.config.velocity_iterations {
@@ -664,7 +731,7 @@ impl World {
                     let next = (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0);
                     let dj = next - c.normal_impulse;
                     c.normal_impulse = next;
-                    apply(&mut self.bodies, c, c.n * dj);
+                    apply::<PREPARED>(&mut self.bodies, &self.responses, c, c.n * dj, &mut report);
                     let rel = contact_velocity(&self.bodies[c.b], c.rb, c.spin)
                         - contact_velocity(&self.bodies[c.a], c.ra, c.spin);
                     let mut tangent = [
@@ -680,7 +747,7 @@ impl World {
                     let jt = c.t1 * (tangent[0] - c.tangent_impulse[0])
                         + c.t2 * (tangent[1] - c.tangent_impulse[1]);
                     c.tangent_impulse = tangent;
-                    apply(&mut self.bodies, c, jt);
+                    apply::<PREPARED>(&mut self.bodies, &self.responses, c, jt, &mut report);
                 }
             }
             let mut retired = BTreeSet::new();
@@ -921,36 +988,43 @@ fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
             Vector::ZERO
         }
 }
-fn effective_mass(
-    a: &Body,
-    b: &Body,
-    ra: Vector,
-    rb: Vector,
+fn effective_mass<const PREPARED: bool>(
+    bodies: [(&Body, &PreparedResponse); 2],
+    arms: [Vector; 2],
     n: Vector,
     response: [bool; 2],
     spin: bool,
+    report: &mut Report,
 ) -> Scalar {
     let mut k = 0.0;
-    for (body, r, yes) in [(a, ra, response[0]), (b, rb, response[1])] {
+    for (((body, cached), r), yes) in bodies.into_iter().zip(arms).zip(response) {
         if yes {
-            k += body.inverse_mass();
+            let prepared = cached.select::<PREPARED>(body, report);
+            k += prepared.inverse_mass;
             if spin {
-                k += body.inverse_inertia(r.cross(n)).cross(r).dot(n);
+                k += prepared.inertia(body, r.cross(n), report).cross(r).dot(n);
             }
         }
     }
     k
 }
-fn apply(bodies: &mut [Body], c: &Constraint, j: Vector) {
+fn apply<const PREPARED: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    c: &Constraint,
+    j: Vector,
+    report: &mut Report,
+) {
     for (i, r, j, yes) in [
         (c.a, c.ra, -j, c.response[0]),
         (c.b, c.rb, j, c.response[1]),
     ] {
         if yes {
             let b = &mut bodies[i];
-            b.velocity += j * b.inverse_mass();
+            let prepared = responses[i].select::<PREPARED>(b, report);
+            b.velocity += j * prepared.inverse_mass;
             if c.spin {
-                b.angular_velocity += b.inverse_inertia(r.cross(j));
+                b.angular_velocity += prepared.inertia(b, r.cross(j), report);
             }
         }
     }
