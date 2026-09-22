@@ -1,6 +1,6 @@
 use super::{
-    PLAYER_ID, Sandbox, rotating_box, sandbox_reset, sandbox_reset_with_character_mode,
-    with_sandbox,
+    CRATE_MASS_UNITS, PLAYER_ID, Sandbox, rotating_box, sandbox_reset,
+    sandbox_reset_with_character_mode, with_sandbox,
 };
 use physics_engine::{BodyId, ContactMode3d, RigidBody, Vec3i};
 
@@ -42,7 +42,7 @@ fn upright_comparison_pushes_a_rough_offset_crate_without_rotating_it() {
                     Vec3i::ZERO,
                     Vec3i::new(18, 18, 18),
                 )
-                .with_mass(2)
+                .with_mass(CRATE_MASS_UNITS)
                 .with_material(physics_engine::Material::new(0).with_friction(1000)),
             )
             .with_rotation_locked(),
