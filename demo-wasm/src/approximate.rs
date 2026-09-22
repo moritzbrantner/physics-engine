@@ -247,6 +247,7 @@ pub extern "C" fn approximate_is_quiescent() -> i32 {
 }
 /// Stats: 0=time; 1=substeps; 2=pair tests; 3=narrow tests; 4=points; 5=iterations;
 /// 6=integrations; 7=woken bodies; 8=swept points; 9=retired total; 10=max penetration.
+/// 11=response preparations; 12=inertia preparations; 13=inertia applications.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_stat(index: u32) -> f64 {
     read(f64::NAN, |s| {
@@ -263,6 +264,9 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             8 => r.swept_contacts as f64,
             9 => s.retired as f64,
             10 => r.max_penetration,
+            11 => r.response_preparations as f64,
+            12 => r.inertia_preparations as f64,
+            13 => r.inertia_applications as f64,
             _ => f64::NAN,
         }
     })
