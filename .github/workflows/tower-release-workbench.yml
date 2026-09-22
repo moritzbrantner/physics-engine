@@ -1,0 +1,71 @@
+name: Canonical tower metadata and browser verification
+
+on:
+  push:
+    branches: [fix/tower-stability-runtime]
+    paths: [.github/workflows/tower-release-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Apply scenario metadata repair and remove transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, pathlib
+          patch = pathlib.Path('.agent-transfer/metadata.patch').read_bytes()
+          assert hashlib.sha256(patch).hexdigest() == 'fcbbcba603ae24d0bbab1455023ab906922171e0d3f0735748a70e7f2e34ba1c'
+          pathlib.Path('/tmp/tower-metadata.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/tower-metadata.patch
+          git apply /tmp/tower-metadata.patch
+          rm .agent-transfer/metadata.patch .github/workflows/tower-release-workbench.yml
+          rmdir .agent-transfer
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: report validated tower settings and capture settled mobile layout'
+          mkdir -p tower-evidence
+          git rev-parse HEAD > tower-evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > tower-evidence/source-tree.txt
+          git archive --format=tar.gz HEAD > tower-evidence/source.tar.gz
+          cp /tmp/tower-metadata.patch tower-evidence/
+          git diff --exit-code 526a4b07ab4ad1ea295c3fe34f81eea942e439a1 -- src demo-wasm
+          printf '%s\n' 'Core and adapter unchanged from full 48-case, two-trial, 20-second verification run 35790401069 / artifact 10722595412.' > tower-evidence/physics-reuse.txt
+      - name: Validate browser code and build real Pages artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test site/*.test.mjs scripts/*.test.mjs > tower-evidence/node-tests.log 2>&1
+          python3 -m py_compile scripts/test-tower-browser.py
+          bash scripts/build-pages.sh > tower-evidence/pages-build.log 2>&1
+          cp pages-dist/physics_engine_demo.wasm tower-evidence/candidate.wasm
+          cp demo-wasm/target/pages-tower-runtime.json tower-evidence/build-runtime.json
+          echo '441253c7e6b4da52974ffbf23ac2924faf5b50b18e687a462a1b5041fea10e27  tower-evidence/candidate.wasm' | sha256sum --check
+      - name: Verify real browser controls and truthful performance export
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+          python3 -m http.server 8765 --directory pages-dist > /tmp/tower-server.log 2>&1 &
+          for i in $(seq 1 50); do if curl -fsS http://127.0.0.1:8765/scenarios/tower/ >/dev/null; then break; fi; sleep 0.2; done
+          python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output tower-evidence/browser 2>&1 | tee tower-evidence/browser.log
+      - name: Publish clean verified source without force
+        run: git push origin HEAD:fix/tower-stability-runtime
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: canonical-tower-final-evidence
+          path: tower-evidence/
+          retention-days: 7

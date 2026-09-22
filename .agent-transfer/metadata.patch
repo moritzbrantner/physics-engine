@@ -1,0 +1,33 @@
+--- a/site/app.js
++++ b/site/app.js
+@@ -109,8 +109,9 @@
+   return {
+     id: scenarioId,
+     solver: engine?.solver ?? "sampled-event-f64",
+-    character_response: characterModeControl.value === "0" ? "physical" : "linear",
+-    crate_motion: uprightCratesControl.checked ? "upright" : "free",
++    // The hidden legacy controls carry packed rule/policy bits, not these choices.
++    character_response: document.querySelector("#character-response").value,
++    crate_motion: document.querySelector("#crate-motion").value,
+     fixed_geometry: scenarioId === "tower" ? null : fixedGeometryControl.value === "0" ? "runtime" : "load",
+     collision_pairs: query.get("collisions") ?? "all",
+     projectile_impact: query.get("projectile-impact") ?? "impact-retire",
+--- a/scripts/test-tower-browser.py
++++ b/scripts/test-tower-browser.py
+@@ -94,6 +94,8 @@
+         target = out / 'browser-session.json'; download.value.save_as(target)
+         session = json.loads(target.read_text())
+         assert session['scenario']['solver'] == 'fixed-step-f64'
++        assert session['scenario']['character_response'] == 'physical'
++        assert session['scenario']['crate_motion'] == 'free'
+         assert session['summary']['physics_work']['fixed_substeps'] > 0
+         page.locator('#close-settings').click()
+         # Screenshot stabilization waits for real animation frames after a resize.
+@@ -102,6 +104,7 @@
+         page.clock.resume()
+         page.set_viewport_size({'width': 390, 'height': 844})
+         page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
++        page.wait_for_function('document.querySelector("#settings-panel").getBoundingClientRect().left >= window.innerWidth')
+         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+         page.screenshot(path=str(out / 'tower-mobile.png'), full_page=True)
+         assert not state()['error'], state()
