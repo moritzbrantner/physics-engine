@@ -12,6 +12,8 @@ import {
   stabilizationToQuery,
 } from "./simulation-rules-config.mjs";
 
+const fixedStepTower = document.body.dataset.scenario === "tower";
+
 const LEGACY_SAVE_STORAGE_KEY = "physics-engine.settings.save.v1";
 const STORAGE_KEYS = Object.freeze({
   save: "physics-engine.settings.save.v2",
@@ -252,6 +254,11 @@ function syncUrl() {
   } else {
     url.searchParams.delete("stabilization");
   }
+  if (fixedStepTower) {
+    url.searchParams.set("solver", "fixed-step");
+    url.searchParams.delete("bake");
+    url.searchParams.delete("stabilization");
+  }
   window.history.replaceState(null, "", url);
 }
 
@@ -329,11 +336,11 @@ function enableSettingsControls() {
   crateMotion.disabled = false;
   projectileImpact.disabled = false;
   projectileType.disabled = false;
-  fixedGeometrySetting.disabled = false;
+  fixedGeometrySetting.disabled = fixedStepTower;
   fullscreenSetting.disabled = !document.fullscreenEnabled;
   resetInteractions.disabled = false;
   for (const control of pairControls.values()) control.disabled = false;
-  for (const control of stabilizationControls.values()) control.disabled = false;
+  for (const control of stabilizationControls.values()) control.disabled = fixedStepTower;
 }
 
 function applyAndReset(id, value) {
@@ -349,7 +356,11 @@ function applyAndReset(id, value) {
   persistSetting(id);
   syncControls();
   syncUrl();
-  resetButton.click();
+  if (fixedStepTower && id === "simulation.projectile_type") {
+    window.dispatchEvent(new Event("physics-projectile-type-change"));
+  } else {
+    resetButton.click();
+  }
 }
 
 characterResponse.addEventListener("change", () => {
@@ -401,6 +412,8 @@ function openSettingsPanel() {
 function closeSettingsPanel() {
   document.body.classList.remove("settings-open");
   openSettings.setAttribute("aria-expanded", "false");
+  // The hidden panel suppresses game key events. Return focus to the visible play surface.
+  document.querySelector("#scene")?.focus({ preventScroll: true });
 }
 
 openSettings.addEventListener("click", openSettingsPanel);
