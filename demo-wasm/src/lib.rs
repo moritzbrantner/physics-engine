@@ -1000,7 +1000,8 @@ mod tests {
     };
 
     use super::{
-        CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail,
+        CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, SPHERE_RESPONSE_MASS_MILLI_UNITS, Sandbox,
+        rotating_box, world_error_detail,
     };
 
     fn settle_player(sandbox: &mut Sandbox) {
