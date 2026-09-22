@@ -16,13 +16,15 @@ use crate::{
 /// body state only for deliberately parked dynamics, because the active solver currently represents those
 /// bodies with fixed collision proxies. Awake bodies are never mirrored into a second full-world map.
 ///
-/// Before an active step, a conservative free-flight sweep of every awake dynamic queries a retained
-/// parked-body bounds index. A parked body whose collision-enabled bounds may be reached is restored to dynamic simulation,
-/// except when the existing linear-actuator policy proves the sweep is only passive support. Passive
-/// supports stay fixed and collision-testable, so character landings do not wake or drop a settled stack.
-/// Newly restored bodies join the same sweep pass so disruptive wake-up propagates through a sleeping
-/// island. Fixed geometry additions and any removals wake every parked body conservatively because support
-/// topology may have changed.
+/// Before collision response, the core tests the actual swept rigid/ballistic contact against
+/// parked proxies. An admitted contact requests activation of its dynamic contact island. The
+/// uncommitted attempt is discarded and repeated with real dynamic mass/inertia; the existing
+/// working rigid buffer and a staged ballistic lane prevent partial physical commits. Every retry
+/// activates at least one parked body, bounding retries by parked membership. A broad-phase near
+/// miss, projectile creation, or removal outside a contact island does not wake the tower. Passive
+/// linear-actuator support and explicit no-wake policies remain authoritative. Actual fixed geometry
+/// does not connect otherwise independent dynamic islands through a shared floor. Fixed-geometry
+/// additions still invalidate parked state conservatively.
 ///
 /// Parking is a bounded representation transition, not a world snapshot. Only the bodies actually parked
 /// have retained original state, and each wake/sleep transition copies at most that body when needed to
@@ -142,6 +144,10 @@ impl RotatingWorld3d {
     }
 
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
+        self.box_by_id(id)?;
+        let dependents = self
+            .contact_dependents(id, false)
+            .unwrap_or_else(|_| self.parked.keys().copied().collect());
         let removed = if self.parked.contains_key(&id) {
             self.active.remove_box(id)?;
             self.parked.remove(&id)?
@@ -154,8 +160,12 @@ impl RotatingWorld3d {
         };
         self.active.clear_body_interaction_category(id);
 
-        self.unpark_all()
-            .expect("parked bodies are valid and disjoint from active dynamics");
+        for dependent in dependents {
+            self.unpark_without_index(dependent)
+                .expect("parked bodies are valid and disjoint from active dynamics");
+        }
+        self.rebuild_parked_wake_index()
+            .expect("remaining parked geometry is valid");
         Some(removed)
     }
 
@@ -164,9 +174,8 @@ impl RotatingWorld3d {
         projectile: BallisticSphere3d,
         retire_on_contact: bool,
     ) -> Result<(), RotatingWorldError3d> {
-        // A newly fired sphere may hit any parked rigid target. Conservatively restore parked bodies now;
-        // the retained wake index can specialize this further once it indexes analytic sphere sweeps.
-        self.unpark_all()?;
+        // Creation is not collision evidence. Parked targets remain collision-testable proxies
+        // until the chronological narrow phase admits an impact during a nonzero step.
         self.active
             .add_ballistic_sphere(projectile, retire_on_contact)
     }
@@ -263,17 +272,48 @@ impl RotatingWorld3d {
         if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
             return Ok(self.quiescent_report());
         }
-        if self.active.ballistic_sphere_count() > 0 && !self.parked.is_empty() {
-            self.unpark_all()?;
-        }
-
-        let mut changed_body_ids =
-            self.wake_parked_for_sweeps(timestep_numerator, timestep_denominator)?;
-        if self.active_dynamic_count == 0 && self.active.ballistic_sphere_count() == 0 {
-            return Ok(self.quiescent_report());
-        }
-
-        let mut report = self.active.step(timestep_numerator, timestep_denominator)?;
+        let mut changed_body_ids = BTreeSet::new();
+        let mut probe_work = [0_u64; 3];
+        let mut wake_retries = 0_u64;
+        let mut report = loop {
+            let before = self.active.contact_work_counters();
+            match self.active.step_with_parked(
+                timestep_numerator,
+                timestep_denominator,
+                &self.parked,
+            ) {
+                Ok(report) => break report,
+                Err(error) => {
+                    let Some(id) = parked_contact_request(error) else {
+                        return Err(error);
+                    };
+                    // Every retry consumes at least one parked body, so this is bounded by
+                    // the original parked count, not an enlarged collision-event budget.
+                    if !self.parked.contains_key(&id) {
+                        return Err(error);
+                    }
+                    let after = self.active.contact_work_counters();
+                    for (sum, (after, before)) in
+                        probe_work.iter_mut().zip(after.into_iter().zip(before))
+                    {
+                        *sum = sum.saturating_add(after.saturating_sub(before));
+                    }
+                    let island = self.contact_dependents(id, true)?;
+                    for body in island {
+                        if self.unpark_without_index(body)? {
+                            changed_body_ids.insert(body);
+                        }
+                    }
+                    self.rebuild_parked_wake_index()?;
+                    wake_retries += 1;
+                }
+            }
+        };
+        report.stats.parked_wake_retries = wake_retries;
+        report.stats.wake_probe_broad_phase_queries = probe_work[0];
+        report.stats.wake_probe_tail_broad_phase_queries = probe_work[1];
+        report.stats.wake_probe_response_passes = probe_work[2];
+        report.stats.parked_bodies_woken = changed_body_ids.len();
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         self.park_new_sleepers(&changed_body_ids)?;
         report.changed_body_ids = changed_body_ids.into_iter().collect();
@@ -371,85 +411,76 @@ impl RotatingWorld3d {
             .map_err(map_broad_phase_error)
     }
 
-    fn wake_parked_for_sweeps(
-        &mut self,
-        timestep_numerator: i32,
-        timestep_denominator: i32,
+    /// Traverse dynamic contact dependencies only. A shared fixed floor is not an island edge.
+    /// This runs on activation/removal, never on a projectile near miss.
+    fn contact_dependents(
+        &self,
+        seed: BodyId,
+        respect_wake_policy: bool,
     ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
-        let mut awakened = BTreeSet::new();
-        if self.parked.is_empty() || self.active_dynamic_count == 0 {
-            return Ok(awakened);
-        }
-
-        let awake_config = RigidBoxFreeFlightConfig3d::new(
-            self.config().gravity,
-            timestep_numerator,
-            timestep_denominator,
-        );
-        let mut awake_bounds = self
-            .active
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body().kind() == BodyKind::Dynamic
-                    && rigid_box.solver_participation() == SolverParticipation3d::Solid
-            })
-            .map(|rigid_box| {
-                Ok((
-                    rigid_box.body().id(),
-                    rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, RotatingWorldError3d>>()?;
-
-        loop {
-            let mut newly_awake = BTreeSet::new();
-            for (awake_id, awake_bounds) in &awake_bounds {
-                let Some(awake_box) = self.active.box_by_id(*awake_id) else {
-                    return Err(RotatingWorldError3d::MissingBody(*awake_id));
+        let mut pending = BTreeSet::from([seed]);
+        let mut visited = BTreeSet::new();
+        let mut parked = BTreeSet::new();
+        while let Some(id) = pending.pop_first() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(source) = self.box_by_id(id) else {
+                continue;
+            };
+            if self.parked.contains_key(&id) {
+                parked.insert(id);
+            }
+            let bounds = rigid_box_free_flight_sweep_bounds(
+                source,
+                RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+            )?;
+            let mut candidates = self.parked_wake_index.overlapping_ids(bounds).body_ids;
+            // The raw current-contact graph excludes parked↔parked (fixed proxy) pairs;
+            // the parked index above supplies those edges using original dynamic geometry.
+            candidates.extend(
+                self.active
+                    .body_contacts(id)?
+                    .into_iter()
+                    .map(|contact| contact.other),
+            );
+            for next in candidates {
+                if visited.contains(&next) {
+                    continue;
+                }
+                let Some(target) = self.box_by_id(next) else {
+                    continue;
                 };
-                let candidates = self.parked_wake_index.overlapping_ids(*awake_bounds);
-                let _ = candidates.visited_nodes;
-                for parked_id in candidates.body_ids {
-                    let Some(parked_box) = self.parked.get(&parked_id) else {
-                        continue;
-                    };
-                    if self
-                        .active
-                        .interaction_execution_plan_for_bodies(*awake_id, parked_id)
-                        .wake_propagation()
-                        == WakePropagation3d::Full
-                        && awake_box
-                            .collision_layers()
-                            .collides_with(parked_box.collision_layers())
-                        && !crate::linear_contact::sweep_is_passive_support(
-                            awake_box,
-                            *awake_bounds,
-                            parked_box,
-                        )
-                    {
-                        newly_awake.insert(parked_id);
-                    }
+                if target.body().kind() == BodyKind::Dynamic
+                    && target.solver_participation() == SolverParticipation3d::Solid
+                    && source
+                        .collision_layers()
+                        .collides_with(target.collision_layers())
+                    && (!respect_wake_policy
+                        || self
+                            .active
+                            .interaction_execution_plan_for_bodies(id, next)
+                            .wake_propagation()
+                            == WakePropagation3d::Full)
+                    && crate::obb_contact_seed(source.oriented_box(), target.oriented_box())?
+                        .is_some()
+                {
+                    pending.insert(next);
                 }
             }
-            if newly_awake.is_empty() {
-                break;
-            }
+        }
+        Ok(parked)
+    }
+}
 
-            for id in newly_awake {
-                let rigid_box = self
-                    .parked
-                    .get(&id)
-                    .ok_or(RotatingWorldError3d::MissingBody(id))?;
-                let bounds = rigid_box_free_flight_sweep_bounds(rigid_box, awake_config)?;
-                self.unpark_without_index(id)?;
-                awakened.insert(id);
-                awake_bounds.push((id, bounds));
-            }
-        }
-        if !awakened.is_empty() {
-            self.rebuild_parked_wake_index()?;
-        }
-        Ok(awakened)
+fn parked_contact_request(error: RotatingWorldError3d) -> Option<BodyId> {
+    use crate::{RepeatedRotatingEventError3d, RotatingContactResponseError3d};
+    match error {
+        RotatingWorldError3d::Response(RotatingContactResponseError3d::ParkedBodyContact(id))
+        | RotatingWorldError3d::Repeated(RepeatedRotatingEventError3d::Response(
+            RotatingContactResponseError3d::ParkedBodyContact(id),
+        )) => Some(id),
+        _ => None,
     }
 }
 

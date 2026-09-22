@@ -27,3 +27,10 @@ Fast-moving bodies must be tested across the requested interval. Do not replace 
 ## Migration from ecs-lab
 
 Move proven physics concepts in coherent slices and remove ECS-specific ownership while doing so. Do not bulk-copy experimental APIs merely to increase feature count.
+
+## Parked-body activation
+
+- Projectile creation, broad-phase proximity, and unrelated projectile removal are not wake evidence.
+- Admit swept/analytic contacts before restoring parked dynamics, and apply impulses only after real dynamic mass/inertia is active.
+- Cover same-step ricochets and support removal. Fixed floors must not connect otherwise independent dynamic islands.
+- Include discarded wake-probe work in performance evidence; follow `docs/contact-wake.md`.

@@ -17,6 +17,7 @@ use crate::{
         remaining_after as ballistic_remaining_after, resolve_ballistic_frontier,
         validate_unique_ballistic_ids,
     },
+    contact_wake::ContactWakeGuard3d,
     rotating_broad_phase::RotatingBroadPhase3d,
     rotating_contact_response::{
         RotatingContactResponseScratch3d,
@@ -231,6 +232,7 @@ pub fn advance_repeated_rotating_events(
         config,
         &mut broad_phase,
         &mut response_scratch,
+        None,
     )?;
     Ok(RepeatedRotatingEventAdvance3d {
         boxes: state,
@@ -252,6 +254,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
 
@@ -285,6 +288,9 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             return Err(RepeatedRotatingEventError3d::EventLimit(config.max_events));
         }
 
+        if let Some(guard) = wake_guard {
+            guard.rigid_contacts(boxes, &frontier.contacts)?;
+        }
         let (response, modified_body_ids, geometry_modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
                 boxes,
@@ -313,6 +319,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             },
             response_scratch,
             &mut work,
+            wake_guard,
         )?;
         events.push(RotatingResolvedEvent3d {
             time: event_time,
@@ -357,6 +364,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     response_scratch: &mut RotatingContactResponseScratch3d,
     resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
     validate_config(config)?;
     validate_unique_ballistic_ids(boxes, projectiles)?;
@@ -412,6 +420,9 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             advance_ballistic_spheres_to_time(projectiles, remaining, hit.time, ballistic_work)?;
             let frontier =
                 current_frontier_from_admitted_hit(boxes, hit, broad_phase, response_scratch)?;
+            if let Some(guard) = wake_guard {
+                guard.rigid_contacts(boxes, &frontier.contacts)?;
+            }
             let (response, modified_body_ids, geometry_modified_body_ids) =
                 resolve_rotating_contact_frontier_with_activity_and_scratch(
                     boxes,
@@ -437,6 +448,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 },
                 response_scratch,
                 &mut work,
+                wake_guard,
             )?;
             events.push(RotatingResolvedEvent3d {
                 time: hit.time,
@@ -460,6 +472,9 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 ballistic_work,
             )?;
             remaining = ballistic_remaining_after(remaining, frontier.time)?;
+            if let Some(guard) = wake_guard {
+                guard.ballistic_contacts(&frontier)?;
+            }
             let modified_targets = resolve_ballistic_frontier(
                 boxes,
                 projectiles,
@@ -482,6 +497,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                     },
                     response_scratch,
                     &mut work,
+                    wake_guard,
                 )?;
             }
             // The ballistic lane has now resolved and stabilized all current contacts reachable from
@@ -605,6 +621,7 @@ fn stabilize_current_contacts(
     seed: StabilizationSeed3d<'_>,
     response_scratch: &mut RotatingContactResponseScratch3d,
     work: &mut RepeatedRotatingEventWorkStats3d,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(), RepeatedRotatingEventError3d> {
     response_scratch.ensure_body_index(boxes);
     let mut active = seed.active.to_vec();
@@ -650,6 +667,9 @@ fn stabilize_current_contacts(
             break;
         };
         work.stabilization_passes = work.stabilization_passes.saturating_add(1);
+        if let Some(guard) = wake_guard {
+            guard.rigid_contacts(boxes, &frontier.contacts)?;
+        }
         let (_, modified_body_ids, geometry_modified_body_ids) =
             resolve_rotating_contact_frontier_with_activity_and_scratch(
                 boxes,
@@ -927,6 +947,7 @@ mod tests {
             config(8),
             &mut broad_phase,
             &mut response_scratch,
+            None,
         )
         .expect("in-place advance");
 
@@ -952,6 +973,7 @@ mod tests {
             config(8),
             &mut broad_phase,
             &mut response_scratch,
+            None,
         )
         .expect("first in-place advance");
         assert_eq!(first_progress.work.response_scratch_index_rebuilds, 1);
@@ -962,6 +984,7 @@ mod tests {
             config(8),
             &mut broad_phase,
             &mut response_scratch,
+            None,
         )
         .expect("second in-place advance");
         assert_eq!(
@@ -1215,6 +1238,7 @@ mod tests {
             &mut response_scratch,
             &mut resolved_ballistic_pairs,
             &mut ballistic_work,
+            None,
         )
         .expect("one rigid event and one ballistic impact use independent budgets");
 

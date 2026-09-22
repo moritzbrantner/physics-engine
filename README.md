@@ -19,6 +19,13 @@ Read [the numerical policy and migration boundary](docs/numerics.md). The free-r
 contact-convergence problem remains a separate solver defect; changing number types alone is
 not a claim to have fixed it.
 
+## Fixed-step comparison
+
+The optional `approximate::World` uses persistent f64 state, semi-implicit Euler integration,
+clipped box contact manifolds and bounded warm-started sequential impulses. It does not replace
+`RotatingWorld3d` silently. Open `scenarios/fixed-step/` on Pages to compare direct hits and near
+misses. See [the algorithm, limits and benchmark instructions](docs/fixed-step-approximation.md).
+
 ## Current foundation
 
 The existing compatibility foundation includes:
@@ -102,6 +109,15 @@ The fixture currently exercises:
 - lightweight per-tick collision/broad-phase evidence from the actual `World` step report.
 
 The player is intentionally box-shaped because the acceptance sandbox still uses the translational/AABB-only `World` path. Capsules, slopes and a richer character controller should be added as real engine capabilities rather than approximated in the renderer; rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
+
+## Contact-triggered parked-body activation
+
+Settled crates remain collision-testable without integrating or re-solving the tower for a nearby
+projectile. The existing swept/analytic collision query admits a contact before the affected dynamic
+island is restored. Same-step ricochets remain covered; unrelated projectile removal preserves sleep.
+The near-miss acceptance matrix checks all 32 crates after every tick, including retirement.
+See [the activation contract and tests](docs/contact-wake.md). This is separate from the ongoing
+floating-state box-contact solver migration and direct-impact tower acceptance.
 
 ## Portable performance logs
 

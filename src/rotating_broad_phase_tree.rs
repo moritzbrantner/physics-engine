@@ -94,6 +94,21 @@ impl IndexedBvh3d {
         true
     }
 
+    /// Refresh authority metadata without discarding spatial topology on sleep/wake transitions.
+    /// Bounds are intentionally retained: the caller separately checks their containment.
+    pub(super) fn update_metadata(&mut self, mut body: BoundedBody3d) {
+        let index = self.leaf_by_id[&body.id];
+        body.bounds = self.node(index).bounds;
+        let node = self.node_mut(index);
+        node.kind = ArenaNodeKind3d::Leaf(body);
+        node.has_dynamic = body.kind == BodyKind::Dynamic;
+        let mut parent = node.parent;
+        while let Some(index) = parent {
+            self.refit(index);
+            parent = self.node(index).parent;
+        }
+    }
+
     pub(super) fn for_each_candidate_pair(&self, mut visit: impl FnMut(BodyId, BodyId)) {
         let Some(root) = self.root else {
             return;

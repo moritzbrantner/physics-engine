@@ -37,6 +37,7 @@ mod ballistic_sphere;
 mod body;
 mod collider;
 mod collision;
+mod contact_wake;
 mod current_contact_query;
 mod ecs_world;
 mod fixed_geometry;
@@ -148,3 +149,5 @@ pub use rotational_sweep::{
 };
 pub use support_query::body_has_support;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
+
+pub mod approximate;

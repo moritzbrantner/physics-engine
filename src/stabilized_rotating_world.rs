@@ -309,6 +309,19 @@ impl RotatingWorld3d {
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        self.step_with_parked(timestep_numerator, timestep_denominator, &BTreeMap::new())
+    }
+
+    pub(crate) fn contact_work_counters(&self) -> [u64; 3] {
+        self.inner.contact_work_counters()
+    }
+
+    pub(crate) fn step_with_parked(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+        parked: &BTreeMap<BodyId, RigidBox3d>,
+    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
         if timestep_numerator <= 0 || timestep_denominator <= 0 {
             return self.inner.step(timestep_numerator, timestep_denominator);
         }
@@ -320,7 +333,15 @@ impl RotatingWorld3d {
         let mut fixed_boundary_subjects = changed_body_ids.clone();
         fixed_boundary_subjects.extend(self.pending_fixed_boundary_body_ids.iter().copied());
         self.freeze_sleeping_bodies()?;
-        let mut report = match self.inner.step(timestep_numerator, timestep_denominator) {
+        let guard = crate::contact_wake::ContactWakeGuard3d {
+            parked,
+            policies: &self.interaction_policies,
+        };
+        let mut report = match self.inner.step_guarded(
+            timestep_numerator,
+            timestep_denominator,
+            (!parked.is_empty()).then_some(&guard),
+        ) {
             Ok(report) => report,
             Err(error) => {
                 let _ = self.restore_sleeping_bodies();

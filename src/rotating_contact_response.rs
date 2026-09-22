@@ -24,6 +24,9 @@ pub struct RotatingContactResponse3d {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RotatingContactResponseError3d {
+    /// Internal parked-world admission signal. The facade restores the dynamic island and
+    /// retries before the core commits; standalone response calls never emit this variant.
+    ParkedBodyContact(BodyId),
     ZeroSolverPasses,
     MissingBody(BodyId),
     Pair(ObbContactResponseError3d),
@@ -34,6 +37,11 @@ pub enum RotatingContactResponseError3d {
 impl fmt::Display for RotatingContactResponseError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ParkedBodyContact(id) => write!(
+                formatter,
+                "contact requires activating parked body {}",
+                id.0
+            ),
             Self::ZeroSolverPasses => write!(
                 formatter,
                 "rotating contact response requires at least one solver pass"
@@ -235,6 +243,7 @@ pub struct RotatingContactResponseScratch3d {
     modified_body_ids: BTreeSet<BodyId>,
     geometry_modified_body_ids: BTreeSet<BodyId>,
     body_index_rebuilds: u64,
+    response_passes_total: u64,
 }
 
 impl RotatingContactResponseScratch3d {
@@ -261,6 +270,10 @@ impl RotatingContactResponseScratch3d {
     }
 
     #[must_use]
+    pub(crate) const fn response_passes_total(&self) -> u64 {
+        self.response_passes_total
+    }
+
     pub(crate) const fn body_index_rebuilds(&self) -> u64 {
         self.body_index_rebuilds
     }
@@ -326,6 +339,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
         combined,
         modified_body_ids,
         geometry_modified_body_ids,
+        response_passes_total,
         ..
     } = scratch;
 
@@ -407,6 +421,7 @@ pub(crate) fn resolve_rotating_contact_frontier_with_activity_and_scratch(
                 apply_delta(rigid_box, delta)?;
             }
         }
+        *response_passes_total = response_passes_total.saturating_add(1);
         passes_used = passes_used.checked_add(1).ok_or(
             RotatingContactResponseError3d::ArithmeticOverflow(
                 island

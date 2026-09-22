@@ -20,6 +20,7 @@ use crate::{
         advance_ballistic_spheres_to_time, earliest_ballistic_frontier,
         remaining_after as ballistic_remaining_after, resolve_ballistic_frontier,
     },
+    contact_wake::ContactWakeGuard3d,
     current_contact_query::{BodyCurrentContact3d, GenerationContactCache3d},
     repeated_rotating_events::{
         advance_repeated_rotating_events_with_ballistics,
@@ -66,6 +67,16 @@ pub struct RotatingWorldStepStats3d {
     pub response_authority_body_count: usize,
     /// Geometrically eligible pairs rejected before CCD because neither participant can receive solver mutation.
     pub response_authority_pair_rejections: u64,
+    /// Contact-triggered retries before a parked-world step commits. Timings include these attempts.
+    pub parked_wake_retries: u64,
+    /// Parked dynamic bodies activated by actual contacts in this step.
+    pub parked_bodies_woken: usize,
+    /// Main broad-phase queries in discarded wake probes (add to committed-step queries).
+    pub wake_probe_broad_phase_queries: u64,
+    /// Tail broad-phase queries in discarded wake probes (add to committed-step tail queries).
+    pub wake_probe_tail_broad_phase_queries: u64,
+    /// Changed-response passes across all stages of discarded wake probes.
+    pub wake_probe_response_passes: u64,
     pub sampled_events: usize,
     pub tail_contacts: usize,
     /// Persistent-tail slices actually executed, including discarded replay work.
@@ -580,6 +591,23 @@ impl RotatingWorld3d {
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        self.step_guarded(timestep_numerator, timestep_denominator, None)
+    }
+
+    pub(crate) fn contact_work_counters(&self) -> [u64; 3] {
+        [
+            self.broad_phase.stats().queries,
+            self.tail_broad_phase.stats().queries,
+            self.response_scratch.response_passes_total(),
+        ]
+    }
+
+    pub(crate) fn step_guarded(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+        wake_guard: Option<&ContactWakeGuard3d<'_>>,
+    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
         if timestep_numerator < 0 {
             return Err(RotatingWorldError3d::NegativeTimestepNumerator(
                 timestep_numerator,
@@ -630,6 +658,9 @@ impl RotatingWorld3d {
         let response_authority_body_count =
             self.solver_partitions.response_authority_body_ids.len();
         let mixed_ballistic_step = !self.ballistic_spheres.is_empty();
+        // Stage only the small ballistic lane; rigid state already has a transactional working buffer.
+        // A contact wake request (including a later ricochet) must not partially advance projectiles.
+        let mut ballistic_spheres = self.ballistic_spheres.clone();
         let mut solver_boxes = Vec::with_capacity(self.solver_partitions.solid_body_ids.len());
         let mut bypassed_updates = Vec::new();
 
@@ -672,7 +703,7 @@ impl RotatingWorld3d {
         let (solver_boxes, sampled_events, tail, work) = if mixed_ballistic_step {
             if solver_boxes.is_empty() {
                 advance_ballistic_spheres_full(
-                    &mut self.ballistic_spheres,
+                    &mut ballistic_spheres,
                     free_flight,
                     &mut ballistic_work,
                 )?;
@@ -685,7 +716,7 @@ impl RotatingWorld3d {
             } else {
                 let advance = advance_repeated_rotating_events_with_ballistics(
                     &mut solver_boxes,
-                    &mut self.ballistic_spheres,
+                    &mut ballistic_spheres,
                     &self.ballistic_retire_on_contact,
                     RepeatedRotatingEventConfig3d::new(
                         RotatingContactSearchConfig3d::new(
@@ -700,6 +731,7 @@ impl RotatingWorld3d {
                     &mut self.response_scratch,
                     &mut resolved_ballistic_pairs,
                     &mut ballistic_work,
+                    wake_guard,
                 )?;
                 let sampled_events = advance.events.len();
                 let work = advance.work;
@@ -708,7 +740,7 @@ impl RotatingWorld3d {
                 } else {
                     consume_tail_with_ballistics(
                         solver_boxes,
-                        &mut self.ballistic_spheres,
+                        &mut ballistic_spheres,
                         &self.ballistic_retire_on_contact,
                         advance.remaining,
                         self.config.solver_passes,
@@ -716,6 +748,7 @@ impl RotatingWorld3d {
                         &mut self.response_scratch,
                         &mut resolved_ballistic_pairs,
                         &mut ballistic_work,
+                        wake_guard,
                     )?
                 };
                 (solver_boxes, sampled_events, tail, work)
@@ -741,6 +774,7 @@ impl RotatingWorld3d {
                 ),
                 &mut self.broad_phase,
                 &mut self.response_scratch,
+                wake_guard,
             )?;
             let sampled_events = advance.events.len();
             let work = advance.work;
@@ -753,11 +787,13 @@ impl RotatingWorld3d {
                     self.config.solver_passes,
                     &mut self.tail_broad_phase,
                     &mut self.response_scratch,
+                    wake_guard,
                 )?
             };
             (solver_boxes, sampled_events, tail, work)
         };
 
+        self.ballistic_spheres = ballistic_spheres;
         let live_ballistic_ids = self
             .ballistic_spheres
             .iter()
@@ -802,6 +838,11 @@ impl RotatingWorld3d {
                                 tail_broad_phase_before.response_authority_pair_rejections,
                             ),
                     ),
+                parked_wake_retries: 0,
+                parked_bodies_woken: 0,
+                wake_probe_broad_phase_queries: 0,
+                wake_probe_tail_broad_phase_queries: 0,
+                wake_probe_response_passes: 0,
                 sampled_events,
                 tail_contacts: tail.contacts,
                 tail_slices: tail.slices,
@@ -913,6 +954,7 @@ fn consume_tail_with_ballistics(
     response_scratch: &mut RotatingContactResponseScratch3d,
     resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
     let mut stats = TailStepStats3d::default();
     let mut current = boxes;
@@ -927,6 +969,7 @@ fn consume_tail_with_ballistics(
             response_scratch,
             &mut stats,
             None,
+            wake_guard,
         )?;
         stats.contacts = result.contact_count;
         return Ok((current, stats));
@@ -961,6 +1004,7 @@ fn consume_tail_with_ballistics(
                 resolved_ballistic_pairs,
                 ballistic_work,
                 current_contacts,
+                wake_guard,
             )?;
             contact_count = contact_count.saturating_add(result.contact_count);
             reusable_contacts = result.reusable_contacts;
@@ -1007,6 +1051,7 @@ fn advance_tail_slice_with_ballistics(
     resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
     initial_contacts: Vec<RotatingContactSearchHit3d>,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(TailSliceResult3d, Option<BodyId>), RotatingWorldError3d> {
     let mut contact_count = 0_usize;
     let mut reusable_contacts = Some(initial_contacts);
@@ -1043,6 +1088,7 @@ fn advance_tail_slice_with_ballistics(
                 response_scratch,
                 stats,
                 Some(journal),
+                wake_guard,
             )?;
             contact_count = contact_count.saturating_add(result.contact_count);
             return Ok((
@@ -1069,6 +1115,7 @@ fn advance_tail_slice_with_ballistics(
             response_scratch,
             stats,
             Some(journal),
+            wake_guard,
         )?;
         contact_count = contact_count.saturating_add(pre_impact.contact_count);
 
@@ -1080,6 +1127,9 @@ fn advance_tail_slice_with_ballistics(
             {
                 journal.record(world_index, &boxes[world_index]);
             }
+        }
+        if let Some(guard) = wake_guard {
+            guard.ballistic_contacts(&frontier)?;
         }
         resolve_ballistic_frontier(
             boxes,
@@ -1114,6 +1164,7 @@ fn stabilize_tail_contacts_in_place(
     response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     journal: Option<&mut TailMutationJournal3d>,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<TailSliceResult3d, RotatingWorldError3d> {
     let contacts = contact_frontier(boxes, broad_phase, stats)?;
     let contact_count = contacts.len();
@@ -1144,6 +1195,9 @@ fn stabilize_tail_contacts_in_place(
         contacts,
         remaining_numerator: 0,
     };
+    if let Some(guard) = wake_guard {
+        guard.rigid_contacts(boxes, &frontier.contacts)?;
+    }
     let (_, _, geometry_modified_body_ids) =
         resolve_rotating_contact_frontier_with_activity_and_scratch(
             boxes,
@@ -1165,6 +1219,7 @@ fn consume_tail(
     solver_passes: u8,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
     let mut stats = TailStepStats3d::default();
     let mut current = boxes;
@@ -1178,6 +1233,7 @@ fn consume_tail(
             response_scratch,
             &mut stats,
             None,
+            wake_guard,
         )?;
         stats.contacts = result.contact_count;
         return Ok((current, stats));
@@ -1209,6 +1265,7 @@ fn consume_tail(
                 response_scratch,
                 &mut stats,
                 Some(&mut journal),
+                wake_guard,
             )?;
             contact_count = contact_count.saturating_add(result.contact_count);
             reusable_contacts = result.reusable_contacts;
@@ -1257,6 +1314,7 @@ fn advance_tail_free_flight_in_place(
     Ok(changed)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn free_flight_and_stabilize_in_place(
     boxes: &mut [RigidBox3d],
     config: RigidBoxFreeFlightConfig3d,
@@ -1265,6 +1323,7 @@ fn free_flight_and_stabilize_in_place(
     response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     mut journal: Option<&mut TailMutationJournal3d>,
+    wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<TailSliceResult3d, RotatingWorldError3d> {
     advance_tail_free_flight_in_place(boxes, config, journal.as_deref_mut())?;
 
@@ -1297,6 +1356,9 @@ fn free_flight_and_stabilize_in_place(
         contacts,
         remaining_numerator: 0,
     };
+    if let Some(guard) = wake_guard {
+        guard.rigid_contacts(boxes, &frontier.contacts)?;
+    }
     let (_, _, geometry_modified_body_ids) =
         resolve_rotating_contact_frontier_with_activity_and_scratch(
             boxes,
@@ -1746,8 +1808,15 @@ mod tests {
         let mut broad_phase = RotatingBroadPhase3d::default();
         let mut response_scratch = RotatingContactResponseScratch3d::default();
 
-        let (_, stats) = consume_tail(boxes, remaining, 8, &mut broad_phase, &mut response_scratch)
-            .expect("resting tail");
+        let (_, stats) = consume_tail(
+            boxes,
+            remaining,
+            8,
+            &mut broad_phase,
+            &mut response_scratch,
+            None,
+        )
+        .expect("resting tail");
 
         assert!(stats.slices > 0, "fixture must exercise sliced tail work");
         assert_eq!(stats.replays, 0, "fixture should not need a replay");

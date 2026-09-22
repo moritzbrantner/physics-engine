@@ -27,6 +27,10 @@ const requiredFunctions = [
   "sandbox_reset_tower_with_baking_options",
   "sandbox_body_count",
   "sandbox_numeric_backend",
+  "sandbox_body_sleeping",
+  "sandbox_last_response_authority_body_count",
+  "sandbox_last_parked_bodies_woken",
+  "sandbox_last_parked_wake_retries",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -103,6 +107,11 @@ if (pointer < 0 || byteEnd > exports.memory.buffer.byteLength) {
 }
 new Int32Array(exports.memory.buffer, pointer, length);
 NODE
+
+# Exercise the real shipped WASM, including sleep/retirement, rather than only counting bodies.
+node scripts/benchmark-projectile-wake.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  demo-wasm/target/pages-projectile-wake.json
 
 node --input-type=module --check < site/app.js
 node --input-type=module --check < site/webgpu-renderer.js
@@ -186,3 +195,6 @@ test -s pages-dist/vendor/settings/settings-browser.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm
 test -s pages-dist/vendor/settings/SOURCE_SHA
+
+test -s pages-dist/scenarios/fixed-step/index.html
+test -s pages-dist/fixed-step-lab.js
