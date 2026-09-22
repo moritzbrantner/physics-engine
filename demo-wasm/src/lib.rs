@@ -1300,7 +1300,7 @@ mod tests {
         assert!(sandbox.shoot(42, 0, -86) >= 0);
 
         let mut crate_responded = false;
-        let mut max_horizontal_excursion = 0_i32;
+        let mut max_horizontal_excursion = 0_i64;
         for tick in 0..180 {
             assert_eq!(
                 sandbox.step_velocity(0, 0, false),
@@ -1312,9 +1312,13 @@ mod tests {
                 let current = sandbox.world.box_by_id(id).expect("pyramid crate after impact");
                 crate_responded |= current.body().position() != before[index].body().position()
                     || current.angular() != before[index].angular();
-                let delta = current.body().position() - before[index].body().position();
-                max_horizontal_excursion =
-                    max_horizontal_excursion.max(delta.x.abs()).max(delta.z.abs());
+                let current_position = current.body().position();
+                let start_position = before[index].body().position();
+                let delta_x = i64::from(current_position.x) - i64::from(start_position.x);
+                let delta_z = i64::from(current_position.z) - i64::from(start_position.z);
+                max_horizontal_excursion = max_horizontal_excursion
+                    .max(delta_x.abs())
+                    .max(delta_z.abs());
             }
             if sandbox.projectiles_retired_on_contact == 1
                 && crate_ids
