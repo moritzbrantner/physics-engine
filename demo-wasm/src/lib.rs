@@ -24,7 +24,7 @@ const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 // Mass units are relative. Scale every rigid sandbox participant together so rigid-vs-rigid
 // behavior stays unchanged while the tiny analytic sphere remains meaningfully lighter than a crate.
-const SANDBOX_RIGID_MASS_SCALE: u32 = 8;
+const SANDBOX_RIGID_MASS_SCALE: u32 = 2;
 const PLAYER_MASS_UNITS: u32 = 4 * SANDBOX_RIGID_MASS_SCALE;
 const CRATE_MASS_UNITS: u32 = 2 * SANDBOX_RIGID_MASS_SCALE;
 const RIGID_PROJECTILE_MASS_UNITS: u32 = SANDBOX_RIGID_MASS_SCALE;
@@ -994,7 +994,7 @@ mod tests {
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
+    use super::{CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
