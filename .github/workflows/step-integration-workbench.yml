@@ -35,21 +35,18 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'feat: retain sleeping near misses and add bounded f64 fixed-step solver'
-      - name: Validate both numerical modes and retained acceptance cases
+      - name: Repeat focused checks after browser-harness-only repair
         shell: bash
         run: |
           set -euo pipefail
+          # Full default/reference native suites already passed for this identical source patch
+          # in run 35729063796. Normal PR validation remains unchanged and runs before merge.
           cargo fmt --check
           cargo fmt --manifest-path demo-wasm/Cargo.toml --check
           cargo clippy --all-targets -- -D warnings
-          cargo clippy --all-targets --features exact-reference -- -D warnings
           cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
-          cargo test --locked
-          cargo test --locked --features exact-reference
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked --features exact-reference
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
-          cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+          cargo test --release --locked --test fixed_step_approximation
+          cargo test --release --locked --test projectile_wake_admission
           node --test site/*.test.mjs scripts/*.test.mjs
       - name: Build actual Pages artifact and benchmark approximation
         shell: bash
@@ -65,7 +62,22 @@ jobs:
           set -euo pipefail
           python3 -m pip install playwright
           python3 -m playwright install --with-deps chromium
-          python3 -m http.server 8765 --directory pages-dist > /tmp/pages-server.log 2>&1 &
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory pages-dist > /tmp/pages-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          python3 - <<'PY'
+          from urllib.request import urlopen
+          import time
+          for attempt in range(100):
+              try:
+                  with urlopen('http://127.0.0.1:8765/scenarios/fixed-step/', timeout=1) as response:
+                      assert response.status == 200
+                  break
+              except OSError:
+                  time.sleep(0.1)
+          else:
+              raise RuntimeError('Pages server did not become ready')
+          PY
           python3 - <<'PY'
           import json, pathlib
           from playwright.sync_api import sync_playwright
