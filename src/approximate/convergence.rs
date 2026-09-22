@@ -1,4 +1,5 @@
 //! Bounded velocity solving with a projected fixed-point residual, never a wall-clock budget.
+use super::correction::Coefficients;
 use super::{Body, Constraint, PreparedResponse, Report, Scalar, apply, contact_velocity};
 
 /// Absolute scene-unit tolerances plus a relative per-contact scale. Zero selects exact checks.
@@ -66,11 +67,12 @@ pub struct ConvergenceStats {
 
 // A sliding contact may retain tangential velocity at the friction limit. Measure the projected
 // impulse correction, not raw slip velocity; an inactive normal must likewise permit separation.
-fn projected_residual(
+fn projected_residual<const SOFT: bool>(
     bodies: &[Body],
     constraints: &[Constraint],
     tolerance: Convergence,
     stats: &mut ConvergenceStats,
+    coefficients: Coefficients,
 ) -> Option<Scalar> {
     stats.residual_checks += 1;
     let mut max_residual: Scalar = 0.0;
@@ -79,8 +81,7 @@ fn projected_residual(
         let rel = contact_velocity(&bodies[c.b], c.rb, c.spin)
             - contact_velocity(&bodies[c.a], c.ra, c.spin);
         let vn = rel.dot(c.n);
-        let normal_delta =
-            (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0) - c.normal_impulse;
+        let normal_delta = next_normal::<SOFT>(c, vn, coefficients) - c.normal_impulse;
         let mut tangent = [
             c.tangent_impulse[0] - rel.dot(c.t1) * c.tangent_mass[0],
             c.tangent_impulse[1] - rel.dot(c.t2) * c.tangent_mass[1],
@@ -91,7 +92,14 @@ fn projected_residual(
             tangent[0] *= limit / length;
             tangent[1] *= limit / length;
         }
-        let normal_error = c.bias - vn;
+        let normal_error = if SOFT && !c.hard_normal {
+            c.bias
+                - vn
+                - coefficients.impulse_scale / (coefficients.mass_scale * c.normal_mass)
+                    * c.normal_impulse
+        } else {
+            c.bias - vn
+        };
         let normal_residual = if c.normal_impulse > 0.0 {
             normal_error.abs()
         } else {
@@ -166,6 +174,68 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
     tolerance: Convergence,
     report: &mut Report,
 ) {
+    solve_impl::<PREPARED, EARLY, false>(
+        bodies,
+        responses,
+        constraints,
+        iterations,
+        tolerance,
+        Coefficients::RIGID,
+        report,
+    );
+}
+
+pub(super) fn solve_soft<const PREPARED: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    iterations: u8,
+    tolerance: Option<Convergence>,
+    coefficients: Coefficients,
+    report: &mut Report,
+) {
+    match tolerance {
+        Some(t) => solve_impl::<PREPARED, true, true>(
+            bodies,
+            responses,
+            constraints,
+            iterations,
+            t,
+            coefficients,
+            report,
+        ),
+        None => solve_impl::<PREPARED, false, true>(
+            bodies,
+            responses,
+            constraints,
+            iterations,
+            Convergence::default(),
+            coefficients,
+            report,
+        ),
+    }
+}
+
+#[inline(always)]
+fn next_normal<const SOFT: bool>(c: &Constraint, vn: Scalar, coefficients: Coefficients) -> Scalar {
+    if SOFT && !c.hard_normal {
+        let delta = coefficients.mass_scale * c.normal_mass * (c.bias - vn)
+            - coefficients.impulse_scale * c.normal_impulse;
+        (c.normal_impulse + delta).max(0.0)
+    } else {
+        (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0)
+    }
+}
+
+fn solve_impl<const PREPARED: bool, const EARLY: bool, const SOFT: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    iterations: u8,
+    tolerance: Convergence,
+    coefficients: Coefficients,
+    report: &mut Report,
+) {
     if EARLY && constraints.is_empty() {
         report.convergence.empty_substeps += 1;
         report.convergence.skipped_iterations += u64::from(iterations);
@@ -189,7 +259,8 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
             report.convergence.probe_passes += 1;
             for c in rows.by_ref() {
                 report.convergence.delta_constraint_checks += 1;
-                let change = solve_row::<PREPARED, true>(bodies, responses, c, report);
+                let change =
+                    solve_row::<PREPARED, true, SOFT>(bodies, responses, c, coefficients, report);
                 let impulse_scale = c
                     .normal_impulse
                     .abs()
@@ -223,13 +294,18 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
         // After the first large correction this pass cannot finish early. The rest uses the
         // identical uninstrumented row kernel, not a per-contact convergence branch.
         for c in rows {
-            solve_row::<PREPARED, false>(bodies, responses, c, report);
+            solve_row::<PREPARED, false, SOFT>(bodies, responses, c, coefficients, report);
         }
         // Later contacts can disturb an earlier row: all candidates must be checked again using
         // the final velocities of this complete pass before any remaining passes are skipped.
         if candidate
-            && let Some(residual) =
-                projected_residual(bodies, constraints, tolerance, &mut report.convergence)
+            && let Some(residual) = projected_residual::<SOFT>(
+                bodies,
+                constraints,
+                tolerance,
+                &mut report.convergence,
+                coefficients,
+            )
         {
             report.convergence.converged_substeps += 1;
             report.convergence.skipped_iterations += u64::from(iterations - pass - 1);
@@ -256,16 +332,17 @@ struct Change {
 // The arithmetic order is identical in both specializations. READ_CHANGE=false removes only
 // observation calculations; it is also the fixed-iteration reference row, not different physics.
 #[inline(always)]
-fn solve_row<const PREPARED: bool, const READ_CHANGE: bool>(
+fn solve_row<const PREPARED: bool, const READ_CHANGE: bool, const SOFT: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     c: &mut Constraint,
+    coefficients: Coefficients,
     report: &mut Report,
 ) -> Change {
     let vn = (contact_velocity(&bodies[c.b], c.rb, c.spin)
         - contact_velocity(&bodies[c.a], c.ra, c.spin))
     .dot(c.n);
-    let next = (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0);
+    let next = next_normal::<SOFT>(c, vn, coefficients);
     let dj = next - c.normal_impulse;
     c.normal_impulse = next;
     apply::<PREPARED>(bodies, responses, c, c.n * dj, report);

@@ -2,7 +2,7 @@
 use super::{PLAYER_ID, PROJECTILE_ID_START, ProjectileType, controller};
 use physics_engine::{
     BodyId,
-    approximate::{Body, Config, Quaternion, Shape, Vector, World},
+    approximate::{Body, Config, Quaternion, Shape, SoftContact, Vector, World},
 };
 use std::cell::RefCell;
 
@@ -26,7 +26,7 @@ fn write(f: impl FnOnce(&mut Experiment) -> i32) -> i32 {
 /// there is no legacy state roundtrip during any approximate tick.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_reset_from_sandbox(substeps: i32, iterations: i32) -> i32 {
-    reset_with_convergence(substeps, iterations, true)
+    reset_with_convergence(substeps, iterations, true, None)
 }
 
 /// Fixed-pass diagnostic reference; same fixture, math and collision path, no early termination.
@@ -35,10 +35,39 @@ pub extern "C" fn approximate_reset_fixed_iterations_from_sandbox(
     substeps: i32,
     iterations: i32,
 ) -> i32 {
-    reset_with_convergence(substeps, iterations, false)
+    reset_with_convergence(substeps, iterations, false, None)
 }
 
-fn reset_with_convergence(substeps: i32, iterations: i32, early: bool) -> i32 {
+/// Opt-in diagnostic correction: existing reset exports keep the merged Baumgarte policy.
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_reset_soft_from_sandbox(
+    substeps: i32,
+    iterations: i32,
+    frequency_hz: f64,
+    damping_ratio: f64,
+    relaxation_iterations: i32,
+) -> i32 {
+    let Ok(relaxation_iterations) = u8::try_from(relaxation_iterations) else {
+        return -1;
+    };
+    reset_with_convergence(
+        substeps,
+        iterations,
+        true,
+        Some(SoftContact {
+            frequency_hz,
+            damping_ratio,
+            relaxation_iterations,
+        }),
+    )
+}
+
+fn reset_with_convergence(
+    substeps: i32,
+    iterations: i32,
+    early: bool,
+    soft_contact: Option<SoftContact>,
+) -> i32 {
     let Ok(substeps) = u8::try_from(substeps) else {
         return -1;
     };
@@ -51,6 +80,7 @@ fn reset_with_convergence(substeps: i32, iterations: i32, early: bool) -> i32 {
             substeps,
             velocity_iterations,
             convergence: early.then(Default::default),
+            soft_contact,
             ..Config::default()
         })?;
         for b in s.world.boxes() {
@@ -255,6 +285,26 @@ pub extern "C" fn approximate_body_velocity(index: u32, axis: u32) -> f64 {
             .map_or(f64::NAN, |b| b.velocity.at(axis as usize))
     })
 }
+/// Read-only diagnostics for the stability experiment, outside the timed step.
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_body_kinetic_energy(index: u32) -> f64 {
+    read(f64::NAN, |s| {
+        s.world
+            .bodies()
+            .nth(index as usize)
+            .map_or(f64::NAN, Body::kinetic_energy)
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_body_angular_velocity(index: u32, axis: u32) -> f64 {
+    read(f64::NAN, |s| {
+        s.world
+            .bodies()
+            .nth(index as usize)
+            .filter(|_| axis < 3)
+            .map_or(f64::NAN, |b| b.angular_velocity.at(axis as usize))
+    })
+}
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_is_quiescent() -> i32 {
     read(-1, |s| i32::from(s.world.is_quiescent()))
@@ -267,6 +317,8 @@ pub extern "C" fn approximate_is_quiescent() -> i32 {
 /// 24: bound-order comparisons (even when a full sort is skipped).
 /// 25..=39: contact-geometry reuse counters; see docs/contact-geometry-reuse.md.
 /// 40..=51: bounded convergence work/exit diagnostics; see docs/velocity-convergence.md.
+/// 52..=57: soft points, relaxation passes/visits/residual visits/skipped passes/retained bytes.
+/// 58: opt-in hard fixed-support points.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_stat(index: u32) -> f64 {
     read(f64::NAN, |s| {
@@ -324,6 +376,13 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             49 => r.convergence.fixed_substeps as f64,
             50 => r.convergence.probe_passes as f64,
             51 => r.convergence.delta_constraint_checks as f64,
+            52 => r.correction.softened_points as f64,
+            53 => r.correction.relaxation_iterations as f64,
+            54 => r.correction.relaxation_constraint_visits as f64,
+            55 => r.correction.relaxation_residual_visits as f64,
+            56 => r.correction.relaxation_skipped_iterations as f64,
+            57 => r.correction.relaxation_motion_bytes as f64,
+            58 => r.correction.hard_support_points as f64,
             _ => f64::NAN,
         }
     })
@@ -332,6 +391,48 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn correction_reset_rejects_invalid_options_and_observers_do_not_mutate() {
+        assert_eq!(
+            controller::baking::sandbox_reset_tower_with_baking_options(0, 0, 1),
+            0
+        );
+        assert_eq!(approximate_reset_soft_from_sandbox(4, 8, 60.0, 1.0, 2), 0);
+        assert_eq!(approximate_step_velocity(0, 0, 0), 0);
+        let before = read(Vec::new(), |s| {
+            s.world.bodies().cloned().collect::<Vec<_>>()
+        });
+        let elapsed = approximate_stat(0);
+        for (f, z, r) in [
+            (f64::NAN, 1.0, 2),
+            (60.0, f64::INFINITY, 2),
+            (0.0, 1.0, 2),
+            (60.0, -1.0, 2),
+            (60.0, 1.0, -1),
+            (60.0, 1.0, 9),
+        ] {
+            assert_eq!(approximate_reset_soft_from_sandbox(4, 8, f, z, r), -1);
+            assert_eq!(approximate_stat(0), elapsed);
+        }
+        for i in 0..before.len() as u32 {
+            assert!(approximate_body_kinetic_energy(i).is_finite());
+            for axis in 0..3 {
+                assert!(approximate_body_angular_velocity(i, axis).is_finite());
+            }
+        }
+        assert!(approximate_body_kinetic_energy(u32::MAX).is_nan());
+        assert!(approximate_body_angular_velocity(0, 3).is_nan());
+        assert_eq!(
+            read(Vec::new(), |s| s
+                .world
+                .bodies()
+                .cloned()
+                .collect::<Vec<_>>()),
+            before
+        );
+        assert_eq!(approximate_reset_from_sandbox(4, 8), 0);
+        assert!(read(false, |s| s.world.config().soft_contact.is_none()));
+    }
     #[test]
     fn real_tower_adapter_retains_float_state_through_all_projectile_impacts() {
         for upright in [0, 1] {

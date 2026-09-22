@@ -8,6 +8,8 @@ on:
       - "tests/fixed_step_approximation.rs"
       - "scripts/benchmark-fixed-step.mjs"
       - "scripts/benchmark-convergence.mjs"
+      - "scripts/benchmark-correction.mjs"
+      - "examples/contact_correction_quality.rs"
       - "scripts/benchmark-prepared-response.mjs"
       - "src/float_math.rs"
       - "src/numeric.rs"
@@ -106,6 +108,9 @@ jobs:
       - name: Compare convergence with fixed-pass reference
         run: TRIALS=2 node scripts/benchmark-convergence.mjs performance-evidence/head.wasm performance-evidence/convergence.json
 
+      - name: Compare opt-in contact corrections
+        run: TRIALS=2 TICKS=240 node scripts/benchmark-correction.mjs performance-evidence/head.wasm performance-evidence/correction.json
+
       - name: Record independent character gameplay options
         run: |
           cp scripts/benchmark-character-options.mjs performance-evidence/
@@ -152,6 +157,9 @@ jobs:
           python scripts/validate-performance-evidence.py
           .performance-evidence-contract
           performance-evidence
+
+      - name: Check held-out contact-correction quality
+        run: cargo run --release --locked --example contact_correction_quality -- performance-evidence/correction-heldout.json
 
       - name: Upload reproducible performance evidence
         if: ${{ always() }}

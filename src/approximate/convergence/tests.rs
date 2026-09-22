@@ -19,6 +19,7 @@ fn row(a: usize, b: usize) -> Constraint {
         normal_mass: 1.0,
         tangent_mass: [1.0; 2],
         bias: 0.0,
+        hard_normal: true,
         friction: 0.5,
         normal_impulse: 0.0,
         tangent_impulse: [0.0; 2],
@@ -80,7 +81,16 @@ fn small_impulse_cannot_hide_a_large_velocity_error_on_a_light_body() {
     // 1e-8 is below the absolute impulse tolerance, but its velocity effect is 0.01.
     assert!(c.bias * c.normal_mass < Convergence::default().absolute_impulse);
     let mut stats = ConvergenceStats::default();
-    assert!(projected_residual(&b, &[c], Convergence::default(), &mut stats).is_none());
+    assert!(
+        projected_residual::<false>(
+            &b,
+            &[c],
+            Convergence::default(),
+            &mut stats,
+            Coefficients::RIGID
+        )
+        .is_none()
+    );
     assert_eq!(stats.residual_checks, 1);
     assert_eq!(stats.residual_constraint_visits, 1);
 }
@@ -91,11 +101,12 @@ fn residual_respects_separating_normals_and_saturated_sliding_friction() {
     let mut c = row(0, 1);
     b[1].velocity = V(10.0, 0.0, 0.0);
     assert_eq!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             std::slice::from_ref(&c),
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         ),
         Some(0.0)
     );
@@ -103,21 +114,23 @@ fn residual_respects_separating_normals_and_saturated_sliding_friction() {
     c.normal_impulse = 2.0;
     c.tangent_impulse[0] = -1.0; // Exactly the friction disk boundary; continued sliding is legal.
     assert_eq!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             std::slice::from_ref(&c),
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         ),
         Some(0.0)
     );
     c.tangent_impulse[0] = 0.0; // Unsatisfied friction, not converged.
     assert!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             &[c],
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         )
         .is_none()
     );
@@ -136,11 +149,12 @@ fn final_residual_catches_an_earlier_constraint_disturbed_by_a_later_contact() {
     c.normal_mass = 0.5;
     // First row is already satisfied before the second row changes the common body.
     assert_eq!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             std::slice::from_ref(&a),
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         ),
         Some(0.0)
     );
@@ -159,11 +173,12 @@ fn final_residual_catches_an_earlier_constraint_disturbed_by_a_later_contact() {
     );
     assert!(b[1].velocity.0 < -0.5);
     assert!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             &[a],
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         )
         .is_none()
     );
@@ -358,11 +373,12 @@ fn rounding_away_a_correction_does_not_prove_convergence() {
     c.bias = 0.1;
     assert_eq!(c.normal_impulse + c.bias * c.normal_mass, c.normal_impulse);
     assert!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             std::slice::from_ref(&c),
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         )
         .is_none()
     );
@@ -375,11 +391,12 @@ fn rounding_away_a_correction_does_not_prove_convergence() {
         c.tangent_impulse[0]
     );
     assert!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             &[c],
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         )
         .is_none()
     );
@@ -391,12 +408,96 @@ fn large_sideways_velocity_cannot_relax_the_normal_error_limit() {
     let mut c = row(0, 1);
     c.friction = 0.0;
     assert!(
-        projected_residual(
+        projected_residual::<false>(
             &b,
             &[c],
             Convergence::default(),
-            &mut ConvergenceStats::default()
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
         )
         .is_none()
+    );
+}
+
+#[test]
+fn soft_residual_checks_compliance_instead_of_rigid_zero_velocity() {
+    let b = vec![sphere(1, 0.0, 0.0), sphere(2, 2.0, 1.0)];
+    let mut c = row(0, 1);
+    c.hard_normal = false;
+    c.friction = 0.0;
+    c.bias = 3.0;
+    let coefficients = crate::approximate::SoftContact::default()
+        .prepare(1.0 / 240.0)
+        .unwrap();
+    c.normal_impulse =
+        c.bias * c.normal_mass * coefficients.mass_scale / coefficients.impulse_scale;
+    assert!(
+        projected_residual::<true>(
+            &b,
+            std::slice::from_ref(&c),
+            Convergence::default(),
+            &mut ConvergenceStats::default(),
+            coefficients
+        )
+        .is_some()
+    );
+    assert!(
+        projected_residual::<false>(
+            &b,
+            std::slice::from_ref(&c),
+            Convergence::default(),
+            &mut ConvergenceStats::default(),
+            Coefficients::RIGID
+        )
+        .is_none()
+    );
+    c.normal_impulse *= 1.01;
+    assert!(
+        projected_residual::<true>(
+            &b,
+            &[c],
+            Convergence::default(),
+            &mut ConvergenceStats::default(),
+            coefficients
+        )
+        .is_none()
+    );
+}
+#[test]
+fn soft_solver_counts_complete_passes_and_checks_its_final_residual() {
+    let mut b = vec![sphere(1, 0.0, 0.0), sphere(2, 2.0, 1.0)];
+    let mut c = row(0, 1);
+    c.hard_normal = false;
+    c.friction = 0.0;
+    c.bias = 3.0;
+    let coefficients = crate::approximate::SoftContact::default()
+        .prepare(1.0 / 240.0)
+        .unwrap();
+    let mut report = Report::default();
+    let responses = vec![PreparedResponse::default(); 2];
+    solve_soft::<false>(
+        &mut b,
+        &responses,
+        std::slice::from_mut(&mut c),
+        8,
+        Some(Convergence::default()),
+        coefficients,
+        &mut report,
+    );
+    assert_eq!(report.convergence.converged_substeps, 1);
+    assert_eq!(
+        report.impulse_iterations + report.convergence.skipped_iterations,
+        8
+    );
+    assert!(c.normal_impulse > 0.0);
+    assert!(
+        projected_residual::<true>(
+            &b,
+            &[c],
+            Convergence::default(),
+            &mut ConvergenceStats::default(),
+            coefficients
+        )
+        .is_some()
     );
 }
