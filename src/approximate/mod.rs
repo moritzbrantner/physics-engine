@@ -660,6 +660,7 @@ impl World {
                 pairs.iter().map(|(_, _, m)| m.points.len()).sum(),
                 &mut self.bookkeeping.work,
             );
+            let softened_before = report.correction.softened_points;
             for (i, j, m) in pairs.drain(..) {
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
@@ -710,8 +711,12 @@ impl World {
                         0.0
                     };
                     // Speculative and restitutive impacts retain the hard response. Softness
-                    // applies only to overlapping, non-bouncing normal constraints.
-                    let soft = softness.filter(|_| point.separation <= 0.0 && restitution == 0.0);
+                    // applies only beyond the existing slop, on non-bouncing normal constraints.
+                    // Within slop the positional target is zero: keep the support hard rather
+                    // than repeatedly reducing its load-bearing accumulated impulse.
+                    let soft = softness.filter(|_| {
+                        point.separation < -self.config.contact_slop && restitution == 0.0
+                    });
                     let correction = (-point.separation - self.config.contact_slop).max(0.0);
                     let bias = if point.separation > 0.0 {
                         -point.separation / h
@@ -800,8 +805,12 @@ impl World {
                     report.max_penetration =
                         report.max_penetration.max((-point.separation).max(0.0));
                     report.correction.softened_points += u64::from(!c.hard_normal);
-                    report.correction.hard_support_points +=
-                        u64::from(soft.is_some() && c.hard_normal);
+                    report.correction.hard_support_points += u64::from(
+                        softness.is_some()
+                            && point.separation <= 0.0
+                            && restitution == 0.0
+                            && (a.mass == 0.0 || b.mass == 0.0),
+                    );
                     if relax_enabled {
                         self.relaxation_bias.push(if point.separation > 0.0 {
                             -point.separation / h
@@ -825,7 +834,10 @@ impl World {
                     &mut report,
                 );
             }
-            if let Some(coefficients) = softness {
+            let converged_before = report.convergence.converged_substeps;
+            if let Some(coefficients) =
+                softness.filter(|_| report.correction.softened_points > softened_before)
+            {
                 convergence::solve_soft::<PREPARED>(
                     &mut self.bodies,
                     &self.responses,
@@ -875,7 +887,9 @@ impl World {
                     }
                 }
             }
-            let relaxing = self.relax_contacts::<PREPARED>(&mut constraints, &mut report);
+            let primary_converged = report.convergence.converged_substeps > converged_before;
+            let relaxing =
+                self.relax_contacts::<PREPARED>(&mut constraints, primary_converged, &mut report);
             let scratch = &mut self.bookkeeping;
             scratch.support_edges.clear();
             reserve(&mut scratch.supported, self.bodies.len(), &mut scratch.work);

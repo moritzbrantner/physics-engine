@@ -156,3 +156,48 @@ between correction policies because their physical trajectories differ.
 Known general approximation limits (frozen rotation within sweeps, non-chronological secondary
 substep ricochets, omitted gyroscopic terms, no universal cross-target bit identity, and no
 mid-step transactional rollback) are unchanged. See `fixed-step-approximation.md`.
+
+## Follow-up: correct penetration error, not contacts already within slop
+
+The first candidate softened *every* overlapping dynamic pair, including contacts whose
+penetration correction target was exactly zero. Under load that still subtracts compliance
+from their accumulated support impulse. The next candidate limits softness to penetration
+**strictly beyond the existing `contact_slop`**. Touching/within-slop contacts stay hard;
+there is no new tolerance, altered sleep threshold, or projectile-specific solver branch.
+Correction outside the slop, fixed-support response, restitution, and speculative sweeps
+retain their documented targets. Primary solves with no soft rows use the existing hard kernel.
+This routing intentionally changes the opt-in trajectories; it does not alter the default policy.
+
+There is also a separate bounded-work optimization. The primary solve's accepted, final-whole-pass
+convergence certificate may replace the optional relaxation **only** if every row remains hard
+and every target is bit-identical to its relaxation target. A changed bias, soft row, unchecked
+or capped primary solve requires relaxation as before. No velocities/geometry change between
+certification and this decision. If skipped, movement integrates from current velocity once,
+without allocating/copying saved motion. This reuses the existing numerical tolerances, not a
+wall-clock deadline or an unconditional reduction in solver iterations.
+
+Telemetry 59 counts certified unchanged-target relaxation skips; 60 counts row checks used to
+validate that reuse. Index 56 includes the saved relaxation passes, while 53/54 still report
+actual relaxation passes/visits. Index 58 retains its original fixed-support contact meaning.
+A skip is a tolerance-based decision, not a claim of universal bitwise equivalence between
+correction policies. The default's previous physical and work/memory history remains required
+to match the separately built merged baseline.
+
+The benchmark can compare the prior experimental binary explicitly:
+
+```
+TRIALS=5 TICKS=1200 node scripts/benchmark-correction.mjs \
+  candidate.wasm comparison.json merged.wasm previous-experiment.wasm
+```
+
+It retains all five policies, raw timings, physics/work hashes, energy, penetration and sleep
+traces; rotating policy order balances ordering across five trials. The refined free-arrow
+trace additionally must settle within 1.5 **simulated** seconds, a regression acceptance case
+rather than a machine-speed gate. The older experimental result remains a measured control,
+not a passing candidate for this new condition. The original 0.5-unit quality limit is unchanged.
+
+Early local probes removed the 12-second arrow tail but changed the other trajectories too:
+the rigid trace slept later than in the prior experiment, and sphere/rigid penetration increased
+while remaining within the limit. Therefore the earlier table of universally lower penetration
+must not be attributed to the refined candidate. Retain the measured tradeoffs and compare both
+the prior experiment and merged default before deciding whether to promote it.

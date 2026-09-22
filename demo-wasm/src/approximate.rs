@@ -383,6 +383,8 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             56 => r.correction.relaxation_skipped_iterations as f64,
             57 => r.correction.relaxation_motion_bytes as f64,
             58 => r.correction.hard_support_points as f64,
+            59 => r.correction.unchanged_converged_skips as f64,
+            60 => r.correction.unchanged_target_checks as f64,
             _ => f64::NAN,
         }
     })
@@ -391,6 +393,40 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relaxed_arrow_impact_stops_recorrecting_the_tower_within_the_regression_window() {
+        let rules = (1_i32 << 29) | ((1_i32 << 11) - 2) | (1_i32 << 14) | (2_i32 << 12);
+        assert_eq!(
+            controller::baking::sandbox_reset_tower_with_baking_options(rules, 0, 1),
+            0
+        );
+        assert_eq!(approximate_reset_soft_from_sandbox(4, 8, 60.0, 1.0, 2), 0);
+        for _ in 0..240 {
+            assert_eq!(approximate_step_velocity(0, 0, 0), 0);
+        }
+        assert_eq!(approximate_is_quiescent(), 1);
+        let before = read(Vec::new(), |s| {
+            s.world.bodies().cloned().collect::<Vec<_>>()
+        });
+        assert_eq!(approximate_set_projectile_type(1), 0);
+        assert!(approximate_shoot(0, 0, -96) >= 0);
+        for _ in 0..90 {
+            assert_eq!(approximate_step_velocity(0, 0, 0), 0);
+        }
+        // Simulated time, not a wall-clock gate. The old relaxed policy stays awake for 721 ticks.
+        assert_eq!(
+            approximate_is_quiescent(),
+            1,
+            "arrow kept the tower correcting after 1.5 s"
+        );
+        assert!(read(false, |s| before
+            .iter()
+            .filter(|b| (100..132).contains(&b.id.0))
+            .any(|b| s
+                .world
+                .body(b.id)
+                .is_some_and(|a| a.position != b.position))));
+    }
     #[test]
     fn correction_reset_rejects_invalid_options_and_observers_do_not_mutate() {
         assert_eq!(

@@ -406,3 +406,117 @@ fn fixed_supports_stay_hard_and_dynamic_contact_normals_use_softness() {
     }
     assert!(r.correction.relaxation_iterations <= 2);
 }
+
+#[test]
+fn compliance_starts_only_beyond_the_existing_penetration_slop() {
+    // A binary-exact slop makes the equality boundary unambiguous. The approaching
+    // spheres must receive a real support impulse, not merely produce zero work.
+    for separation in [-0.25, -0.125, -0.0625, 0.0, 0.0625] {
+        let cfg = Config {
+            substeps: 1,
+            convergence: None,
+            contact_slop: 0.125,
+            ..config(0)
+        };
+        let mut candidate = World::new(cfg).unwrap();
+        let mut reference = World::new(Config {
+            soft_contact: None,
+            ..cfg
+        })
+        .unwrap();
+        for (id, x, vx) in [(1, 0.0, 1.0), (2, 2.0 + separation, -1.0)] {
+            let mut b = Body::new(BodyId(id), Shape::Sphere(1.0), Vector(x, 0.0, 0.0), 1.0);
+            b.velocity = Vector(vx, 0.0, 0.0);
+            for w in [&mut candidate, &mut reference] {
+                w.add_body(b.clone()).unwrap();
+            }
+        }
+        let r = candidate.step(1.0 / 240.0).unwrap();
+        reference.step(1.0 / 240.0).unwrap();
+        assert!(!candidate.constraints.is_empty());
+        assert_eq!(
+            r.correction.softened_points > 0,
+            separation < -cfg.contact_slop
+        );
+        if separation >= -cfg.contact_slop {
+            assert!(candidate.constraints.iter().all(|c| c.hard_normal));
+            assert_eq!(candidate.bodies, reference.bodies);
+        }
+    }
+}
+
+#[test]
+fn a_converged_unchanged_bounce_skips_relaxation_without_losing_its_impulse() {
+    let mut w = World::new(Config {
+        substeps: 1,
+        ..config(2)
+    })
+    .unwrap();
+    for (id, x, vx) in [(1, -1.0, 10.0), (2, 1.0, -10.0)] {
+        let mut b = Body::new(BodyId(id), Shape::Sphere(1.0), Vector(x, 0.0, 0.0), 1.0);
+        b.velocity = Vector(vx, 0.0, 0.0);
+        b.restitution = 1.0;
+        w.add_body(b).unwrap();
+    }
+    let r = w.step(1.0 / 240.0).unwrap();
+    assert_eq!(r.convergence.converged_substeps, 1);
+    assert_eq!(r.correction.unchanged_converged_skips, 1);
+    assert_eq!(r.correction.relaxation_iterations, 0);
+    assert_eq!(r.correction.relaxation_skipped_iterations, 2);
+    assert_eq!(
+        r.correction.relaxation_motion_bytes,
+        8 * w.relaxation_bias.capacity() as u64
+    );
+    assert!(w.relaxation_motion.is_empty());
+    assert!((w.bodies[0].velocity.0 + 10.0).abs() < 1e-12);
+    assert!((w.bodies[1].velocity.0 - 10.0).abs() < 1e-12);
+    assert!((w.bodies[0].velocity + w.bodies[1].velocity).length() < 1e-12);
+    assert_eq!(r.integrated_bodies, 2);
+}
+
+#[test]
+fn changed_correction_target_requires_relaxation_even_after_primary_convergence() {
+    let mut w = World::new(Config {
+        substeps: 1,
+        ..config(2)
+    })
+    .unwrap();
+    w.add_body(Body::new(BodyId(1), Shape::Sphere(1.0), Vector::ZERO, 0.0))
+        .unwrap();
+    w.add_body(Body::new(
+        BodyId(2),
+        Shape::Sphere(1.0),
+        Vector(1.75, 0.0, 0.0),
+        1.0,
+    ))
+    .unwrap();
+    let r = w.step(1.0 / 240.0).unwrap();
+    assert_eq!(r.convergence.converged_substeps, 1);
+    assert!(r.correction.hard_support_points > 0);
+    assert_eq!(r.correction.unchanged_converged_skips, 0);
+    assert_eq!(r.correction.relaxation_iterations, 2);
+    assert!(w.bodies[1].position.0 > 1.75);
+    assert!(w.bodies[1].velocity.length() < 1e-12);
+}
+
+#[test]
+fn unchanged_targets_do_not_allow_skipping_an_unchecked_primary_solve() {
+    let mut w = World::new(Config {
+        substeps: 1,
+        velocity_iterations: 1,
+        convergence: None,
+        ..config(2)
+    })
+    .unwrap();
+    w.add_body(Body::new(BodyId(1), Shape::Sphere(1.0), Vector::ZERO, 0.0))
+        .unwrap();
+    let mut b = Body::new(BodyId(2), Shape::Sphere(1.0), Vector(2.0, 0.0, 0.0), 1.0);
+    b.velocity = Vector(-1.0, 0.0, 0.0);
+    w.add_body(b).unwrap();
+    let r = w.step(1.0 / 240.0).unwrap();
+    assert_eq!(r.convergence.converged_substeps, 0);
+    assert_eq!(r.correction.unchanged_target_checks, 0);
+    assert_eq!(r.correction.unchanged_converged_skips, 0);
+    assert_eq!(r.correction.relaxation_iterations, 2);
+    assert_eq!(r.impulse_iterations, 3);
+}

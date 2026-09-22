@@ -3,14 +3,16 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync, writeFileSync} from 'node:fs';
 import os from 'node:os';
-const [candidatePath, output, baselinePath] = process.argv.slice(2);
-if (!candidatePath || !output) throw new Error('usage: node scripts/benchmark-correction.mjs candidate.wasm result.json [merged.wasm]');
+const [candidatePath, output, baselinePath, previousPath] = process.argv.slice(2);
+if (!candidatePath || !output) throw new Error('usage: node scripts/benchmark-correction.mjs candidate.wasm result.json [merged.wasm] [previous-experiment.wasm]');
 const trials=Number(process.env.TRIALS??2), ticks=Number(process.env.TICKS??1200);
 if(!Number.isInteger(trials)||trials<2||trials>8||!Number.isInteger(ticks)||ticks<240||ticks>3600)throw new Error('TRIALS=2..8 and TICKS=240..3600 required');
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const bytes=readFileSync(candidatePath),baseBytes=baselinePath?readFileSync(baselinePath):null;
 const candidate=await WebAssembly.compile(bytes),baseline=baseBytes?await WebAssembly.compile(baseBytes):null;
-const modes=baseline?['baseline','baumgarte','soft','relaxed']:['baumgarte','soft','relaxed'];
+const previousBytes=previousPath?readFileSync(previousPath):null, previous=previousBytes?await WebAssembly.compile(previousBytes):null;
+const modes=[...(baseline?['baseline']:[]),...(previous?['previous-relaxed']:[]),'baumgarte','soft','relaxed'];
+const relaxedMode=mode=>mode==='relaxed'||mode==='previous-relaxed';
 const phaseNames=['settling','active','sleeping'];
 const summary=v=>{const s=[...v].sort((a,b)=>a-b);return {count:v.length,mean_ms:v.length?v.reduce((a,b)=>a+b,0)/v.length:null,total_ms:v.reduce((a,b)=>a+b,0),p95_ms:s[Math.floor(s.length*.95)]??null,max_ms:s.at(-1)??null};};
 function snapshot(e){const p=e.approximate_refresh_snapshot();return new Float64Array(e.memory.buffer,p,e.approximate_snapshot_len()).slice();}
@@ -25,12 +27,12 @@ function diagnostics(e,s){let energy=typeof e.approximate_body_kinetic_energy===
  return {kinetic:energy,linear_rms:Math.sqrt(speed2/32),angular_rms:angular2===null?null:Math.sqrt(angular2/32),floor_penetration:penetration,awake};
 }
 async function replay(mode,upright,type,shot,measure=true){
- const e=(await WebAssembly.instantiate(mode==='baseline'?baseline:candidate,{})).exports;
+ const e=(await WebAssembly.instantiate(mode==='baseline'?baseline:mode==='previous-relaxed'?previous:candidate,{})).exports;
  const rules=(1<<29)|((1<<11)-2)|(1<<14)|(2<<12)|(upright?1<<11:0);
  assert.equal(e.sandbox_reset_tower_with_baking_options(rules,0,1),0);
- assert.equal(mode==='soft'||mode==='relaxed'?e.approximate_reset_soft_from_sandbox(4,8,60,1,mode==='relaxed'?2:0):e.approximate_reset_from_sandbox(4,8),0);
+ assert.equal(mode==='soft'||relaxedMode(mode)?e.approximate_reset_soft_from_sandbox(4,8,60,1,relaxedMode(mode)?2:0):e.approximate_reset_from_sandbox(4,8),0);
  const physics=createHash('sha256'), workHash=createHash('sha256'),decisions=createHash('sha256');
- const timing=Object.fromEntries(phaseNames.map(p=>[p,[]])),work=Object.fromEntries(phaseNames.map(p=>[p,{primary_iterations:0,relaxation_iterations:0,narrow_tests:0,constraint_visits:0,relaxation_constraint_visits:0,woken:0}]));
+ const timing=Object.fromEntries(phaseNames.map(p=>[p,[]])),work=Object.fromEntries(phaseNames.map(p=>[p,{primary_iterations:0,relaxation_iterations:0,narrow_tests:0,constraint_visits:0,relaxation_constraint_visits:0,certified_relaxation_skips:0,certificate_row_checks:0,woken:0}]));
  let maxFloor=0,maxSettleFloor=0,maxAwake=0,energyPeak=null,energyIntegral=null,final=null,changed=false,rotated=false,wakes=0,sleeps=0,lastAwake=-1,scratchPeak=0;
  const series=[],late=[];let initial,ids,prev=[];
  function step(phase,t){
@@ -45,10 +47,11 @@ async function replay(mode,upright,type,shot,measure=true){
   const relax=mode==='baseline'?0:e.approximate_stat(53),visits=mode==='baseline'?0:e.approximate_stat(54);
   assert.ok(stats[1]<=4&&stats[5]<=40);
   assert.equal(stats[5]-relax+stats[46],stats[1]*8,'primary iteration accounting');
-  if(mode!=='relaxed')assert.equal(relax,0);
+  if(!relaxedMode(mode))assert.equal(relax,0);
   assert.ok(relax<=stats[1]*2);
   const w=work[phase];w.primary_iterations+=stats[5]-relax;w.relaxation_iterations+=relax;w.narrow_tests+=stats[3];w.constraint_visits+=stats[40];w.relaxation_constraint_visits+=visits;w.woken+=stats[7];
-  const correction=mode==='baseline'?[]:Array.from({length:7},(_,i)=>e.approximate_stat(52+i));assert.ok(correction.every(Number.isFinite));decisions.update(JSON.stringify([...stats.slice(40),...correction]));
+  const correction=mode==='baseline'?[]:Array.from({length:mode==='previous-relaxed'?7:9},(_,i)=>e.approximate_stat(52+i));assert.ok(correction.every(Number.isFinite));decisions.update(JSON.stringify([...stats.slice(40),...correction]));
+  w.certified_relaxation_skips+=correction[7]??0;w.certificate_row_checks+=correction[8]??0;
   scratchPeak=Math.max(scratchPeak,stats[23]+(correction[5]??0));
   const d=diagnostics(e,s);
   if(phase==='settling')maxSettleFloor=Math.max(maxSettleFloor,d.floor_penetration);
@@ -73,6 +76,7 @@ async function replay(mode,upright,type,shot,measure=true){
  assert.ok(maxFloor<=0.5&&maxSettleFloor<=0.5,`${mode}: floor penetration ${maxFloor}/${maxSettleFloor}`);
  assert.ok(shot==='hit'?changed:!changed,'hit/miss response');assert.ok(!upright||!rotated,'rotation lock');if(shot==='miss')assert.equal(maxAwake,0);
  assert.ok(Math.abs(e.approximate_stat(0)-(240+ticks)/60)<1e-9,'dropped requested time');
+ if(mode==='relaxed'&&!upright&&type===1&&shot==='hit')assert.ok(e.approximate_is_quiescent()===1&&(lastAwake+2)/60<=1.5,'relaxed arrow exceeded 1.5 simulated seconds to settle');
  return {physics_hash:physics.digest('hex'),work_hash:workHash.digest('hex'),decisions_hash:decisions.digest('hex'),
   changed,rotated,max_floor_penetration:maxFloor,settle_max_floor_penetration:maxSettleFloor,max_awake_crates:maxAwake,quiescent_after:e.approximate_is_quiescent()===1,
   settled_seconds:e.approximate_is_quiescent()===1?(lastAwake+2)/60:null,energy_peak:energyPeak,kinetic_time_integral:energyIntegral,
@@ -95,7 +99,7 @@ for(const upright of [false,true])for(const [projectile,type] of [['sphere',0],[
  records.push(row);console.log(JSON.stringify({crates:row.crates,projectile,shot,active:row.phases.active,quality:Object.fromEntries(modes.map(m=>[m,{settled_seconds:runs[0][m].settled_seconds,floor:runs[0][m].max_floor_penetration,energy:runs[0][m].final.kinetic}]))}));
  writeFileSync(output+'.partial',JSON.stringify({complete:false,records},null,2)+'\n');
 }
-writeFileSync(output,JSON.stringify({kind:'soft-contact-correction-v1',complete:true,cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
- candidate_sha256:hash(bytes),baseline_sha256:baseBytes?hash(baseBytes):null,trials,post_shot_ticks:ticks,settle_ticks:240,
- policies:{baumgarte:'merged default with validated convergence',soft:'60 Hz dynamic-pair compliance, hard fixed supports, damping ratio 1, no relaxation',relaxed:'same contact rule + at most two relaxation passes per substep'},
+writeFileSync(output,JSON.stringify({kind:'soft-contact-correction-v2',complete:true,cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
+ candidate_sha256:hash(bytes),baseline_sha256:baseBytes?hash(baseBytes):null,previous_experiment_sha256:previousBytes?hash(previousBytes):null,trials,post_shot_ticks:ticks,settle_ticks:240,
+ policies:{baumgarte:'merged default with validated convergence',soft:'60 Hz dynamic-pair compliance only beyond existing contact slop, hard fixed supports, damping ratio 1, no relaxation',relaxed:'same contact rule + at most two relaxation passes; skip only after certified convergence with identical hard targets','previous-relaxed':'separately supplied old experimental binary; 60 Hz dynamic-pair compliance for all overlaps, two relaxation passes'},
  note:'All requested time is simulated. Timing excludes setup/observations and separates settling, non-quiescent post-shot and quiescent calls. Different correction policies may change contacts, trajectories, sleep timing and active workloads. A lower active mean is not an equal-work throughput claim. Kinetic energy uses engine mass/scene units, not SI joules. Default parity uses the separately built merged module; energy is unavailable for that old module, not fabricated. No end-of-window sleep assertion or forced sleep.',records},null,2)+'\n');

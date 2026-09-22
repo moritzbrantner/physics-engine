@@ -75,6 +75,8 @@ pub struct CorrectionStats {
     pub relaxation_residual_visits: u64,
     pub relaxation_skipped_iterations: u64,
     pub relaxation_motion_bytes: u64,
+    pub unchanged_converged_skips: u64,
+    pub unchanged_target_checks: u64,
 }
 
 impl World {
@@ -83,6 +85,7 @@ impl World {
     pub(super) fn relax_contacts<const PREPARED: bool>(
         &mut self,
         constraints: &mut [Constraint],
+        primary_converged: bool,
         report: &mut Report,
     ) -> bool {
         let relax = self
@@ -90,6 +93,24 @@ impl World {
             .soft_contact
             .map_or(0, |c| c.relaxation_iterations);
         let relaxing = relax > 0 && !constraints.is_empty();
+        if relaxing && primary_converged {
+            // The primary solve already checked final whole-pass normal/friction residuals.
+            // That certificate is reusable ONLY when relaxation would solve the same hard
+            // equations on the same frozen state. A soft row or changed bias requires work.
+            let unchanged = constraints.len() == self.relaxation_bias.len()
+                && constraints
+                    .iter()
+                    .zip(&self.relaxation_bias)
+                    .all(|(c, bias)| {
+                        report.correction.unchanged_target_checks += 1;
+                        c.hard_normal && c.bias.to_bits() == bias.to_bits()
+                    });
+            if unchanged {
+                report.correction.unchanged_converged_skips += 1;
+                report.correction.relaxation_skipped_iterations += u64::from(relax);
+                return false;
+            }
+        }
         if relaxing {
             // Freeze the integration velocity, then relax using the SAME pre-integration
             // geometry/inertia. Pose is advanced once from this saved velocity; the relaxed
