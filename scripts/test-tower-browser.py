@@ -94,6 +94,8 @@ def main():
         target = out / 'browser-session.json'; download.value.save_as(target)
         session = json.loads(target.read_text())
         assert session['scenario']['solver'] == 'fixed-step-f64'
+        assert session['scenario']['character_response'] == 'physical'
+        assert session['scenario']['crate_motion'] == 'free'
         assert session['summary']['physics_work']['fixed_substeps'] > 0
         page.locator('#close-settings').click()
         # Screenshot stabilization waits for real animation frames after a resize.
@@ -102,6 +104,7 @@ def main():
         page.clock.resume()
         page.set_viewport_size({'width': 390, 'height': 844})
         page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        page.wait_for_function('document.querySelector("#settings-panel").getBoundingClientRect().left >= window.innerWidth')
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
         page.screenshot(path=str(out / 'tower-mobile.png'), full_page=True)
         assert not state()['error'], state()

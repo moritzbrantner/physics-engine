@@ -109,8 +109,9 @@ function performanceScenario() {
   return {
     id: scenarioId,
     solver: engine?.solver ?? "sampled-event-f64",
-    character_response: characterModeControl.value === "0" ? "physical" : "linear",
-    crate_motion: uprightCratesControl.checked ? "upright" : "free",
+    // The hidden legacy controls carry packed rule/policy bits, not these choices.
+    character_response: document.querySelector("#character-response").value,
+    crate_motion: document.querySelector("#crate-motion").value,
     fixed_geometry: scenarioId === "tower" ? null : fixedGeometryControl.value === "0" ? "runtime" : "load",
     collision_pairs: query.get("collisions") ?? "all",
     projectile_impact: query.get("projectile-impact") ?? "impact-retire",
