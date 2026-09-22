@@ -172,8 +172,7 @@ fn reset_with_baking_options(
     // applied to the replacement. Invalid inputs still return above without touching the current sandbox.
     with_sandbox(|_| ());
 
-    let Ok(mut replacement) =
-        build_layout(rules.character_linear_push(), rules.upright_crates())
+    let Ok(mut replacement) = build_layout(rules.character_linear_push(), rules.upright_crates())
     else {
         return -2;
     };
