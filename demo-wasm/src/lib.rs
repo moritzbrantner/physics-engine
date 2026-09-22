@@ -24,10 +24,11 @@ const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
 // Mass units are relative. Scale every rigid sandbox participant together so rigid-vs-rigid
 // behavior stays unchanged while the tiny analytic sphere remains meaningfully lighter than a crate.
-const SANDBOX_RIGID_MASS_SCALE: u32 = 2;
+const SANDBOX_RIGID_MASS_SCALE: u32 = 1;
 const PLAYER_MASS_UNITS: u32 = 4 * SANDBOX_RIGID_MASS_SCALE;
 const CRATE_MASS_UNITS: u32 = 2 * SANDBOX_RIGID_MASS_SCALE;
 const RIGID_PROJECTILE_MASS_UNITS: u32 = SANDBOX_RIGID_MASS_SCALE;
+const SPHERE_RESPONSE_MASS_MILLI_UNITS: u32 = 125;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -323,7 +324,13 @@ impl Sandbox {
                 .with_transient_contacts(),
             ),
             Some(ProjectileType::Sphere) => {
-                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1) else {
+                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1)
+                    .and_then(|projectile| {
+                        projectile.with_response_mass_milli_units(
+                            SPHERE_RESPONSE_MASS_MILLI_UNITS,
+                        )
+                    })
+                else {
                     self.error_code = 5;
                     return -1;
                 };
@@ -1203,6 +1210,10 @@ mod tests {
             .expect("spawned analytic sphere projectile");
         assert_eq!(projectile.radius(), 3);
         assert_eq!(projectile.mass_units(), 1);
+        assert_eq!(
+            projectile.response_mass_milli_units(),
+            SPHERE_RESPONSE_MASS_MILLI_UNITS
+        );
         assert_eq!(sandbox.active_projectile_count(), 1);
     }
 
