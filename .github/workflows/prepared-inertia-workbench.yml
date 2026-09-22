@@ -1,0 +1,26 @@
+name: Prepared inertia workbench
+on:
+  push:
+    branches: [perf/154-prepared-inertia]
+    paths: [.github/workflows/prepared-inertia-workbench.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Export immutable baseline only
+        run: |
+          mkdir -p "$RUNNER_TEMP/prepared-inertia"
+          git archive --format=tar 090fe521bbfe539deeefc6a5c3741677836ee7c4 | gzip -1 > "$RUNNER_TEMP/prepared-inertia/source.tar.gz"
+          echo 090fe521bbfe539deeefc6a5c3741677836ee7c4 > "$RUNNER_TEMP/prepared-inertia/source-revision.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: prepared-inertia-baseline
+          path: ${{ runner.temp }}/prepared-inertia
+          retention-days: 1
