@@ -68,6 +68,41 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        let crate_positions = [
+            Vec3i::new(-75, 18, 135),
+            Vec3i::new(-75, 54, 135),
+            Vec3i::new(80, 18, 120),
+            Vec3i::new(116, 18, 120),
+            Vec3i::new(98, 54, 120),
+            Vec3i::new(0, 18, -70),
+        ];
+        Self::with_crate_layout(linear_push, upright_crates, &crate_positions)
+    }
+
+    fn with_tower_options(
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        let mut crate_positions = Vec::with_capacity(32);
+        for level in 0..4 {
+            for depth in 0..2 {
+                for column in 0..4 {
+                    crate_positions.push(Vec3i::new(
+                        -54 + column * 36,
+                        18 + level * 36,
+                        82 + depth * 36,
+                    ));
+                }
+            }
+        }
+        Self::with_crate_layout(linear_push, upright_crates, &crate_positions)
+    }
+
+    fn with_crate_layout(
+        linear_push: bool,
+        upright_crates: bool,
+        crate_positions: &[Vec3i],
+    ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
@@ -115,15 +150,7 @@ impl Sandbox {
             player
         })?;
 
-        let crate_positions = [
-            Vec3i::new(-75, 18, 135),
-            Vec3i::new(-75, 54, 135),
-            Vec3i::new(80, 18, 120),
-            Vec3i::new(116, 18, 120),
-            Vec3i::new(98, 54, 120),
-            Vec3i::new(0, 18, -70),
-        ];
-        for (offset, position) in crate_positions.into_iter().enumerate() {
+        for (offset, position) in crate_positions.iter().copied().enumerate() {
             let crate_body = rotating_box(
                 RigidBody::dynamic(
                     BodyId(100 + offset as u64),

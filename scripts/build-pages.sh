@@ -24,6 +24,8 @@ const exports = instance.exports;
 const requiredFunctions = [
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
+  "sandbox_reset_tower_with_baking_options",
+  "sandbox_body_count",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -45,6 +47,12 @@ if (!(exports.memory instanceof WebAssembly.Memory)) {
 
 if (exports.sandbox_reset_with_baking_options(0, 0, 0) !== 0) {
   throw new Error("runtime fixed-geometry reference mode failed to initialize");
+}
+if (exports.sandbox_reset_tower_with_baking_options(0, 0, 0) !== 0) {
+  throw new Error("tower scenario failed to initialize");
+}
+if (exports.sandbox_body_count() !== 44) {
+  throw new Error(`tower scenario expected 44 bodies, got ${exports.sandbox_body_count()}`);
 }
 if (
   exports.sandbox_fixed_geometry_mode() !== 0 ||
@@ -155,6 +163,7 @@ NODE
 test -s pages-dist/index.html
 test -s pages-dist/catalog.css
 test -s pages-dist/scenarios/sandbox/index.html
+test -s pages-dist/scenarios/tower/index.html
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
 test -s pages-dist/physics-settings.mjs
