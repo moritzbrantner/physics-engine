@@ -1308,7 +1308,10 @@ mod tests {
         super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
             .expect("apply impact-retire tower rules");
         settle_player(&mut sandbox);
-        assert!(sandbox.is_quiescent(), "tower fixture must settle before the impact");
+        assert!(
+            sandbox.is_quiescent(),
+            "tower fixture must settle before the impact"
+        );
 
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Sphere as i32),
