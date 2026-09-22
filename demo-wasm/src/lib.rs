@@ -28,7 +28,7 @@ const SANDBOX_RIGID_MASS_SCALE: u32 = 1;
 const PLAYER_MASS_UNITS: u32 = 4 * SANDBOX_RIGID_MASS_SCALE;
 const CRATE_MASS_UNITS: u32 = 2 * SANDBOX_RIGID_MASS_SCALE;
 const RIGID_PROJECTILE_MASS_UNITS: u32 = SANDBOX_RIGID_MASS_SCALE;
-const SPHERE_RESPONSE_MASS_MILLI_UNITS: u32 = 125;
+const SPHERE_RESPONSE_MASS_MILLI_UNITS: u32 = 500;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -324,11 +324,9 @@ impl Sandbox {
                 .with_transient_contacts(),
             ),
             Some(ProjectileType::Sphere) => {
-                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1)
-                    .and_then(|projectile| {
-                        projectile.with_response_mass_milli_units(
-                            SPHERE_RESPONSE_MASS_MILLI_UNITS,
-                        )
+                let Ok(projectile) =
+                    BallisticSphere3d::new(id, spawn, velocity, 3, 1).and_then(|projectile| {
+                        projectile.with_response_mass_milli_units(SPHERE_RESPONSE_MASS_MILLI_UNITS)
                     })
                 else {
                     self.error_code = 5;
@@ -1001,7 +999,9 @@ mod tests {
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
+    use super::{
+        CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail,
+    };
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
@@ -1303,7 +1303,8 @@ mod tests {
         settle_player(&mut sandbox);
 
         let crate_ids = [BodyId(102), BodyId(103), BodyId(104)];
-        let before = crate_ids.map(|id| sandbox.world.box_by_id(id).expect("pyramid crate").clone());
+        let before =
+            crate_ids.map(|id| sandbox.world.box_by_id(id).expect("pyramid crate").clone());
         assert_eq!(
             sandbox.set_projectile_type(ProjectileType::Sphere as i32),
             0
@@ -1320,7 +1321,10 @@ mod tests {
                 sandbox.error_detail
             );
             for (index, id) in crate_ids.into_iter().enumerate() {
-                let current = sandbox.world.box_by_id(id).expect("pyramid crate after impact");
+                let current = sandbox
+                    .world
+                    .box_by_id(id)
+                    .expect("pyramid crate after impact");
                 crate_responded |= current.body().position() != before[index].body().position()
                     || current.angular() != before[index].angular();
                 let current_position = current.body().position();
