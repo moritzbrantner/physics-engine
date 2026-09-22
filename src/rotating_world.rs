@@ -66,6 +66,8 @@ pub struct RotatingWorldStepStats3d {
     pub response_authority_body_count: usize,
     /// Geometrically eligible pairs rejected before CCD because neither participant can receive solver mutation.
     pub response_authority_pair_rejections: u64,
+    /// Dynamic rigid projectiles removed after an admitted impact response in this step.
+    pub rigid_bodies_retired_on_impact: usize,
     pub sampled_events: usize,
     pub tail_contacts: usize,
     /// Persistent-tail slices actually executed, including discarded replay work.
@@ -120,8 +122,9 @@ pub struct RotatingWorldStepReport3d {
     pub stats: RotatingWorldStepStats3d,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct TailStepStats3d {
+    retired_body_ids: Vec<BodyId>,
     contacts: usize,
     slices: u64,
     replays: u64,
@@ -409,6 +412,10 @@ impl RotatingWorld3d {
         Ok(())
     }
 
+    pub(crate) fn ballistic_retires_on_contact(&self, id: BodyId) -> bool {
+        self.ballistic_retire_on_contact.contains(&id)
+    }
+
     pub fn remove_ballistic_sphere(&mut self, id: BodyId) -> Option<BallisticSphere3d> {
         let index = self
             .ballistic_spheres
@@ -668,6 +675,7 @@ impl RotatingWorld3d {
         let solver_bypassed_body_count = total_body_count.saturating_sub(solver_body_count);
         let mut ballistic_work = BallisticStepWork3d::default();
         let mut resolved_ballistic_pairs = BTreeSet::new();
+        let mut retired_body_ids = Vec::new();
 
         let (solver_boxes, sampled_events, tail, work) = if mixed_ballistic_step {
             if solver_boxes.is_empty() {
@@ -701,6 +709,7 @@ impl RotatingWorld3d {
                     &mut resolved_ballistic_pairs,
                     &mut ballistic_work,
                 )?;
+                retired_body_ids.extend(advance.retired_body_ids);
                 let sampled_events = advance.events.len();
                 let work = advance.work;
                 let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
@@ -742,6 +751,7 @@ impl RotatingWorld3d {
                 &mut self.broad_phase,
                 &mut self.response_scratch,
             )?;
+            retired_body_ids.extend(advance.retired_body_ids);
             let sampled_events = advance.events.len();
             let work = advance.work;
             let (solver_boxes, tail) = if advance.remaining.timestep_is_zero() {
@@ -766,7 +776,14 @@ impl RotatingWorld3d {
         self.ballistic_retire_on_contact
             .retain(|id| live_ballistic_ids.contains(id));
 
+        retired_body_ids.extend(tail.retired_body_ids.iter().copied());
         let mut changed_body_ids = BTreeSet::new();
+        let rigid_bodies_retired_on_impact = retired_body_ids.len();
+        for id in retired_body_ids {
+            self.remove_box(id)
+                .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            changed_body_ids.insert(id);
+        }
         for rigid_box in solver_boxes.into_iter().chain(bypassed_updates) {
             let id = rigid_box.body().id();
             if self.boxes.get(&id) == Some(&rigid_box) {
@@ -802,6 +819,7 @@ impl RotatingWorld3d {
                                 tail_broad_phase_before.response_authority_pair_rejections,
                             ),
                     ),
+                rigid_bodies_retired_on_impact,
                 sampled_events,
                 tail_contacts: tail.contacts,
                 tail_slices: tail.slices,
@@ -929,7 +947,7 @@ fn consume_tail_with_ballistics(
             None,
         )?;
         stats.contacts = result.contact_count;
-        return Ok((current, stats));
+        return Ok(finish_tail_retirements(current, stats));
     }
 
     let mut slice_count = persistent_tail_slice_count(&current, remaining, &initial_contacts)?;
@@ -972,7 +990,7 @@ fn consume_tail_with_ballistics(
 
         if unsafe_body.is_none() {
             stats.contacts = contact_count;
-            return Ok((current, stats));
+            return Ok(finish_tail_retirements(current, stats));
         }
 
         stats.replays = stats.replays.saturating_add(1);
@@ -986,6 +1004,7 @@ fn consume_tail_with_ballistics(
         }
         let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
         journal.rollback(&mut current);
+        stats.retired_body_ids.clear();
         *projectiles = projectile_start;
         *resolved_ballistic_pairs = resolved_pairs_start;
         reusable_contacts = Some(initial_contacts.clone());
@@ -1026,7 +1045,7 @@ fn advance_tail_slice_with_ballistics(
             ));
         }
 
-        let Some(frontier) = earliest_ballistic_frontier(
+        let Some(mut frontier) = earliest_ballistic_frontier(
             boxes,
             projectiles,
             remaining,
@@ -1071,6 +1090,9 @@ fn advance_tail_slice_with_ballistics(
             Some(journal),
         )?;
         contact_count = contact_count.saturating_add(pre_impact.contact_count);
+        frontier
+            .hits
+            .retain(|hit| !stats.retired_body_ids.contains(&hit.hit.body));
 
         for candidate in &frontier.hits {
             if let Some(world_index) = boxes
@@ -1094,7 +1116,13 @@ fn advance_tail_slice_with_ballistics(
 
         // Ballistic response changes velocity/angular velocity but not current geometry, so any exact
         // contact evidence retained by the pre-impact solve remains valid for the next safety check.
-        reusable_contacts = pre_impact.reusable_contacts;
+        let retired =
+            retire_tail_targets(boxes, frontier.hits.iter().map(|hit| hit.hit.body), stats);
+        reusable_contacts = if retired {
+            None
+        } else {
+            pre_impact.reusable_contacts
+        };
         remaining = ballistic_remaining_after(remaining, frontier.time)?;
     }
 
@@ -1151,10 +1179,17 @@ fn stabilize_tail_contacts_in_place(
             solver_passes,
             response_scratch,
         )?;
+    let retired = retire_tail_targets(
+        boxes,
+        frontier
+            .contacts
+            .iter()
+            .flat_map(|hit| [hit.pair.left, hit.pair.right]),
+        stats,
+    );
     Ok(TailSliceResult3d {
         contact_count,
-        reusable_contacts: geometry_modified_body_ids
-            .is_empty()
+        reusable_contacts: (geometry_modified_body_ids.is_empty() && !retired)
             .then_some(frontier.contacts),
     })
 }
@@ -1180,7 +1215,7 @@ fn consume_tail(
             None,
         )?;
         stats.contacts = result.contact_count;
-        return Ok((current, stats));
+        return Ok(finish_tail_retirements(current, stats));
     }
 
     let mut slice_count = persistent_tail_slice_count(&current, remaining, &initial_contacts)?;
@@ -1216,7 +1251,7 @@ fn consume_tail(
 
         if unsafe_body.is_none() {
             stats.contacts = contact_count;
-            return Ok((current, stats));
+            return Ok(finish_tail_retirements(current, stats));
         }
         stats.replays = stats.replays.saturating_add(1);
         let target = slice_count
@@ -1229,9 +1264,56 @@ fn consume_tail(
         }
         let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
         journal.rollback(&mut current);
+        stats.retired_body_ids.clear();
         reusable_contacts = Some(initial_contacts.clone());
         slice_count = next_slice_count;
     }
+}
+
+/// Preserve vector indices until a tail attempt commits: the existing touched-body journal can
+/// then restore retirement, motion and masks together on replay. These inert, non-colliding slots
+/// are removed before publishing the step and are never exposed as fixed physical bodies.
+fn retire_tail_targets(
+    boxes: &mut [RigidBox3d],
+    hit_ids: impl IntoIterator<Item = BodyId>,
+    stats: &mut TailStepStats3d,
+) -> bool {
+    if !boxes
+        .iter()
+        .any(|body| body.retires_on_impact() && body.body().kind() == BodyKind::Dynamic)
+    {
+        return false;
+    }
+    let hit_ids = hit_ids.into_iter().collect::<BTreeSet<_>>();
+    let mut retired = false;
+    for body in boxes.iter_mut().filter(|body| {
+        body.retires_on_impact()
+            && body.body().kind() == BodyKind::Dynamic
+            && hit_ids.contains(&body.body().id())
+    }) {
+        stats.retired_body_ids.push(body.body().id());
+        body.body.kind = BodyKind::Fixed;
+        body.body.velocity = Vec3i::ZERO;
+        body.angular.angular_velocity = crate::AngularVelocity3d::default();
+        body.collision_layers = crate::CollisionLayers3d::new(0, 0);
+        retired = true;
+    }
+    retired
+}
+
+fn finish_tail_retirements(
+    mut boxes: Vec<RigidBox3d>,
+    stats: TailStepStats3d,
+) -> (Vec<RigidBox3d>, TailStepStats3d) {
+    if !stats.retired_body_ids.is_empty() {
+        let retired = stats
+            .retired_body_ids
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        boxes.retain(|body| !retired.contains(&body.body().id()));
+    }
+    (boxes, stats)
 }
 
 fn advance_tail_free_flight_in_place(
@@ -1304,10 +1386,17 @@ fn free_flight_and_stabilize_in_place(
             solver_passes,
             response_scratch,
         )?;
+    let retired = retire_tail_targets(
+        boxes,
+        frontier
+            .contacts
+            .iter()
+            .flat_map(|hit| [hit.pair.left, hit.pair.right]),
+        stats,
+    );
     Ok(TailSliceResult3d {
         contact_count,
-        reusable_contacts: geometry_modified_body_ids
-            .is_empty()
+        reusable_contacts: (geometry_modified_body_ids.is_empty() && !retired)
             .then_some(frontier.contacts),
     })
 }
@@ -1578,6 +1667,73 @@ mod tests {
         assert_eq!(actual, expected);
         assert_eq!(changed, 2);
         assert_eq!(actual[1], baseline[1], "fixed body must remain untouched");
+    }
+
+    #[test]
+    fn tail_impact_retirement_rolls_back_without_reindexing_the_journal() {
+        let baseline = vec![
+            dynamic(
+                1,
+                Vec3i::new(-2, 0, 0),
+                Vec3i::new(60, 0, 0),
+                Vec3i::new(1, 1, 1),
+            )
+            .with_impact_retirement(true),
+            fixed(2, Vec3i::ZERO, Vec3i::new(1, 1, 1)),
+        ];
+        let mut current = baseline.clone();
+        let mut journal = TailMutationJournal3d::new(current.len());
+        let mut stats = TailStepStats3d::default();
+        let mut broad_phase = RotatingBroadPhase3d::default();
+        let mut scratch = RotatingContactResponseScratch3d::default();
+        let result = super::stabilize_tail_contacts_in_place(
+            &mut current,
+            8,
+            &mut broad_phase,
+            &mut scratch,
+            &mut stats,
+            Some(&mut journal),
+        )
+        .expect("tail response");
+        assert!(result.reusable_contacts.is_none());
+        assert_eq!(
+            current.len(),
+            baseline.len(),
+            "retirement must not shift journal indices"
+        );
+        assert_eq!(stats.retired_body_ids, [BodyId(1)]);
+        assert_eq!(current[0].body().kind(), crate::BodyKind::Fixed);
+        assert_eq!(
+            current[0].collision_layers(),
+            crate::CollisionLayers3d::new(0, 0)
+        );
+        assert!(
+            contact_frontier(&current, &mut broad_phase, &mut stats)
+                .unwrap()
+                .is_empty()
+        );
+        journal.rollback(&mut current);
+        stats.retired_body_ids.clear();
+        assert_eq!(
+            current, baseline,
+            "replay must restore kind, masks, motion and retirement policy"
+        );
+        super::stabilize_tail_contacts_in_place(
+            &mut current,
+            8,
+            &mut broad_phase,
+            &mut scratch,
+            &mut stats,
+            Some(&mut journal),
+        )
+        .expect("replayed tail response");
+        let (committed, stats) = super::finish_tail_retirements(current, stats);
+        assert_eq!(stats.retired_body_ids, [BodyId(1)]);
+        assert_eq!(
+            committed,
+            vec![baseline[1].clone()],
+            "no inert slot may escape the step"
+        );
     }
 
     #[test]

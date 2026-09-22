@@ -256,7 +256,11 @@ impl Sandbox {
         self.last_step_stats = report.stats;
         self.projectiles_retired_on_contact = self
             .projectiles_retired_on_contact
-            .saturating_add(saturating_u32(self.last_step_stats.ballistic_retired));
+            .saturating_add(saturating_u32(self.last_step_stats.ballistic_retired))
+            .saturating_add(
+                u32::try_from(self.last_step_stats.rigid_bodies_retired_on_impact)
+                    .unwrap_or(u32::MAX),
+            );
         if let Err(error) = self.update_arrow_directions() {
             self.error_code = 6;
             self.error_detail = world_error_detail(error);
@@ -340,7 +344,8 @@ impl Sandbox {
                 )
                 // Keep the pre-selector WASM behavior stable for historical benchmark callers.
                 .with_collision_layers(layers)
-                .with_transient_contacts(),
+                .with_transient_contacts()
+                .with_impact_retirement(impact_policy.retire_on_contact()),
             ),
             Some(ProjectileType::Sphere) => {
                 let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1) else {
@@ -367,14 +372,16 @@ impl Sandbox {
                 .with_rotation_locked()
                 .with_collision_layers(layers)
                 .with_transient_contacts()
-                .with_aggressive_sleep(),
+                .with_aggressive_sleep()
+                .with_impact_retirement(impact_policy.retire_on_contact()),
             ),
             Some(ProjectileType::Rigid) => self.world.add_box(
                 rotating_box(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
                         .with_material(material),
                 )
-                .with_collision_layers(layers),
+                .with_collision_layers(layers)
+                .with_impact_retirement(impact_policy.retire_on_contact()),
             ),
         };
 
@@ -450,7 +457,7 @@ impl Sandbox {
                     return out_of_bounds.then_some((id, 2_u8));
                 }
 
-                // Analytic impact-retire removes the sphere inside the event timeline and records the
+                // Impact-retire removes the projectile inside the event timeline and records the
                 // lifecycle counter in the step report. Only the demo membership list remains to prune.
                 Some((id, 0_u8))
             })
@@ -714,6 +721,19 @@ pub const extern "C" fn sandbox_render_snapshot_stride() -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_body_count() -> u32 {
     with_sandbox(|sandbox| u32::try_from(sandbox.body_count()).unwrap_or(u32::MAX))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_sleeping_body_count() -> u32 {
+    u32::try_from(with_sandbox(|sandbox| sandbox.world.sleeping_body_count())).unwrap_or(u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_body_count() -> u32 {
+    u32::try_from(with_sandbox(|sandbox| {
+        sandbox.last_step_stats.response_authority_body_count
+    }))
+    .unwrap_or(u32::MAX)
 }
 
 #[unsafe(no_mangle)]
@@ -1563,3 +1583,6 @@ mod tests {
 #[cfg(test)]
 #[path = "character_interaction_tests.rs"]
 mod character_interaction_tests;
+
+#[cfg(test)]
+mod projectile_wake_tests;

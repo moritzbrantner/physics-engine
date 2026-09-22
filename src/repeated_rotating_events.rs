@@ -79,6 +79,7 @@ pub struct RepeatedRotatingEventAdvance3d {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RepeatedRotatingEventProgress3d {
+    pub retired_body_ids: Vec<BodyId>,
     pub events: Vec<RotatingResolvedEvent3d>,
     pub remaining: RigidBoxFreeFlightConfig3d,
     pub work: RepeatedRotatingEventWorkStats3d,
@@ -248,7 +249,7 @@ pub fn advance_repeated_rotating_events(
 /// receives an evidence-only zero-time frontier and stages only the active contact island. The function never
 /// clones the complete input world; callers choose the transactional boundary appropriate to their authority.
 pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
-    boxes: &mut [RigidBox3d],
+    boxes: &mut Vec<RigidBox3d>,
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
@@ -256,6 +257,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     validate_config(config)?;
 
     let mut work = RepeatedRotatingEventWorkStats3d::default();
+    let mut retired_body_ids = Vec::new();
     let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
     let mut remaining = config.search.free_flight;
     response_scratch.ensure_body_index(boxes);
@@ -269,6 +271,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             .body_index_rebuilds()
             .saturating_sub(scratch_rebuilds_before);
         return Ok(RepeatedRotatingEventProgress3d {
+            retired_body_ids,
             events: Vec::new(),
             remaining,
             work,
@@ -302,7 +305,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         work.event_response_passes = work
             .event_response_passes
             .saturating_add(u64::from(response_passes));
-        stabilize_current_contacts(
+        retire_and_stabilize_rigid_contacts(
             boxes,
             config.solver_passes,
             broad_phase,
@@ -313,6 +316,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             },
             response_scratch,
             &mut work,
+            &mut retired_body_ids,
         )?;
         events.push(RotatingResolvedEvent3d {
             time: event_time,
@@ -341,6 +345,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         .body_index_rebuilds()
         .saturating_sub(scratch_rebuilds_before);
     Ok(RepeatedRotatingEventProgress3d {
+        retired_body_ids,
         events,
         remaining,
         work,
@@ -349,7 +354,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn advance_repeated_rotating_events_with_ballistics(
-    boxes: &mut [RigidBox3d],
+    boxes: &mut Vec<RigidBox3d>,
     projectiles: &mut Vec<BallisticSphere3d>,
     retire_on_contact: &BTreeSet<BodyId>,
     config: RepeatedRotatingEventConfig3d,
@@ -362,6 +367,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     validate_unique_ballistic_ids(boxes, projectiles)?;
 
     let mut work = RepeatedRotatingEventWorkStats3d::default();
+    let mut retired_body_ids = Vec::new();
     let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
     let mut remaining = config.search.free_flight;
     let mut events = Vec::new();
@@ -426,7 +432,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             work.event_response_passes = work
                 .event_response_passes
                 .saturating_add(u64::from(response_passes));
-            stabilize_current_contacts(
+            retire_and_stabilize_rigid_contacts(
                 boxes,
                 config.solver_passes,
                 broad_phase,
@@ -437,6 +443,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 },
                 response_scratch,
                 &mut work,
+                &mut retired_body_ids,
             )?;
             events.push(RotatingResolvedEvent3d {
                 time: hit.time,
@@ -460,7 +467,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 ballistic_work,
             )?;
             remaining = ballistic_remaining_after(remaining, frontier.time)?;
-            let modified_targets = resolve_ballistic_frontier(
+            let mut modified_targets = resolve_ballistic_frontier(
                 boxes,
                 projectiles,
                 retire_on_contact,
@@ -470,6 +477,14 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             for candidate in &frontier.hits {
                 resolved_ballistic_pairs.insert((candidate.projectile, candidate.hit.body));
             }
+            let retired = retire_impacted_boxes(
+                boxes,
+                frontier.hits.iter().map(|hit| hit.hit.body),
+                broad_phase,
+                response_scratch,
+                &mut retired_body_ids,
+            )?;
+            modified_targets.retain(|id| !retired.contains(id));
             if !modified_targets.is_empty() {
                 stabilize_current_contacts(
                     boxes,
@@ -497,10 +512,96 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
         .body_index_rebuilds()
         .saturating_sub(scratch_rebuilds_before);
     Ok(RepeatedRotatingEventProgress3d {
+        retired_body_ids,
         events,
         remaining,
         work,
     })
+}
+
+fn retire_impacted_boxes(
+    boxes: &mut Vec<RigidBox3d>,
+    hit_ids: impl IntoIterator<Item = BodyId>,
+    broad_phase: &mut RotatingBroadPhase3d,
+    scratch: &mut RotatingContactResponseScratch3d,
+    retired_body_ids: &mut Vec<BodyId>,
+) -> Result<BTreeSet<BodyId>, RepeatedRotatingEventError3d> {
+    let retired = hit_ids
+        .into_iter()
+        .filter(|id| {
+            scratch.indexed_box(boxes, *id).is_some_and(|body| {
+                body.retires_on_impact() && body.body().kind() == crate::BodyKind::Dynamic
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    if !retired.is_empty() {
+        boxes.retain(|body| !retired.contains(&body.body().id()));
+        retired_body_ids.extend(retired.iter().copied());
+        scratch.ensure_body_index(boxes);
+        // Membership changed. Refresh the derived index before any partial contact query so
+        // retired IDs cannot survive as stale stabilization or ballistic targets.
+        broad_phase
+            .response_candidate_pairs(
+                boxes,
+                RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1),
+            )
+            .map_err(RotatingContactFrontierError3d::from)?;
+    }
+    Ok(retired)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn retire_and_stabilize_rigid_contacts(
+    boxes: &mut Vec<RigidBox3d>,
+    solver_passes: u8,
+    broad_phase: &mut RotatingBroadPhase3d,
+    seed: StabilizationSeed3d<'_>,
+    scratch: &mut RotatingContactResponseScratch3d,
+    work: &mut RepeatedRotatingEventWorkStats3d,
+    retired_body_ids: &mut Vec<BodyId>,
+) -> Result<(), RepeatedRotatingEventError3d> {
+    let retired = retire_impacted_boxes(
+        boxes,
+        seed.contacts
+            .iter()
+            .flat_map(|hit| [hit.pair.left, hit.pair.right]),
+        broad_phase,
+        scratch,
+        retired_body_ids,
+    )?;
+    if retired.is_empty() {
+        return stabilize_current_contacts(boxes, solver_passes, broad_phase, seed, scratch, work);
+    }
+    let active = seed
+        .active
+        .iter()
+        .copied()
+        .filter(|id| !retired.contains(id))
+        .collect::<Vec<_>>();
+    let geometry_active = seed
+        .geometry_active
+        .iter()
+        .copied()
+        .filter(|id| !retired.contains(id))
+        .collect::<Vec<_>>();
+    let contacts = seed
+        .contacts
+        .iter()
+        .copied()
+        .filter(|hit| !retired.contains(&hit.pair.left) && !retired.contains(&hit.pair.right))
+        .collect::<Vec<_>>();
+    stabilize_current_contacts(
+        boxes,
+        solver_passes,
+        broad_phase,
+        StabilizationSeed3d {
+            active: &active,
+            geometry_active: &geometry_active,
+            contacts: &contacts,
+        },
+        scratch,
+        work,
+    )
 }
 
 fn advance_state_to_time(

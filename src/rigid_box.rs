@@ -118,6 +118,7 @@ pub struct RigidBox3d {
     pub(crate) solver_participation: SolverParticipation3d,
     pub(crate) motion_authority: MotionAuthority3d,
     pub(crate) sleep_mode: SleepMode3d,
+    pub(crate) retire_on_impact: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -191,7 +192,21 @@ impl RigidBox3d {
             solver_participation: SolverParticipation3d::Solid,
             motion_authority: MotionAuthority3d::Physics,
             sleep_mode: SleepMode3d::Normal,
+            retire_on_impact: false,
         })
+    }
+
+    /// Retire this dynamic after its first admitted impact has transferred its impulse, before
+    /// searching the remainder of the step. This is independent of transient resting contacts.
+    #[must_use]
+    pub const fn with_impact_retirement(mut self, enabled: bool) -> Self {
+        self.retire_on_impact = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn retires_on_impact(&self) -> bool {
+        self.retire_on_impact
     }
 
     /// Prevents collision response and free-flight integration from changing this box's orientation.
