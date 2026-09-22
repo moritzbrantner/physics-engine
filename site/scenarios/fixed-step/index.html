@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <base href="../../"><title>physics-engine · fixed-step comparison</title>
+  <link rel="stylesheet" href="catalog.css">
+  <style>
+    .lab{max-width:1360px;margin:auto;padding:30px 32px}h1{font-size:34px;margin:12px 0}.intro{max-width:1000px}
+    .controls{display:flex;gap:16px;flex-wrap:wrap;align-items:end;margin:24px 0 18px}label{display:grid;gap:8px;font-size:13px;color:color-mix(in srgb,CanvasText 75%,Canvas)}
+    select,button{font:inherit;color:#edf6fc;background:#162735;border:1px solid #4d6576;border-radius:6px;padding:10px 14px}button{cursor:pointer}button:disabled{opacity:.45;cursor:wait}
+    :focus-visible{outline:3px solid #90e4ce;outline-offset:3px}.world{border:1px solid #304955;border-radius:9px;overflow:hidden;background:#10202e}canvas{display:block;width:100%;height:570px}
+    .status{padding:13px 17px;margin:0;background:#142532;font:14px ui-monospace,monospace;color:#dbe8ef}.method{font-size:14px;line-height:1.65;color:color-mix(in srgb,CanvasText 75%,Canvas);max-width:1100px}
+    .tag{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:CanvasText}a{color:CanvasText}@media(max-width:700px){.lab{padding:20px}canvas{height:410px}.controls{gap:10px}}
+  </style>
+</head>
+<body><main class="lab">
+  <a href="index.html">← All scenarios</a>
+  <h1>Fixed-step physics comparison</h1>
+  <p class="intro">The same Rust-owned 32-crate tower. Compare a bounded floating-point impulse solver with the existing event solver.</p>
+  <div class="controls" aria-label="Simulation controls">
+    <label>Solver<select id="solver" aria-label="Solver"><option value="approximate">Fixed step · f64 approximation</option><option value="event">Sampled event · f64 reference</option></select></label>
+    <label>Crate rotation<select id="crates"><option value="free">Free rotation</option><option value="upright">Locked upright</option></select></label>
+    <label>Projectile<select id="projectile"><option value="arrow">Arrow</option><option value="sphere">Sphere</option><option value="rigid">Rigid box</option></select></label>
+    <button id="hit" disabled>Shoot tower</button><button id="miss" disabled>Shoot beside tower</button><button id="pause" disabled>Resume</button><button id="reset" disabled>Reset</button>
+  </div>
+  <section class="world" aria-label="Physics comparison viewport">
+    <canvas id="scene" width="1280" height="570" aria-label="Three-dimensional tower of crates"></canvas>
+    <p class="status" id="status" role="status" aria-live="polite">Loading Rust/WASM…</p>
+  </section>
+  <p class="tag" id="method-title">Explicit approximation · 4 substeps · 8 impulse iterations</p>
+  <p class="method" id="method">Forces and impulses update velocity; the new velocity advances position and orientation. Contact manifolds retain accumulated impulses for the next substep. Fast projectiles use translation-only sweeps. Rapidly rotating continuous collisions are not exact. Changing a control resets both the fixture and its caches.</p>
+  <p class="method">Rust owns all movement, contacts, waking and retirement. This page only sends commands and renders snapshots. Timing below is browser diagnostic evidence, not a stable benchmark or FPS claim.</p>
+  <script type="module" src="fixed-step-lab.js"></script>
+</main></body></html>

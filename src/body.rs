@@ -12,7 +12,7 @@ pub enum BodyKind {
     Dynamic,
 }
 
-/// Collision response properties expressed without floating-point state.
+/// Legacy quantized material coefficients retained at the public compatibility boundary.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Material {
     restitution_milli: u16,

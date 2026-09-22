@@ -4,6 +4,14 @@ on:
   pull_request:
     paths:
       - "src/query.rs"
+      - "src/approximate/**"
+      - "tests/fixed_step_approximation.rs"
+      - "scripts/benchmark-fixed-step.mjs"
+      - "src/float_math.rs"
+      - "src/numeric.rs"
+      - "src/contact_wake.rs"
+      - "tests/projectile_wake_admission.rs"
+      - "scripts/benchmark-projectile-wake.mjs"
       - "src/ballistic_sphere.rs"
       - "src/rigid_box.rs"
       - "src/linear_contact.rs"
@@ -90,6 +98,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/run-sandbox-performance.sh
+
+      - name: Compare fixed-step approximation with event solver
+        run: node scripts/benchmark-fixed-step.mjs performance-evidence/head.wasm performance-evidence/fixed-step.json performance-evidence/base.wasm
 
       - name: Record independent character gameplay options
         run: |

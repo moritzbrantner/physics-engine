@@ -5,8 +5,9 @@ use crate::{
     BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
     BallisticSphereSweepHit3d, BodyId, BodyKind, MATERIAL_SCALE, ORIENTATION_SCALE, Orientation3d,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, SampledContactTime3d, Vec3i,
-    box_inertia, sample_rigid_box_free_flight,
-    wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
+    box_inertia,
+    numeric::{ArithmeticError, mul_div_round_i128, mul_div_round_u128},
+    sample_rigid_box_free_flight,
 };
 
 const BALLISTIC_TIME_SCALE: u64 = 1_u64 << 32;
@@ -94,8 +95,8 @@ impl From<AngularError3d> for BallisticTimelineError3d {
     }
 }
 
-impl From<WideRatioError> for BallisticTimelineError3d {
-    fn from(_: WideRatioError) -> Self {
+impl From<ArithmeticError> for BallisticTimelineError3d {
+    fn from(_: ArithmeticError) -> Self {
         Self::ArithmeticOverflow
     }
 }
@@ -329,7 +330,7 @@ fn advance_projectile_exact(
     projectile: &mut BallisticSphere3d,
     free_flight: RigidBoxFreeFlightConfig3d,
 ) -> Result<(), BallisticTimelineError3d> {
-    let timestep = free_flight.exact_timestep()?;
+    let timestep = free_flight.timestep()?;
     if timestep.is_zero() {
         return Ok(());
     }

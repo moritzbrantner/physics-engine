@@ -23,3 +23,9 @@ test("legacy errors retain their stable public message", () => {
     "Physics stopped fail-closed with sandbox error 3. Reset to start from the deterministic fixture again.",
   );
 });
+
+// The error number is a stable compatibility surface; the label must not imply exact math.
+test("numeric range errors describe the production floating-point path", () => {
+  assert.match(physicsFailureMessage(6, 612), /remaining-time numerical range/);
+  assert.doesNotMatch(physicsFailureMessage(6, 612), /exact/);
+});

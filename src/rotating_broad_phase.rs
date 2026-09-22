@@ -142,6 +142,22 @@ impl RotatingBroadPhase3d {
             self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
             self.rebuild(exact);
         } else {
+            // A parked proxy retains the same geometry/identity. Refresh dynamic and authority
+            // metadata in place instead of rebuilding an entire BVH when it sleeps or wakes.
+            let mut metadata_changed = false;
+            for body in &exact {
+                let previous = self.exact[&body.id];
+                if previous.kind != body.kind
+                    || previous.solver_participation != body.solver_participation
+                    || previous.receives_solver_response != body.receives_solver_response
+                {
+                    self.tree.update_metadata(*body);
+                    metadata_changed = true;
+                }
+            }
+            if metadata_changed {
+                self.stats.incremental_updates = self.stats.incremental_updates.saturating_add(1);
+            }
             let mut escaped = exact
                 .iter()
                 .copied()
@@ -365,7 +381,7 @@ impl RotatingBroadPhase3d {
         boxes: &[RigidBox3d],
         config: RigidBoxFreeFlightConfig3d,
     ) -> Result<Vec<BoundedBody3d>, RotatingBroadPhaseError3d> {
-        config.exact_timestep()?;
+        config.timestep()?;
         let mut ids = BTreeSet::new();
         let mut fixed_ids = BTreeSet::new();
         let mut bounded = Vec::with_capacity(boxes.len());
@@ -416,13 +432,9 @@ impl RotatingBroadPhase3d {
         if exact.len() != self.exact.len() || exact.len() != self.tree.len() {
             return false;
         }
-        exact.iter().all(|body| {
-            self.exact.get(&body.id).is_some_and(|previous| {
-                previous.kind == body.kind
-                    && previous.solver_participation == body.solver_participation
-                    && previous.receives_solver_response == body.receives_solver_response
-            }) && self.tree.has_leaf(body.id)
-        })
+        exact
+            .iter()
+            .all(|body| self.exact.contains_key(&body.id) && self.tree.has_leaf(body.id))
     }
 
     fn rebuild(&mut self, exact: Vec<BoundedBody3d>) {
@@ -802,6 +814,43 @@ mod tests {
                 .expect("valid sensor candidate query")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn sleep_wake_metadata_updates_preserve_pairs_without_tree_rebuilds() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut retained = RotatingBroadPhase3d::default();
+        let stationary = fixed(1, Vec3i::ZERO);
+        let neighbor = fixed(2, Vec3i::new(1, 0, 0));
+        assert!(
+            retained
+                .response_candidate_pairs(&[stationary.clone(), neighbor.clone()], config)
+                .unwrap()
+                .is_empty()
+        );
+        let initial = retained.stats().rebuilds;
+        for active in [true, false, true, false] {
+            let body = if active {
+                dynamic(1, Vec3i::ZERO, Vec3i::ZERO)
+            } else {
+                stationary.clone()
+            };
+            let boxes = [body, neighbor.clone()];
+            let expected = RotatingBroadPhase3d::default()
+                .response_candidate_pairs(&boxes, config)
+                .unwrap();
+            assert_eq!(
+                retained.response_candidate_pairs(&boxes, config).unwrap(),
+                expected
+            );
+            assert_eq!(
+                retained.stats().rebuilds,
+                initial,
+                "metadata changes do not discard spatial topology"
+            );
+            retained.tree.validate_structure().unwrap();
+        }
+        assert_eq!(retained.stats().incremental_updates, 4);
     }
 
     #[test]

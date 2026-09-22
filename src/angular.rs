@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::{
     BodyId, BodyKind, RigidBody,
-    wide_ratio::{ExactRatio, WideRatioError},
+    numeric::{ArithmeticError, Ratio},
 };
 
 /// Fixed-point quaternion scale. `1 << 30` represents one unit.
@@ -35,7 +35,7 @@ impl Orientation3d {
     /// Renormalizes the quaternion with integer arithmetic.
     ///
     /// Components are rounded to nearest with half values away from zero, keeping authoritative
-    /// orientation state independent of platform floating-point behavior.
+    /// the existing quantized orientation format. This is a compatibility format, not a ban on floats.
     ///
     /// # Errors
     ///
@@ -192,15 +192,15 @@ pub fn integrate_orientation(
         ));
     }
 
-    let timestep = ExactRatio::new(
+    let timestep = Ratio::new(
         u128::from(timestep_numerator.unsigned_abs()),
         u128::from(timestep_denominator.unsigned_abs()),
     )
     .map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
+    integrate_orientation_scaled(orientation, angular_velocity, timestep)
 }
 
-/// Internal exact-rational counterpart to [`integrate_orientation`], retained for direct compatibility
+/// Internal ratio-input counterpart to [`integrate_orientation`], retained for direct compatibility
 /// coverage of large but reducible ratios.
 #[cfg(test)]
 pub(crate) fn integrate_orientation_ratio(
@@ -209,15 +209,15 @@ pub(crate) fn integrate_orientation_ratio(
     timestep_numerator: u128,
     timestep_denominator: u128,
 ) -> Result<Orientation3d, AngularError3d> {
-    let timestep = ExactRatio::new(timestep_numerator, timestep_denominator)
+    let timestep = Ratio::new(timestep_numerator, timestep_denominator)
         .map_err(|_| AngularError3d::ArithmeticOverflow)?;
-    integrate_orientation_exact_ratio(orientation, angular_velocity, timestep)
+    integrate_orientation_scaled(orientation, angular_velocity, timestep)
 }
 
-pub(crate) fn integrate_orientation_exact_ratio(
+pub(crate) fn integrate_orientation_scaled(
     orientation: Orientation3d,
     angular_velocity: AngularVelocity3d,
-    timestep: ExactRatio,
+    timestep: Ratio,
 ) -> Result<Orientation3d, AngularError3d> {
     let orientation = orientation.normalized()?;
     if timestep.is_zero() || angular_velocity.is_zero() {
@@ -249,10 +249,10 @@ pub(crate) fn integrate_orientation_exact_ratio(
         .map_err(|_| AngularError3d::ArithmeticOverflow)?;
 
     let next = [
-        integrated_component_exact(qx, derivative[0], derivative_time)?,
-        integrated_component_exact(qy, derivative[1], derivative_time)?,
-        integrated_component_exact(qz, derivative[2], derivative_time)?,
-        integrated_component_exact(qw, derivative[3], derivative_time)?,
+        integrated_component_scaled(qx, derivative[0], derivative_time)?,
+        integrated_component_scaled(qy, derivative[1], derivative_time)?,
+        integrated_component_scaled(qz, derivative[2], derivative_time)?,
+        integrated_component_scaled(qw, derivative[3], derivative_time)?,
     ];
     normalize_orientation_components(next)
 }
@@ -334,20 +334,20 @@ pub fn contact_angular_impulse(
     ])
 }
 
-fn integrated_component_exact(
+fn integrated_component_scaled(
     component: i128,
     derivative: i128,
-    timestep: ExactRatio,
+    timestep: Ratio,
 ) -> Result<i128, AngularError3d> {
     let delta = timestep
         .mul_round_i128(derivative)
-        .map_err(map_wide_ratio_error)?;
+        .map_err(map_arithmetic_error)?;
     component
         .checked_add(delta)
         .ok_or(AngularError3d::ArithmeticOverflow)
 }
 
-fn map_wide_ratio_error(_: WideRatioError) -> AngularError3d {
+fn map_arithmetic_error(_: ArithmeticError) -> AngularError3d {
     AngularError3d::ArithmeticOverflow
 }
 

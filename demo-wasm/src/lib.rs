@@ -623,6 +623,15 @@ fn with_sandbox_mut<R>(callback: impl FnOnce(&mut Sandbox) -> R) -> R {
     SANDBOX.with(|sandbox| callback(&mut sandbox.borrow_mut()))
 }
 
+/// Identify the compiled math backend without inferring it from timings or build flags.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_numeric_backend() -> i32 {
+    match physics_engine::numeric::NUMERICAL_BACKEND {
+        physics_engine::numeric::NumericalBackend::Float64 => 64,
+        physics_engine::numeric::NumericalBackend::ExactReference => 0,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_reset() {
     with_sandbox_mut(|sandbox| {
@@ -1554,3 +1563,60 @@ mod tests {
 #[cfg(test)]
 #[path = "character_interaction_tests.rs"]
 mod character_interaction_tests;
+
+#[cfg(test)]
+mod projectile_wake_tests;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_sleeping_body_count() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.world.sleeping_body_count() as u64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_sleeping(index: u32) -> i32 {
+    with_sandbox(|sandbox| {
+        sandbox
+            .world
+            .boxes()
+            .nth(index as usize)
+            .map_or(-1, |body| {
+                i32::from(sandbox.world.is_sleeping(body.body().id()))
+            })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_parked_bodies_woken() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.parked_bodies_woken as u64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_parked_wake_retries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.parked_wake_retries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.response_authority_body_count as u64)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.wake_probe_broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_tail_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.wake_probe_tail_broad_phase_queries)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_response_passes() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.wake_probe_response_passes))
+}
+
+mod approximate;

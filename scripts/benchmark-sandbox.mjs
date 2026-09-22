@@ -68,10 +68,10 @@ async function measure(path) {
       tail_slices: readCounter("sandbox_last_tail_slices"),
       tail_replays: readCounter("sandbox_last_tail_replays"),
       tail_candidate_pairs: readCounter("sandbox_last_tail_candidate_pairs"),
-      tail_broad_phase_queries: readCounter("sandbox_last_tail_broad_phase_queries"),
+      tail_broad_phase_queries: readCounter("sandbox_last_tail_broad_phase_queries") + (readCounter("sandbox_last_wake_probe_tail_broad_phase_queries") ?? 0),
       tail_broad_phase_rebuilds: readCounter("sandbox_last_tail_broad_phase_rebuilds"),
       tail_broad_phase_reuses: readCounter("sandbox_last_tail_broad_phase_reuses"),
-      broad_phase_queries: readCounter("sandbox_last_broad_phase_queries"),
+      broad_phase_queries: readCounter("sandbox_last_broad_phase_queries") + (readCounter("sandbox_last_wake_probe_broad_phase_queries") ?? 0),
       broad_phase_rebuilds: readCounter("sandbox_last_broad_phase_rebuilds"),
       broad_phase_reuses: readCounter("sandbox_last_broad_phase_reuses"),
       broad_phase_incremental_updates: readCounter("sandbox_last_broad_phase_incremental_updates"),
@@ -95,7 +95,13 @@ async function measure(path) {
   }
   settle();
   for (let tick = 0; tick < 120; tick += 1) step(0, -420);
-  const result = { wasm_sha256: hash(bytes), cases: [] };
+  const result = {
+    wasm_sha256: hash(bytes),
+    numerical_backend: typeof engine.sandbox_numeric_backend === "function"
+      ? (engine.sandbox_numeric_backend() === 64 ? "float64" : "exact-reference")
+      : "legacy-unreported",
+    cases: [],
+  };
   for (const name of cases) {
     const measurements = [];
     for (let trial = 0; trial < trials; trial += 1) {

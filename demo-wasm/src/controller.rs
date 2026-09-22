@@ -1,7 +1,7 @@
 use physics_engine::Vec3i;
 
 #[path = "baking.rs"]
-mod baking;
+pub(crate) mod baking;
 #[path = "scenario_rules.rs"]
 pub(crate) mod scenario_rules;
 
