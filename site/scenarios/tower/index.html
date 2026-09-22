@@ -6,6 +6,7 @@
     <base href="../../" />
     <title>physics-engine · tower stability scenario</title>
     <link rel="stylesheet" href="styles.css" />
+    <style>.setting-row[hidden], .pair-table tr > :nth-child(3) { display: none; }</style>
   </head>
   <body class="settings-open" data-scenario="tower">
     <main class="app-shell">
@@ -32,7 +33,7 @@
         <header class="topbar">
           <div class="brand">
             <span class="eyebrow">physics-engine</span>
-            <span class="topbar-title">Tower stability</span>
+            <span class="topbar-title">Tower stability · fixed step</span>
           </div>
           <div class="actions" aria-label="Simulation controls">
             <a class="scenario-nav" href="./">Scenarios</a>
@@ -70,9 +71,14 @@
         </div>
 
         <p class="settings-intro">
-          Settings state is validated by the shared settings foundation. The physics engine remains
-          authoritative for collision, response, stabilization, and pair-policy semantics.
+          The bounded f64 solver runs four substeps with up to eight contact iterations each.
+          Two bounded geometric passes correct residual overlap with fixed colliders without adding velocity.
+          Rust owns movement, swept projectile contacts and sleeping. Settings are validated by the shared foundation.
         </p>
+
+        <p class="setting-note">Legacy event stepping remains available on the
+          <a href="scenarios/fixed-step/?solver=event">solver comparison page</a>; it can still fail on rotating stacks.
+          This tower always uses fixed-step physics. Sweeps approximate rotation within each substep.</p>
 
         <section class="settings-section" aria-labelledby="simulation-title">
           <h2 id="simulation-title">Simulation</h2>
@@ -123,7 +129,7 @@
               </select>
             </label>
 
-            <label class="setting-row" for="fixed-geometry-setting">
+            <label class="setting-row" for="fixed-geometry-setting" hidden>
               <span>
                 <strong>Fixed collision geometry</strong>
                 <small>Preparation is a storage/performance choice, not a gameplay rule.</small>
@@ -154,10 +160,9 @@
           </div>
 
           <p>
-            Collision eligibility and response cost are separate controls. Every pair can be enabled or
-            disabled. For fixed-world interactions, the stabilization budget can reduce the engine-owned
-            hard limit of 16 passes. <strong>Engine default</strong> keeps the ordinary budget; <strong>0</strong>
-            disables only post-step fixed-boundary stabilization for that pair.
+            Collision filters are applied by Rust. Disabling a pair deliberately changes physics;
+            disabling World ↔ Crate removes floor support. Legacy baking and per-pair stabilization
+            budgets are not supported by this solver and are not offered here.
           </p>
 
           <div class="pair-table-wrap">
@@ -166,7 +171,7 @@
                 <tr>
                   <th scope="col">Object pair</th>
                   <th scope="col">Collide</th>
-                  <th scope="col">Fixed-boundary stabilization</th>
+                  <th scope="col" hidden>Legacy stabilization</th>
                 </tr>
               </thead>
               <tbody>
@@ -231,9 +236,8 @@
           </div>
 
           <p class="setting-note">
-            Stabilization budgets do not change material restitution/friction, collision layers, sleep
-            settlement, or the engine hard limit. More pair-policy dimensions can be added here only after
-            the corresponding physics stages consume them.
+            Projectile selection changes the next shot without resetting the tower or existing
+            projectiles. Changing physical rules resets the fixture and its caches.
           </p>
         </section>
 

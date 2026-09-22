@@ -9,6 +9,8 @@
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
 mod bookkeeping;
 mod contact;
+mod position;
+pub use position::PositionReport;
 mod convergence;
 pub use convergence::{Convergence, ConvergenceStats};
 mod geometry;
@@ -203,6 +205,9 @@ pub struct Config {
     pub gravity: Vector,
     pub substeps: u8,
     pub velocity_iterations: u8,
+    /// Optional bounded position-only correction against fixed colliders, after integration.
+    /// Zero preserves the comparison kernel; the interactive tower explicitly selects two.
+    pub fixed_position_iterations: u8,
     /// Scene-space length, default 0.02. Chosen explicitly for the legacy 36-unit crates.
     pub contact_slop: Scalar,
     pub sleep_speed: Scalar,
@@ -217,6 +222,7 @@ impl Default for Config {
             gravity: Vector(0.0, -3600.0, 0.0),
             substeps: 4,
             velocity_iterations: 8,
+            fixed_position_iterations: 0,
             contact_slop: 0.02,
             sleep_speed: 1.0,
             sleep_seconds: 0.5,
@@ -240,6 +246,7 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    pub position: PositionReport,
     pub substeps: u32,
     pub pair_tests: u64,
     pub narrow_tests: u64,
@@ -310,6 +317,7 @@ impl World {
             || config.substeps > 32
             || config.velocity_iterations == 0
             || config.velocity_iterations > 64
+            || config.fixed_position_iterations > 8
             || config.convergence.is_some_and(|c| !c.valid())
             || !config.contact_slop.is_finite()
             || config.contact_slop <= 0.0
@@ -883,6 +891,7 @@ impl World {
                 b.cached_bounds = contact::bounds(b);
             }
             self.constraints = constraints;
+            self.correct_fixed_positions(h, &mut report.position)?;
             self.sleep_quiet_islands();
             // Retirement is local; remove all affected cached edges before indexed graph reuse.
             self.bookkeeping.retired.sort_unstable();
