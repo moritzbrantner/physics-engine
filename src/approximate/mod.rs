@@ -631,7 +631,7 @@ impl World {
                 let used = &mut self.bookkeeping.used;
                 used.clear();
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
-                for point in m.points {
+                for point in &m.points {
                     let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
                     let arms = [point.ra, point.rb];
                     let k = effective_mass::<PREPARED>(
@@ -1039,12 +1039,10 @@ impl World {
                     continue;
                 }
                 report.narrow_tests += 1;
-                // Avoid pair-cache churn for actively rotating bodies. Their geometry changes
-                // each substep; the original narrow phase is cheaper than retaining stale pairs.
-                let stable_orientation =
-                    |b: &Body| b.mass == 0.0 || b.sleeping || b.rotation_locked;
-                let current = if CACHED && stable_orientation(a) && stable_orientation(b) {
-                    self.geometry.current(
+                // GeometryCache shares read-only frames even for rotating pairs; it retains
+                // complete pair results only when both orientation dependencies are stable.
+                let current = if CACHED {
+                    self.geometry.query(
                         [i, j],
                         [a, b],
                         self.config.contact_slop,
@@ -1064,7 +1062,17 @@ impl World {
                                     .min_component()
                                     .min(b.shape.half_extents().min_component())
                     {
-                        contact::swept(a, b, h, self.config.contact_slop, &mut report.geometry)
+                        if CACHED {
+                            self.geometry.swept(
+                                [i, j],
+                                [a, b],
+                                h,
+                                self.config.contact_slop,
+                                &mut report.geometry,
+                            )
+                        } else {
+                            contact::swept(a, b, h, self.config.contact_slop, &mut report.geometry)
+                        }
                     } else {
                         None
                     }

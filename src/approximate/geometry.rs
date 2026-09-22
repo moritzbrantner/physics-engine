@@ -63,7 +63,8 @@ struct Pair {
     keys: [ShapeKey; 2],
     positions: [[u64; 3]; 2],
     margin: u64,
-    current: Option<contact::Manifold>,
+    // Negative entries retain no manifold allocation; positive storage is reused on refresh.
+    current: Option<Box<contact::Manifold>>,
     projections: contact::BoxProjections,
     epoch: u64,
 }
@@ -71,6 +72,7 @@ struct Pair {
 pub(super) struct GeometryCache {
     frames: Vec<Option<Frame>>,
     pairs: BTreeMap<(BodyId, BodyId), Pair>,
+    clipping: contact::ClipScratch,
     epoch: u64,
     retained_bytes: usize,
 }
@@ -111,6 +113,57 @@ impl GeometryCache {
         });
         axes
     }
+    pub fn query(
+        &mut self,
+        indices: [usize; 2],
+        bodies: [&Body; 2],
+        margin: Scalar,
+        work: &mut GeometryStats,
+    ) -> Option<contact::Manifold> {
+        let [a, b] = bodies;
+        let stable = |b: &Body| b.mass == 0.0 || b.sleeping || b.rotation_locked;
+        if !stable(a) || !stable(b) {
+            // No pair keys, projections, retained manifold, or map lookup on the rotating path.
+            // Frames are nevertheless shared by every pair using the same body in this pass.
+            if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                let frames = [
+                    self.frame(indices[0], a, work),
+                    self.frame(indices[1], b, work),
+                ];
+                work.current_queries += 1;
+                work.manifold_refreshes += 1;
+                return contact::box_current_with_frames(
+                    a,
+                    b,
+                    margin,
+                    frames,
+                    work,
+                    &mut self.clipping,
+                );
+            }
+            return contact::current_counted(a, b, margin, work);
+        }
+        self.current(indices, bodies, margin, work)
+    }
+    pub fn swept(
+        &mut self,
+        indices: [usize; 2],
+        bodies: [&Body; 2],
+        dt: Scalar,
+        margin: Scalar,
+        work: &mut GeometryStats,
+    ) -> Option<contact::Manifold> {
+        let [a, b] = bodies;
+        if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+            let frames = [
+                self.frame(indices[0], a, work),
+                self.frame(indices[1], b, work),
+            ];
+            contact::box_swept_with_frames(a, b, dt, margin, frames, work, &mut self.clipping)
+        } else {
+            contact::swept(a, b, dt, margin, work)
+        }
+    }
     pub fn current(
         &mut self,
         indices: [usize; 2],
@@ -131,7 +184,7 @@ impl GeometryCache {
             pair.epoch = self.epoch;
             work.manifold_hits += 1;
             work.negative_hits += u64::from(pair.current.is_none());
-            return pair.current.clone();
+            return pair.current.as_deref().cloned();
         }
         let frames = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
             Some([
@@ -159,7 +212,15 @@ impl GeometryCache {
                 work.projection_reuses += 1;
             }
             work.manifold_refreshes += 1;
-            contact::box_prepared(a, b, margin, &pair.projections, frames, work)
+            contact::box_prepared(
+                a,
+                b,
+                margin,
+                &pair.projections,
+                frames,
+                work,
+                &mut self.clipping,
+            )
         } else {
             // Already counted the query; the uncached sphere path records its own work.
             work.current_queries -= 1;
@@ -175,7 +236,7 @@ impl GeometryCache {
                 old.swept = new.swept;
                 old.time = new.time;
             }
-            _ => pair.current = result.clone(),
+            _ => pair.current = result.clone().map(Box::new),
         }
         pair.epoch = self.epoch;
         result
@@ -198,16 +259,17 @@ impl GeometryCache {
         self.retained_bytes
     }
     fn measure_retained_bytes(&self) -> usize {
-        self.frames.capacity() * std::mem::size_of::<Option<Frame>>()
+        self.clipping.retained_bytes()
+            + self.frames.capacity() * std::mem::size_of::<Option<Frame>>()
             + self
                 .pairs
                 .values()
                 .map(|p| {
                     std::mem::size_of::<((BodyId, BodyId), Pair)>()
                         + p.projections.retained_bytes()
-                        + p.current.as_ref().map_or(0, |m| {
-                            m.points.capacity() * std::mem::size_of::<contact::Point>()
-                        })
+                        + p.current
+                            .as_ref()
+                            .map_or(0, |_| std::mem::size_of::<contact::Manifold>())
                 })
                 .sum::<usize>()
     }

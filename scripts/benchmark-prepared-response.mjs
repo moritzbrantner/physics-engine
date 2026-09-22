@@ -6,8 +6,9 @@ import os from 'node:os';
 
 const [basePath, candidatePath, output, option] = process.argv.slice(2);
 const bookkeepingMode = option === '--bookkeeping';
-const geometryMode = option === '--geometry';
-if (option && !bookkeepingMode && !geometryMode) throw new Error('Unknown option; expected --bookkeeping or --geometry');
+const inlineGeometryMode = option === '--geometry-inline';
+const geometryMode = option === '--geometry' || inlineGeometryMode;
+if (option && !bookkeepingMode && !geometryMode) throw new Error('Unknown option; expected --bookkeeping, --geometry or --geometry-inline');
 if (!basePath || !candidatePath || !output) {
   throw new Error('usage: node scripts/benchmark-prepared-response.mjs base.wasm candidate.wasm result.json');
 }
@@ -40,6 +41,7 @@ async function replay(build, upright, type, shot, measured=true) {
   assert.equal(e.sandbox_reset_tower_with_baking_options(rules,0,1),0);
   assert.equal(e.approximate_reset_from_sandbox(4,8),0);
   const raw = {settling:[],active:[],sleeping:[]};
+  const scratchPeakBytes = {settling:0,active:0,sleeping:0};
   const trace = createHash('sha256');
   const work = Array(11).fill(0);
   const preparation = {bodies:0,inertias:0,inertia_applications:0};
@@ -87,9 +89,16 @@ async function replay(build, upright, type, shot, measured=true) {
       }
     }
     if (geometryMode) {
-      // All pre-existing counters, including bookkeeping, remain part of the equality oracle.
+      // Inline manifolds deliberately change retained storage size, not physical work.
+      // Only the explicit --geometry-inline experiment separates counter 23 from the equality
+      // hash; record its peak for BOTH builds. Every other old counter must still match.
       for (let i=14;i<=24;i++) {
-        const v=e.approximate_stat(i); assert.ok(Number.isFinite(v)); observations.push(v);
+        const v=e.approximate_stat(i); assert.ok(Number.isFinite(v));
+        if (i===23) {
+          const key=phase==='settling'?'settling':quiet?'sleeping':'active';
+          scratchPeakBytes[key]=Math.max(scratchPeakBytes[key],v);
+        }
+        if (!inlineGeometryMode || i!==23) observations.push(v);
       }
       if (build==='candidate') {
         const row=geometry[phase==='settling'?'settling':quiet?'sleeping':'active'];
@@ -134,7 +143,7 @@ async function replay(build, upright, type, shot, measured=true) {
   assert.ok(!upright||!rotated);
   assert.ok(shot==='hit'?changed:!changed);
   if(shot==='miss')assert.equal(peakAwake,0);
-  return {geometry:geometryMode&&build==='candidate'?Object.fromEntries(Object.entries(geometry).map(([phase,row])=>[phase,Object.fromEntries(geometryNames.map((n,i)=>[n,row[i]]))])):null,
+  return {scratch_peak_bytes: geometryMode?scratchPeakBytes:null, geometry:geometryMode&&build==='candidate'?Object.fromEntries(Object.entries(geometry).map(([phase,row])=>[phase,Object.fromEntries(geometryNames.map((n,i)=>[n,row[i]]))])):null,
     bookkeeping:bookkeepingMode&&build==='candidate'?Object.fromEntries(Object.entries(bookkeeping).map(([phase,row])=>[phase,Object.fromEntries(bookkeepingNames.map((n,i)=>[n,row[i]]))])):null,
     trace_sha256:trace.digest('hex'),work,preparation:build==='candidate'?preparation:null,
     max_floor_penetration:peakFloor,crates_changed:changed,crates_rotated:rotated,max_awake_crates:peakAwake,
@@ -152,7 +161,7 @@ for(const upright of rotations)for(const [projectile,type] of [['sphere',0],['ar
   for(let trial=0;trial<trials;trial++) {
     const pair={trial};
     for(const build of trial%2?['candidate','base']:['base','candidate'])pair[build]=await replay(build,upright,type,shot);
-    assert.equal(pair.base.trace_sha256,pair.candidate.trace_sha256,'base/candidate physical state and old work counters diverged');
+    assert.equal(pair.base.trace_sha256,pair.candidate.trace_sha256,'base/candidate physical state or compared work counters diverged');
     if(trial)assert.equal(pair.base.trace_sha256,runs[0].base.trace_sha256,'same-build replay diverged');
     runs.push(pair);
   }
@@ -166,7 +175,9 @@ for(const upright of rotations)for(const [projectile,type] of [['sphere',0],['ar
   writeFileSync(output+'.partial',JSON.stringify({complete:false,records},null,2)+'\n');
   console.log(JSON.stringify({crates:record.crates,projectile,shot,bit_identical:true,phases}));
 }
-writeFileSync(output,JSON.stringify({kind:geometryMode?'contact-geometry-reuse-v1':bookkeepingMode?'fixed-step-bookkeeping-v1':'prepared-response-v1',cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
+writeFileSync(output,JSON.stringify({kind:inlineGeometryMode?'contact-geometry-inline-v2':geometryMode?'contact-geometry-reuse-v1':bookkeepingMode?'fixed-step-bookkeeping-v1':'prepared-response-v1',cpu:os.cpus()[0]?.model,node:process.version,v8:process.versions.v8,
   base_sha256:hash(bytes.base),candidate_sha256:hash(bytes.candidate),trials,post_shot_ticks:ticks,settle_ticks:240,substeps:4,iterations:8,
   note:'Alternating build order after module warmup. Timings include only calls to approximate_step_velocity, not setup or observations. Settling, non-quiescent post-shot ticks, and quiescent ticks are separate. Raw repetitions retained; no wall-clock gate. Hash includes all visible poses, linear velocities, sleep flags and the pre-existing report counters.',
+  excluded_memory_stat_indices:inlineGeometryMode?[23]:[],
+  memory_note:inlineGeometryMode?'Counter 23 measures retained scratch capacity. Inline manifold storage changes its size; record both builds, do not classify memory layout as physical state. All other old counters 0..24 remain equal.':null,
   crate_mode:crateMode,passed:true,records},null,2)+'\n');

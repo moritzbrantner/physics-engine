@@ -285,3 +285,150 @@ fn zero_and_quiescent_steps_do_no_geometry_work_but_report_retained_memory() {
         assert_eq!(r.geometry.retained_bytes, retained as u64);
     }
 }
+
+#[test]
+fn rotating_pairs_share_frames_without_retaining_pair_payloads() {
+    let mut cache = GeometryCache::default();
+    let mut bodies = (0..4)
+        .map(|i| {
+            let mut b = Body::new(
+                BodyId(i + 1),
+                Shape::Box(Vector(3.0, 1.0, 2.0)),
+                Vector(i as f64, 0.0, 0.0),
+                2.0,
+            );
+            b.orientation = Quaternion(0.1 * i as f64, 0.2, 0.3, 0.9).normalized();
+            b
+        })
+        .collect::<Vec<_>>();
+    for pass in 0..3 {
+        if pass == 2 {
+            bodies[1].orientation = bodies[1].orientation.integrate(Vector::X, 0.01);
+        }
+        cache.begin(bodies.len());
+        let mut work = GeometryStats::default();
+        for i in 0..bodies.len() {
+            for j in i + 1..bodies.len() {
+                let actual = cache.query([i, j], [&bodies[i], &bodies[j]], 0.02, &mut work);
+                assert_eq!(
+                    bits(&actual),
+                    bits(&contact::current(&bodies[i], &bodies[j], 0.02))
+                );
+            }
+        }
+        cache.finish(&mut work);
+        assert_eq!(work.frame_preparations, [4, 0, 1][pass]);
+        assert_eq!(work.frame_preparations + work.frame_reuses, 12);
+        assert_eq!(work.manifold_hits + work.projection_preparations, 0);
+        assert!(
+            cache.pairs.is_empty(),
+            "rotating pairs must not allocate pair entries"
+        );
+    }
+    cache.remove(BodyId(2));
+    bodies[1].shape = Shape::Box(Vector(1.1, 0.8, 2.5));
+    cache.begin(bodies.len());
+    let mut work = GeometryStats::default();
+    let actual = cache.query([0, 1], [&bodies[0], &bodies[1]], 0.02, &mut work);
+    assert_eq!(
+        bits(&actual),
+        bits(&contact::current(&bodies[0], &bodies[1], 0.02))
+    );
+    assert_eq!(
+        work.frame_preparations, 2,
+        "reused IDs must not reuse old indexed frames"
+    );
+}
+
+#[test]
+fn separated_rotating_query_short_circuits_without_pair_or_polygon_storage() {
+    let mut cache = GeometryCache::default();
+    let mut b = pair();
+    b[1].position = Vector(100.0, 0.0, 0.0);
+    cache.begin(2);
+    let mut work = GeometryStats::default();
+    assert!(
+        cache
+            .query([0, 1], [&b[0], &b[1]], 0.02, &mut work)
+            .is_none()
+    );
+    assert_eq!(work.sat_axes_tested, 1);
+    assert_eq!(work.clip_passes, 0);
+    assert_eq!(cache.clipping.retained_bytes(), 0);
+    assert!(cache.pairs.is_empty());
+}
+
+#[test]
+fn rotating_frame_and_sweep_reuse_matches_uncached_oracle() {
+    let mut cache = GeometryCache::default();
+    let mut b = pair();
+    let mut seed = 911_u64;
+    let mut value = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 32) as f64 / u32::MAX as f64 * 2.0 - 1.0
+    };
+    let mut contacts = 0;
+    let mut misses = 0;
+    let mut swept_hits = 0;
+    for _ in 0..1200 {
+        b[0].orientation = Quaternion(value(), value(), value(), value()).normalized();
+        b[1].orientation = Quaternion(value(), value(), value(), value()).normalized();
+        b[1].position = Vector(value() * 6.0, value() * 4.0, value() * 4.0);
+        b[1].velocity = Vector(value() * 400.0, value() * 400.0, value() * 400.0);
+        cache.begin(2);
+        let mut work = GeometryStats::default();
+        let actual = cache.query([0, 1], [&b[0], &b[1]], 0.02, &mut work);
+        assert_eq!(bits(&actual), bits(&contact::current(&b[0], &b[1], 0.02)));
+        contacts += usize::from(actual.is_some());
+        misses += usize::from(actual.is_none());
+        for dt in [1.0 / 240.0, 1.0 / 60.0, 0.001] {
+            // Changing trajectory/time within a read-only pose pass must not reuse a time of hit.
+            b[1].velocity = -b[1].velocity;
+            let actual = cache.swept([0, 1], [&b[0], &b[1]], dt, 0.02, &mut work);
+            let mut reference_work = GeometryStats::default();
+            let expected = contact::swept(&b[0], &b[1], dt, 0.02, &mut reference_work);
+            assert_eq!(bits(&actual), bits(&expected), "dt={dt}");
+            swept_hits += usize::from(actual.is_some());
+        }
+        assert_eq!(work.frame_preparations, 2);
+        cache.finish(&mut work);
+        assert!(cache.pairs.is_empty());
+    }
+    assert!(contacts > 50 && misses > 50 && swept_hits > 50);
+}
+
+#[test]
+fn prepared_sweeps_preserve_thin_wall_and_changed_interval() {
+    let mut cache = GeometryCache::default();
+    let wall = Body::new(
+        BodyId(1),
+        Shape::Box(Vector(0.01, 10.0, 10.0)),
+        Vector::ZERO,
+        0.0,
+    );
+    let mut projectile = Body::new(
+        BodyId(2),
+        Shape::Box(Vector(0.1, 0.1, 0.5)),
+        Vector(-3.0, 0.0, 0.0),
+        1.0,
+    );
+    projectile.velocity = Vector(1000.0, 0.0, 0.0);
+    projectile.ccd = true;
+    let mut work = GeometryStats::default();
+    cache.begin(2);
+    let first = cache.swept([0, 1], [&wall, &projectile], 0.01, 0.02, &mut work);
+    assert!(first.is_some());
+    assert!(
+        cache
+            .swept([0, 1], [&wall, &projectile], 0.0001, 0.02, &mut work)
+            .is_none()
+    );
+    projectile.velocity = -projectile.velocity;
+    assert!(
+        cache
+            .swept([0, 1], [&wall, &projectile], 0.01, 0.02, &mut work)
+            .is_none()
+    );
+    assert_eq!(work.frame_preparations, 2);
+    assert_eq!(work.sweep_queries, 3);
+}
