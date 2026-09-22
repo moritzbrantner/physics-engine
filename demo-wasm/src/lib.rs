@@ -1298,6 +1298,57 @@ mod tests {
     }
 
     #[test]
+    fn tower_sphere_impact_does_not_readmit_stabilized_contacts_as_rigid_events() {
+        let mut sandbox = Sandbox::with_tower_options(true, true).expect("valid tower sandbox");
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, true)
+                .expect("impact-retire tower rules");
+        super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
+            .expect("apply impact-retire tower rules");
+        settle_player(&mut sandbox);
+        assert!(
+            sandbox.is_quiescent(),
+            "tower fixture must settle before the impact"
+        );
+
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        assert!(sandbox.shoot(0, 0, -96) >= 0);
+
+        let mut peak_sampled_events = 0_usize;
+        let mut peak_stabilization_limit_hits = 0_u64;
+        for tick in 0..120 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "tower sphere impact tick {tick}, detail {}",
+                sandbox.error_detail
+            );
+            peak_sampled_events = peak_sampled_events.max(sandbox.last_step_stats.sampled_events);
+            peak_stabilization_limit_hits = peak_stabilization_limit_hits
+                .max(sandbox.last_step_stats.stabilizations_hitting_limit);
+            if sandbox.projectiles_retired_on_contact == 1 && sandbox.is_quiescent() {
+                break;
+            }
+        }
+
+        assert_eq!(sandbox.projectiles_retired_on_contact, 1);
+        assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
+        assert!(
+            peak_sampled_events < 8,
+            "one localized sphere impact re-admitted {peak_sampled_events} sampled rigid events"
+        );
+        assert!(
+            peak_stabilization_limit_hits < 8,
+            "one localized sphere impact exhausted stabilization {peak_stabilization_limit_hits} times"
+        );
+    }
+
+    #[test]
     fn analytic_sphere_stress_lane_completes_without_exhausting_event_budget() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
