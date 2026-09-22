@@ -216,6 +216,8 @@ fn preparation_work_depends_on_bodies_not_iteration_count() {
             gravity: Vector::ZERO,
             substeps: 1,
             velocity_iterations: iterations,
+            // This test measures the fixed-work reference, independently of convergence.
+            convergence: None,
             ..Config::default()
         })
         .unwrap();

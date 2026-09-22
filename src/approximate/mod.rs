@@ -9,6 +9,8 @@
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
 mod bookkeeping;
 mod contact;
+mod convergence;
+pub use convergence::{Convergence, ConvergenceStats};
 mod geometry;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, SweepRow, push, reserve};
@@ -206,6 +208,8 @@ pub struct Config {
     pub sleep_speed: Scalar,
     pub sleep_seconds: Scalar,
     pub warm_start: bool,
+    /// None retains the fixed-pass reference. Some permits a checked early exit.
+    pub convergence: Option<Convergence>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -217,6 +221,7 @@ impl Default for Config {
             sleep_speed: 1.0,
             sleep_seconds: 0.5,
             warm_start: true,
+            convergence: Some(Convergence::default()),
         }
     }
 }
@@ -247,6 +252,7 @@ pub struct Report {
     pub max_penetration: Scalar,
     pub bookkeeping: BookkeepingStats,
     pub geometry: GeometryStats,
+    pub convergence: ConvergenceStats,
     /// Active response bodies prepared, including newly awakened bodies in the same substep.
     pub response_preparations: u64,
     /// Shape/mass inertia coefficients calculated; independent of contact iteration count.
@@ -304,6 +310,7 @@ impl World {
             || config.substeps > 32
             || config.velocity_iterations == 0
             || config.velocity_iterations > 64
+            || config.convergence.is_some_and(|c| !c.valid())
             || !config.contact_slop.is_finite()
             || config.contact_slop <= 0.0
             || !config.sleep_speed.is_finite()
@@ -754,33 +761,23 @@ impl World {
                     &mut report,
                 );
             }
-            for _ in 0..self.config.velocity_iterations {
-                report.impulse_iterations += 1;
-                for c in &mut constraints {
-                    let vn = (contact_velocity(&self.bodies[c.b], c.rb, c.spin)
-                        - contact_velocity(&self.bodies[c.a], c.ra, c.spin))
-                    .dot(c.n);
-                    let next = (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0);
-                    let dj = next - c.normal_impulse;
-                    c.normal_impulse = next;
-                    apply::<PREPARED>(&mut self.bodies, &self.responses, c, c.n * dj, &mut report);
-                    let rel = contact_velocity(&self.bodies[c.b], c.rb, c.spin)
-                        - contact_velocity(&self.bodies[c.a], c.ra, c.spin);
-                    let mut tangent = [
-                        c.tangent_impulse[0] - rel.dot(c.t1) * c.tangent_mass[0],
-                        c.tangent_impulse[1] - rel.dot(c.t2) * c.tangent_mass[1],
-                    ];
-                    let len = tangent[0].hypot(tangent[1]);
-                    let limit = c.friction * c.normal_impulse;
-                    if len > limit && len > 0.0 {
-                        tangent[0] *= limit / len;
-                        tangent[1] *= limit / len;
-                    }
-                    let jt = c.t1 * (tangent[0] - c.tangent_impulse[0])
-                        + c.t2 * (tangent[1] - c.tangent_impulse[1]);
-                    c.tangent_impulse = tangent;
-                    apply::<PREPARED>(&mut self.bodies, &self.responses, c, jt, &mut report);
-                }
+            match self.config.convergence {
+                Some(tolerances) => convergence::solve::<PREPARED, true>(
+                    &mut self.bodies,
+                    &self.responses,
+                    &mut constraints,
+                    self.config.velocity_iterations,
+                    tolerances,
+                    &mut report,
+                ),
+                None => convergence::solve::<PREPARED, false>(
+                    &mut self.bodies,
+                    &self.responses,
+                    &mut constraints,
+                    self.config.velocity_iterations,
+                    Convergence::default(),
+                    &mut report,
+                ),
             }
             let scratch = &mut self.bookkeeping;
             scratch.retired.clear();
