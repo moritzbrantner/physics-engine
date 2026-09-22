@@ -26,6 +26,7 @@ const requiredFunctions = [
   "sandbox_reset_with_baking_options",
   "sandbox_reset_tower_with_baking_options",
   "sandbox_body_count",
+  "sandbox_numeric_backend",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -40,6 +41,9 @@ for (const name of requiredFunctions) {
   if (typeof exports[name] !== "function") {
     throw new Error(`missing WASM sandbox export: ${name}`);
   }
+}
+if (exports.sandbox_numeric_backend() !== 64) {
+  throw new Error("Pages must use the production f64 numerical backend, not exact-reference");
 }
 if (!(exports.memory instanceof WebAssembly.Memory)) {
   throw new Error("WASM module does not export linear memory for the render snapshot");
@@ -147,6 +151,7 @@ const wasm = await readFile("pages-dist/physics_engine_demo.wasm");
 const settingsWasm = await readFile("pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm");
 const provenance = {
   schema_version: 1,
+  numerical_backend: "float64",
   repository: "moritzbrantner/physics-engine",
   revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   wasm_sha256: createHash("sha256").update(wasm).digest("hex"),

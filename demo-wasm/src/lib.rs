@@ -623,6 +623,15 @@ fn with_sandbox_mut<R>(callback: impl FnOnce(&mut Sandbox) -> R) -> R {
     SANDBOX.with(|sandbox| callback(&mut sandbox.borrow_mut()))
 }
 
+/// Identify the compiled math backend without inferring it from timings or build flags.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_numeric_backend() -> i32 {
+    match physics_engine::numeric::NUMERICAL_BACKEND {
+        physics_engine::numeric::NumericalBackend::Float64 => 64,
+        physics_engine::numeric::NumericalBackend::ExactReference => 0,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_reset() {
     with_sandbox_mut(|sandbox| {

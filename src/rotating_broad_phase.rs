@@ -365,7 +365,7 @@ impl RotatingBroadPhase3d {
         boxes: &[RigidBox3d],
         config: RigidBoxFreeFlightConfig3d,
     ) -> Result<Vec<BoundedBody3d>, RotatingBroadPhaseError3d> {
-        config.exact_timestep()?;
+        config.timestep()?;
         let mut ids = BTreeSet::new();
         let mut fixed_ids = BTreeSet::new();
         let mut bounded = Vec::with_capacity(boxes.len());

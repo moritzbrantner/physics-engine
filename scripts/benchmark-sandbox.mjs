@@ -95,7 +95,13 @@ async function measure(path) {
   }
   settle();
   for (let tick = 0; tick < 120; tick += 1) step(0, -420);
-  const result = { wasm_sha256: hash(bytes), cases: [] };
+  const result = {
+    wasm_sha256: hash(bytes),
+    numerical_backend: typeof engine.sandbox_numeric_backend === "function"
+      ? (engine.sandbox_numeric_backend() === 64 ? "float64" : "exact-reference")
+      : "legacy-unreported",
+    cases: [],
+  };
   for (const name of cases) {
     const measurements = [];
     for (let trial = 0; trial < trials; trial += 1) {

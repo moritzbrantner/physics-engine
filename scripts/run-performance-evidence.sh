@@ -76,8 +76,8 @@ if grep -Eq '(^|/)(stabilized_rotating_world\.rs)$' <<<"$changed"; then
   run_library_module stabilized_rotating_world
 fi
 
-if grep -Eq '(^|/)(wide_ratio\.rs)$' <<<"$changed"; then
-  run_library_module wide_ratio
+if grep -Eq '(^|/)(float_math\.rs|numeric\.rs|wide_ratio\.rs)$' <<<"$changed"; then
+  run_library_module float_math
 fi
 
 if grep -Eq '(^|/)(oriented_box\.rs)$' <<<"$changed"; then

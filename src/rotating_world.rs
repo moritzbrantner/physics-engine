@@ -267,17 +267,17 @@ impl From<BallisticTimelineError3d> for RotatingWorldError3d {
 /// Deterministic rotating-cuboid world built from the engine's sampled OBB event pipeline.
 ///
 /// Collision discovery remains explicitly sampled rotational handling rather than analytic rotational
-/// CCD. The event pipeline resolves every admitted impact first. A contact-free exact tail still uses
-/// one direct free-flight sample. When the tail begins with persistent contact, the remaining rational
+/// CCD. The event pipeline resolves every admitted impact first. A contact-free tail still uses
+/// one direct free-flight sample. When the tail begins with persistent contact, the remaining
 /// time is instead consumed through bounded deterministic slices. Bodies participating in the current
 /// persistent frontier are limited to less than their narrowest full thickness of conservative
 /// center-plus-rotational motion before the next OBB stabilization pass, so a time-zero contact cannot
 /// be free-flown completely through before the next constraint solve. Tail slicing scales the canonical
-/// exact ratio directly, so repeated-event precision is preserved without forcing the tail back into a
-/// narrower integer pair. Each tail slice advances the same authoritative working buffer in place: fixed
+/// numerical time scale directly (f64 by default) without forcing it back through the integer input
+/// compatibility API. Each tail slice advances the same authoritative working buffer in place: fixed
 /// bodies are not sampled because free flight cannot change them, while dynamic bodies are written back
 /// only when their sampled state differs. If an impulse makes the selected resolution too coarse, the
-/// exact tail is replayed from its starting state with a finer deterministic resolution. Replay rollback
+/// tail is replayed from its starting state with a finer deterministic resolution. Replay rollback
 /// journals only bodies actually changed by the discarded attempt instead of cloning the complete world
 /// at every retry; exceeding the hard bound still fails closed.
 ///
@@ -1389,7 +1389,7 @@ fn tail_motion_within_extent(
 
     let id = rigid_box.body().id();
     let timestep = config
-        .exact_timestep()
+        .timestep()
         .map_err(|_| RotatingWorldError3d::PersistentTailArithmeticOverflow(id))?;
     let half = rigid_box.body().half_extents();
     let minimum_half = u128::from(half.x.min(half.y).min(half.z).unsigned_abs());
@@ -1758,6 +1758,19 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "exact-reference"))]
+    #[test]
+    fn floating_tail_slices_account_for_the_requested_duration() {
+        let remaining =
+            RigidBoxFreeFlightConfig3d::try_from_seconds(Vec3i::ZERO, 1.0 / 60.0).unwrap();
+        for slices in [1, 2, 3, 64, 1024] {
+            let slice = tail_slice_config(remaining, slices).unwrap();
+            let restored = slice.timestep().unwrap().value() * f64::from(slices);
+            assert!((restored - remaining.timestep().unwrap().value()).abs() <= f64::EPSILON);
+        }
+    }
+
+    #[cfg(feature = "exact-reference")]
     #[test]
     fn widened_tail_denominator_can_be_sliced_exactly() {
         let remaining =
@@ -1794,6 +1807,7 @@ mod tests {
                 .scaled_fraction(511, 512)
                 .expect("bounded exact tail growth");
         }
+        #[cfg(feature = "exact-reference")]
         assert!(config.timestep_i128().is_none());
 
         assert!(

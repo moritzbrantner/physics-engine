@@ -3,26 +3,44 @@ use std::{error::Error, fmt};
 use crate::{
     AngularError3d, AngularState3d, AngularVelocity3d, BodyId, BodyKind, MotionAuthority3d,
     OrientedBoxError3d, RigidBox3d, RotationalSweepBounds3d, RotationalSweepError3d, Vec3i,
-    angular::integrate_orientation_exact_ratio,
+    angular::integrate_orientation_scaled,
+    numeric::{ArithmeticError, Ratio, Scalar},
     oriented_box_vertices,
     rotational_sweep::rotational_sweep_bounds_for_center_interval,
-    wide_ratio::{ExactRatio, WideRatioError},
 };
 
-/// Explicit exact timestep and acceleration for collision-free rotating-box sampling.
+/// Timestep and acceleration for collision-free rotating-box sampling.
 ///
-/// The public constructor still accepts the ordinary signed `i32` timestep contract. Valid timesteps are
-/// canonicalized into deterministic fixed-capacity limb storage so repeated sampled-event composition can
-/// remain exact beyond one `i128/i128` pair without allocation or floating point.
+/// The default backend stores time as one finite `f64`. The integer numerator/denominator constructor
+/// remains a compatibility input; it does not require exact-rational internal arithmetic. New callers
+/// can use [`Self::try_from_seconds`]. The opt-in `exact-reference` build retains the historical ratio
+/// implementation for diagnostic comparisons only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RigidBoxFreeFlightConfig3d {
     pub gravity: Vec3i,
-    timestep: ExactRatio,
+    timestep: Ratio,
     invalid_numerator: Option<i128>,
     invalid_denominator: Option<i128>,
 }
 
 impl RigidBoxFreeFlightConfig3d {
+    /// Construct a checked floating-point timestep in seconds.
+    ///
+    /// # Errors
+    /// Rejects negative, NaN and infinite durations before any simulation state can be changed.
+    pub fn try_from_seconds(
+        gravity: Vec3i,
+        seconds: Scalar,
+    ) -> Result<Self, RigidBoxFreeFlightError3d> {
+        if !seconds.is_finite() || seconds < 0.0 {
+            return Err(RigidBoxFreeFlightError3d::InvalidFloatingTimestep);
+        }
+        Ok(Self::from_ratio(
+            gravity,
+            Ratio::from_scalar(seconds).map_err(map_ratio_error)?,
+        ))
+    }
+
     #[must_use]
     pub fn new(gravity: Vec3i, timestep_numerator: i32, timestep_denominator: i32) -> Self {
         Self::new_wide(
@@ -41,13 +59,13 @@ impl RigidBoxFreeFlightConfig3d {
         let invalid_numerator = (timestep_numerator < 0).then_some(timestep_numerator);
         let invalid_denominator = (timestep_denominator <= 0).then_some(timestep_denominator);
         let timestep = if invalid_numerator.is_none() && invalid_denominator.is_none() {
-            ExactRatio::new(
+            Ratio::new(
                 timestep_numerator.unsigned_abs(),
                 timestep_denominator.unsigned_abs(),
             )
-            .expect("an i128 timestep fits the deterministic exact-ratio capacity")
+            .expect("a ratio of nonnegative i128 inputs fits the numerical backend")
         } else {
-            ExactRatio::new(0, 1).expect("zero exact timestep is valid")
+            Ratio::new(0, 1).expect("zero timestep is valid")
         };
         Self {
             gravity,
@@ -57,7 +75,7 @@ impl RigidBoxFreeFlightConfig3d {
         }
     }
 
-    fn from_exact(gravity: Vec3i, timestep: ExactRatio) -> Self {
+    fn from_ratio(gravity: Vec3i, timestep: Ratio) -> Self {
         Self {
             gravity,
             timestep,
@@ -66,7 +84,7 @@ impl RigidBoxFreeFlightConfig3d {
         }
     }
 
-    pub(crate) fn exact_timestep(self) -> Result<ExactRatio, RigidBoxFreeFlightError3d> {
+    pub(crate) fn timestep(self) -> Result<Ratio, RigidBoxFreeFlightError3d> {
         if let Some(value) = self.invalid_numerator {
             return Err(RigidBoxFreeFlightError3d::NegativeTimestepNumerator(value));
         }
@@ -83,7 +101,7 @@ impl RigidBoxFreeFlightConfig3d {
         fraction_numerator: u32,
         fraction_denominator: u32,
     ) -> Result<Self, RigidBoxFreeFlightError3d> {
-        let timestep = self.exact_timestep()?;
+        let timestep = self.timestep()?;
         if fraction_denominator == 0 {
             return Err(RigidBoxFreeFlightError3d::ZeroFractionDenominator);
         }
@@ -93,7 +111,7 @@ impl RigidBoxFreeFlightConfig3d {
                 denominator: fraction_denominator,
             });
         }
-        Ok(Self::from_exact(
+        Ok(Self::from_ratio(
             self.gravity,
             timestep
                 .scaled_u32(fraction_numerator, fraction_denominator)
@@ -108,7 +126,7 @@ impl RigidBoxFreeFlightConfig3d {
             && self.timestep.is_zero()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "exact-reference"))]
     #[must_use]
     pub(crate) fn timestep_i128(self) -> Option<(i128, i128)> {
         if self.invalid_numerator.is_some() || self.invalid_denominator.is_some() {
@@ -120,6 +138,7 @@ impl RigidBoxFreeFlightConfig3d {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RigidBoxFreeFlightError3d {
+    InvalidFloatingTimestep,
     NegativeTimestepNumerator(i128),
     NonPositiveTimestepDenominator(i128),
     ZeroFractionDenominator,
@@ -134,6 +153,9 @@ pub enum RigidBoxFreeFlightError3d {
 impl fmt::Display for RigidBoxFreeFlightError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidFloatingTimestep => {
+                formatter.write_str("timestep must be finite and non-negative")
+            }
             Self::NegativeTimestepNumerator(value) => write!(
                 formatter,
                 "rigid-box free-flight timestep numerator must be non-negative, got {value}"
@@ -155,7 +177,7 @@ impl fmt::Display for RigidBoxFreeFlightError3d {
             ),
             Self::RatioTooLarge => write!(
                 formatter,
-                "rigid-box free-flight rational calculation exceeded deterministic exact-ratio capacity"
+                "rigid-box free-flight calculation exceeded the numerical range"
             ),
             Self::ArithmeticOverflow(body) => write!(
                 formatter,
@@ -204,8 +226,8 @@ impl From<RotationalSweepError3d> for RigidBoxFreeFlightError3d {
 /// to velocity, then advance position with the resulting velocity. Orientation uses the engine's
 /// deterministic fixed-point quaternion integrator unless the box has an explicit rotation lock.
 ///
-/// Repeated-event time and the sampled search fraction remain one exact canonical ratio internally, even
-/// when the reduced numerator or denominator exceeds `i128`.
+/// Repeated-event time and the search fraction are composed in the selected numerical backend.
+/// Production uses f64; quantization occurs at the existing integer body-state boundary.
 ///
 /// `fraction_numerator / fraction_denominator` must be within `0..=1`.
 ///
@@ -221,7 +243,7 @@ pub fn sample_rigid_box_free_flight(
 ) -> Result<RigidBox3d, RigidBoxFreeFlightError3d> {
     let sample_time = config
         .scaled_fraction(fraction_numerator, fraction_denominator)?
-        .exact_timestep()?;
+        .timestep()?;
     if sample_time.is_zero() || rigid_box.body.kind() == BodyKind::Fixed {
         return Ok(rigid_box.clone());
     }
@@ -263,7 +285,7 @@ pub fn sample_rigid_box_free_flight(
         AngularState3d::new(rigid_box.angular.orientation, AngularVelocity3d::default())
     } else {
         AngularState3d::new(
-            integrate_orientation_exact_ratio(
+            integrate_orientation_scaled(
                 rigid_box.angular.orientation,
                 rigid_box.angular.angular_velocity,
                 sample_time,
@@ -290,8 +312,8 @@ pub fn sample_rigid_box_free_flight(
 /// quantized OBB vertices, so immovable thin walls do not acquire an arbitrary-rotation radius. Time
 /// validation still precedes this fast path. Moving dynamic bodies retain the conservative rotational
 /// envelope: each center axis uses an absolute upper bound on speed after acceleration and then on
-/// displacement. Exact limb arithmetic performs multiply/divide before the final upward rounding, so a
-/// large repeated-event denominator cannot manufacture an overflow. This may overproduce broad-phase
+/// displacement. The default floating-point backend rounds these bounds outward; the optional
+/// reference backend uses exact multiply/divide with upward rounding. This may overproduce broad-phase
 /// candidates, but it cannot lose a sampled contact when velocity reverses and the center reaches an
 /// interior extremum outside the start/end interval. Nonzero arbitrary orientation remains enclosed by
 /// the same circumscribed-box radius as [`crate::rotational_sweep_bounds`].
@@ -304,7 +326,7 @@ pub fn rigid_box_free_flight_sweep_bounds(
     rigid_box: &RigidBox3d,
     config: RigidBoxFreeFlightConfig3d,
 ) -> Result<RotationalSweepBounds3d, RigidBoxFreeFlightError3d> {
-    let timestep = config.exact_timestep()?;
+    let timestep = config.timestep()?;
     if timestep.is_zero() || rigid_box.body.kind() == BodyKind::Fixed {
         return current_quantized_obb_bounds(rigid_box);
     }
@@ -372,7 +394,7 @@ fn current_quantized_obb_bounds(
 fn conservative_axis_displacement(
     velocity: i32,
     acceleration: i32,
-    timestep: ExactRatio,
+    timestep: Ratio,
 ) -> Result<u128, RigidBoxFreeFlightError3d> {
     let acceleration_delta = timestep
         .mul_ceil_u128(u128::from(acceleration.unsigned_abs()))
@@ -385,7 +407,7 @@ fn conservative_axis_displacement(
         .map_err(map_ratio_error)
 }
 
-fn map_ratio_error(_: WideRatioError) -> RigidBoxFreeFlightError3d {
+fn map_ratio_error(_: ArithmeticError) -> RigidBoxFreeFlightError3d {
     RigidBoxFreeFlightError3d::RatioTooLarge
 }
 
@@ -408,6 +430,44 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, angular_velocity),
         )
         .expect("valid rotating box")
+    }
+
+    #[test]
+    fn floating_seconds_are_checked_before_sampling() {
+        for seconds in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01] {
+            assert_eq!(
+                RigidBoxFreeFlightConfig3d::try_from_seconds(Vec3i::ZERO, seconds),
+                Err(super::RigidBoxFreeFlightError3d::InvalidFloatingTimestep),
+            );
+        }
+        assert!(
+            RigidBoxFreeFlightConfig3d::try_from_seconds(Vec3i::ZERO, -0.0)
+                .unwrap()
+                .timestep_is_zero()
+        );
+        let body = rotating_box(
+            RigidBody::dynamic(
+                BodyId(500),
+                Vec3i::ZERO,
+                Vec3i::new(120, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularVelocity3d::default(),
+        );
+        let seconds = RigidBoxFreeFlightConfig3d::try_from_seconds(Vec3i::ZERO, 0.5).unwrap();
+        let ratio = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 2);
+        assert_eq!(
+            sample_rigid_box_free_flight(&body, seconds, 1, 1),
+            sample_rigid_box_free_flight(&body, ratio, 1, 1)
+        );
+        assert_eq!(
+            sample_rigid_box_free_flight(&body, seconds, 1, 1)
+                .unwrap()
+                .body()
+                .position()
+                .x,
+            60
+        );
     }
 
     #[test]
@@ -560,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_timestep_can_exceed_i128_without_flattening_sample_time() {
+    fn repeated_fraction_composition_preserves_repeatable_motion() {
         let rigid_box = rotating_box(
             RigidBody::dynamic(
                 BodyId(9),
@@ -574,14 +634,14 @@ mod tests {
         for _ in 0..20 {
             config = config
                 .scaled_fraction(511, 512)
-                .expect("bounded exact timestep growth");
+                .expect("bounded timestep composition");
         }
+        #[cfg(feature = "exact-reference")]
         assert!(config.timestep_i128().is_none());
 
         let first = sample_rigid_box_free_flight(&rigid_box, config, 1, 512)
-            .expect("sampled exact timestep remains representable");
-        let second =
-            sample_rigid_box_free_flight(&rigid_box, config, 1, 512).expect("same exact sample");
+            .expect("sampled timestep remains representable");
+        let second = sample_rigid_box_free_flight(&rigid_box, config, 1, 512).expect("same sample");
         assert_eq!(first, second);
         assert_ne!(first.angular().orientation, Orientation3d::IDENTITY);
     }
@@ -601,12 +661,13 @@ mod tests {
         for _ in 0..20 {
             config = config
                 .scaled_fraction(511, 512)
-                .expect("bounded exact timestep growth");
+                .expect("bounded timestep composition");
         }
+        #[cfg(feature = "exact-reference")]
         assert!(config.timestep_i128().is_none());
 
         let bounds = rigid_box_free_flight_sweep_bounds(&rigid_box, config)
-            .expect("wide conservative bound remains exact");
+            .expect("conservative bound remains representable");
         assert!(bounds.minimum[1] < 0);
         assert!(bounds.maximum[1] > 0);
     }

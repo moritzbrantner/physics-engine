@@ -2,8 +2,9 @@ use std::{collections::BTreeSet, error::Error, fmt};
 
 use crate::{
     AngularError3d, BodyId, CollisionLayers3d, Material, ORIENTATION_SCALE, Orientation3d,
-    OrientedBoxError3d, RigidBox3d, Vec3i, oriented_box_vertices,
-    wide_ratio::{WideRatioError, mul_div_round_i128},
+    OrientedBoxError3d, RigidBox3d, Vec3i,
+    numeric::{ArithmeticError, mul_div_round_i128},
+    oriented_box_vertices,
 };
 
 const BALLISTIC_TIME_SCALE: u64 = 1_u64 << 32;
@@ -161,7 +162,7 @@ pub struct BallisticSphereSweepHit3d {
     pub body: BodyId,
     pub time: BallisticTime3d,
     /// Primitive integer world-space direction pointing from the rigid target toward the sphere.
-    /// Only direction is significant; the vector is deliberately not normalized with floating point.
+    /// Only direction is significant; this integer representation is retained for API compatibility.
     pub normal: [i128; 3],
 }
 
@@ -236,8 +237,8 @@ impl From<AngularError3d> for BallisticSphereError3d {
     }
 }
 
-impl From<WideRatioError> for BallisticSphereError3d {
-    fn from(_: WideRatioError) -> Self {
+impl From<ArithmeticError> for BallisticSphereError3d {
+    fn from(_: ArithmeticError) -> Self {
         Self::ArithmeticOverflow
     }
 }

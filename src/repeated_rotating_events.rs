@@ -128,7 +128,7 @@ impl fmt::Display for RepeatedRotatingEventError3d {
             ),
             Self::RatioTooLarge => write!(
                 formatter,
-                "repeated rotating event exact remaining-time arithmetic exceeded deterministic exact-ratio capacity"
+                "repeated rotating event remaining-time calculation exceeded the numerical range"
             ),
             Self::Frontier(error) => write!(
                 formatter,
@@ -814,7 +814,7 @@ fn validate_config(
             MAX_REPEATED_ROTATING_EVENTS,
         ));
     }
-    match config.search.free_flight.exact_timestep() {
+    match config.search.free_flight.timestep() {
         Ok(_) => Ok(()),
         Err(RigidBoxFreeFlightError3d::NegativeTimestepNumerator(value)) => Err(
             RepeatedRotatingEventError3d::NegativeTimestepNumerator(value),
@@ -1225,19 +1225,24 @@ mod tests {
     }
 
     #[test]
-    fn exact_remaining_time_reduction_preserves_rational_value() {
+    fn remaining_time_reduction_preserves_value_at_backend_precision() {
         let current = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 2, 3);
-        assert_eq!(
-            scale_remaining_time(
-                current,
-                5,
-                crate::SampledContactTime3d {
-                    numerator: 3,
-                    denominator: 8,
-                },
-            )
-            .expect("representable scaled remainder"),
-            RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 5, 12)
+        let scaled = scale_remaining_time(
+            current,
+            5,
+            crate::SampledContactTime3d {
+                numerator: 3,
+                denominator: 8,
+            },
+        )
+        .expect("representable scaled remainder");
+        let expected = RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 5, 12);
+        #[cfg(feature = "exact-reference")]
+        assert_eq!(scaled, expected);
+        #[cfg(not(feature = "exact-reference"))]
+        assert!(
+            (scaled.timestep().unwrap().value() - expected.timestep().unwrap().value()).abs()
+                <= f64::EPSILON
         );
         assert_eq!(
             scale_remaining_time(
@@ -1245,14 +1250,15 @@ mod tests {
                 0,
                 crate::SampledContactTime3d {
                     numerator: 1,
-                    denominator: 1,
+                    denominator: 1
                 },
             )
             .expect("zero remainder"),
-            RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 0, 1)
+            RigidBoxFreeFlightConfig3d::new(Vec3i::new(0, -10, 0), 0, 1),
         );
     }
 
+    #[cfg(feature = "exact-reference")]
     #[test]
     fn reducible_remainder_is_normalized_before_exact_composition() {
         let current = RigidBoxFreeFlightConfig3d::new_wide(Vec3i::ZERO, i128::MAX, 1);
@@ -1269,6 +1275,7 @@ mod tests {
         assert_eq!(scaled.timestep_i128(), Some((i128::MAX, 2)));
     }
 
+    #[cfg(feature = "exact-reference")]
     #[test]
     fn denominator_growth_stays_exact_beyond_i32() {
         let mut remaining = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
@@ -1297,16 +1304,17 @@ mod tests {
     }
 
     #[test]
-    fn exact_remaining_time_survives_beyond_i128() {
+    fn repeated_remaining_time_stays_positive_and_repeatable() {
         let mut remaining = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60);
         let event = crate::SampledContactTime3d {
             numerator: 1,
             denominator: 512,
         };
         for _ in 0..20 {
-            remaining = scale_remaining_time(remaining, 511, event)
-                .expect("bounded repeated-event exact ratio");
+            remaining =
+                scale_remaining_time(remaining, 511, event).expect("bounded repeated-event time");
         }
+        #[cfg(feature = "exact-reference")]
         assert!(remaining.timestep_i128().is_none());
         assert!(!remaining.timestep_is_zero());
     }

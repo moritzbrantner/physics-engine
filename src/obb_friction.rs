@@ -1,8 +1,9 @@
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BodyKind, MATERIAL_SCALE, MotionAuthority3d,
     ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactResponse3d, ObbContactResponseError3d,
-    ObbResolvedContact3d, Orientation3d, RigidBox3d, Vec3i, box_inertia, oriented_box_vertices,
-    wide_ratio::{mul_div_round_i128, mul_div_round_u128},
+    ObbResolvedContact3d, Orientation3d, RigidBox3d, Vec3i, box_inertia,
+    numeric::{mul_div_round_i128, mul_div_round_u128},
+    oriented_box_vertices,
 };
 
 use crate::obb_response::resolve_obb_contact as resolve_normal_obb_contact;
@@ -24,8 +25,8 @@ struct TangentResponse3d {
 /// The normal response remains owned by the existing OBB resolver. Friction uses that resolver's exact
 /// reduced contact point and SAT feature, evaluates post-normal relative contact velocity including spin,
 /// and chooses the dominant slip direction from the exact oriented box edges spanning the contact tangent
-/// plane. The Coulomb bound compares squared impulse-vector magnitudes, so no floating-point normalization
-/// or square root enters solver truth.
+/// plane. This compatibility solver compares squared impulse-vector magnitudes for the Coulomb bound;
+/// new solver paths may use floating-point normalization and square roots where appropriate.
 ///
 /// Friction combines with the migrated `ecs-lab` rule: the pair uses the larger material coefficient.
 /// A zero coefficient preserves the previous normal-only response bit-for-bit. Rotation-locked bodies still

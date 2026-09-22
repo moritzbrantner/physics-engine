@@ -1,4 +1,8 @@
-//! Reusable deterministic physics simulation primitives.
+//! Reusable physics simulation primitives with floating-point arithmetic by default.
+//!
+//! [`numeric::Scalar`] is f64. Production time composition and shared scaled-arithmetic helpers
+//! do not use multi-limb exact rationals. Existing quantized geometry/state APIs remain compatibility
+//! surfaces during migration; they are not a requirement for new solver work.
 //!
 //! The engine owns deterministic translational rigid-body stepping plus engine-local rotational and
 //! contact geometry foundations: gravity, fixed/dynamic bodies, continuous collision detection,
@@ -67,7 +71,11 @@ mod strict_stabilized_rotating_world;
 mod stabilized_rotating_world {
     pub(crate) use crate::relaxed_rotating_world::RotatingWorld3d;
 }
+#[cfg(not(feature = "exact-reference"))]
+mod float_math;
+pub mod numeric;
 mod support_query;
+#[cfg(feature = "exact-reference")]
 mod wide_ratio;
 mod world;
 
