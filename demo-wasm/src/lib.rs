@@ -142,7 +142,8 @@ impl Sandbox {
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
-            );
+            )
+            .with_aggressive_sleep();
             world.add_box(if upright_crates {
                 crate_body.with_rotation_locked()
             } else {
