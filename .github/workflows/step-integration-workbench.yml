@@ -29,7 +29,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           path=Path('site/scenarios/fixed-step/index.html');source=path.read_text()
-          replacements={'<select id="solver">':'<select id="solver" aria-label="Solver">','href="style.css"':'href="catalog.css"','color:#9eb5cc':'color:color-mix(in srgb,CanvasText 75%,Canvas)','font:14px ui-monospace,monospace':'color:#edf4fc;font:14px ui-monospace,monospace','color:#75eedb':'color:CanvasText'}
+          replacements={'<select id="solver">':'<select id="solver" aria-label="Solver">','color:#aabcc8':'color:color-mix(in srgb,CanvasText 75%,Canvas)','color:#90e4ce':'color:CanvasText'}
           for old,new in replacements.items():
               assert old in source,old
               source=source.replace(old,new)
