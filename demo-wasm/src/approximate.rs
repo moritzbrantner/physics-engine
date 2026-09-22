@@ -251,6 +251,7 @@ pub extern "C" fn approximate_is_quiescent() -> i32 {
 /// 14..=23: active rebuilds/scans, adjacency rebuilds/edges, island bodies/edges,
 /// bound updates/sorted rows, tracked scratch capacity grows/retained bytes.
 /// 24: bound-order comparisons (even when a full sort is skipped).
+/// 25..=39: contact-geometry reuse counters; see docs/contact-geometry-reuse.md.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_stat(index: u32) -> f64 {
     read(f64::NAN, |s| {
@@ -281,6 +282,21 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             22 => r.bookkeeping.scratch_growths as f64,
             23 => r.bookkeeping.scratch_retained_bytes as f64,
             24 => r.bookkeeping.bounds_order_checks as f64,
+            25 => r.geometry.current_queries as f64,
+            26 => r.geometry.manifold_hits as f64,
+            27 => r.geometry.negative_hits as f64,
+            28 => r.geometry.manifold_refreshes as f64,
+            29 => r.geometry.frame_preparations as f64,
+            30 => r.geometry.frame_reuses as f64,
+            31 => r.geometry.projection_preparations as f64,
+            32 => r.geometry.projection_reuses as f64,
+            33 => r.geometry.sat_queries as f64,
+            34 => r.geometry.sat_axes_tested as f64,
+            35 => r.geometry.clip_passes as f64,
+            36 => r.geometry.sweep_queries as f64,
+            37 => r.geometry.pair_invalidations as f64,
+            38 => r.geometry.cached_pairs_peak as f64,
+            39 => r.geometry.retained_bytes as f64,
             _ => f64::NAN,
         }
     })
