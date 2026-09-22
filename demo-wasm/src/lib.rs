@@ -28,7 +28,7 @@ const SANDBOX_RIGID_MASS_SCALE: u32 = 1;
 const PLAYER_MASS_UNITS: u32 = 4 * SANDBOX_RIGID_MASS_SCALE;
 const CRATE_MASS_UNITS: u32 = 2 * SANDBOX_RIGID_MASS_SCALE;
 const RIGID_PROJECTILE_MASS_UNITS: u32 = SANDBOX_RIGID_MASS_SCALE;
-const SPHERE_RESPONSE_MASS_MILLI_UNITS: u32 = 500;
+const SPHERE_RESPONSE_MASS_MILLI_UNITS: u32 = 750;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -142,8 +142,7 @@ impl Sandbox {
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
-            )
-            .with_aggressive_sleep();
+            );
             world.add_box(if upright_crates {
                 crate_body.with_rotation_locked()
             } else {
