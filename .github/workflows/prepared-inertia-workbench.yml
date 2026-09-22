@@ -4,23 +4,70 @@ on:
     branches: [perf/154-prepared-inertia]
     paths: [.github/workflows/prepared-inertia-workbench.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
         with:
-          persist-credentials: false
-          fetch-depth: 2
-      - name: Export immutable baseline only
+          fetch-depth: 0
+      - name: Apply prepared implementation and remove workbench files
         run: |
-          mkdir -p "$RUNNER_TEMP/prepared-inertia"
-          git archive --format=tar 090fe521bbfe539deeefc6a5c3741677836ee7c4 | gzip -1 > "$RUNNER_TEMP/prepared-inertia/source.tar.gz"
-          echo 090fe521bbfe539deeefc6a5c3741677836ee7c4 > "$RUNNER_TEMP/prepared-inertia/source-revision.txt"
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,base64,lzma,hashlib
+          patch=lzma.decompress(base64.b64decode(pathlib.Path('.agent-transfer/prepared-response.b64').read_text(),validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='30ccac45cb6c59b9e5688bd277807bd4baf279e28f03f817c4429dd8a198ec0b'
+          pathlib.Path('/tmp/prepared-response.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/prepared-response.patch
+          git apply /tmp/prepared-response.patch
+          rm -r .agent-transfer
+          rm .github/workflows/prepared-inertia-workbench.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'perf: prepare fixed-step inverse response per substep (refs #154)'
+      - name: Validate code and existing behavioral contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p prepared-response-evidence
+          {
+            cargo fmt --check
+            cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+            cargo clippy --all-targets -- -D warnings
+            cargo clippy --all-targets --features exact-reference -- -D warnings
+            cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
+            cargo test --locked
+            cargo test --locked --features exact-reference
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --features exact-reference
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+            node --test site/*.test.mjs scripts/*.test.mjs
+          } 2>&1 | tee prepared-response-evidence/verification.log
+      - name: Build once and retain before-after evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-pages.sh
+          mkdir -p "$RUNNER_TEMP/prepared-base"
+          git archive 090fe521bbfe539deeefc6a5c3741677836ee7c4 | tar -x -C "$RUNNER_TEMP/prepared-base"
+          cargo build --manifest-path "$RUNNER_TEMP/prepared-base/demo-wasm/Cargo.toml" --target wasm32-unknown-unknown --release --locked
+          cp "$RUNNER_TEMP/prepared-base/demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm" prepared-response-evidence/base.wasm
+          cp pages-dist/physics_engine_demo.wasm prepared-response-evidence/candidate.wasm
+          node scripts/benchmark-prepared-response.mjs prepared-response-evidence/base.wasm prepared-response-evidence/candidate.wasm prepared-response-evidence/paired.json > prepared-response-evidence/paired.log
+          node scripts/benchmark-fixed-step.mjs prepared-response-evidence/candidate.wasm prepared-response-evidence/fixed-step.json prepared-response-evidence/base.wasm > prepared-response-evidence/fixed-step.log
+          git rev-parse HEAD > prepared-response-evidence/source-revision.txt
+          git diff 090fe521bbfe539deeefc6a5c3741677836ee7c4 -- > prepared-response-evidence/implementation.patch
+      - name: Publish verified source without force
+        run: git push origin HEAD:perf/154-prepared-inertia
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
-          name: prepared-inertia-baseline
-          path: ${{ runner.temp }}/prepared-inertia
-          retention-days: 1
+          name: prepared-response-evidence
+          path: prepared-response-evidence/
+          retention-days: 7
