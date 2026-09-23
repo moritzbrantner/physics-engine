@@ -12,7 +12,9 @@ mod contact;
 mod position;
 pub use position::PositionReport;
 mod convergence;
+mod islands;
 pub use convergence::{Convergence, ConvergenceStats};
+pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, SweepRow, push, reserve};
@@ -215,6 +217,9 @@ pub struct Config {
     pub warm_start: bool,
     /// None retains the fixed-pass reference. Some permits a checked early exit.
     pub convergence: Option<Convergence>,
+    /// Contact-island-local stopping, or the original whole-world convergence reference.
+    /// With `convergence: None`, both scopes use the unchanged fixed-pass solver.
+    pub convergence_scope: ConvergenceScope,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -228,6 +233,7 @@ impl Default for Config {
             sleep_seconds: 0.5,
             warm_start: true,
             convergence: Some(Convergence::default()),
+            convergence_scope: ConvergenceScope::ContactIslands,
         }
     }
 }
@@ -251,6 +257,8 @@ pub struct Report {
     pub pair_tests: u64,
     pub narrow_tests: u64,
     pub contact_points: u64,
+    /// Equivalent solver rounds per substep (maximum over islands), not the sum over islands.
+    /// Use `convergence.constraint_visits` for actual row work and `islands` for grouping costs.
     pub impulse_iterations: u64,
     pub integrated_bodies: u64,
     pub woken_bodies: u64,
@@ -260,6 +268,7 @@ pub struct Report {
     pub bookkeeping: BookkeepingStats,
     pub geometry: GeometryStats,
     pub convergence: ConvergenceStats,
+    pub islands: IslandStats,
     /// Active response bodies prepared, including newly awakened bodies in the same substep.
     pub response_preparations: u64,
     /// Shape/mass inertia coefficients calculated; independent of contact iteration count.
@@ -305,6 +314,7 @@ pub struct World {
     responses: Vec<PreparedResponse>,
     bookkeeping: Scratch,
     geometry: GeometryCache,
+    island_scratch: islands::Scratch,
     constraints: Vec<Constraint>,
     manifold_scratch: Vec<(usize, usize, contact::Manifold)>,
     pub last_report: Report,
@@ -336,6 +346,7 @@ impl World {
             responses: Vec::new(),
             bookkeeping: Scratch::default(),
             geometry: GeometryCache::default(),
+            island_scratch: islands::Scratch::default(),
             constraints: Vec::new(),
             manifold_scratch: Vec::new(),
             last_report: Report::default(),
@@ -524,6 +535,7 @@ impl World {
         }
         if dt == 0.0 {
             self.last_report = Report::default();
+            self.last_report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
             self.last_report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
             self.last_report.position.scratch_retained_bytes =
                 self.bookkeeping.position.retained_bytes();
@@ -772,6 +784,19 @@ impl World {
                 );
             }
             match self.config.convergence {
+                Some(tolerances)
+                    if self.config.convergence_scope == ConvergenceScope::ContactIslands =>
+                {
+                    islands::solve::<PREPARED>(
+                        &mut self.bodies,
+                        &self.responses,
+                        &mut constraints,
+                        self.config.velocity_iterations,
+                        tolerances,
+                        &mut self.island_scratch,
+                        &mut report,
+                    )
+                }
                 Some(tolerances) => convergence::solve::<PREPARED, true>(
                     &mut self.bodies,
                     &self.responses,
@@ -921,6 +946,7 @@ impl World {
         Ok(report)
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
+        report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
         report.position.scratch_retained_bytes = self.bookkeeping.position.retained_bytes();
         report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
         self.bookkeeping.work.scratch_retained_bytes = (self.bookkeeping.retained_bytes()
