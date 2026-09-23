@@ -1,4 +1,4 @@
-name: Tower position preparation verification
+name: Tower position browser verification
 
 on:
   push:
@@ -7,17 +7,18 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
         with:
           fetch-depth: 0
           ref: ${{ github.sha }}
-      - name: Apply source and remove temporary transport
+      - name: Apply solver source and clock-safe browser harness
         shell: bash
         run: |
           set -euo pipefail
@@ -29,54 +30,81 @@ jobs:
           PY
           git apply --check /tmp/position.patch
           git apply /tmp/position.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('scripts/test-tower-browser.py')
+          s = p.read_text().replace('The virtual clock advances browser callbacks deterministically; these are NOT timing benchmarks.', 'Manual clock advances exercise input sequences; timers resume for real UI actions.\nThese are behavioral checks, NOT timing benchmarks or deterministic browser replays.')
+          s, n = re.subn(r"page\.locator\(('#[^']+')\)\.click\(\)", r'click(\1)', s)
+          assert n == 14, n
+          s = s.replace("        state = lambda: page.evaluate('window.physicsTowerState')", """        def click(selector):
+                      # Actionability waits for stable animation frames. Manual run_for calls may
+                      # leave that progress suspended; resume timers instead of forcing a click
+                      # or bypassing visibility/obstruction checks. Game pause remains separate.
+                      page.clock.resume()
+                      page.locator(selector).click()
+
+                  state = lambda: page.evaluate('window.physicsTowerState')""")
+          # The embedded block above follows YAML's ten-space run indentation.
+          s = s.replace('                      # Actionability', '            # Actionability').replace('                      # leave', '            # leave').replace('                      # or bypassing', '            # or bypassing').replace('                      page.clock.resume()', '            page.clock.resume()').replace('                      page.locator(selector).click()', '            page.locator(selector).click()').replace('                  state = lambda:', '        state = lambda:')
+          s = s.replace("'note': 'Virtual-clock UI acceptance; not a performance benchmark.'", "'note': 'Clock-assisted real-input acceptance; not a performance benchmark or deterministic browser replay.'")
+          p.write_text(s)
+          PY
           rm .agent-transfer/position.patch.xz .github/workflows/position-preparation-workbench.yml
           rmdir .agent-transfer
           git add -u
           git add src/approximate/position/parity_tests.rs scripts/benchmark-tower-position.mjs docs/position-preparation.md
-          test "$(git write-tree)" = 64c4527ffbf058a111bd7e6d12652a87860a5357
+          test "$(git write-tree)" = 107f5ba1b04c811a2bfe404b9703ff33d3aabd4a
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'perf: prepare fixed collider views and geometry for tower position correction'
-          mkdir -p position-evidence
-          git rev-parse HEAD > position-evidence/source-revision.txt
-          git rev-parse HEAD^{tree} > position-evidence/source-tree.txt
-          git archive --format=tar.gz HEAD > position-evidence/source.tar.gz
-          cp /tmp/position.patch position-evidence/implementation.patch
-      - name: Validate numerical modes and behavioral contracts
+          git commit -m 'perf: prepare tower position geometry and verify real browser controls'
+          mkdir -p position-final-evidence
+          git rev-parse HEAD > position-final-evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > position-final-evidence/source-tree.txt
+          git archive --format=tar.gz HEAD > position-final-evidence/source.tar.gz
+          git diff ca394b3ff6f8ede1848bc84fc9d92fb66dea4ad8 HEAD > position-final-evidence/implementation.patch
+      - name: Verify reuse of already-passed physics evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/moritzbrantner/physics-engine/actions/artifacts/10733057962/zip \
+            -o /tmp/position-prior.zip
+          echo '4f1c6d30bd30d70ae2732b3232ac0b797ccf31e01b0d7e706e5360e64adf020d  /tmp/position-prior.zip' | sha256sum --check
+          unzip -q /tmp/position-prior.zip -d /tmp/position-prior
+          python3 - <<'PY'
+          import pathlib, subprocess, tarfile, json, hashlib
+          previous = pathlib.Path('/tmp/position-prior')
+          assert previous.joinpath('source-tree.txt').read_text().strip() == '64c4527ffbf058a111bd7e6d12652a87860a5357'
+          for name in ['all-configurations.json', 'representative.json']:
+              report = json.loads(previous.joinpath(name).read_text())
+              assert report['passed'] and all(r['bit_identical_history'] for r in report['records'])
+          tracked = set(subprocess.check_output(['git', 'ls-files', '-z']).decode().rstrip('\0').split('\0'))
+          with tarfile.open(previous / 'source.tar.gz') as source:
+              files = {m.name: m for m in source.getmembers() if m.isfile()}
+              assert tracked == set(files)
+              for name in tracked - {'scripts/test-tower-browser.py'}:
+                  assert pathlib.Path(name).read_bytes() == source.extractfile(files[name]).read(), name
+          pathlib.Path('position-final-evidence/physics-evidence-reuse.json').write_text(json.dumps({
+              'passed': True, 'prior_run': 35820301276, 'prior_artifact': 10733057962,
+              'physics_tree': '64c4527ffbf058a111bd7e6d12652a87860a5357',
+              'only_changed_file': 'scripts/test-tower-browser.py', 'compared_files': len(tracked)-1,
+              'candidate_wasm_sha256': hashlib.sha256(previous.joinpath('candidate.wasm').read_bytes()).hexdigest()
+          }, indent=2))
+          PY
+          python3 -m py_compile scripts/test-tower-browser.py
+          node --test site/*.test.mjs scripts/*.test.mjs > position-final-evidence/node-tests.log
+      - name: Build canonical Pages with the same physics binary
         shell: bash
         run: |
           set -euo pipefail
-          {
-            cargo fmt --check
-            cargo fmt --manifest-path demo-wasm/Cargo.toml --check
-            cargo clippy --all-targets -- -D warnings
-            cargo clippy --all-targets --features exact-reference -- -D warnings
-            cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
-            cargo test --locked
-            cargo test --locked --features exact-reference
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked --features exact-reference
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
-            node --test site/*.test.mjs scripts/*.test.mjs
-          } 2>&1 | tee position-evidence/validation.log
-      - name: Build actual Pages and compare canonical tower replays
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash scripts/build-pages.sh > position-evidence/pages-build.log 2>&1
-          cp pages-dist/physics_engine_demo.wasm position-evidence/candidate.wasm
-          git worktree add --detach /tmp/position-base ca394b3ff6f8ede1848bc84fc9d92fb66dea4ad8
-          (cd /tmp/position-base && cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked)
-          cp /tmp/position-base/demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm position-evidence/base.wasm
-          TRIALS=2 TICKS=1200 node scripts/benchmark-tower-position.mjs position-evidence/base.wasm position-evidence/candidate.wasm position-evidence/all-configurations.json --all > position-evidence/all-configurations.log
-          TRIALS=6 TICKS=1200 node scripts/benchmark-tower-position.mjs position-evidence/base.wasm position-evidence/candidate.wasm position-evidence/representative.json --representative > position-evidence/representative.log
-          cargo test --release --locked --lib approximate::position::parity_tests::position_preparation_scaling_benchmark -- --ignored --nocapture > position-evidence/phase-scaling.log
-          cp scripts/benchmark-tower-position.mjs position-evidence/
-          rustc --version > position-evidence/environment.txt
-          node --version >> position-evidence/environment.txt
-          lscpu >> position-evidence/environment.txt
-      - name: Verify the unchanged tower UI with real projectile inputs
+          bash scripts/build-pages.sh > position-final-evidence/pages-build.log 2>&1
+          cmp pages-dist/physics_engine_demo.wasm /tmp/position-prior/candidate.wasm
+          cp pages-dist/physics_engine_demo.wasm position-final-evidence/candidate.wasm
+          cp pages-dist/build-provenance.json position-final-evidence/
+      - name: Exercise real UI twice without bypassing actionability
         shell: bash
         run: |
           set -euo pipefail
@@ -85,12 +113,14 @@ jobs:
           python3 -m http.server 8765 --directory pages-dist > /tmp/position-server.log 2>&1 &
           server=$!
           trap 'kill "$server" || true' EXIT
-          python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output position-evidence/browser > position-evidence/browser.log 2>&1
+          for attempt in 1 2; do
+            python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output "position-final-evidence/browser-$attempt" > "position-final-evidence/browser-$attempt.log" 2>&1
+          done
       - name: Publish clean verified source without force
         run: git push origin HEAD:perf/tower-position-preparation
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: tower-position-preparation-evidence
-          path: position-evidence/
+          name: tower-position-final-evidence
+          path: position-final-evidence/
           retention-days: 7
