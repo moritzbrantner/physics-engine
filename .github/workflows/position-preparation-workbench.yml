@@ -1,0 +1,96 @@
+name: Tower position preparation verification
+
+on:
+  push:
+    branches: [perf/tower-position-preparation]
+    paths: [.github/workflows/position-preparation-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Apply source and remove temporary transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, hashlib, lzma
+          patch = lzma.decompress(pathlib.Path('.agent-transfer/position.patch.xz').read_bytes())
+          assert hashlib.sha256(patch).hexdigest() == '6881f0858bf2939bffe8f50f2eb1ac91e6c1e97192780cbc08a830b0e2ddf355'
+          pathlib.Path('/tmp/position.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/position.patch
+          git apply /tmp/position.patch
+          rm .agent-transfer/position.patch.xz .github/workflows/position-preparation-workbench.yml
+          rmdir .agent-transfer
+          git add -u
+          git add src/approximate/position/parity_tests.rs scripts/benchmark-tower-position.mjs docs/position-preparation.md
+          test "$(git write-tree)" = 64c4527ffbf058a111bd7e6d12652a87860a5357
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf: prepare fixed collider views and geometry for tower position correction'
+          mkdir -p position-evidence
+          git rev-parse HEAD > position-evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > position-evidence/source-tree.txt
+          git archive --format=tar.gz HEAD > position-evidence/source.tar.gz
+          cp /tmp/position.patch position-evidence/implementation.patch
+      - name: Validate numerical modes and behavioral contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cargo fmt --check
+            cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+            cargo clippy --all-targets -- -D warnings
+            cargo clippy --all-targets --features exact-reference -- -D warnings
+            cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets -- -D warnings
+            cargo test --locked
+            cargo test --locked --features exact-reference
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --features exact-reference
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+            node --test site/*.test.mjs scripts/*.test.mjs
+          } 2>&1 | tee position-evidence/validation.log
+      - name: Build actual Pages and compare canonical tower replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-pages.sh > position-evidence/pages-build.log 2>&1
+          cp pages-dist/physics_engine_demo.wasm position-evidence/candidate.wasm
+          git worktree add --detach /tmp/position-base ca394b3ff6f8ede1848bc84fc9d92fb66dea4ad8
+          (cd /tmp/position-base && cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked)
+          cp /tmp/position-base/demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm position-evidence/base.wasm
+          TRIALS=2 TICKS=1200 node scripts/benchmark-tower-position.mjs position-evidence/base.wasm position-evidence/candidate.wasm position-evidence/all-configurations.json --all > position-evidence/all-configurations.log
+          TRIALS=6 TICKS=1200 node scripts/benchmark-tower-position.mjs position-evidence/base.wasm position-evidence/candidate.wasm position-evidence/representative.json --representative > position-evidence/representative.log
+          cargo test --release --locked --lib approximate::position::parity_tests::position_preparation_scaling_benchmark -- --ignored --nocapture > position-evidence/phase-scaling.log
+          cp scripts/benchmark-tower-position.mjs position-evidence/
+          rustc --version > position-evidence/environment.txt
+          node --version >> position-evidence/environment.txt
+          lscpu >> position-evidence/environment.txt
+      - name: Verify the unchanged tower UI with real projectile inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install playwright==1.57.0
+          python3 -m playwright install --with-deps chromium
+          python3 -m http.server 8765 --directory pages-dist > /tmp/position-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" || true' EXIT
+          python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output position-evidence/browser > position-evidence/browser.log 2>&1
+      - name: Publish clean verified source without force
+        run: git push origin HEAD:perf/tower-position-preparation
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: tower-position-preparation-evidence
+          path: position-evidence/
+          retention-days: 7
