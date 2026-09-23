@@ -66,9 +66,19 @@ pub struct ConvergenceStats {
 
 // A sliding contact may retain tangential velocity at the friction limit. Measure the projected
 // impulse correction, not raw slip velocity; an inactive normal must likewise permit separation.
+#[cfg(test)]
 fn projected_residual(
     bodies: &[Body],
     constraints: &[Constraint],
+    tolerance: Convergence,
+    stats: &mut ConvergenceStats,
+) -> Option<Scalar> {
+    projected_residual_rows(bodies, constraints.iter(), tolerance, stats)
+}
+
+fn projected_residual_rows<'a>(
+    bodies: &[Body],
+    constraints: impl Iterator<Item = &'a Constraint>,
     tolerance: Convergence,
     stats: &mut ConvergenceStats,
 ) -> Option<Scalar> {
@@ -158,6 +168,60 @@ fn projected_residual(
     Some(max_residual)
 }
 
+// Same row kernel and arithmetic for contiguous/global and indexed/island solving.
+// Indirection is specialized away for the existing single-island/fixed-pass path.
+trait Rows: Copy {
+    fn len(self) -> usize;
+    fn index(self, row: usize) -> usize;
+}
+#[derive(Clone, Copy)]
+struct All(usize);
+impl Rows for All {
+    fn len(self) -> usize {
+        self.0
+    }
+    fn index(self, row: usize) -> usize {
+        row
+    }
+}
+impl Rows for &[usize] {
+    fn len(self) -> usize {
+        <[usize]>::len(self)
+    }
+    fn index(self, row: usize) -> usize {
+        self[row]
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Exit {
+    Pending,
+    Empty,
+    Converged,
+    Capped,
+    Fixed,
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Outcome {
+    pub passes: u8,
+    pub exit: Exit,
+}
+
+// Historical substep counters remain substep counters, NOT a sum over islands. In a partitioned
+// solve, passes is the maximum over its islands (the number of equivalent round-robin rounds).
+// Actual work is constraint_visits and the separately reported sum of island_iterations.
+pub(super) fn record_substep(outcome: Outcome, limit: u8, report: &mut Report) {
+    report.impulse_iterations += u64::from(outcome.passes);
+    report.convergence.skipped_iterations += u64::from(limit - outcome.passes);
+    match outcome.exit {
+        Exit::Empty => report.convergence.empty_substeps += 1,
+        Exit::Converged => report.convergence.converged_substeps += 1,
+        Exit::Capped => report.convergence.capped_substeps += 1,
+        Exit::Fixed => report.convergence.fixed_substeps += 1,
+        Exit::Pending => unreachable!("a shared prefix is not a complete substep"),
+    }
+}
+
 pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
@@ -166,28 +230,112 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
     tolerance: Convergence,
     report: &mut Report,
 ) {
-    if EARLY && constraints.is_empty() {
-        report.convergence.empty_substeps += 1;
-        report.convergence.skipped_iterations += u64::from(iterations);
-        return;
+    let outcome = solve_rows::<PREPARED, EARLY, 0, false, _>(
+        bodies,
+        responses,
+        constraints,
+        All(constraints.len()),
+        iterations,
+        tolerance,
+        report,
+    );
+    record_substep(outcome, iterations, report);
+}
+
+pub(super) fn solve_selected<const PREPARED: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    selected: &[usize],
+    iterations: u8,
+    tolerance: Convergence,
+    report: &mut Report,
+) -> Outcome {
+    solve_rows::<PREPARED, true, 2, false, _>(
+        bodies,
+        responses,
+        constraints,
+        selected,
+        iterations,
+        tolerance,
+        report,
+    )
+}
+
+pub(super) fn solve_all_after_prefix<const PREPARED: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    iterations: u8,
+    tolerance: Convergence,
+    report: &mut Report,
+) -> Outcome {
+    solve_rows::<PREPARED, true, 2, false, _>(
+        bodies,
+        responses,
+        constraints,
+        All(constraints.len()),
+        iterations,
+        tolerance,
+        report,
+    )
+}
+
+pub(super) fn solve_prefix<const PREPARED: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    iterations: u8,
+    tolerance: Convergence,
+    report: &mut Report,
+) -> Outcome {
+    solve_rows::<PREPARED, true, 0, true, _>(
+        bodies,
+        responses,
+        constraints,
+        All(constraints.len()),
+        iterations,
+        tolerance,
+        report,
+    )
+}
+
+fn solve_rows<
+    const PREPARED: bool,
+    const EARLY: bool,
+    const START: u8,
+    const PREFIX: bool,
+    R: Rows,
+>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    rows: R,
+    iterations: u8,
+    tolerance: Convergence,
+    report: &mut Report,
+) -> Outcome {
+    if EARLY && rows.len() == 0 {
+        return Outcome {
+            passes: 0,
+            exit: Exit::Empty,
+        };
     }
-    for pass in 0..iterations {
-        report.impulse_iterations += 1;
-        report.convergence.constraint_visits += constraints.len() as u64;
-        // An initial warm-started pass alone is not accepted. No final residual scan is needed
-        // when the iteration ceiling has already been reached or an earlier correction is large.
+    for pass in START..iterations {
+        report.convergence.constraint_visits += rows.len() as u64;
         let completed = u32::from(pass) + 1;
-        // Probe after 2/4/8/... completed passes, never after reaching the ceiling.
-        // Hard stacks do not pay for a convergence probe on every iteration.
+        // A first pass is never certified. Probe after 2/4/8/... complete passes, below the ceiling.
         let mut candidate = EARLY
             && completed >= 2
             && completed.is_power_of_two()
             && completed < u32::from(iterations);
         let mut max_delta: Scalar = 0.0;
-        let mut rows = constraints.iter_mut();
+        let mut unchecked = 0;
         if candidate {
             report.convergence.probe_passes += 1;
-            for c in rows.by_ref() {
+            for n in 0..rows.len() {
+                let c = &mut constraints[rows.index(n)];
+                unchecked = n + 1;
                 report.convergence.delta_constraint_checks += 1;
                 let change = solve_row::<PREPARED, true>(bodies, responses, c, report);
                 let impulse_scale = c
@@ -220,30 +368,44 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
                     .max(change.impulse[2].abs());
             }
         }
-        // After the first large correction this pass cannot finish early. The rest uses the
-        // identical uninstrumented row kernel, not a per-contact convergence branch.
-        for c in rows {
-            solve_row::<PREPARED, false>(bodies, responses, c, report);
+        // Never omit the rest of a pass after a large correction: use the identical cheaper kernel.
+        for n in unchecked..rows.len() {
+            solve_row::<PREPARED, false>(
+                bodies,
+                responses,
+                &mut constraints[rows.index(n)],
+                report,
+            );
         }
-        // Later contacts can disturb an earlier row: all candidates must be checked again using
-        // the final velocities of this complete pass before any remaining passes are skipped.
+        // Check final velocities of every row in this island after completing the ENTIRE pass.
+        // Partition construction includes mutable read dependencies, including one-way responses.
         if candidate
-            && let Some(residual) =
-                projected_residual(bodies, constraints, tolerance, &mut report.convergence)
+            && let Some(residual) = projected_residual_rows(
+                bodies,
+                (0..rows.len()).map(|n| &constraints[rows.index(n)]),
+                tolerance,
+                &mut report.convergence,
+            )
         {
-            report.convergence.converged_substeps += 1;
-            report.convergence.skipped_iterations += u64::from(iterations - pass - 1);
             report.convergence.max_exit_impulse_delta =
                 report.convergence.max_exit_impulse_delta.max(max_delta);
             report.convergence.max_exit_velocity_residual =
                 report.convergence.max_exit_velocity_residual.max(residual);
-            return;
+            return Outcome {
+                passes: pass + 1,
+                exit: Exit::Converged,
+            };
+        }
+        if PREFIX && pass == 1 {
+            return Outcome {
+                passes: 2,
+                exit: Exit::Pending,
+            };
         }
     }
-    if EARLY {
-        report.convergence.capped_substeps += 1;
-    } else {
-        report.convergence.fixed_substeps += 1;
+    Outcome {
+        passes: iterations,
+        exit: if EARLY { Exit::Capped } else { Exit::Fixed },
     }
 }
 

@@ -1,7 +1,8 @@
 """Exercise the canonical tower page with real UI inputs and its actual WASM artifact.
 Run after build-pages.sh with a local server. Requires playwright and chromium.
-Manual clock advances exercise input sequences; timers resume for real UI actions.
-These are behavioral checks, NOT timing benchmarks or deterministic browser replays.
+Use real animation/timer progress for locator actionability and held-input durations.
+Readiness and state transitions use predicates. This is behavioral acceptance, not a
+deterministic replay or a physics timing benchmark; those run through the WASM harness.
 """
 import argparse
 import json
@@ -23,42 +24,45 @@ def main():
         page = browser.new_page(viewport={'width': 1440, 'height': 960}, device_scale_factor=1)
         errors = []
         page.on('pageerror', lambda err: errors.append(str(err)))
-        page.clock.install()
         page.goto(args.url.rstrip('/') + '/scenarios/tower/?response=physical&crates=free&projectile-type=arrow&projectile-impact=impact-retire', wait_until='networkidle')
         page.wait_for_function("document.querySelector('#status').textContent.includes('Tower ready') || document.querySelector('#status').textContent.includes('Unable')")
         assert 'Tower ready' in page.locator('#status').inner_text()
-        page.clock.run_for(4000)
+        page.wait_for_timeout(4000)
+        def paint():
+            page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+
         def click(selector):
-            # Actionability waits for stable animation frames. Manual run_for calls may
-            # leave that progress suspended; resume timers instead of forcing a click
-            # or bypassing visibility/obstruction checks. Game pause remains separate.
-            page.clock.resume()
+            # Real frames keep Playwright's visibility/obstruction/stability checks alive.
+            # Do not force clicks or disable checks to compensate for a paused fake clock.
             page.locator(selector).click()
+            paint()
 
         state = lambda: page.evaluate('window.physicsTowerState')
+        page.wait_for_function('window.physicsTowerState && !window.physicsTowerState.error && window.physicsTowerState.awake === 0')
         before = state()
         assert before['solver'] == 'fixed-step-f64' and not before['error'] and before['awake'] == 0, before
         click('#close-settings')
         assert page.evaluate('document.activeElement.id') == 'scene'
-        page.clock.run_for(32)
+        page.wait_for_timeout(32)
         page.screenshot(path=str(out / 'tower-ready.png'), full_page=True)
         # Change type with a shot still in flight: no fixture reset and per-shot shapes survive.
         click('#pause')
         page.keyboard.press('f')
         page.keyboard.press('1')
         page.keyboard.press('f')
-        page.clock.run_for(16)
+        page.wait_for_timeout(16)
+        page.wait_for_function('window.physicsTowerState.roles.includes(3) && window.physicsTowerState.roles.includes(4)')
         live = state()
         assert live['ticks'] >= before['ticks'] and live['projectileCount'] >= 1, live
         assert 3 in live['roles'] and 4 in live['roles'], live
-        click('#reset'); page.clock.run_for(4000)
+        click('#reset'); page.wait_for_timeout(4000)
         # Non-overlapping fast mixed volley: callbacks/time continue through every impact.
         for i in range(18):
             page.keyboard.press(str(i % 3 + 1))
             page.keyboard.press('f')
-            page.clock.run_for(100)
+            page.wait_for_timeout(100)
             assert not state()['error'], state()
-        page.clock.run_for(5000)
+        page.wait_for_timeout(5000)
         hit = state()
         assert hit['ticks'] > before['ticks'] and not hit['error'], hit
         assert hit['cratePoses'] != before['cratePoses'], 'projectiles must visibly disturb crates'
@@ -66,36 +70,38 @@ def main():
         page.screenshot(path=str(out / 'tower-after-projectiles.png'), full_page=True)
         # Reset works after impacts. Aimed near miss does not wake the tower.
         click('#reset')
-        page.clock.run_for(4000)
+        page.wait_for_timeout(4000)
         reset = state()
         page.keyboard.down('ArrowRight')
-        page.clock.run_for(320)
+        page.wait_for_timeout(320)
         page.keyboard.up('ArrowRight')
         for i in range(3):
-            page.keyboard.press(str(i + 1)); page.keyboard.press('f'); page.clock.run_for(300)
-        page.clock.run_for(2000)
+            page.keyboard.press(str(i + 1)); page.keyboard.press('f'); page.wait_for_timeout(300)
+        page.wait_for_timeout(2000)
         miss = state()
         assert miss['cratePoses'] == reset['cratePoses'] and miss['awake'] == 0 and not miss['error'], miss
         # Existing first-person movement/jump and pause/single-step controls remain usable.
-        click('#reset'); page.clock.run_for(4000)
+        click('#reset'); page.wait_for_timeout(4000)
         position = state()['playerPose']
-        page.keyboard.down('d'); page.clock.run_for(250); page.keyboard.up('d')
+        page.keyboard.down('d'); page.wait_for_timeout(250); page.keyboard.up('d')
         assert state()['playerPose'][0] > position[0], 'first-person movement'
-        page.keyboard.press('Space'); page.clock.run_for(200)
+        page.keyboard.press('Space'); page.wait_for_timeout(200)
         assert state()['playerPose'][1] > position[1], 'jump'
-        click('#pause'); page.clock.run_for(32)
+        click('#pause'); page.wait_for_timeout(32)
+        page.wait_for_function('window.physicsTowerState.paused')
         paused = state(); assert paused['paused']
-        page.clock.run_for(500); assert state()['ticks'] == paused['ticks']
-        click('#single-step'); page.clock.run_for(32)
+        page.wait_for_timeout(500); assert state()['ticks'] == paused['ticks']
+        click('#single-step'); page.wait_for_timeout(32)
+        page.wait_for_function('(tick) => window.physicsTowerState.ticks === tick', arg=paused['ticks'] + 1)
         assert state()['ticks'] == paused['ticks'] + 1
-        click('#reset'); page.clock.run_for(4000)
+        click('#reset'); page.wait_for_timeout(4000)
         assert state()['projectileCount'] == 0 and not state()['error']
         # Unsupported event-solver settings must not masquerade as functional controls.
         click('#open-settings')
         assert page.locator('#fixed-geometry-setting').is_disabled()
         assert all(x.is_disabled() for x in page.locator('[data-stabilization-pair]').all())
         click('#start-performance-log')
-        click('#close-settings'); page.keyboard.press('f'); page.clock.run_for(500)
+        click('#close-settings'); page.keyboard.press('f'); page.wait_for_timeout(500)
         click('#open-settings')
         with page.expect_download() as download:
             click('#download-performance-log')
@@ -106,10 +112,7 @@ def main():
         assert session['scenario']['crate_motion'] == 'free'
         assert session['summary']['physics_work']['fixed_substeps'] > 0
         click('#close-settings')
-        # Screenshot stabilization waits for real animation frames after a resize.
-        # All deterministic gameplay assertions above are complete; resume browser time
-        # for presentation capture rather than leaving its paint callbacks paused.
-        page.clock.resume()
+        # Presentation uses the same real animation clock as input actionability.
         page.set_viewport_size({'width': 390, 'height': 844})
         page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         page.wait_for_function('document.querySelector("#settings-panel").getBoundingClientRect().left >= window.innerWidth')
@@ -118,7 +121,7 @@ def main():
         assert not state()['error'], state()
         assert not errors, errors
         result = {'passed': True, 'before': before, 'hit': hit, 'miss': miss, 'mixed_live': live,
-                  'page_errors': errors, 'url': page.url, 'note': 'Clock-assisted real-input acceptance; not a performance benchmark or deterministic browser replay.'}
+                  'page_errors': errors, 'url': page.url, 'note': 'Real-clock, real-input acceptance; no mocked timers or forced clicks. Not a physics benchmark or deterministic browser replay.'}
         (out / 'browser-result.json').write_text(json.dumps(result, indent=2))
         browser.close()
 
