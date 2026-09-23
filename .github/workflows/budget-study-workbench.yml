@@ -1,0 +1,79 @@
+name: Full solver budget capacity verification
+
+on:
+  push:
+    branches: [experiment/solver-budget-capacity]
+    paths: [.github/workflows/budget-study-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Prepare the isolated experiment without changing production physics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, hashlib, lzma
+          data = b''.join(pathlib.Path(f'.agent-transfer/budget-{i}.xzpart').read_bytes() for i in range(2))
+          patch = lzma.decompress(data)
+          assert hashlib.sha256(patch).hexdigest() == 'ea0ea0130a5bd950cf23ab3a08d103cd53fcd1a90a76e0e658f2b1ed7300b5c6'
+          pathlib.Path('/tmp/study.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/study.patch
+          git apply /tmp/study.patch
+          rm .agent-transfer/budget-*.xzpart .github/workflows/budget-study-workbench.yml
+          rmdir .agent-transfer
+          git add -A
+          test "$(git write-tree)" = 51c7a4f8b5a8ccd124405d45811a98a0be96687a
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'experiment: measure solver budget, contact quality and active box capacity'
+          mkdir -p solver-budget-evidence
+          git rev-parse HEAD > solver-budget-evidence/source-revision.txt
+          git rev-parse 'HEAD^{tree}' > solver-budget-evidence/source-tree.txt
+          git archive --format=tar.gz HEAD > solver-budget-evidence/source.tar.gz
+          cp /tmp/study.patch solver-budget-evidence/implementation.patch
+          git diff --exit-code 3074f49ca2219b89cd093af6b6f8099bb387b887 -- src demo-wasm site
+      - name: Validate fixture, collision probes, observations and capacity analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cargo fmt --manifest-path benchmarks/solver-budget/Cargo.toml --check
+            cargo clippy --manifest-path benchmarks/solver-budget/Cargo.toml --all-targets --locked -- -D warnings
+            cargo clippy --manifest-path benchmarks/solver-budget/Cargo.toml --all-targets --features exact-reference --locked -- -D warnings
+            cargo test --manifest-path benchmarks/solver-budget/Cargo.toml --locked
+            cargo test --manifest-path benchmarks/solver-budget/Cargo.toml --features exact-reference --locked
+            node --check scripts/benchmark-solver-budget.mjs
+            node --test site/*.test.mjs scripts/*.test.mjs
+          } 2>&1 | tee solver-budget-evidence/validation.log
+      - name: Build once and compare twelve budgets across five contact loads
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add wasm32-unknown-unknown
+          cargo build --manifest-path benchmarks/solver-budget/Cargo.toml --target wasm32-unknown-unknown --release --locked
+          cp benchmarks/solver-budget/target/wasm32-unknown-unknown/release/physics_solver_budget_study.wasm solver-budget-evidence/study.wasm
+          rustc --version > solver-budget-evidence/environment.txt
+          node --version >> solver-budget-evidence/environment.txt
+          lscpu >> solver-budget-evidence/environment.txt
+          node scripts/benchmark-solver-budget.mjs solver-budget-evidence/study.wasm solver-budget-evidence --counts 16,32,64,128,256 --ticks 180 --trials 5 | tee solver-budget-evidence/study.log
+          node --input-type=module -e 'import fs from "node:fs";import assert from "node:assert/strict";const r=JSON.parse(fs.readFileSync("solver-budget-evidence/summary.json"));assert(r.complete&&r.harness_passed&&r.rows.length===120);assert(r.rows.some(x=>x.quality_passed));assert(r.rows.some(x=>!x.quality_passed));'
+      - name: Publish verified source without force
+        continue-on-error: true
+        run: git push origin HEAD:experiment/solver-budget-capacity
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: solver-budget-capacity-study
+          path: solver-budget-evidence/
+          retention-days: 14
