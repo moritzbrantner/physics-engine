@@ -6,6 +6,12 @@ on:
       - "src/query.rs"
       - "src/approximate/**"
       - "experiments/contact-islands/**"
+      - "experiments/solver-budget/**"
+      - "scripts/check-diagnostic-exports.mjs"
+      - "scripts/check-diagnostic-exports.test.mjs"
+      - "scripts/benchmark-correction.mjs"
+      - "examples/contact_correction_quality.rs"
+      - "Cargo.toml"
       - "tests/fixed_step_approximation.rs"
       - "scripts/benchmark-fixed-step.mjs"
       - "scripts/benchmark-convergence.mjs"
@@ -102,6 +108,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/run-sandbox-performance.sh
 
+      - name: Verify production excludes optional diagnostics
+        run: node scripts/check-diagnostic-exports.mjs performance-evidence/head.wasm production
+
       - name: Compare fixed-step approximation with event solver
         run: node scripts/benchmark-fixed-step.mjs performance-evidence/head.wasm performance-evidence/fixed-step.json performance-evidence/base.wasm
       - name: Compare convergence with fixed-pass reference
@@ -114,6 +123,27 @@ jobs:
           cp experiments/contact-islands/target/wasm32-unknown-unknown/release/contact_islands_experiment.wasm performance-evidence/contact-islands.wasm
           cp experiments/contact-islands/run.mjs performance-evidence/contact-islands-run.mjs
           TRIALS=2 TICKS=600 node experiments/contact-islands/run.mjs performance-evidence/contact-islands.wasm performance-evidence/contact-islands.json
+
+      - name: Verify opt-in correction without replacing production evidence
+        run: |
+          cargo test --locked --features experimental-soft-contact --lib approximate::
+          cargo test --locked --manifest-path demo-wasm/Cargo.toml --features experimental-soft-contact --lib approximate::
+          cargo build --locked --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --features experimental-soft-contact
+          cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm performance-evidence/correction-experiment.wasm
+          node scripts/check-diagnostic-exports.mjs performance-evidence/correction-experiment.wasm soft
+          TRIALS=2 TICKS=1200 node scripts/benchmark-correction.mjs performance-evidence/correction-experiment.wasm performance-evidence/correction.json
+          cargo run --locked --release --features experimental-soft-contact --example contact_correction_quality -- performance-evidence/correction-quality.json
+
+      - name: Validate budget reporting and bounded diagnostic smoke
+        run: |
+          cargo test --locked --manifest-path experiments/solver-budget/Cargo.toml
+          node --test experiments/solver-budget/*.test.mjs
+          cargo build --locked --manifest-path experiments/solver-budget/Cargo.toml --release --target wasm32-unknown-unknown
+          COUNTS=32 TRIALS=2 TICKS=300 SCENES=0,3 PROFILES=4s-8v-2p,2s-2v-1p node experiments/solver-budget/run.mjs experiments/solver-budget/target/wasm32-unknown-unknown/release/physics_solver_budget.wasm performance-evidence/budget-smoke.json
+          node experiments/solver-budget/check-smoke.mjs performance-evidence/budget-smoke.json
+          cargo test --locked --manifest-path demo-wasm/Cargo.toml --features experimental-soft-contact,solver-budget-experiment --lib approximate::tests::diagnostic_budget
+          cargo build --locked --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --features experimental-soft-contact,solver-budget-experiment
+          node scripts/check-diagnostic-exports.mjs demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm combined
 
       - name: Record independent character gameplay options
         run: |

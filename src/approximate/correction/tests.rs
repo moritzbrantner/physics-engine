@@ -520,3 +520,83 @@ fn unchanged_targets_do_not_allow_skipping_an_unchecked_primary_solve() {
     assert_eq!(r.correction.relaxation_iterations, 2);
     assert_eq!(r.impulse_iterations, 3);
 }
+
+#[test]
+fn reconciled_soft_islands_keep_primary_work_separate_from_relaxation_and_positions() {
+    use crate::approximate::ConvergenceScope;
+    for scope in [
+        ConvergenceScope::ContactIslands,
+        ConvergenceScope::WholeWorld,
+    ] {
+        for relax in [0, 2, 8] {
+            let mut w = World::new(Config {
+                gravity: Vector(0.0, -10.0, 0.0),
+                convergence_scope: scope,
+                fixed_position_iterations: 2,
+                ..config(relax)
+            })
+            .unwrap();
+            w.add_body(Body::new(
+                BodyId(0),
+                Shape::Box(Vector(100.0, 1.0, 100.0)),
+                Vector(0.0, -1.0, 0.0),
+                0.0,
+            ))
+            .unwrap();
+            for (id, p) in [
+                (1, Vector(0.0, 0.9, 0.0)),
+                (2, Vector(0.0, 2.8, 0.0)),
+                (3, Vector(0.0, 4.7, 0.0)),
+                (4, Vector(20.0, 1.0, 0.0)),
+            ] {
+                let mut b = body(id, p, 1.0);
+                b.sleep_allowed = false;
+                w.add_body(b).unwrap();
+            }
+            let mut clone = w.clone();
+            let mut partitions = 0;
+            let mut softened = 0;
+            let mut relaxations = 0;
+            for _ in 0..120 {
+                let r = w.step(1.0 / 60.0).unwrap();
+                clone.step(1.0 / 60.0).unwrap();
+                assert_eq!(
+                    w.bodies, clone.bodies,
+                    "same-build replay and clone cache validity"
+                );
+                assert_eq!(w.cache, clone.cache);
+                assert_eq!(
+                    r.impulse_iterations - r.correction.relaxation_iterations
+                        + r.convergence.skipped_iterations,
+                    u64::from(r.substeps) * 8
+                );
+                assert!(r.position.passes <= u64::from(r.substeps) * 2);
+                if scope == ConvergenceScope::ContactIslands {
+                    assert_eq!(
+                        r.convergence.constraint_visits + r.islands.skipped_constraint_visits,
+                        r.contact_points * 8,
+                        "primary island accounting must exclude relaxation"
+                    );
+                }
+                for b in w.bodies().filter(|b| b.mass > 0.0) {
+                    assert!(
+                        crate::approximate::contact::bounds(b).0.1
+                            >= -w.config.contact_slop - 1e-10
+                    );
+                }
+                assert!(w.constraints.iter().all(|c| !c.relaxing_normal));
+                softened += r.correction.softened_points;
+                partitions += r.islands.partition_builds;
+                relaxations += r.correction.relaxation_iterations;
+            }
+            assert!(softened > 0);
+            if scope == ConvergenceScope::ContactIslands {
+                assert!(partitions > 0);
+            } else {
+                assert_eq!(partitions, 0);
+            }
+            assert_eq!(relaxations > 0, relax > 0);
+            assert!((w.elapsed_seconds() - 2.0).abs() < 1e-12);
+        }
+    }
+}

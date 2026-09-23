@@ -1,6 +1,17 @@
 # Soft-contact and relaxation experiment (#158)
 
-Status: opt-in research comparison. `Config::soft_contact` defaults to `None`, retaining the
+Status: opt-in research comparison, compiled only with `--features experimental-soft-contact`.
+Normal CPU/WASM builds do not contain the optional Config/Constraint/World/Report fields or
+correction exports; even enabled builds retain `soft_contact: None` by default.
+The reconciled primary solve uses the existing island/whole-world/fixed-pass scheduler with a
+shared row formula and final-velocity residual. Relaxation is separately accounted, hardens only
+its temporary solve, and integrates time once before the existing fixed-position stage.
+
+The tables below are historical measurements on the pre-island experiment unless explicitly
+identified as reconciliation evidence. Merging the experiment is NOT promoting it to production.
+All commands in this document require the experimental feature on the relevant Cargo invocation.
+
+Opt-in research comparison. `Config::soft_contact` defaults to `None`, retaining the
 merged Baumgarte solver and its convergence checks. Neither the existing Pages scenarios nor
 the default approximation reset silently select this experiment. Passing selected fixtures is not
 a default-promotion decision: the relaxed method trades cheaper settling in some impacts against
@@ -33,15 +44,15 @@ This follows the soft-constraint parameterization described by Erin Catto in
 <https://box2d.org/posts/2024/02/solver2d/>. It is a compliant contact constraint, not a change
 to global linear/angular damping. The same pair impulse application and friction kernel are
 used. Fixed supports (mass zero) keep a hard normal constraint while using the selected correction
-bias rate. Compliance applies to overlapping dynamic pairs. Speculative separated contacts and
+bias rate. Compliance applies only to dynamic pairs penetrating strictly beyond the unchanged contact slop. Speculative separated contacts and
 fresh restitutive impacts also retain the hard normal response and their existing speed targets. Collision admission, nearest/equal-hit shielding, rotation locks and numerical
 ownership remain in the same Rust world.
 
 Early stopping uses the **soft** complementarity residual, including the compliance times
 accumulated impulse. It cannot reuse the rigid zero-relative-velocity condition. Friction
 stationarity and final-whole-pass checks remain required; large impulses absorbing a small
-increment cannot establish convergence by themselves. The default hard kernel is a separate
-compile-time specialization with the original floating-point evaluation order.
+increment cannot establish convergence by themselves. With the feature absent the hard kernel keeps its original arithmetic and data layout.
+Feature-enabled builds share row/residual code for hard and soft constraints; no second island solver is introduced.
 
 ## Optional relaxation
 
@@ -66,8 +77,11 @@ There is no second gravity application, global drag, forced sleep, or dropped re
 
 The default path allocates no correction scratch. Opt-in relaxation retains per-body motion and
 per-row bias buffers. Their payload bytes are separately counted; allocator overhead is not
-included. The normal hard/soft flag fits the existing constraint storage; the default replay
-comparison still checks every pre-existing work/memory stat, including stat 23.
+included. Experimental builds retain per-row compliance coefficients and a temporary relaxation-phase flag,
+so their constraint scratch payload can differ from production even with `soft_contact: None`.
+The correction-policy comparison reports stat 23 separately and checks all other old work counters.
+Normal, feature-OFF builds retain the production layout and are compared strictly, including stat 23.
+These are different comparisons; experimental metadata is not disguised as a production speedup.
 
 ## Observation and acceptance
 
@@ -89,9 +103,16 @@ Generic stats 0..51 are retained. New stats are:
 | 56 | Skipped relaxation passes |
 | 57 | Retained relaxation motion/bias payload bytes |
 | 58 | Overlapping non-bouncing fixed-support points kept hard |
+| 59 | Certified unchanged-system relaxation skips |
+| 60 | Rows checked for that certificate |
+| 61 | Relaxation partition builds |
+| 62 | Relaxation rows indexed |
+| 63 | Relaxation logical island iterations |
+| 64 | Relaxation skipped constraint visits |
+| 65 | Relaxation partition scratch growths |
 
 The tower matrix compares the real merged module, the same-binary Baumgarte policy, softness,
-and soft-plus-relaxation. It enforces unchanged default physics/work histories; same-policy
+and soft-plus-relaxation. It enforces unchanged default physics/non-memory work histories; same-policy
 repetition; actual crate response on hits; unchanged sleeping poses on misses; rotation locks;
 finite state; bounded work; full elapsed time; and the existing 0.5-unit floor-penetration bound.
 Cross-policy hashes may differ. Record settling, kinetic energy, jitter, sleep transitions and
@@ -138,11 +159,11 @@ include unrelated host load and are diagnostic; use an isolated repeated run for
 ## Reproduction
 
 ```
-cargo test --locked --lib approximate::correction
-cargo test --locked --lib approximate::convergence
-cargo build --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --locked
+cargo test --locked --features experimental-soft-contact --lib approximate::correction
+cargo test --locked --features experimental-soft-contact --lib approximate::convergence
+cargo build --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --locked --features experimental-soft-contact
 TRIALS=4 TICKS=1200 node scripts/benchmark-correction.mjs candidate.wasm result.json merged.wasm
-cargo run --release --locked --example contact_correction_quality -- heldout.json
+cargo run --release --locked --features experimental-soft-contact --example contact_correction_quality -- heldout.json
 ```
 
 The last command gates the relaxed candidate and currently exits 0 while retaining failed mixed-mass
@@ -201,3 +222,27 @@ the rigid trace slept later than in the prior experiment, and sphere/rigid penet
 while remaining within the limit. Therefore the earlier table of universally lower penetration
 must not be attributed to the refined candidate. Retain the measured tradeoffs and compare both
 the prior experiment and merged default before deciding whether to promote it.
+
+## Reconciliation with island convergence and fixed-position correction
+
+The current primary scheduler is retained in every build. Both whole-world and per-island
+checks call the same row update and the same soft-aware final-velocity residual. There is no
+legacy `solve_soft` loop bypassing current contact partitioning. A compliant row cannot be
+certified with the hard-contact residual.
+
+Relaxation temporarily sets `relaxing_normal` and changes its targets; `hard_normal` remains the
+primary row classification. The temporary flag is cleared before returning. Primary convergence
+and island reports are saved/restored while extra relaxation work is separately measured. A
+relaxation pass cannot accidentally certify the next primary solve or overwrite primary row
+savings. Inertia-application totals still include all actual primary and relaxation applications.
+The shared island scratch may be reused, but is rebuilt under the same current-row dependency rules.
+
+Pose advances once from the selected movement velocity. Existing geometric fixed-position
+correction then runs before island sleep. The reconciliation regression combines both scopes,
+zero/two/eight relaxation passes, independent props, corrected floor contacts and mixed soft/hard
+rows through 120 ticks, checking primary/relaxation work accounting, cloned body/cache replay,
+unchanged elapsed time and the existing position-correction bound.
+
+The real tower always resets to the established production config, including in an experimental
+binary. Budget tuning has a separate `solver-budget-experiment` feature and cannot implicitly
+enable compliance. See [the integration ledger](improvement-reconciliation.md).

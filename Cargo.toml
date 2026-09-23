@@ -10,6 +10,8 @@ description = "Deterministic continuous-collision physics kernel"
 default = []
 # Diagnostic legacy replay only. Never required by the default or Pages build.
 exact-reference = []
+# Diagnostic correction study only; no optional state/branches in production builds.
+experimental-soft-contact = []
 
 [lib]
 name = "physics_engine"
@@ -20,3 +22,7 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+
+[[example]]
+name = "contact_correction_quality"
+required-features = ["experimental-soft-contact"]

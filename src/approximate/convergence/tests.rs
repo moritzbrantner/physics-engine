@@ -19,6 +19,12 @@ fn row(a: usize, b: usize) -> Constraint {
         normal_mass: 1.0,
         tangent_mass: [1.0; 2],
         bias: 0.0,
+        #[cfg(feature = "experimental-soft-contact")]
+        hard_normal: true,
+        #[cfg(feature = "experimental-soft-contact")]
+        relaxing_normal: false,
+        #[cfg(feature = "experimental-soft-contact")]
+        normal_coefficients: super::super::correction::Coefficients::RIGID,
         friction: 0.5,
         normal_impulse: 0.0,
         tangent_impulse: [0.0; 2],
@@ -398,5 +404,89 @@ fn large_sideways_velocity_cannot_relax_the_normal_error_limit() {
             &mut ConvergenceStats::default()
         )
         .is_none()
+    );
+}
+
+#[cfg(feature = "experimental-soft-contact")]
+#[test]
+fn soft_residual_checks_compliance_instead_of_rigid_zero_velocity() {
+    let b = vec![sphere(1, 0.0, 0.0), sphere(2, 2.0, 1.0)];
+    let mut c = row(0, 1);
+    c.hard_normal = false;
+    c.friction = 0.0;
+    c.bias = 3.0;
+    let coefficients = crate::approximate::SoftContact::default()
+        .prepare(1.0 / 240.0)
+        .unwrap();
+    c.normal_coefficients = coefficients;
+    c.normal_impulse =
+        c.bias * c.normal_mass * coefficients.mass_scale / coefficients.impulse_scale;
+    assert!(
+        projected_residual(
+            &b,
+            std::slice::from_ref(&c),
+            Convergence::default(),
+            &mut ConvergenceStats::default()
+        )
+        .is_some()
+    );
+    c.hard_normal = true;
+    assert!(
+        projected_residual(
+            &b,
+            std::slice::from_ref(&c),
+            Convergence::default(),
+            &mut ConvergenceStats::default()
+        )
+        .is_none()
+    );
+    c.hard_normal = false;
+    c.normal_impulse *= 1.01;
+    assert!(
+        projected_residual(
+            &b,
+            &[c],
+            Convergence::default(),
+            &mut ConvergenceStats::default()
+        )
+        .is_none()
+    );
+}
+#[cfg(feature = "experimental-soft-contact")]
+#[test]
+fn soft_solver_counts_complete_passes_and_checks_its_final_residual() {
+    let mut b = vec![sphere(1, 0.0, 0.0), sphere(2, 2.0, 1.0)];
+    let mut c = row(0, 1);
+    c.hard_normal = false;
+    c.friction = 0.0;
+    c.bias = 3.0;
+    let coefficients = crate::approximate::SoftContact::default()
+        .prepare(1.0 / 240.0)
+        .unwrap();
+    let mut report = Report::default();
+    let responses = vec![PreparedResponse::default(); 2];
+    c.normal_coefficients = coefficients;
+    solve::<false, true>(
+        &mut b,
+        &responses,
+        std::slice::from_mut(&mut c),
+        8,
+        Convergence::default(),
+        &mut report,
+    );
+    assert_eq!(report.convergence.converged_substeps, 1);
+    assert_eq!(
+        report.impulse_iterations + report.convergence.skipped_iterations,
+        8
+    );
+    assert!(c.normal_impulse > 0.0);
+    assert!(
+        projected_residual(
+            &b,
+            &[c],
+            Convergence::default(),
+            &mut ConvergenceStats::default()
+        )
+        .is_some()
     );
 }

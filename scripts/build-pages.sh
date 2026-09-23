@@ -13,6 +13,9 @@ cargo build \
   --release \
   --locked
 
+node scripts/check-diagnostic-exports.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm production
+
 node --input-type=module <<'NODE'
 import { readFile } from "node:fs/promises";
 

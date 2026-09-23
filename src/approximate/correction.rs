@@ -77,6 +77,11 @@ pub struct CorrectionStats {
     pub relaxation_motion_bytes: u64,
     pub unchanged_converged_skips: u64,
     pub unchanged_target_checks: u64,
+    pub relaxation_partition_builds: u64,
+    pub relaxation_rows_indexed: u64,
+    pub relaxation_island_iterations: u64,
+    pub relaxation_skipped_constraint_visits: u64,
+    pub relaxation_scratch_growths: u64,
 }
 
 impl World {
@@ -126,10 +131,25 @@ impl World {
             }
             for (c, bias) in constraints.iter_mut().zip(&self.relaxation_bias) {
                 c.bias = *bias;
+                c.relaxing_normal = true;
             }
             let primary = std::mem::take(&mut report.convergence);
+            let primary_islands = std::mem::take(&mut report.islands);
             let iterations_before = report.impulse_iterations;
             match self.config.convergence {
+                Some(tolerance)
+                    if self.config.convergence_scope == super::ConvergenceScope::ContactIslands =>
+                {
+                    super::islands::solve::<PREPARED>(
+                        &mut self.bodies,
+                        &self.responses,
+                        constraints,
+                        relax,
+                        tolerance,
+                        &mut self.island_scratch,
+                        report,
+                    );
+                }
                 Some(tolerance) => convergence::solve::<PREPARED, true>(
                     &mut self.bodies,
                     &self.responses,
@@ -154,7 +174,18 @@ impl World {
                 report.convergence.residual_constraint_visits;
             report.correction.relaxation_skipped_iterations +=
                 report.convergence.skipped_iterations;
+            // Relaxation grouping is bounded separately and cannot certify a primary solve.
+            let r = &mut report.correction;
+            r.relaxation_partition_builds += report.islands.partition_builds;
+            r.relaxation_rows_indexed += report.islands.rows_indexed;
+            r.relaxation_island_iterations += report.islands.island_iterations;
+            r.relaxation_skipped_constraint_visits += report.islands.skipped_constraint_visits;
+            r.relaxation_scratch_growths += report.islands.scratch_growths;
+            report.islands = primary_islands;
             report.convergence = primary;
+            for c in constraints {
+                c.relaxing_normal = false;
+            }
         }
         relaxing
     }

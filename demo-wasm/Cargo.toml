@@ -9,7 +9,10 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
+# Budget controls are diagnostic exports, never a production quality switch.
+solver-budget-experiment = []
 exact-reference = ["physics-engine/exact-reference"]
+experimental-soft-contact = ["physics-engine/experimental-soft-contact"]
 
 [dependencies]
 physics-engine = { path = ".." }
