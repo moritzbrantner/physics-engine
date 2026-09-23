@@ -525,6 +525,8 @@ impl World {
         if dt == 0.0 {
             self.last_report = Report::default();
             self.last_report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
+            self.last_report.position.scratch_retained_bytes =
+                self.bookkeeping.position.retained_bytes();
             return Ok(self.last_report.clone());
         }
         if dt / self.config.substeps as Scalar == 0.0 {
@@ -919,6 +921,7 @@ impl World {
         Ok(report)
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
+        report.position.scratch_retained_bytes = self.bookkeeping.position.retained_bytes();
         report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
         self.bookkeeping.work.scratch_retained_bytes = (self.bookkeeping.retained_bytes()
             + bookkeeping::bytes(&self.constraints)

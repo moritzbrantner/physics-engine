@@ -3,7 +3,7 @@
 //! This is not a sweep and cannot replace CCD. It removes residual overlap after pose
 //! integration, without adding correction velocity/kinetic energy or integrating time again.
 //! Movable pairs stay in the impulse solver; fixed bodies are never modified.
-use super::{Error, World};
+use super::{Body, Error, Shape, Vector, World, contact, geometry::GeometryStats};
 
 #[derive(Clone, Debug, Default)]
 pub struct PositionReport {
@@ -12,6 +12,64 @@ pub struct PositionReport {
     pub contact_tests: u64,
     pub corrections: u64,
     pub max_distance: f64,
+    /// Eligible dynamic bodies visited, once per position pass.
+    pub body_visits: u64,
+    pub fixed_index_rebuilds: u64,
+    /// Includes every body inspected while rebuilding the fixed index.
+    pub index_body_scans: u64,
+    pub fixed_frame_preparations: u64,
+    pub moving_frame_preparations: u64,
+    /// Retained fixed-index and clipping payload; excludes allocator overhead.
+    pub scratch_retained_bytes: u64,
+    /// Observed capacity increases (index pushes and end-of-stage clipping storage).
+    /// This is not a count of allocations or all transient growth events.
+    pub scratch_growths: u64,
+}
+
+#[derive(Clone, Debug)]
+struct FixedCollider {
+    index: usize,
+    axes: Option<[Vector; 3]>,
+    bounds: (Vector, Vector),
+}
+/// Derived from the world-owned, BodyId-sorted body layout. Stored body geometry cannot be
+/// mutated through the public API; add/remove/retirement invalidates the index centrally.
+/// No contact results, normals, swept bounds or times of impact are retained here.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Scratch {
+    fixed: Vec<FixedCollider>,
+    valid: bool,
+    clipping: contact::ClipScratch,
+    #[cfg(test)]
+    reference: bool,
+}
+impl Scratch {
+    pub fn invalidate(&mut self) {
+        self.valid = false;
+    }
+    fn prepare(&mut self, bodies: &[Body], report: &mut PositionReport) {
+        if self.valid {
+            return;
+        }
+        report.fixed_index_rebuilds += 1;
+        report.index_body_scans += bodies.len() as u64;
+        self.fixed.clear();
+        for (index, b) in bodies.iter().enumerate() {
+            if b.mass == 0.0 && !b.sensor {
+                let capacity = self.fixed.capacity();
+                self.fixed.push(FixedCollider {
+                    index,
+                    axes: None,
+                    bounds: b.cached_bounds,
+                });
+                report.scratch_growths += u64::from(self.fixed.capacity() != capacity);
+            }
+        }
+        self.valid = true;
+    }
+    pub fn retained_bytes(&self) -> u64 {
+        (self.fixed.capacity() * size_of::<FixedCollider>() + self.clipping.retained_bytes()) as u64
+    }
 }
 
 impl World {
@@ -20,23 +78,36 @@ impl World {
         h: f64,
         report: &mut PositionReport,
     ) -> Result<(), Error> {
+        #[cfg(test)]
+        if self.bookkeeping.position.reference {
+            return parity_tests::reference(self, h, report);
+        }
+        if self.config.fixed_position_iterations == 0 {
+            return Ok(());
+        }
+        let s = &mut self.bookkeeping;
+        s.activity.refresh(&self.bodies, &mut s.work);
+        s.position.prepare(&self.bodies, report);
+        let clipping_before = s.position.clipping.retained_bytes();
         for _ in 0..self.config.fixed_position_iterations {
             report.passes += 1;
             let mut changed = false;
-            for i in 0..self.bodies.len() {
+            // Both views preserve BodyId order. A correction can move into a later collider;
+            // never prefilter an entire pass from the body's old bounds.
+            for &i in &s.activity.indices {
                 if !self.bodies[i].movable() || self.bodies[i].sleeping || self.bodies[i].sensor {
                     continue;
                 }
-                for j in 0..self.bodies.len() {
-                    if self.bodies[j].mass != 0.0
-                        || self.bodies[j].sensor
-                        || !self.bodies[i].layers.collides_with(self.bodies[j].layers)
-                    {
+                report.body_visits += 1;
+                let mut moving_axes = None;
+                let (mut lo, mut hi) = self.bodies[i].cached_bounds;
+                for fixed in &mut s.position.fixed {
+                    let j = fixed.index;
+                    if !self.bodies[i].layers.collides_with(self.bodies[j].layers) {
                         continue;
                     }
                     report.bounds_tests += 1;
-                    let (lo, hi) = self.bodies[i].cached_bounds;
-                    let (bl, bh) = self.bodies[j].cached_bounds;
+                    let (bl, bh) = fixed.bounds;
                     if lo.0 > bh.0
                         || hi.0 < bl.0
                         || lo.1 > bh.1
@@ -47,11 +118,30 @@ impl World {
                         continue;
                     }
                     report.contact_tests += 1;
-                    // Fresh post-integration manifold: no old normals or swept TOI may substitute.
-                    let Some(m) = super::contact::current(&self.bodies[j], &self.bodies[i], 0.0)
-                    else {
-                        continue;
+                    let (a, b) = (&self.bodies[j], &self.bodies[i]);
+                    // Only orientation axes and buffer capacity are reused. Every query recomputes
+                    // current SAT separation and clipped points after any preceding correction.
+                    let manifold = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                        let aa = *fixed.axes.get_or_insert_with(|| {
+                            report.fixed_frame_preparations += 1;
+                            a.orientation.axes()
+                        });
+                        let bb = *moving_axes.get_or_insert_with(|| {
+                            report.moving_frame_preparations += 1;
+                            b.orientation.axes()
+                        });
+                        contact::box_current_with_frames(
+                            a,
+                            b,
+                            0.0,
+                            [aa, bb],
+                            &mut GeometryStats::default(),
+                            &mut s.position.clipping,
+                        )
+                    } else {
+                        contact::current(a, b, 0.0)
                     };
+                    let Some(m) = manifold else { continue };
                     let depth = (&m.points)
                         .into_iter()
                         .map(|p| -p.separation)
@@ -65,8 +155,8 @@ impl World {
                     if !body.valid() {
                         return Err(Error::NonFiniteState(body.id));
                     }
-                    body.cached_bounds = super::contact::bounds(body);
-                    // A body still receiving material correction is not ready to sleep.
+                    body.cached_bounds = contact::bounds(body);
+                    (lo, hi) = body.cached_bounds;
                     if distance > self.config.sleep_speed * h {
                         body.quiet_time = 0.0;
                     }
@@ -79,6 +169,9 @@ impl World {
                 break;
             }
         }
+        report.scratch_growths +=
+            u64::from(s.position.clipping.retained_bytes() != clipping_before);
+        report.scratch_retained_bytes = s.position.retained_bytes();
         Ok(())
     }
 }
@@ -233,3 +326,6 @@ mod tests {
         assert!(!w.bodies[1].sleeping);
     }
 }
+
+#[cfg(test)]
+mod parity_tests;

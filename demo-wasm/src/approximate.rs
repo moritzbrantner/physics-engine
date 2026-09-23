@@ -111,6 +111,13 @@ pub extern "C" fn approximate_position_stat(index: u32) -> f64 {
             2 => r.contact_tests as f64,
             3 => r.corrections as f64,
             4 => r.max_distance,
+            5 => r.body_visits as f64,
+            6 => r.fixed_index_rebuilds as f64,
+            7 => r.index_body_scans as f64,
+            8 => r.fixed_frame_preparations as f64,
+            9 => r.moving_frame_preparations as f64,
+            10 => r.scratch_retained_bytes as f64,
+            11 => r.scratch_growths as f64,
             _ => f64::NAN,
         }
     })
