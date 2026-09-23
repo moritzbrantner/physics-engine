@@ -1,0 +1,104 @@
+name: Independent contact-island verification
+
+on:
+  push:
+    branches: [perf/166-island-convergence]
+    paths: [.github/workflows/island-convergence-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Apply validated source and remove temporary transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, lzma, hashlib
+          data = b''.join(pathlib.Path(f'.agent-transfer/islands-{i}.xzpart').read_bytes() for i in range(5))
+          patch = lzma.decompress(data)
+          assert hashlib.sha256(patch).hexdigest() == '99cda403a07f5a807b5ebdc85aced1352809d6acdbd98913c6370a156af9bb62'
+          pathlib.Path('/tmp/islands.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/islands.patch
+          git apply /tmp/islands.patch
+          rm .agent-transfer/islands-*.xzpart .github/workflows/island-convergence-workbench.yml
+          rmdir .agent-transfer
+          git add -A
+          test "$(git write-tree)" = c8797b0ccbf0add40dcf96c83dee7ddedab83549
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'perf: stop independent contact islands after validated local convergence'
+          mkdir -p island-evidence
+          git rev-parse HEAD > island-evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > island-evidence/source-tree.txt
+          git archive --format=tar.gz HEAD > island-evidence/source.tar.gz
+          cp /tmp/islands.patch island-evidence/implementation.patch
+      - name: Verify dependencies, bounded solving and native regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cargo fmt --check
+            cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+            cargo fmt --manifest-path experiments/contact-islands/Cargo.toml --check
+            cargo clippy --locked --all-targets -- -D warnings
+            cargo clippy --locked --manifest-path experiments/contact-islands/Cargo.toml --all-targets -- -D warnings
+            cargo test --locked --lib approximate::
+            cargo test --locked --features exact-reference --lib approximate::
+            cargo test --locked --test fixed_step_approximation
+            cargo test --locked --manifest-path experiments/contact-islands/Cargo.toml
+            node --test site/*.test.mjs scripts/*.test.mjs
+          } 2>&1 | tee island-evidence/native.log
+      - name: Build Pages and an immutable same-fixture reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-pages.sh > island-evidence/pages-build.log 2>&1
+          cp pages-dist/physics_engine_demo.wasm island-evidence/tower.wasm
+          cargo build --locked --manifest-path experiments/contact-islands/Cargo.toml --release --target wasm32-unknown-unknown
+          cp experiments/contact-islands/target/wasm32-unknown-unknown/release/contact_islands_experiment.wasm island-evidence/candidate.wasm
+          git worktree add --detach /tmp/island-base 3074f49ca2219b89cd093af6b6f8099bb387b887
+          mkdir -p /tmp/island-base/experiments
+          cp -r experiments/contact-islands /tmp/island-base/experiments/
+          rm -rf /tmp/island-base/experiments/contact-islands/target
+          (cd /tmp/island-base && cargo build --locked --manifest-path experiments/contact-islands/Cargo.toml --features baseline --release --target wasm32-unknown-unknown)
+          cp /tmp/island-base/experiments/contact-islands/target/wasm32-unknown-unknown/release/contact_islands_experiment.wasm island-evidence/base.wasm
+          cp experiments/contact-islands/run.mjs island-evidence/
+          rustc -Vv > island-evidence/environment.txt
+          node --version >> island-evidence/environment.txt
+          lscpu >> island-evidence/environment.txt
+      - name: Measure complete physics steps including partition overhead
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRIALS=6 TICKS=600 node experiments/contact-islands/run.mjs island-evidence/candidate.wasm island-evidence/paired.json island-evidence/base.wasm | tee island-evidence/paired.log
+          TRIALS=2 TICKS=1200 node experiments/contact-islands/run.mjs island-evidence/candidate.wasm island-evidence/long.json island-evidence/base.wasm | tee island-evidence/long.log
+          TOWER_TICKS=1200 TOWER_TRIALS=2 node scripts/test-tower-runtime.mjs island-evidence/tower.wasm island-evidence/tower-quality.json > island-evidence/tower-quality.log
+          TRIALS=2 node scripts/benchmark-convergence.mjs island-evidence/tower.wasm island-evidence/convergence.json > island-evidence/convergence.log
+      - name: Verify the unchanged tower UI with actual projectile controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install playwright==1.57.0
+          python3 -m playwright install --with-deps chromium
+          python3 -m http.server 8765 --directory pages-dist > /tmp/island-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" || true' EXIT
+          python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output island-evidence/browser > island-evidence/browser.log 2>&1
+      - name: Publish clean verified source without force
+        run: git push origin HEAD:perf/166-island-convergence
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: contact-island-convergence-evidence
+          path: island-evidence/
+          retention-days: 7
