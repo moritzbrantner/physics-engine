@@ -181,6 +181,7 @@ pub(super) struct SweepRow {
 }
 #[derive(Clone, Debug, Default)]
 pub(super) struct Scratch {
+    pub position: super::position::Scratch,
     pub activity: Activity,
     pub graph: Adjacency,
     pub traversal: Traversal,
@@ -195,6 +196,7 @@ pub(super) struct Scratch {
 }
 impl Scratch {
     pub fn layout_changed(&mut self) {
+        self.position.invalidate();
         self.activity.dirty = true;
         self.graph.dirty = true;
         self.bounds.clear();

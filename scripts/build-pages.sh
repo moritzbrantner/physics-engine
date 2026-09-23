@@ -22,6 +22,8 @@ const bytes = await readFile(
 const { instance } = await WebAssembly.instantiate(bytes, {});
 const exports = instance.exports;
 const requiredFunctions = [
+  "approximate_reset_tower",
+  "approximate_position_stat",
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
   "sandbox_reset_tower_with_baking_options",
@@ -112,6 +114,12 @@ NODE
 node scripts/benchmark-projectile-wake.mjs \
   demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
   demo-wasm/target/pages-projectile-wake.json
+
+# The canonical page is a different consumer from the comparison page: exercise its real adapter.
+TOWER_TICKS=600 node scripts/test-tower-runtime.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  demo-wasm/target/pages-tower-runtime.json
+node --test site/tower-runtime.test.mjs
 
 node --input-type=module --check < site/app.js
 node --input-type=module --check < site/webgpu-renderer.js

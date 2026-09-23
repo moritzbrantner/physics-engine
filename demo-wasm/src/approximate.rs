@@ -2,9 +2,9 @@
 use super::{PLAYER_ID, PROJECTILE_ID_START, ProjectileType, controller};
 use physics_engine::{
     BodyId,
-    approximate::{Body, Config, Quaternion, Shape, SoftContact, Vector, World},
+    approximate::{Body, Config, Quaternion, Shape, Vector, World},
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::BTreeMap};
 
 struct Experiment {
     world: World,
@@ -13,6 +13,10 @@ struct Experiment {
     snapshot: Vec<f64>,
     error: i32,
     retired: u32,
+    out_of_bounds: u32,
+    evicted: u32,
+    total_contacts: u64,
+    projectile_types: BTreeMap<BodyId, ProjectileType>,
 }
 std::thread_local! {static EXPERIMENT:RefCell<Option<Experiment>>=const{RefCell::new(None)};}
 fn read<T>(default: T, f: impl FnOnce(&Experiment) -> T) -> T {
@@ -26,7 +30,7 @@ fn write(f: impl FnOnce(&mut Experiment) -> i32) -> i32 {
 /// there is no legacy state roundtrip during any approximate tick.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_reset_from_sandbox(substeps: i32, iterations: i32) -> i32 {
-    reset_with_convergence(substeps, iterations, true, None)
+    reset_with_convergence(substeps, iterations, true, 0)
 }
 
 /// Fixed-pass diagnostic reference; same fixture, math and collision path, no early termination.
@@ -35,38 +39,14 @@ pub extern "C" fn approximate_reset_fixed_iterations_from_sandbox(
     substeps: i32,
     iterations: i32,
 ) -> i32 {
-    reset_with_convergence(substeps, iterations, false, None)
-}
-
-/// Opt-in diagnostic correction: existing reset exports keep the merged Baumgarte policy.
-#[unsafe(no_mangle)]
-pub extern "C" fn approximate_reset_soft_from_sandbox(
-    substeps: i32,
-    iterations: i32,
-    frequency_hz: f64,
-    damping_ratio: f64,
-    relaxation_iterations: i32,
-) -> i32 {
-    let Ok(relaxation_iterations) = u8::try_from(relaxation_iterations) else {
-        return -1;
-    };
-    reset_with_convergence(
-        substeps,
-        iterations,
-        true,
-        Some(SoftContact {
-            frequency_hz,
-            damping_ratio,
-            relaxation_iterations,
-        }),
-    )
+    reset_with_convergence(substeps, iterations, false, 0)
 }
 
 fn reset_with_convergence(
     substeps: i32,
     iterations: i32,
     early: bool,
-    soft_contact: Option<SoftContact>,
+    fixed_position_iterations: u8,
 ) -> i32 {
     let Ok(substeps) = u8::try_from(substeps) else {
         return -1;
@@ -79,8 +59,8 @@ fn reset_with_convergence(
             gravity: s.world.config().gravity.into(),
             substeps,
             velocity_iterations,
+            fixed_position_iterations,
             convergence: early.then(Default::default),
-            soft_contact,
             ..Config::default()
         })?;
         for b in s.world.boxes() {
@@ -99,19 +79,84 @@ fn reset_with_convergence(
             snapshot: Vec::new(),
             error: 0,
             retired: 0,
+            out_of_bounds: 0,
+            evicted: 0,
+            total_contacts: 0,
+            projectile_types: BTreeMap::new(),
         })
     });
     0
 }
+/// Production tower entry point. Legacy code constructs the shared fixture only: no event
+/// step, integer pose write-back, or automatic solver fallback runs during this scenario.
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_reset_tower(simulation_rules: i32) -> i32 {
+    let result =
+        controller::baking::sandbox_reset_tower_with_baking_options(simulation_rules, 0, 0);
+    if result != 0 {
+        return result;
+    }
+    // Retain the four-substep impulse solver. A bounded geometric correction handles residual
+    // fixed-world overlap under repeated volleys without adding velocity or chronological events.
+    reset_with_convergence(4, 8, true, 2)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_position_stat(index: u32) -> f64 {
+    read(f64::NAN, |s| {
+        let r = &s.world.last_report.position;
+        match index {
+            0 => r.passes as f64,
+            1 => r.bounds_tests as f64,
+            2 => r.contact_tests as f64,
+            3 => r.corrections as f64,
+            4 => r.max_distance,
+            5 => r.body_visits as f64,
+            6 => r.fixed_index_rebuilds as f64,
+            7 => r.index_body_scans as f64,
+            8 => r.fixed_frame_preparations as f64,
+            9 => r.moving_frame_preparations as f64,
+            10 => r.scratch_retained_bytes as f64,
+            11 => r.scratch_growths as f64,
+            _ => f64::NAN,
+        }
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_grounded() -> i32 {
+    read(-1, |s| i32::from(s.world.has_support(PLAYER_ID)))
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_body_count() -> u32 {
+    read(0, |s| s.world.bodies().count() as u32)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_projectile_count() -> u32 {
+    read(0, |s| s.projectile_types.len() as u32)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_projectiles_out_of_bounds() -> u32 {
+    read(0, |s| s.out_of_bounds)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_projectiles_evicted() -> u32 {
+    read(0, |s| s.evicted)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_total_contacts() -> u64 {
+    read(0, |s| s.total_contacts)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn approximate_error() -> i32 {
+    read(-1, |s| s.error)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_set_projectile_type(kind: i32) -> i32 {
     write(|s| {
         let Some(kind) = ProjectileType::from_i32(kind) else {
             return -1;
         };
-        if s.world.bodies().any(|b| b.id.0 >= PROJECTILE_ID_START) {
-            return -1;
-        }
         s.kind = kind;
         0
     })
@@ -171,6 +216,7 @@ pub extern "C" fn approximate_shoot(x: i32, y: i32, z: i32) -> i32 {
         if s.world.add_body(body).is_err() {
             return -1;
         }
+        s.projectile_types.insert(id, s.kind);
         s.next_id += 1;
         let projectiles = s
             .world
@@ -180,6 +226,8 @@ pub extern "C" fn approximate_shoot(x: i32, y: i32, z: i32) -> i32 {
             .collect::<Vec<_>>();
         if projectiles.len() > super::MAX_PROJECTILES {
             s.world.remove_body(projectiles[0]);
+            s.projectile_types.remove(&projectiles[0]);
+            s.evicted += 1;
         }
         id.0 as i32
     })
@@ -204,6 +252,10 @@ pub extern "C" fn approximate_step_velocity(x: i32, z: i32, jump: i32) -> i32 {
             Ok(report) => {
                 s.error = 0;
                 s.retired += report.retired.len() as u32;
+                s.total_contacts += report.contact_points;
+                for id in &report.retired {
+                    s.projectile_types.remove(id);
+                }
             }
             Err(_) => {
                 s.error = 1;
@@ -221,6 +273,8 @@ pub extern "C" fn approximate_step_velocity(x: i32, z: i32, jump: i32) -> i32 {
             .collect::<Vec<_>>();
         for id in out {
             s.world.remove_body(id);
+            s.projectile_types.remove(&id);
+            s.out_of_bounds += 1;
         }
         0
     })
@@ -237,7 +291,7 @@ pub extern "C" fn approximate_refresh_snapshot() -> usize {
             let h = b.shape.half_extents();
             let q = b.orientation;
             let role = if b.id.0 >= PROJECTILE_ID_START {
-                match s.kind {
+                match s.projectile_types[&b.id] {
                     ProjectileType::Sphere => 3.0,
                     ProjectileType::Arrow => 4.0,
                     ProjectileType::Rigid => 5.0,
@@ -285,26 +339,6 @@ pub extern "C" fn approximate_body_velocity(index: u32, axis: u32) -> f64 {
             .map_or(f64::NAN, |b| b.velocity.at(axis as usize))
     })
 }
-/// Read-only diagnostics for the stability experiment, outside the timed step.
-#[unsafe(no_mangle)]
-pub extern "C" fn approximate_body_kinetic_energy(index: u32) -> f64 {
-    read(f64::NAN, |s| {
-        s.world
-            .bodies()
-            .nth(index as usize)
-            .map_or(f64::NAN, Body::kinetic_energy)
-    })
-}
-#[unsafe(no_mangle)]
-pub extern "C" fn approximate_body_angular_velocity(index: u32, axis: u32) -> f64 {
-    read(f64::NAN, |s| {
-        s.world
-            .bodies()
-            .nth(index as usize)
-            .filter(|_| axis < 3)
-            .map_or(f64::NAN, |b| b.angular_velocity.at(axis as usize))
-    })
-}
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_is_quiescent() -> i32 {
     read(-1, |s| i32::from(s.world.is_quiescent()))
@@ -317,8 +351,6 @@ pub extern "C" fn approximate_is_quiescent() -> i32 {
 /// 24: bound-order comparisons (even when a full sort is skipped).
 /// 25..=39: contact-geometry reuse counters; see docs/contact-geometry-reuse.md.
 /// 40..=51: bounded convergence work/exit diagnostics; see docs/velocity-convergence.md.
-/// 52..=57: soft points, relaxation passes/visits/residual visits/skipped passes/retained bytes.
-/// 58: opt-in hard fixed-support points.
 #[unsafe(no_mangle)]
 pub extern "C" fn approximate_stat(index: u32) -> f64 {
     read(f64::NAN, |s| {
@@ -376,15 +408,6 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
             49 => r.convergence.fixed_substeps as f64,
             50 => r.convergence.probe_passes as f64,
             51 => r.convergence.delta_constraint_checks as f64,
-            52 => r.correction.softened_points as f64,
-            53 => r.correction.relaxation_iterations as f64,
-            54 => r.correction.relaxation_constraint_visits as f64,
-            55 => r.correction.relaxation_residual_visits as f64,
-            56 => r.correction.relaxation_skipped_iterations as f64,
-            57 => r.correction.relaxation_motion_bytes as f64,
-            58 => r.correction.hard_support_points as f64,
-            59 => r.correction.unchanged_converged_skips as f64,
-            60 => r.correction.unchanged_target_checks as f64,
             _ => f64::NAN,
         }
     })
@@ -394,81 +417,66 @@ pub extern "C" fn approximate_stat(index: u32) -> f64 {
 mod tests {
     use super::*;
     #[test]
-    fn relaxed_arrow_impact_stops_recorrecting_the_tower_within_the_regression_window() {
-        let rules = (1_i32 << 29) | ((1_i32 << 11) - 2) | (1_i32 << 14) | (2_i32 << 12);
+    fn canonical_tower_reset_is_bounded_and_preserves_invalid_reset_state() {
+        assert_eq!(approximate_reset_tower(0), 0);
+        assert_eq!(approximate_body_count(), 44);
+        assert_eq!(approximate_step_velocity(0, 0, 0), 0);
+        let time = approximate_stat(0);
+        assert_eq!(approximate_reset_tower(-1), -1);
+        assert_eq!(approximate_stat(0), time);
+        assert_eq!(approximate_body_count(), 44);
+    }
+
+    #[test]
+    fn mixed_live_projectiles_keep_their_own_shapes_and_reset_clears_metadata() {
+        assert_eq!(approximate_reset_tower(0), 0);
+        for kind in 0..3 {
+            assert_eq!(approximate_set_projectile_type(kind), 0);
+            assert!(approximate_shoot(96, 30 + kind * 20, 0) > 0);
+        }
+        assert_eq!(approximate_projectile_count(), 3);
+        approximate_refresh_snapshot();
+        EXPERIMENT.with(|s| {
+            let s = s.borrow();
+            let s = s.as_ref().unwrap();
+            let roles: Vec<_> = s
+                .snapshot
+                .as_chunks::<11>()
+                .0
+                .iter()
+                .filter(|r| r[0] >= 3.0)
+                .map(|r| r[0])
+                .collect();
+            assert_eq!(roles, vec![3.0, 4.0, 5.0]);
+        });
+        assert_eq!(approximate_reset_tower(0), 0);
+        assert_eq!(approximate_projectile_count(), 0);
+        assert_eq!(approximate_body_count(), 44);
+        assert_eq!(approximate_total_contacts(), 0);
+    }
+
+    #[test]
+    fn projectile_cap_and_departure_clear_only_local_lifecycle_metadata() {
+        assert_eq!(approximate_reset_tower(0), 0);
+        for _ in 0..(super::super::MAX_PROJECTILES + 3) {
+            assert!(approximate_shoot(100, 80, 0) > 0);
+        }
         assert_eq!(
-            controller::baking::sandbox_reset_tower_with_baking_options(rules, 0, 1),
-            0
+            approximate_projectile_count() as usize,
+            super::super::MAX_PROJECTILES
         );
-        assert_eq!(approximate_reset_soft_from_sandbox(4, 8, 60.0, 1.0, 2), 0);
+        assert_eq!(approximate_projectiles_evicted(), 3);
+        // Metadata must agree with the authoritative bodies throughout retirement/departure.
         for _ in 0..240 {
             assert_eq!(approximate_step_velocity(0, 0, 0), 0);
+            assert_eq!(
+                approximate_body_count() - approximate_projectile_count(),
+                44
+            );
+            approximate_refresh_snapshot();
         }
-        assert_eq!(approximate_is_quiescent(), 1);
-        let before = read(Vec::new(), |s| {
-            s.world.bodies().cloned().collect::<Vec<_>>()
-        });
-        assert_eq!(approximate_set_projectile_type(1), 0);
-        assert!(approximate_shoot(0, 0, -96) >= 0);
-        for _ in 0..90 {
-            assert_eq!(approximate_step_velocity(0, 0, 0), 0);
-        }
-        // Simulated time, not a wall-clock gate. The old relaxed policy stays awake for 721 ticks.
-        assert_eq!(
-            approximate_is_quiescent(),
-            1,
-            "arrow kept the tower correcting after 1.5 s"
-        );
-        assert!(read(false, |s| before
-            .iter()
-            .filter(|b| (100..132).contains(&b.id.0))
-            .any(|b| s
-                .world
-                .body(b.id)
-                .is_some_and(|a| a.position != b.position))));
     }
-    #[test]
-    fn correction_reset_rejects_invalid_options_and_observers_do_not_mutate() {
-        assert_eq!(
-            controller::baking::sandbox_reset_tower_with_baking_options(0, 0, 1),
-            0
-        );
-        assert_eq!(approximate_reset_soft_from_sandbox(4, 8, 60.0, 1.0, 2), 0);
-        assert_eq!(approximate_step_velocity(0, 0, 0), 0);
-        let before = read(Vec::new(), |s| {
-            s.world.bodies().cloned().collect::<Vec<_>>()
-        });
-        let elapsed = approximate_stat(0);
-        for (f, z, r) in [
-            (f64::NAN, 1.0, 2),
-            (60.0, f64::INFINITY, 2),
-            (0.0, 1.0, 2),
-            (60.0, -1.0, 2),
-            (60.0, 1.0, -1),
-            (60.0, 1.0, 9),
-        ] {
-            assert_eq!(approximate_reset_soft_from_sandbox(4, 8, f, z, r), -1);
-            assert_eq!(approximate_stat(0), elapsed);
-        }
-        for i in 0..before.len() as u32 {
-            assert!(approximate_body_kinetic_energy(i).is_finite());
-            for axis in 0..3 {
-                assert!(approximate_body_angular_velocity(i, axis).is_finite());
-            }
-        }
-        assert!(approximate_body_kinetic_energy(u32::MAX).is_nan());
-        assert!(approximate_body_angular_velocity(0, 3).is_nan());
-        assert_eq!(
-            read(Vec::new(), |s| s
-                .world
-                .bodies()
-                .cloned()
-                .collect::<Vec<_>>()),
-            before
-        );
-        assert_eq!(approximate_reset_from_sandbox(4, 8), 0);
-        assert!(read(false, |s| s.world.config().soft_contact.is_none()));
-    }
+
     #[test]
     fn real_tower_adapter_retains_float_state_through_all_projectile_impacts() {
         for upright in [0, 1] {

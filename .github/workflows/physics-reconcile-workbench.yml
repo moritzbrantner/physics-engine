@@ -1,0 +1,103 @@
+name: Reconciled physics integration verification
+
+on:
+  push:
+    branches: [work/reconcile-physics-improvements]
+    paths: [.github/workflows/physics-reconcile-workbench.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Reconcile against current main and remove temporary transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, hashlib, lzma
+          data = b''.join(pathlib.Path(f'.agent-transfer/reconcile-{i}.xzpart').read_bytes() for i in range(3))
+          patch = lzma.decompress(data)
+          assert hashlib.sha256(patch).hexdigest() == '8eceb44886cf03830da871d21450a3499d039ac3a3b9b0fe4d6ee1fa97336da4'
+          pathlib.Path('/tmp/reconcile.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/reconcile.patch
+          git apply /tmp/reconcile.patch
+          rm .agent-transfer/reconcile-*.xzpart .github/workflows/physics-reconcile-workbench.yml
+          rmdir .agent-transfer
+          git add -A
+          test "$(git write-tree)" = f326e83752fce2b3bb5d49c90f33b6a8627a9d43
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'reconcile: isolate diagnostics and integrate correction with contact islands'
+          mkdir -p performance-evidence/reconciliation
+          git rev-parse HEAD > performance-evidence/reconciliation/source-revision.txt
+          git rev-parse HEAD^{tree} > performance-evidence/reconciliation/source-tree.txt
+          git archive --format=tar.gz HEAD > performance-evidence/reconciliation/source.tar.gz
+          git diff 92312a5d36ec1ed9cbafad92e45b2012affa27de HEAD > performance-evidence/reconciliation/implementation.patch
+      - name: Validate numerical and experimental combinations
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cargo fmt --check
+            cargo fmt --manifest-path demo-wasm/Cargo.toml --check
+            for feature in default exact-reference experimental-soft-contact experimental-soft-contact,exact-reference; do
+              args=()
+              if [[ "$feature" != default ]]; then args=(--features "$feature"); fi
+              cargo test --locked --lib approximate:: "${args[@]}"
+              cargo clippy --all-targets "${args[@]}" -- -D warnings
+            done
+            cargo test --locked --manifest-path demo-wasm/Cargo.toml --features experimental-soft-contact,solver-budget-experiment --lib approximate::
+            cargo test --locked --manifest-path demo-wasm/Cargo.toml --features experimental-soft-contact,solver-budget-experiment,exact-reference --lib approximate::
+            cargo test --locked --manifest-path experiments/contact-islands/Cargo.toml
+            cargo test --locked --manifest-path experiments/solver-budget/Cargo.toml
+            node --test site/*.test.mjs scripts/*.test.mjs experiments/solver-budget/*.test.mjs
+          } 2>&1 | tee performance-evidence/reconciliation/validation.log
+      - name: Build real production Pages and protect its diagnostic boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build-pages.sh > performance-evidence/reconciliation/pages-build.log 2>&1
+          cp pages-dist/physics_engine_demo.wasm performance-evidence/reconciliation/production.wasm
+          cp pages-dist/build-provenance.json performance-evidence/reconciliation/
+          node scripts/check-diagnostic-exports.mjs performance-evidence/reconciliation/production.wasm production
+      - name: Verify production gameplay in Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install playwright==1.57.0
+          python3 -m playwright install --with-deps chromium
+          python3 -m http.server 8765 --directory pages-dist > /tmp/reconcile-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" || true' EXIT
+          python3 scripts/test-tower-browser.py --url http://127.0.0.1:8765 --output performance-evidence/reconciliation/browser > performance-evidence/reconciliation/browser.log 2>&1
+      - name: Verify isolated experimental artifacts and quality
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --features experimental-soft-contact
+          cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm performance-evidence/reconciliation/soft.wasm
+          node scripts/check-diagnostic-exports.mjs performance-evidence/reconciliation/soft.wasm soft
+          TRIALS=2 TICKS=1200 node scripts/benchmark-correction.mjs performance-evidence/reconciliation/soft.wasm performance-evidence/reconciliation/correction.json > performance-evidence/reconciliation/correction.log
+          cargo run --locked --release --features experimental-soft-contact --example contact_correction_quality -- performance-evidence/reconciliation/correction-quality.json
+          cargo build --locked --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --features solver-budget-experiment,experimental-soft-contact
+          node scripts/check-diagnostic-exports.mjs demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm combined
+          rustc --version > performance-evidence/reconciliation/environment.txt
+          node --version >> performance-evidence/reconciliation/environment.txt
+          lscpu >> performance-evidence/reconciliation/environment.txt
+      - name: Publish clean source without force
+        run: git push origin HEAD:work/reconcile-physics-improvements
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: reconciled-physics-integration-evidence
+          path: performance-evidence/reconciliation/
+          retention-days: 14

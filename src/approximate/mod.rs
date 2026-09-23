@@ -9,10 +9,12 @@
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
 mod bookkeeping;
 mod contact;
+mod position;
+pub use position::PositionReport;
 mod convergence;
-mod correction;
+mod islands;
 pub use convergence::{Convergence, ConvergenceStats};
-pub use correction::{CorrectionStats, SoftContact};
+pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, SweepRow, push, reserve};
@@ -145,25 +147,6 @@ impl Body {
         }
         out
     }
-    /// Diagnostic kinetic energy in mass-units * scene-units squared / second squared.
-    /// This observation does not feed back into dynamics or the sleep policy.
-    pub fn kinetic_energy(&self) -> Scalar {
-        if self.mass == 0.0 {
-            return 0.0;
-        }
-        let w = self.orientation.inverse_rotate(self.angular_velocity);
-        let inertia = match self.shape {
-            Shape::Sphere(r) => Vector(1.0, 1.0, 1.0) * (0.4 * self.mass * r * r),
-            Shape::Box(h) => {
-                Vector(
-                    h.1 * h.1 + h.2 * h.2,
-                    h.0 * h.0 + h.2 * h.2,
-                    h.0 * h.0 + h.1 * h.1,
-                ) * (self.mass / 3.0)
-            }
-        };
-        0.5 * (self.mass * self.velocity.dot(self.velocity) + w.dot(w.component_mul(inertia)))
-    }
     pub fn is_sleeping(&self) -> bool {
         self.sleeping
     }
@@ -224,6 +207,9 @@ pub struct Config {
     pub gravity: Vector,
     pub substeps: u8,
     pub velocity_iterations: u8,
+    /// Optional bounded position-only correction against fixed colliders, after integration.
+    /// Zero preserves the comparison kernel; the interactive tower explicitly selects two.
+    pub fixed_position_iterations: u8,
     /// Scene-space length, default 0.02. Chosen explicitly for the legacy 36-unit crates.
     pub contact_slop: Scalar,
     pub sleep_speed: Scalar,
@@ -231,8 +217,9 @@ pub struct Config {
     pub warm_start: bool,
     /// None retains the fixed-pass reference. Some permits a checked early exit.
     pub convergence: Option<Convergence>,
-    /// None preserves Baumgarte; Some selects the explicit soft/relaxation experiment.
-    pub soft_contact: Option<SoftContact>,
+    /// Contact-island-local stopping, or the original whole-world convergence reference.
+    /// With `convergence: None`, both scopes use the unchanged fixed-pass solver.
+    pub convergence_scope: ConvergenceScope,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -240,12 +227,13 @@ impl Default for Config {
             gravity: Vector(0.0, -3600.0, 0.0),
             substeps: 4,
             velocity_iterations: 8,
+            fixed_position_iterations: 0,
             contact_slop: 0.02,
             sleep_speed: 1.0,
             sleep_seconds: 0.5,
             warm_start: true,
             convergence: Some(Convergence::default()),
-            soft_contact: None,
+            convergence_scope: ConvergenceScope::ContactIslands,
         }
     }
 }
@@ -264,10 +252,13 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    pub position: PositionReport,
     pub substeps: u32,
     pub pair_tests: u64,
     pub narrow_tests: u64,
     pub contact_points: u64,
+    /// Equivalent solver rounds per substep (maximum over islands), not the sum over islands.
+    /// Use `convergence.constraint_visits` for actual row work and `islands` for grouping costs.
     pub impulse_iterations: u64,
     pub integrated_bodies: u64,
     pub woken_bodies: u64,
@@ -277,7 +268,7 @@ pub struct Report {
     pub bookkeeping: BookkeepingStats,
     pub geometry: GeometryStats,
     pub convergence: ConvergenceStats,
-    pub correction: CorrectionStats,
+    pub islands: IslandStats,
     /// Active response bodies prepared, including newly awakened bodies in the same substep.
     pub response_preparations: u64,
     /// Shape/mass inertia coefficients calculated; independent of contact iteration count.
@@ -305,7 +296,6 @@ struct Constraint {
     normal_mass: Scalar,
     tangent_mass: [Scalar; 2],
     bias: Scalar,
-    hard_normal: bool,
     friction: Scalar,
     normal_impulse: Scalar,
     tangent_impulse: [Scalar; 2],
@@ -324,10 +314,9 @@ pub struct World {
     responses: Vec<PreparedResponse>,
     bookkeeping: Scratch,
     geometry: GeometryCache,
+    island_scratch: islands::Scratch,
     constraints: Vec<Constraint>,
     manifold_scratch: Vec<(usize, usize, contact::Manifold)>,
-    relaxation_motion: Vec<correction::Motion>,
-    relaxation_bias: Vec<Scalar>,
     pub last_report: Report,
     elapsed: Scalar,
 }
@@ -338,8 +327,8 @@ impl World {
             || config.substeps > 32
             || config.velocity_iterations == 0
             || config.velocity_iterations > 64
+            || config.fixed_position_iterations > 8
             || config.convergence.is_some_and(|c| !c.valid())
-            || config.soft_contact.is_some_and(|c| !c.valid())
             || !config.contact_slop.is_finite()
             || config.contact_slop <= 0.0
             || !config.sleep_speed.is_finite()
@@ -357,10 +346,9 @@ impl World {
             responses: Vec::new(),
             bookkeeping: Scratch::default(),
             geometry: GeometryCache::default(),
+            island_scratch: islands::Scratch::default(),
             constraints: Vec::new(),
             manifold_scratch: Vec::new(),
-            relaxation_motion: Vec::new(),
-            relaxation_bias: Vec::new(),
             last_report: Report::default(),
             elapsed: 0.0,
         })
@@ -547,21 +535,15 @@ impl World {
         }
         if dt == 0.0 {
             self.last_report = Report::default();
+            self.last_report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
             self.last_report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
-            self.last_report.correction.relaxation_motion_bytes =
-                (bookkeeping::bytes(&self.relaxation_motion)
-                    + bookkeeping::bytes(&self.relaxation_bias)) as u64;
+            self.last_report.position.scratch_retained_bytes =
+                self.bookkeeping.position.retained_bytes();
             return Ok(self.last_report.clone());
         }
         if dt / self.config.substeps as Scalar == 0.0 {
             return Err(Error::InvalidInput);
         }
-        let h = dt / self.config.substeps as Scalar;
-        let softness = self
-            .config
-            .soft_contact
-            .map(|c| c.prepare(h).ok_or(Error::InvalidInput))
-            .transpose()?;
         let mut report = Report::default();
         if self.is_quiescent() {
             self.elapsed += dt;
@@ -648,19 +630,11 @@ impl World {
             }
             let mut constraints = std::mem::take(&mut self.constraints);
             constraints.clear();
-            let relax_enabled = self
-                .config
-                .soft_contact
-                .is_some_and(|c| c.relaxation_iterations > 0);
-            if relax_enabled {
-                self.relaxation_bias.clear();
-            }
             reserve(
                 &mut constraints,
                 pairs.iter().map(|(_, _, m)| m.points.len()).sum(),
                 &mut self.bookkeeping.work,
             );
-            let softened_before = report.correction.softened_points;
             for (i, j, m) in pairs.drain(..) {
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
@@ -710,20 +684,11 @@ impl World {
                     } else {
                         0.0
                     };
-                    // Speculative and restitutive impacts retain the hard response. Softness
-                    // applies only beyond the existing slop, on non-bouncing normal constraints.
-                    // Within slop the positional target is zero: keep the support hard rather
-                    // than repeatedly reducing its load-bearing accumulated impulse.
-                    let soft = softness.filter(|_| {
-                        point.separation < -self.config.contact_slop && restitution == 0.0
-                    });
-                    let correction = (-point.separation - self.config.contact_slop).max(0.0);
                     let bias = if point.separation > 0.0 {
                         -point.separation / h
-                    } else if let Some(soft) = soft {
-                        (soft.bias_rate * correction).min(60.0)
                     } else {
-                        (0.2 * correction / h).min(60.0)
+                        (0.2 * (-point.separation - self.config.contact_slop).max(0.0) / h)
+                            .min(60.0)
                     }
                     .max(restitution);
                     // A separated speculative constraint must still permit closing up to its surface.
@@ -762,8 +727,6 @@ impl World {
                             .recip(),
                         ],
                         bias,
-                        // Fixed supports remain hard; compliance is for dynamic pairs.
-                        hard_normal: soft.is_none() || a.mass == 0.0 || b.mass == 0.0,
                         friction: if linear {
                             0.0
                         } else {
@@ -804,20 +767,6 @@ impl World {
                     }
                     report.max_penetration =
                         report.max_penetration.max((-point.separation).max(0.0));
-                    report.correction.softened_points += u64::from(!c.hard_normal);
-                    report.correction.hard_support_points += u64::from(
-                        softness.is_some()
-                            && point.separation <= 0.0
-                            && restitution == 0.0
-                            && (a.mass == 0.0 || b.mass == 0.0),
-                    );
-                    if relax_enabled {
-                        self.relaxation_bias.push(if point.separation > 0.0 {
-                            -point.separation / h
-                        } else {
-                            restitution
-                        });
-                    }
                     constraints.push(c);
                 }
             }
@@ -834,63 +783,39 @@ impl World {
                     &mut report,
                 );
             }
-            let converged_before = report.convergence.converged_substeps;
-            if let Some(coefficients) =
-                softness.filter(|_| report.correction.softened_points > softened_before)
-            {
-                convergence::solve_soft::<PREPARED>(
-                    &mut self.bodies,
-                    &self.responses,
-                    &mut constraints,
-                    self.config.velocity_iterations,
-                    self.config.convergence,
-                    coefficients,
-                    &mut report,
-                );
-            } else {
-                match self.config.convergence {
-                    Some(tolerances) => convergence::solve::<PREPARED, true>(
+            match self.config.convergence {
+                Some(tolerances)
+                    if self.config.convergence_scope == ConvergenceScope::ContactIslands =>
+                {
+                    islands::solve::<PREPARED>(
                         &mut self.bodies,
                         &self.responses,
                         &mut constraints,
                         self.config.velocity_iterations,
                         tolerances,
+                        &mut self.island_scratch,
                         &mut report,
-                    ),
-                    None => convergence::solve::<PREPARED, false>(
-                        &mut self.bodies,
-                        &self.responses,
-                        &mut constraints,
-                        self.config.velocity_iterations,
-                        Convergence::default(),
-                        &mut report,
-                    ),
+                    )
                 }
+                Some(tolerances) => convergence::solve::<PREPARED, true>(
+                    &mut self.bodies,
+                    &self.responses,
+                    &mut constraints,
+                    self.config.velocity_iterations,
+                    tolerances,
+                    &mut report,
+                ),
+                None => convergence::solve::<PREPARED, false>(
+                    &mut self.bodies,
+                    &self.responses,
+                    &mut constraints,
+                    self.config.velocity_iterations,
+                    Convergence::default(),
+                    &mut report,
+                ),
             }
-            // Admission/retirement belongs to the biased physical solve. A later relaxation
-            // correction cannot erase an already admitted projectile impact.
-            self.bookkeeping.retired.clear();
-            for c in &constraints {
-                if c.normal_impulse > 0.0 {
-                    for index in [c.a, c.b] {
-                        let b = &self.bodies[index];
-                        if b.retire_on_impact {
-                            push(
-                                &mut self.bookkeeping.retired,
-                                b.id,
-                                &mut self.bookkeeping.work,
-                            );
-                        }
-                    }
-                    if c.swept {
-                        report.swept_contacts += 1;
-                    }
-                }
-            }
-            let primary_converged = report.convergence.converged_substeps > converged_before;
-            let relaxing =
-                self.relax_contacts::<PREPARED>(&mut constraints, primary_converged, &mut report);
             let scratch = &mut self.bookkeeping;
+            scratch.retired.clear();
             scratch.support_edges.clear();
             reserve(&mut scratch.supported, self.bodies.len(), &mut scratch.work);
             scratch.supported.clear();
@@ -915,6 +840,17 @@ impl World {
             for c in &constraints {
                 let a = &self.bodies[c.a];
                 let b = &self.bodies[c.b];
+                if c.normal_impulse > 0.0 {
+                    if a.retire_on_impact {
+                        push(&mut scratch.retired, a.id, &mut scratch.work);
+                    }
+                    if b.retire_on_impact {
+                        push(&mut scratch.retired, b.id, &mut scratch.work);
+                    }
+                    if c.swept {
+                        report.swept_contacts += 1;
+                    }
+                }
                 if c.sep <= self.config.contact_slop * 2.0 {
                     let points = match self.cache.entry((a.id, b.id)) {
                         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -962,17 +898,9 @@ impl World {
             for &i in &scratch.activity.indices {
                 let b = &mut self.bodies[i];
                 report.integrated_bodies += 1;
-                let motion = if relaxing {
-                    self.relaxation_motion[i]
-                } else {
-                    correction::Motion {
-                        velocity: b.velocity,
-                        angular: b.angular_velocity,
-                    }
-                };
-                b.position += motion.velocity * h;
+                b.position += b.velocity * h;
                 if !b.rotation_locked {
-                    b.orientation = b.orientation.integrate(motion.angular, h);
+                    b.orientation = b.orientation.integrate(b.angular_velocity, h);
                 }
                 if !b.valid() {
                     return Err(Error::NonFiniteState(b.id));
@@ -982,9 +910,6 @@ impl World {
                     && scratch.supported[i]
                     && b.velocity.length() + b.angular_velocity.length() * b.shape.radius()
                         < self.config.sleep_speed
-                    // Do not force sleep while positional correction is still moving a body.
-                    && (!relaxing || motion.velocity.length() + motion.angular.length() * b.shape.radius()
-                        < self.config.sleep_speed)
                 {
                     b.quiet_time += h;
                 } else {
@@ -993,6 +918,7 @@ impl World {
                 b.cached_bounds = contact::bounds(b);
             }
             self.constraints = constraints;
+            self.correct_fixed_positions(h, &mut report.position)?;
             self.sleep_quiet_islands();
             // Retirement is local; remove all affected cached edges before indexed graph reuse.
             self.bookkeeping.retired.sort_unstable();
@@ -1020,9 +946,8 @@ impl World {
         Ok(report)
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
-        report.correction.relaxation_motion_bytes = (bookkeeping::bytes(&self.relaxation_motion)
-            + bookkeeping::bytes(&self.relaxation_bias))
-            as u64;
+        report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
+        report.position.scratch_retained_bytes = self.bookkeeping.position.retained_bytes();
         report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
         self.bookkeeping.work.scratch_retained_bytes = (self.bookkeeping.retained_bytes()
             + bookkeeping::bytes(&self.constraints)

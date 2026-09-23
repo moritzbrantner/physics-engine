@@ -5,11 +5,10 @@ on:
     paths:
       - "src/query.rs"
       - "src/approximate/**"
+      - "experiments/contact-islands/**"
       - "tests/fixed_step_approximation.rs"
       - "scripts/benchmark-fixed-step.mjs"
       - "scripts/benchmark-convergence.mjs"
-      - "scripts/benchmark-correction.mjs"
-      - "examples/contact_correction_quality.rs"
       - "scripts/benchmark-prepared-response.mjs"
       - "src/float_math.rs"
       - "src/numeric.rs"
@@ -108,8 +107,13 @@ jobs:
       - name: Compare convergence with fixed-pass reference
         run: TRIALS=2 node scripts/benchmark-convergence.mjs performance-evidence/head.wasm performance-evidence/convergence.json
 
-      - name: Compare opt-in contact corrections
-        run: TRIALS=2 TICKS=240 node scripts/benchmark-correction.mjs performance-evidence/head.wasm performance-evidence/correction.json
+      - name: Compare independent contact-island convergence
+        run: |
+          cargo test --locked --manifest-path experiments/contact-islands/Cargo.toml
+          cargo build --locked --manifest-path experiments/contact-islands/Cargo.toml --release --target wasm32-unknown-unknown
+          cp experiments/contact-islands/target/wasm32-unknown-unknown/release/contact_islands_experiment.wasm performance-evidence/contact-islands.wasm
+          cp experiments/contact-islands/run.mjs performance-evidence/contact-islands-run.mjs
+          TRIALS=2 TICKS=600 node experiments/contact-islands/run.mjs performance-evidence/contact-islands.wasm performance-evidence/contact-islands.json
 
       - name: Record independent character gameplay options
         run: |
@@ -157,9 +161,6 @@ jobs:
           python scripts/validate-performance-evidence.py
           .performance-evidence-contract
           performance-evidence
-
-      - name: Check held-out contact-correction quality
-        run: cargo run --release --locked --example contact_correction_quality -- performance-evidence/correction-heldout.json
 
       - name: Upload reproducible performance evidence
         if: ${{ always() }}
