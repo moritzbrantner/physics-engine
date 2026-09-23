@@ -1,6 +1,7 @@
 """Exercise the canonical tower page with real UI inputs and its actual WASM artifact.
 Run after build-pages.sh with a local server. Requires playwright and chromium.
-The virtual clock advances browser callbacks deterministically; these are NOT timing benchmarks.
+Manual clock advances exercise input sequences; timers resume for real UI actions.
+These are behavioral checks, NOT timing benchmarks or deterministic browser replays.
 """
 import argparse
 import json
@@ -27,15 +28,22 @@ def main():
         page.wait_for_function("document.querySelector('#status').textContent.includes('Tower ready') || document.querySelector('#status').textContent.includes('Unable')")
         assert 'Tower ready' in page.locator('#status').inner_text()
         page.clock.run_for(4000)
+        def click(selector):
+            # Actionability waits for stable animation frames. Manual run_for calls may
+            # leave that progress suspended; resume timers instead of forcing a click
+            # or bypassing visibility/obstruction checks. Game pause remains separate.
+            page.clock.resume()
+            page.locator(selector).click()
+
         state = lambda: page.evaluate('window.physicsTowerState')
         before = state()
         assert before['solver'] == 'fixed-step-f64' and not before['error'] and before['awake'] == 0, before
-        page.locator('#close-settings').click()
+        click('#close-settings')
         assert page.evaluate('document.activeElement.id') == 'scene'
         page.clock.run_for(32)
         page.screenshot(path=str(out / 'tower-ready.png'), full_page=True)
         # Change type with a shot still in flight: no fixture reset and per-shot shapes survive.
-        page.locator('#pause').click()
+        click('#pause')
         page.keyboard.press('f')
         page.keyboard.press('1')
         page.keyboard.press('f')
@@ -43,7 +51,7 @@ def main():
         live = state()
         assert live['ticks'] >= before['ticks'] and live['projectileCount'] >= 1, live
         assert 3 in live['roles'] and 4 in live['roles'], live
-        page.locator('#reset').click(); page.clock.run_for(4000)
+        click('#reset'); page.clock.run_for(4000)
         # Non-overlapping fast mixed volley: callbacks/time continue through every impact.
         for i in range(18):
             page.keyboard.press(str(i % 3 + 1))
@@ -57,7 +65,7 @@ def main():
         assert hit['bodyCount'] - hit['projectileCount'] == 44, hit
         page.screenshot(path=str(out / 'tower-after-projectiles.png'), full_page=True)
         # Reset works after impacts. Aimed near miss does not wake the tower.
-        page.locator('#reset').click()
+        click('#reset')
         page.clock.run_for(4000)
         reset = state()
         page.keyboard.down('ArrowRight')
@@ -69,35 +77,35 @@ def main():
         miss = state()
         assert miss['cratePoses'] == reset['cratePoses'] and miss['awake'] == 0 and not miss['error'], miss
         # Existing first-person movement/jump and pause/single-step controls remain usable.
-        page.locator('#reset').click(); page.clock.run_for(4000)
+        click('#reset'); page.clock.run_for(4000)
         position = state()['playerPose']
         page.keyboard.down('d'); page.clock.run_for(250); page.keyboard.up('d')
         assert state()['playerPose'][0] > position[0], 'first-person movement'
         page.keyboard.press('Space'); page.clock.run_for(200)
         assert state()['playerPose'][1] > position[1], 'jump'
-        page.locator('#pause').click(); page.clock.run_for(32)
+        click('#pause'); page.clock.run_for(32)
         paused = state(); assert paused['paused']
         page.clock.run_for(500); assert state()['ticks'] == paused['ticks']
-        page.locator('#single-step').click(); page.clock.run_for(32)
+        click('#single-step'); page.clock.run_for(32)
         assert state()['ticks'] == paused['ticks'] + 1
-        page.locator('#reset').click(); page.clock.run_for(4000)
+        click('#reset'); page.clock.run_for(4000)
         assert state()['projectileCount'] == 0 and not state()['error']
         # Unsupported event-solver settings must not masquerade as functional controls.
-        page.locator('#open-settings').click()
+        click('#open-settings')
         assert page.locator('#fixed-geometry-setting').is_disabled()
         assert all(x.is_disabled() for x in page.locator('[data-stabilization-pair]').all())
-        page.locator('#start-performance-log').click()
-        page.locator('#close-settings').click(); page.keyboard.press('f'); page.clock.run_for(500)
-        page.locator('#open-settings').click()
+        click('#start-performance-log')
+        click('#close-settings'); page.keyboard.press('f'); page.clock.run_for(500)
+        click('#open-settings')
         with page.expect_download() as download:
-            page.locator('#download-performance-log').click()
+            click('#download-performance-log')
         target = out / 'browser-session.json'; download.value.save_as(target)
         session = json.loads(target.read_text())
         assert session['scenario']['solver'] == 'fixed-step-f64'
         assert session['scenario']['character_response'] == 'physical'
         assert session['scenario']['crate_motion'] == 'free'
         assert session['summary']['physics_work']['fixed_substeps'] > 0
-        page.locator('#close-settings').click()
+        click('#close-settings')
         # Screenshot stabilization waits for real animation frames after a resize.
         # All deterministic gameplay assertions above are complete; resume browser time
         # for presentation capture rather than leaving its paint callbacks paused.
@@ -110,7 +118,7 @@ def main():
         assert not state()['error'], state()
         assert not errors, errors
         result = {'passed': True, 'before': before, 'hit': hit, 'miss': miss, 'mixed_live': live,
-                  'page_errors': errors, 'url': page.url, 'note': 'Virtual-clock UI acceptance; not a performance benchmark.'}
+                  'page_errors': errors, 'url': page.url, 'note': 'Clock-assisted real-input acceptance; not a performance benchmark or deterministic browser replay.'}
         (out / 'browser-result.json').write_text(json.dumps(result, indent=2))
         browser.close()
 
