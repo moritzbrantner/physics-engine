@@ -49,6 +49,19 @@ pub(crate) struct PerformanceCounterU64 {
 
 impl PerformanceCounterU64 {
     #[must_use]
+    pub(crate) const fn from_value(value: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self { value }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = value;
+            Self {}
+        }
+    }
+
+    #[must_use]
     pub(crate) const fn value(self) -> u64 {
         #[cfg(feature = "performance-counters")]
         {
