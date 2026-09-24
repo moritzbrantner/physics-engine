@@ -45,7 +45,7 @@ pub(super) fn support_point(body: &Body, direction: V) -> V {
     support_counted(body, direction, None)
 }
 
-fn support_counted(body: &Body, direction: V, mut work: Option<&mut GeometryStats>) -> V {
+fn support_counted(body: &Body, direction: V, work: Option<&mut GeometryStats>) -> V {
     let n = direction.unit();
     match body.shape {
         Shape::Sphere(radius) => body.position + n * radius,
@@ -70,7 +70,7 @@ fn support_counted(body: &Body, direction: V, mut work: Option<&mut GeometryStat
         }
         Shape::Wedge(half) => {
             let vertices = wedge_vertices(half);
-            if let Some(work) = work.as_deref_mut() {
+            if let Some(work) = work {
                 work.primitive_vertex_tests += vertices.len() as u64;
             }
             let mut best = vertices[0];
