@@ -882,18 +882,11 @@ impl World {
                     true
                 }
             });
-            for _ in 0..self.bodies.len() {
-                let mut changed = false;
-                for &(lower, upper) in &scratch.support_edges {
-                    if scratch.supported[lower] && !scratch.supported[upper] {
-                        scratch.supported[upper] = true;
-                        changed = true;
-                    }
-                }
-                if !changed {
-                    break;
-                }
-            }
+            scratch.support.propagate(
+                &mut scratch.supported,
+                &scratch.support_edges,
+                &mut scratch.work,
+            );
             scratch.activity.refresh(&self.bodies, &mut scratch.work);
             for &i in &scratch.activity.indices {
                 let b = &mut self.bodies[i];

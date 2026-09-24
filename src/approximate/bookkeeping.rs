@@ -12,6 +12,14 @@ pub struct BookkeepingStats {
     pub adjacency_edges_indexed: u64,
     pub island_body_visits: u64,
     pub island_edge_visits: u64,
+    /// Current-step directed support graphs built for contact-support closure.
+    pub support_graph_builds: u64,
+    /// Directed support edges indexed while building those graphs.
+    pub support_edges_indexed: u64,
+    /// Supported source bodies whose outgoing support edges were visited.
+    pub support_body_visits: u64,
+    /// Directed support edges visited by the propagation frontier.
+    pub support_edge_visits: u64,
     pub bounds_updates: u64,
     pub bound_rows_sorted: u64,
     pub bounds_order_checks: u64,
@@ -172,6 +180,90 @@ impl Traversal {
     }
 }
 
+/// Reusable directed current-step support graph.
+///
+/// Building the CSR view is O(bodies + support edges). Propagation then visits every outgoing edge
+/// of a reachable supported source at most once, replacing the previous repeated full-edge scan.
+#[derive(Clone, Debug, Default)]
+pub(super) struct SupportPropagation {
+    offsets: Vec<usize>,
+    neighbors: Vec<usize>,
+    cursor: Vec<usize>,
+    queue: Vec<usize>,
+}
+impl SupportPropagation {
+    pub fn propagate(
+        &mut self,
+        supported: &mut [bool],
+        edges: &[(usize, usize)],
+        work: &mut BookkeepingStats,
+    ) {
+        if edges.is_empty() {
+            return;
+        }
+
+        work.support_graph_builds += 1;
+        work.support_edges_indexed += edges.len() as u64;
+
+        reserve(&mut self.offsets, supported.len() + 1, work);
+        self.offsets.clear();
+        self.offsets.resize(supported.len() + 1, 0);
+        for &(lower, upper) in edges {
+            debug_assert!(lower < supported.len());
+            debug_assert!(upper < supported.len());
+            self.offsets[lower + 1] += 1;
+        }
+        for index in 1..self.offsets.len() {
+            self.offsets[index] += self.offsets[index - 1];
+        }
+
+        reserve(&mut self.cursor, supported.len(), work);
+        self.cursor.clear();
+        self.cursor
+            .extend_from_slice(&self.offsets[..supported.len()]);
+
+        reserve(&mut self.neighbors, edges.len(), work);
+        self.neighbors.clear();
+        self.neighbors.resize(edges.len(), 0);
+        for &(lower, upper) in edges {
+            self.neighbors[self.cursor[lower]] = upper;
+            self.cursor[lower] += 1;
+        }
+
+        self.queue.clear();
+        reserve(&mut self.queue, supported.len().min(edges.len()), work);
+        for (index, is_supported) in supported.iter().copied().enumerate() {
+            if is_supported && self.offsets[index] != self.offsets[index + 1] {
+                push(&mut self.queue, index, work);
+            }
+        }
+
+        let mut head = 0;
+        while head < self.queue.len() {
+            let lower = self.queue[head];
+            head += 1;
+            work.support_body_visits += 1;
+
+            let start = self.offsets[lower];
+            let end = self.offsets[lower + 1];
+            work.support_edge_visits += (end - start) as u64;
+            for edge_index in start..end {
+                let upper = self.neighbors[edge_index];
+                if !supported[upper] {
+                    supported[upper] = true;
+                    if self.offsets[upper] != self.offsets[upper + 1] {
+                        push(&mut self.queue, upper, work);
+                    }
+                }
+            }
+        }
+    }
+
+    fn retained_bytes(&self) -> usize {
+        bytes(&self.offsets) + bytes(&self.neighbors) + bytes(&self.cursor) + bytes(&self.queue)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct SweepRow {
     pub index: usize,
@@ -190,6 +282,7 @@ pub(super) struct Scratch {
     pub roots: Vec<BodyId>,
     pub used: Vec<usize>,
     pub retired: Vec<BodyId>,
+    pub support: SupportPropagation,
     pub supported: Vec<bool>,
     pub support_edges: Vec<(usize, usize)>,
     pub earliest: Vec<Scalar>,
@@ -216,6 +309,7 @@ impl Scratch {
             + bytes(&self.roots)
             + bytes(&self.used)
             + bytes(&self.retired)
+            + self.support.retained_bytes()
             + bytes(&self.supported)
             + bytes(&self.support_edges)
             + bytes(&self.earliest)
