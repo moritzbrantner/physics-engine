@@ -15,6 +15,96 @@ pub(super) struct PrimitiveContact {
     pub point_b: V,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum PrimitiveKind {
+    Sphere,
+    Box,
+    Capsule,
+    Wedge,
+}
+
+impl PrimitiveKind {
+    pub const ALL: [Self; 4] = [Self::Sphere, Self::Box, Self::Capsule, Self::Wedge];
+
+    pub const fn from_shape(shape: Shape) -> Self {
+        match shape {
+            Shape::Sphere(_) => Self::Sphere,
+            Shape::Box(_) => Self::Box,
+            Shape::Capsule { .. } => Self::Capsule,
+            Shape::Wedge(_) => Self::Wedge,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PrimitivePair {
+    SphereSphere,
+    SphereBox,
+    SphereCapsule,
+    SphereWedge,
+    BoxBox,
+    BoxCapsule,
+    BoxWedge,
+    CapsuleCapsule,
+    CapsuleWedge,
+    WedgeWedge,
+}
+
+impl PrimitivePair {
+    pub const ALL: [Self; 10] = [
+        Self::SphereSphere,
+        Self::SphereBox,
+        Self::SphereCapsule,
+        Self::SphereWedge,
+        Self::BoxBox,
+        Self::BoxCapsule,
+        Self::BoxWedge,
+        Self::CapsuleCapsule,
+        Self::CapsuleWedge,
+        Self::WedgeWedge,
+    ];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::SphereSphere => 0,
+            Self::SphereBox => 1,
+            Self::SphereCapsule => 2,
+            Self::SphereWedge => 3,
+            Self::BoxBox => 4,
+            Self::BoxCapsule => 5,
+            Self::BoxWedge => 6,
+            Self::CapsuleCapsule => 7,
+            Self::CapsuleWedge => 8,
+            Self::WedgeWedge => 9,
+        }
+    }
+
+    pub fn canonical(left: Shape, right: Shape) -> (Self, bool) {
+        let left_kind = PrimitiveKind::from_shape(left);
+        let right_kind = PrimitiveKind::from_shape(right);
+        let reversed = left_kind > right_kind;
+        let (first, second) = if reversed {
+            (right_kind, left_kind)
+        } else {
+            (left_kind, right_kind)
+        };
+        let pair = match (first, second) {
+            (PrimitiveKind::Sphere, PrimitiveKind::Sphere) => Self::SphereSphere,
+            (PrimitiveKind::Sphere, PrimitiveKind::Box) => Self::SphereBox,
+            (PrimitiveKind::Sphere, PrimitiveKind::Capsule) => Self::SphereCapsule,
+            (PrimitiveKind::Sphere, PrimitiveKind::Wedge) => Self::SphereWedge,
+            (PrimitiveKind::Box, PrimitiveKind::Box) => Self::BoxBox,
+            (PrimitiveKind::Box, PrimitiveKind::Capsule) => Self::BoxCapsule,
+            (PrimitiveKind::Box, PrimitiveKind::Wedge) => Self::BoxWedge,
+            (PrimitiveKind::Capsule, PrimitiveKind::Capsule) => Self::CapsuleCapsule,
+            (PrimitiveKind::Capsule, PrimitiveKind::Wedge) => Self::CapsuleWedge,
+            (PrimitiveKind::Wedge, PrimitiveKind::Wedge) => Self::WedgeWedge,
+            _ => unreachable!("primitive kind ordering is exhaustive"),
+        };
+        (pair, reversed)
+    }
+}
+
 fn flip(contact: PrimitiveContact) -> PrimitiveContact {
     PrimitiveContact {
         normal: -contact.normal,
@@ -42,10 +132,15 @@ pub(super) fn bounds_extents(body: &Body) -> V {
 }
 
 pub(super) fn support_point(body: &Body, direction: V) -> V {
-    support_counted(body, direction, None)
+    support_impl(body, direction, None)
 }
 
-fn support_counted(body: &Body, direction: V, work: Option<&mut GeometryStats>) -> V {
+fn support_counted(body: &Body, direction: V, work: &mut GeometryStats) -> V {
+    work.support_evaluations += 1;
+    support_impl(body, direction, Some(work))
+}
+
+fn support_impl(body: &Body, direction: V, work: Option<&mut GeometryStats>) -> V {
     let n = direction.unit();
     match body.shape {
         Shape::Sphere(radius) => body.position + n * radius,
@@ -88,7 +183,93 @@ fn support_counted(body: &Body, direction: V, work: Option<&mut GeometryStats>) 
 }
 
 pub(super) fn query(a: &Body, b: &Body, work: &mut GeometryStats) -> Option<PrimitiveContact> {
+    let (pair, reversed) = PrimitivePair::canonical(a.shape, b.shape);
+    let (left, right) = if reversed { (b, a) } else { (a, b) };
+    let contact = query_canonical(pair, left, right, work)?;
+    Some(if reversed { flip(contact) } else { contact })
+}
+
+pub(super) fn query_canonical(
+    pair: PrimitivePair,
+    a: &Body,
+    b: &Body,
+    work: &mut GeometryStats,
+) -> Option<PrimitiveContact> {
     work.primitive_queries += 1;
+    match pair {
+        PrimitivePair::SphereCapsule => {
+            let Shape::Sphere(sphere_radius) = a.shape else {
+                unreachable!()
+            };
+            let Shape::Capsule {
+                half_segment,
+                radius,
+            } = b.shape
+            else {
+                unreachable!()
+            };
+            Some(flip(capsule_sphere(
+                b,
+                a,
+                half_segment,
+                radius,
+                sphere_radius,
+            )))
+        }
+        PrimitivePair::SphereWedge => {
+            let Shape::Sphere(radius) = a.shape else {
+                unreachable!()
+            };
+            Some(sphere_wedge(a, b, radius))
+        }
+        PrimitivePair::BoxCapsule => {
+            let Shape::Capsule {
+                half_segment,
+                radius,
+            } = b.shape
+            else {
+                unreachable!()
+            };
+            Some(flip(capsule_box(b, a, half_segment, radius)))
+        }
+        PrimitivePair::BoxWedge | PrimitivePair::WedgeWedge => Some(poly_poly(a, b, work)),
+        PrimitivePair::CapsuleCapsule => {
+            let Shape::Capsule {
+                half_segment: ah,
+                radius: ar,
+            } = a.shape
+            else {
+                unreachable!()
+            };
+            let Shape::Capsule {
+                half_segment: bh,
+                radius: br,
+            } = b.shape
+            else {
+                unreachable!()
+            };
+            Some(capsule_capsule(a, b, ah, ar, bh, br))
+        }
+        PrimitivePair::CapsuleWedge => {
+            let Shape::Capsule {
+                half_segment,
+                radius,
+            } = a.shape
+            else {
+                unreachable!()
+            };
+            Some(capsule_wedge(a, b, half_segment, radius))
+        }
+        PrimitivePair::SphereSphere | PrimitivePair::SphereBox | PrimitivePair::BoxBox => None,
+    }
+}
+
+#[cfg(test)]
+pub(super) fn reference_query(
+    a: &Body,
+    b: &Body,
+    work: &mut GeometryStats,
+) -> Option<PrimitiveContact> {
     match (a.shape, b.shape) {
         (
             Shape::Capsule {
@@ -164,12 +345,9 @@ pub(super) fn swept_time(
     margin: Scalar,
     work: &mut GeometryStats,
 ) -> Option<Scalar> {
-    if matches!(
-        (a.shape, b.shape),
-        (Shape::Wedge(_), Shape::Box(_))
-            | (Shape::Box(_), Shape::Wedge(_))
-            | (Shape::Wedge(_), Shape::Wedge(_))
-    ) {
+    let (pair, reversed) = PrimitivePair::canonical(a.shape, b.shape);
+    let (a, b) = if reversed { (b, a) } else { (a, b) };
+    if matches!(pair, PrimitivePair::BoxWedge | PrimitivePair::WedgeWedge) {
         return poly_sweep_time(a, b, dt, margin, work);
     }
 
@@ -187,7 +365,7 @@ pub(super) fn swept_time(
         work.primitive_sweep_iterations += 1;
         aa.position = a.position + a.velocity * (dt * time);
         bb.position = b.position + b.velocity * (dt * time);
-        let contact = query(&aa, &bb, work)?;
+        let contact = query_canonical(pair, &aa, &bb, work)?;
         let gap = contact.separation - target;
         if gap <= 0.0 {
             return Some(time);
@@ -453,8 +631,8 @@ fn poly_sweep_time(
 }
 
 fn projection_interval(body: &Body, axis: V, work: &mut GeometryStats) -> (Scalar, Scalar) {
-    let maximum = support_counted(body, axis, Some(work)).dot(axis);
-    let minimum = support_counted(body, -axis, Some(work)).dot(axis);
+    let maximum = support_counted(body, axis, work).dot(axis);
+    let minimum = support_counted(body, -axis, work).dot(axis);
     (minimum, maximum)
 }
 
