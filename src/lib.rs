@@ -31,6 +31,16 @@
 
 #![forbid(unsafe_code)]
 
+macro_rules! performance_counter {
+    ($expression:expr) => {{
+        #[cfg(feature = "performance-counters")]
+        {
+            $expression;
+        }
+    }};
+}
+pub(crate) use performance_counter;
+
 mod angular;
 mod ballistic_event;
 mod ballistic_sphere;
