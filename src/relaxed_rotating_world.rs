@@ -4,8 +4,9 @@ use crate::{
     AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind,
     InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
     OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, SolverParticipation3d, Vec3i, WakePropagation3d,
+    PerformanceCounterU64, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotatingWorldStepStats3d, SolverParticipation3d, Vec3i,
+    WakePropagation3d,
     rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
@@ -273,10 +274,10 @@ impl RotatingWorld3d {
             return Ok(self.quiescent_report());
         }
         let mut changed_body_ids = BTreeSet::new();
-        let mut _probe_work = [0_u64; 3];
-        let mut _wake_retries = 0_u64;
+        let mut probe_work = [PerformanceCounterU64::default(); 3];
+        let mut wake_retries = PerformanceCounterU64::default();
         let mut report = loop {
-            let _before = self.active.contact_work_counters();
+            let before = self.active.contact_work_counters();
             match self.active.step_with_parked(
                 timestep_numerator,
                 timestep_denominator,
@@ -292,14 +293,12 @@ impl RotatingWorld3d {
                     if !self.parked.contains_key(&id) {
                         return Err(error);
                     }
-                    crate::performance_counter!({
-                        let after = self.active.contact_work_counters();
-                        for (sum, (after, before)) in
-                            _probe_work.iter_mut().zip(after.into_iter().zip(_before))
-                        {
-                            *sum = sum.saturating_add(after.saturating_sub(before));
-                        }
-                    });
+                    let after = self.active.contact_work_counters();
+                    for (sum, (after, before)) in
+                        probe_work.iter_mut().zip(after.into_iter().zip(before))
+                    {
+                        *sum = sum.saturating_add(after.saturating_sub(before));
+                    }
                     let island = self.contact_dependents(id, true)?;
                     for body in island {
                         if self.unpark_without_index(body)? {
@@ -307,15 +306,15 @@ impl RotatingWorld3d {
                         }
                     }
                     self.rebuild_parked_wake_index()?;
-                    crate::performance_counter!(_wake_retries += 1);
+                    wake_retries = wake_retries.saturating_add(1);
                 }
             }
         };
         crate::performance_counter!({
-            report.stats.parked_wake_retries = _wake_retries;
-            report.stats.wake_probe_broad_phase_queries = _probe_work[0];
-            report.stats.wake_probe_tail_broad_phase_queries = _probe_work[1];
-            report.stats.wake_probe_response_passes = _probe_work[2];
+            report.stats.parked_wake_retries = wake_retries.value();
+            report.stats.wake_probe_broad_phase_queries = probe_work[0].value();
+            report.stats.wake_probe_tail_broad_phase_queries = probe_work[1].value();
+            report.stats.wake_probe_response_passes = probe_work[2].value();
             report.stats.parked_bodies_woken = changed_body_ids.len();
         });
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
