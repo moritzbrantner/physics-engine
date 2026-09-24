@@ -1,6 +1,4 @@
-use super::{
-    Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar, primitive,
-};
+use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar, primitive};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
