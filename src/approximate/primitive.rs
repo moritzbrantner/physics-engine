@@ -45,11 +45,7 @@ pub(super) fn support_point(body: &Body, direction: V) -> V {
     support_counted(body, direction, None)
 }
 
-fn support_counted(
-    body: &Body,
-    direction: V,
-    mut work: Option<&mut GeometryStats>,
-) -> V {
+fn support_counted(body: &Body, direction: V, mut work: Option<&mut GeometryStats>) -> V {
     let n = direction.unit();
     match body.shape {
         Shape::Sphere(radius) => body.position + n * radius,
@@ -91,11 +87,7 @@ fn support_counted(
     }
 }
 
-pub(super) fn query(
-    a: &Body,
-    b: &Body,
-    work: &mut GeometryStats,
-) -> Option<PrimitiveContact> {
+pub(super) fn query(a: &Body, b: &Body, work: &mut GeometryStats) -> Option<PrimitiveContact> {
     work.primitive_queries += 1;
     match (a.shape, b.shape) {
         (
@@ -280,8 +272,12 @@ fn capsule_box(
         unreachable!()
     };
     let (world_a, world_b) = capsule_segment(capsule, half_segment);
-    let local_a = box_body.orientation.inverse_rotate(world_a - box_body.position);
-    let local_b = box_body.orientation.inverse_rotate(world_b - box_body.position);
+    let local_a = box_body
+        .orientation
+        .inverse_rotate(world_a - box_body.position);
+    let local_b = box_body
+        .orientation
+        .inverse_rotate(world_b - box_body.position);
 
     if let Some((enter, exit)) = segment_aabb_interval(local_a, local_b, half) {
         let local_core = local_a + (local_b - local_a) * ((enter + exit) * 0.5);
@@ -315,7 +311,9 @@ fn sphere_wedge(sphere: &Body, wedge: &Body, radius: Scalar) -> PrimitiveContact
     let Shape::Wedge(half) = wedge.shape else {
         unreachable!()
     };
-    let local = wedge.orientation.inverse_rotate(sphere.position - wedge.position);
+    let local = wedge
+        .orientation
+        .inverse_rotate(sphere.position - wedge.position);
     if let Some((outward, depth)) = wedge_inside_depth(local, half) {
         let outward_world = wedge.orientation.rotate(outward);
         let normal = -outward_world;
@@ -494,14 +492,9 @@ fn edge_axes(body: &Body) -> ([V; 4], usize) {
             (out, 3)
         }
         Shape::Wedge(half) => {
-            for (index, local) in [
-                V::X,
-                V::Y,
-                V::Z,
-                V(half.0, -half.1, 0.0).unit(),
-            ]
-            .into_iter()
-            .enumerate()
+            for (index, local) in [V::X, V::Y, V::Z, V(half.0, -half.1, 0.0).unit()]
+                .into_iter()
+                .enumerate()
             {
                 out[index] = body.orientation.rotate(local);
             }
@@ -620,8 +613,7 @@ fn closest_segment_wedge(a: V, b: V, half: V) -> (V, V) {
     let mut best_distance = Scalar::INFINITY;
     for triangle in wedge_triangles(half) {
         for endpoint in [a, b] {
-            let candidate =
-                closest_point_triangle(endpoint, triangle[0], triangle[1], triangle[2]);
+            let candidate = closest_point_triangle(endpoint, triangle[0], triangle[1], triangle[2]);
             update_pair(endpoint, candidate, &mut best, &mut best_distance);
         }
         for edge in [
