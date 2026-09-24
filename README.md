@@ -41,7 +41,9 @@ The existing compatibility foundation includes:
 - bounded translational collision events per step;
 - deterministic swept sweep-and-prune broad-phase candidate generation;
 - snapshot overlap, swept-AABB and ray queries ordered by TOI and body ID;
-- physics-native AABB and sphere collider geometry with exact integer contact evidence;
+- physics-native AABB and sphere compatibility collider geometry with exact integer contact evidence;
+- f64 fixed-step capsule geometry with analytic support/distance, capsule inertia and translation CCD;
+- f64 oriented triangular-prism wedge geometry with six-vertex support, fixed-axis SAT and translation CCD;
 - deterministic fixed-point quaternion orientation and angular-velocity integration;
 - exact box principal inertia ratios and off-center angular impulse evidence;
 - quantized oriented-box vertices and exact SAT contact seeds with stable support masks;
@@ -108,7 +110,7 @@ The fixture currently exercises:
 - pause, reset and single-step controls for inspecting deterministic behavior;
 - lightweight per-tick collision/broad-phase evidence from the actual `World` step report.
 
-The player is intentionally box-shaped because the acceptance sandbox still uses the translational/AABB-only `World` path. Capsules, slopes and a richer character controller should be added as real engine capabilities rather than approximated in the renderer; rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
+The legacy acceptance player remains box-shaped because that sandbox still uses the translational/AABB-only `World` path. The f64 fixed-step engine now owns capsule and wedge/ramp collision geometry; wiring those primitives into a dedicated character-controller scenario remains a consumer-facing follow-up rather than renderer-owned collision logic. Rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
 
 ## Contact-triggered parked-body activation
 
