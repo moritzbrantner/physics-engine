@@ -10,6 +10,7 @@
 mod bookkeeping;
 mod contact;
 mod position;
+mod primitive;
 pub use position::PositionReport;
 mod convergence;
 mod islands;
@@ -35,18 +36,89 @@ use std::collections::BTreeMap;
 pub enum Shape {
     Box(Vector),
     Sphere(Scalar),
+    /// Local-Y segment expanded by a spherical radius.
+    Capsule {
+        half_segment: Scalar,
+        radius: Scalar,
+    },
+    /// Right triangular prism inside the local bounding box. The ramp rises toward -X.
+    Wedge(Vector),
 }
 impl Shape {
+    pub const fn capsule(half_segment: Scalar, radius: Scalar) -> Self {
+        Self::Capsule {
+            half_segment,
+            radius,
+        }
+    }
+    pub const fn wedge(half_extents: Vector) -> Self {
+        Self::Wedge(half_extents)
+    }
     pub fn radius(self) -> Scalar {
         match self {
-            Self::Box(h) => h.length(),
+            Self::Box(h) | Self::Wedge(h) => h.length(),
             Self::Sphere(r) => r,
+            Self::Capsule {
+                half_segment,
+                radius,
+            } => half_segment + radius,
         }
     }
     pub fn half_extents(self) -> Vector {
         match self {
-            Self::Box(h) => h,
+            Self::Box(h) | Self::Wedge(h) => h,
             Self::Sphere(r) => Vector(r, r, r),
+            Self::Capsule {
+                half_segment,
+                radius,
+            } => Vector(radius, half_segment + radius, radius),
+        }
+    }
+    fn valid_dimensions(self) -> bool {
+        match self {
+            Self::Box(h) | Self::Wedge(h) => {
+                h.finite() && h.min_component() >= 1e-6 && h.max_component() < 1e12
+            }
+            Self::Sphere(radius) => radius.is_finite() && (1e-6..1e12).contains(&radius),
+            Self::Capsule {
+                half_segment,
+                radius,
+            } => {
+                half_segment.is_finite()
+                    && (0.0..1e12).contains(&half_segment)
+                    && radius.is_finite()
+                    && (1e-6..1e12).contains(&radius)
+            }
+        }
+    }
+    fn local_inverse_inertia(self, mass: Scalar) -> Option<Vector> {
+        match self {
+            Self::Sphere(r) => {
+                let inverse = 2.5 / (mass * r * r);
+                Some(Vector(inverse, inverse, inverse))
+            }
+            Self::Box(h) => Some(Vector(
+                3.0 / (mass * (h.1 * h.1 + h.2 * h.2)),
+                3.0 / (mass * (h.0 * h.0 + h.2 * h.2)),
+                3.0 / (mass * (h.0 * h.0 + h.1 * h.1)),
+            )),
+            Self::Capsule {
+                half_segment: h,
+                radius: r,
+            } => {
+                let cylinder_volume = r * r * (2.0 * h);
+                let sphere_volume = (4.0 / 3.0) * r * r * r;
+                let total_volume = cylinder_volume + sphere_volume;
+                let cylinder_mass = mass * cylinder_volume / total_volume;
+                let sphere_mass = mass * sphere_volume / total_volume;
+                let axial = cylinder_mass * r * r * 0.5 + sphere_mass * r * r * (2.0 / 5.0);
+                let radial = cylinder_mass * (3.0 * r * r + 4.0 * h * h) / 12.0
+                    + sphere_mass * ((2.0 / 5.0) * r * r + h * h + (3.0 / 4.0) * h * r);
+                Some(Vector(1.0 / radial, 1.0 / axial, 1.0 / radial))
+            }
+            // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
+            // wedge inertia/pose contract is introduced.
+            Self::Wedge(_) => None,
         }
     }
 }
@@ -165,17 +237,10 @@ impl Body {
         if self.inverse_mass() == 0.0 || self.rotation_locked {
             return Vector::ZERO;
         }
-        let inverse = match self.shape {
-            Shape::Sphere(r) => {
-                let k = 2.5 / (self.mass * r * r);
-                Vector(k, k, k)
-            }
-            Shape::Box(h) => Vector(
-                3.0 / (self.mass * (h.1 * h.1 + h.2 * h.2)),
-                3.0 / (self.mass * (h.0 * h.0 + h.2 * h.2)),
-                3.0 / (self.mass * (h.0 * h.0 + h.1 * h.1)),
-            ),
-        };
+        let inverse = self
+            .shape
+            .local_inverse_inertia(self.mass)
+            .unwrap_or(Vector::ZERO);
         self.orientation
             .rotate(self.orientation.inverse_rotate(v).component_mul(inverse))
     }
@@ -185,9 +250,8 @@ impl Body {
             && self.angular_velocity.finite()
             && self.angular_velocity.abs().max_component() < 1e9
             && self.orientation.finite()
-            && self.shape.half_extents().finite()
-            && self.shape.half_extents().min_component() >= 1e-6
-            && self.shape.half_extents().max_component() < 1e12
+            && self.shape.valid_dimensions()
+            && (!matches!(self.shape, Shape::Wedge(_)) || self.rotation_locked || !self.movable())
             && self.mass.is_finite()
             && (self.mass == 0.0 || self.mass >= 1e-6)
             && self.mass < 1e12

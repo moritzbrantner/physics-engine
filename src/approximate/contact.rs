@@ -1,4 +1,4 @@
-use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar};
+use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar, primitive};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
@@ -67,19 +67,17 @@ pub(super) struct Manifold {
 }
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
-    let e = match b.shape {
-        Shape::Sphere(r) => V(r, r, r),
-        Shape::Box(h) => {
-            let a = b.orientation.axes();
-            a[0].abs() * h.0 + a[1].abs() * h.1 + a[2].abs() * h.2
-        }
-    };
+    let e = primitive::bounds_extents(b);
     (b.position - e, b.position + e)
 }
 fn radius(b: &Body, n: V) -> Scalar {
     match b.shape {
         Shape::Sphere(r) => r,
-        Shape::Box(h) => {
+        Shape::Capsule {
+            half_segment,
+            radius,
+        } => n.dot(b.orientation.rotate(V::Y)).abs() * half_segment + radius,
+        Shape::Box(h) | Shape::Wedge(h) => {
             let a = b.orientation.axes();
             n.dot(a[0]).abs() * h.0 + n.dot(a[1]).abs() * h.1 + n.dot(a[2]).abs() * h.2
         }
@@ -137,20 +135,7 @@ fn clip_into(input: &[V], n: V, limit: Scalar, out: &mut Vec<V>) {
 }
 
 fn support(b: &Body, n: V) -> V {
-    match b.shape {
-        Shape::Sphere(r) => b.position + n * r,
-        Shape::Box(h) => {
-            let a = b.orientation.axes();
-            let mut p = b.position;
-            for (i, axis) in a.iter().enumerate() {
-                let d = n.dot(*axis);
-                if d.abs() > 1e-8 {
-                    p += *axis * (h.at(i) * d.signum());
-                }
-            }
-            p
-        }
-    }
+    primitive::support_point(b, n)
 }
 /// Shape/orientation-dependent support projections. Centers are deliberately not cached here.
 #[derive(Clone, Debug, Default)]
@@ -491,6 +476,21 @@ pub(super) fn current_counted(
                 time: 0.0,
             })
         }
+        _ => primitive::query(a, b, work).and_then(|contact| {
+            if contact.separation > margin {
+                return None;
+            }
+            Some(Manifold {
+                normal: contact.normal,
+                points: Points::one(Point {
+                    ra: contact.point_a - a.position,
+                    rb: contact.point_b - b.position,
+                    separation: contact.separation,
+                }),
+                swept: false,
+                time: 0.0,
+            })
+        }),
     }
 }
 
@@ -606,6 +606,7 @@ pub(super) fn swept(
                 .into_iter()
                 .map(|(axis, feature)| (axis, feature, radius(a, axis), radius(b, axis))),
         )?,
+        _ => primitive::swept_time(a, b, dt, margin, work)?,
     };
     finish_sweep(a, b, dt, time, |aa, bb| {
         current_counted(aa, bb, margin.max(1e-6), work)

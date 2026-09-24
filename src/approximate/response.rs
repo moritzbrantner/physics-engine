@@ -1,5 +1,5 @@
 //! Substep-local response coefficients. This caches division/shape work, not body motion.
-use super::{Body, Report, Scalar, Shape, Vector};
+use super::{Body, Report, Scalar, Vector};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PreparedResponse {
@@ -22,16 +22,11 @@ impl PreparedResponse {
             };
         }
         report.inertia_preparations += 1;
-        let local_inverse_inertia = match body.shape {
-            Shape::Sphere(r) => {
-                let k = 2.5 / (body.mass * r * r);
-                Vector(k, k, k)
-            }
-            Shape::Box(h) => Vector(
-                3.0 / (body.mass * (h.1 * h.1 + h.2 * h.2)),
-                3.0 / (body.mass * (h.0 * h.0 + h.2 * h.2)),
-                3.0 / (body.mass * (h.0 * h.0 + h.1 * h.1)),
-            ),
+        let Some(local_inverse_inertia) = body.shape.local_inverse_inertia(body.mass) else {
+            return Self {
+                inverse_mass,
+                ..Self::default()
+            };
         };
         Self {
             inverse_mass,
