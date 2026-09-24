@@ -197,3 +197,73 @@ fn removal_of_support_wakes_a_sleeping_box() {
     w.step(1.0 / 60.0).unwrap();
     assert!(w.body(BodyId(2)).unwrap().velocity.1 < 0.0);
 }
+
+#[test]
+fn fast_capsule_does_not_tunnel_through_thin_box_or_wedge() {
+    for target in [
+        Shape::Box(V(10.0, 10.0, 0.02)),
+        Shape::wedge(V(10.0, 10.0, 0.02)),
+    ] {
+        let mut w = world(V::ZERO);
+        w.add_body(Body::new(BodyId(1), target, V::ZERO, 0.0))
+            .unwrap();
+
+        let mut projectile = Body::new(
+            BodyId(2),
+            Shape::capsule(0.5, 0.1),
+            V(-5.0, -5.0, 10.0),
+            1.0,
+        );
+        projectile.velocity = V(0.0, 0.0, -10_000.0);
+        projectile.ccd = true;
+        projectile.retire_on_impact = true;
+        w.add_body(projectile).unwrap();
+
+        let report = w.step(1.0 / 60.0).unwrap();
+        assert_eq!(report.retired, vec![BodyId(2)]);
+        assert!(report.swept_contacts > 0);
+        assert!(report.geometry.primitive_queries > 0);
+    }
+}
+
+#[test]
+fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
+    let mut w = world(V::ZERO);
+    let wedge = Body::new(
+        BodyId(1),
+        Shape::wedge(V(2.0, 1.0, 3.0)),
+        V::ZERO,
+        1.0,
+    );
+    assert!(w.add_body(wedge.clone()).is_err());
+
+    let mut locked = wedge;
+    locked.rotation_locked = true;
+    w.add_body(locked).unwrap();
+
+    w.add_body(Body::new(
+        BodyId(2),
+        Shape::wedge(V(2.0, 1.0, 3.0)),
+        V(10.0, 0.0, 0.0),
+        0.0,
+    ))
+    .unwrap();
+}
+
+#[test]
+fn capsule_off_center_impulse_uses_capsule_inertia_without_quantization() {
+    let mut w = world(V::ZERO);
+    w.add_body(Body::new(
+        BodyId(1),
+        Shape::capsule(1.5, 0.5),
+        V::ZERO,
+        2.0,
+    ))
+    .unwrap();
+    w.apply_impulse(BodyId(1), V(0.5, 0.0, 0.0), V(0.0, 1.0, 0.0))
+        .unwrap();
+    w.step(1.0 / 60.0).unwrap();
+    let body = w.body(BodyId(1)).unwrap();
+    assert!(body.angular_velocity.2 < 0.0);
+    assert_ne!(body.orientation, Quaternion::IDENTITY);
+}
