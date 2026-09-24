@@ -228,7 +228,11 @@ fn sphere_and_box_fast_paths_have_deterministic_work_budgets() {
         let mut work = GeometryStats::default();
         let manifold = current_counted(&a, &b, 0.02, &mut work);
         assert!(manifold.is_some(), "{pair:?}");
-        assert_eq!(work.specialized_pair_dispatches[pair.index()], 1, "{pair:?}");
+        assert_eq!(
+            work.specialized_pair_dispatches[pair.index()],
+            1,
+            "{pair:?}"
+        );
         assert_eq!(
             work.specialized_pair_dispatches.into_iter().sum::<u64>(),
             1,
@@ -255,4 +259,3 @@ fn sphere_and_box_fast_paths_have_deterministic_work_budgets() {
         }
     }
 }
-
