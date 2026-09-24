@@ -150,11 +150,7 @@ pub(super) fn support_point(body: &Body, direction: V) -> V {
     support_impl(body, direction, None)
 }
 
-pub(super) fn support_point_counted(
-    body: &Body,
-    direction: V,
-    work: &mut GeometryStats,
-) -> V {
+pub(super) fn support_point_counted(body: &Body, direction: V, work: &mut GeometryStats) -> V {
     support_counted(body, direction, work)
 }
 
