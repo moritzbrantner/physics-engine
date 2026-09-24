@@ -655,27 +655,41 @@ pub(super) fn swept(
     work: &mut GeometryStats,
 ) -> Option<Manifold> {
     work.sweep_queries += 1;
-    let time = match (a.shape, b.shape) {
-        (Shape::Sphere(r), Shape::Box(_)) => sphere_box_time(a, b, r, dt)?,
-        (Shape::Box(_), Shape::Sphere(r)) => sphere_box_time(b, a, r, dt)?,
-        (Shape::Sphere(ra), Shape::Sphere(rb)) => {
-            let d = b.position - a.position;
-            let v = (b.velocity - a.velocity) * dt;
+    let (pair, reversed) = primitive::PrimitivePair::canonical(a.shape, b.shape);
+    let (left, right) = if reversed { (b, a) } else { (a, b) };
+    let time = match pair {
+        primitive::PrimitivePair::SphereBox => {
+            let Shape::Sphere(radius) = left.shape else {
+                unreachable!()
+            };
+            sphere_box_time(left, right, radius, dt)?
+        }
+        primitive::PrimitivePair::SphereSphere => {
+            let Shape::Sphere(ra) = left.shape else {
+                unreachable!()
+            };
+            let Shape::Sphere(rb) = right.shape else {
+                unreachable!()
+            };
+            let d = right.position - left.position;
+            let v = (right.velocity - left.velocity) * dt;
             roots(v.dot(v), 2.0 * d.dot(v), d.dot(d) - (ra + rb) * (ra + rb))
                 .into_iter()
                 .flatten()
                 .filter(|t| (0.0..=1.0).contains(t))
                 .min_by(Scalar::total_cmp)?
         }
-        (Shape::Box(_), Shape::Box(_)) => box_sweep_time(
-            a,
-            b,
+        primitive::PrimitivePair::BoxBox => box_sweep_time(
+            left,
+            right,
             dt,
-            axes(a, b)
+            axes(left, right)
                 .into_iter()
-                .map(|(axis, feature)| (axis, feature, radius(a, axis), radius(b, axis))),
+                .map(|(axis, feature)| {
+                    (axis, feature, radius(left, axis), radius(right, axis))
+                }),
         )?,
-        _ => primitive::swept_time(a, b, dt, margin, work)?,
+        _ => primitive::swept_time(left, right, dt, margin, work)?,
     };
     finish_sweep(a, b, dt, time, |aa, bb| {
         current_counted(aa, bb, margin.max(1e-6), work)
