@@ -50,7 +50,10 @@ fn disabling_step_stats_preserves_authoritative_simulation() {
         );
     }
 
-    assert!(observed_work, "fixture must exercise diagnostic counter collection");
+    assert!(
+        observed_work,
+        "fixture must exercise diagnostic counter collection"
+    );
 }
 
 #[test]
