@@ -24,6 +24,7 @@ pub(super) enum PrimitiveKind {
 }
 
 impl PrimitiveKind {
+    #[cfg(test)]
     pub const ALL: [Self; 4] = [Self::Sphere, Self::Box, Self::Capsule, Self::Wedge];
 
     pub const fn from_shape(shape: Shape) -> Self {
@@ -51,6 +52,7 @@ pub(super) enum PrimitivePair {
 }
 
 impl PrimitivePair {
+    #[cfg(test)]
     pub const ALL: [Self; 10] = [
         Self::SphereSphere,
         Self::SphereBox,
@@ -79,6 +81,7 @@ impl PrimitivePair {
         }
     }
 
+    #[cfg(test)]
     pub const fn kinds(self) -> (PrimitiveKind, PrimitiveKind) {
         match self {
             Self::SphereSphere => (PrimitiveKind::Sphere, PrimitiveKind::Sphere),
@@ -146,10 +149,6 @@ pub(super) fn bounds_extents(body: &Body) -> V {
     }
 }
 
-pub(super) fn support_point(body: &Body, direction: V) -> V {
-    support_impl(body, direction, None)
-}
-
 pub(super) fn support_point_counted(body: &Body, direction: V, work: &mut GeometryStats) -> V {
     support_counted(body, direction, work)
 }
@@ -201,6 +200,7 @@ fn support_impl(body: &Body, direction: V, work: Option<&mut GeometryStats>) -> 
     }
 }
 
+#[cfg(test)]
 pub(super) fn query(a: &Body, b: &Body, work: &mut GeometryStats) -> Option<PrimitiveContact> {
     let (pair, reversed) = PrimitivePair::canonical(a.shape, b.shape);
     let (left, right) = if reversed { (b, a) } else { (a, b) };
