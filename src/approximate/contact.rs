@@ -438,13 +438,7 @@ fn sphere_box(s: &Body, b: &Body, r: Scalar, margin: Scalar) -> Option<Manifold>
     })
 }
 
-fn sphere_sphere(
-    a: &Body,
-    b: &Body,
-    ra: Scalar,
-    rb: Scalar,
-    margin: Scalar,
-) -> Option<Manifold> {
+fn sphere_sphere(a: &Body, b: &Body, ra: Scalar, rb: Scalar, margin: Scalar) -> Option<Manifold> {
     let d = b.position - a.position;
     let l = d.length();
     let separation = l - ra - rb;
@@ -541,9 +535,7 @@ fn reference_current_counted(
     match (a.shape, b.shape) {
         (Shape::Box(_), Shape::Box(_)) => box_manifold(a, b, margin, work),
         (Shape::Sphere(r), Shape::Box(_)) => sphere_box(a, b, r, margin),
-        (Shape::Box(_), Shape::Sphere(r)) => {
-            sphere_box(b, a, r, margin).map(flip_manifold)
-        }
+        (Shape::Box(_), Shape::Sphere(r)) => sphere_box(b, a, r, margin).map(flip_manifold),
         (Shape::Sphere(ra), Shape::Sphere(rb)) => sphere_sphere(a, b, ra, rb, margin),
         _ => primitive::reference_query(a, b, work).and_then(|contact| {
             if contact.separation > margin {
@@ -685,9 +677,7 @@ pub(super) fn swept(
             dt,
             axes(left, right)
                 .into_iter()
-                .map(|(axis, feature)| {
-                    (axis, feature, radius(left, axis), radius(right, axis))
-                }),
+                .map(|(axis, feature)| (axis, feature, radius(left, axis), radius(right, axis))),
         )?,
         _ => primitive::swept_time(left, right, dt, margin, work)?,
     };
