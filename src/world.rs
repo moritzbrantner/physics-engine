@@ -201,21 +201,6 @@ impl World {
     /// requested interval continues with the post-impact velocity, so fast bodies cannot tunnel
     /// through thin fixed bodies merely because no frame landed on the contact point.
     pub fn step(&mut self, ticks: i32) -> Result<StepReport, PhysicsError> {
-        self.step_with_stats::<true>(ticks)
-    }
-
-    /// Advances the same authoritative simulation while compile-time-eliding `StepStats` updates.
-    ///
-    /// Collision events and world state remain identical to `step`; only diagnostic counters
-    /// are disabled and therefore remain at their default values.
-    pub fn step_without_stats(&mut self, ticks: i32) -> Result<StepReport, PhysicsError> {
-        self.step_with_stats::<false>(ticks)
-    }
-
-    fn step_with_stats<const COLLECT_STATS: bool>(
-        &mut self,
-        ticks: i32,
-    ) -> Result<StepReport, PhysicsError> {
         if ticks <= 0 {
             return Err(PhysicsError::NonPositiveTicks(ticks));
         }
@@ -232,12 +217,12 @@ impl World {
 
         let mut report = StepReport {
             events: Vec::new(),
-            stats: StepStats::default(),
+            stats: StepStats {
+                body_count: states.len(),
+                ..StepStats::default()
+            },
         };
-        if COLLECT_STATS {
-            report.stats.body_count = states.len();
-        }
-        stabilize_contacts::<COLLECT_STATS>(
+        stabilize_contacts(
             &mut states,
             self.config.stabilization_passes,
             &mut report.stats,
@@ -248,8 +233,7 @@ impl World {
         let mut event_count = 0_usize;
 
         while remaining_subticks > 0 {
-            let hits =
-                find_earliest_hits::<COLLECT_STATS>(&states, remaining_subticks, &mut report.stats);
+            let hits = find_earliest_hits(&states, remaining_subticks, &mut report.stats);
             if hits.is_empty() {
                 advance_all(&mut states, remaining_subticks)?;
                 break;
@@ -269,9 +253,7 @@ impl World {
             }
             for hit in hits {
                 let (left_id, right_id) = (states[hit.left].body.id, states[hit.right].body.id);
-                let resolved =
-                    resolve_contact_velocity(&mut states, hit.left, hit.right, hit.hit.normal)?;
-                if COLLECT_STATS && resolved {
+                if resolve_contact_velocity(&mut states, hit.left, hit.right, hit.hit.normal)? {
                     report.stats.contact_resolutions += 1;
                 }
                 let event_time = u64::try_from(elapsed_subticks)
@@ -282,13 +264,11 @@ impl World {
                     normal: hit.hit.normal,
                     time: TimeOfImpact::from_subticks(event_time),
                 });
-                if COLLECT_STATS {
-                    report.stats.collision_events += 1;
-                }
+                report.stats.collision_events += 1;
                 event_count += 1;
             }
 
-            stabilize_contacts::<COLLECT_STATS>(
+            stabilize_contacts(
                 &mut states,
                 self.config.stabilization_passes,
                 &mut report.stats,
@@ -417,16 +397,13 @@ struct BroadPhaseBounds {
     max: [i128; 3],
 }
 
-fn find_earliest_hits<const COLLECT_STATS: bool>(
+fn find_earliest_hits(
     states: &[BodyState],
     remaining_subticks: i128,
     stats: &mut StepStats,
 ) -> Vec<IndexedHit> {
-    let (candidate_pairs, pair_checks) =
-        broad_phase_pairs::<COLLECT_STATS>(states, remaining_subticks);
-    if COLLECT_STATS {
-        stats.pair_checks += pair_checks;
-    }
+    let (candidate_pairs, pair_checks) = broad_phase_pairs(states, remaining_subticks);
+    stats.pair_checks += pair_checks;
 
     let mut earliest_time: Option<Ratio> = None;
     let mut hits = Vec::new();
@@ -436,10 +413,8 @@ fn find_earliest_hits<const COLLECT_STATS: bool>(
             continue;
         }
 
-        if COLLECT_STATS {
-            stats.swept_candidates += 1;
-            stats.toi_tests += 1;
-        }
+        stats.swept_candidates += 1;
+        stats.toi_tests += 1;
         let Some(hit) = sweep_motion(
             states[left].motion(),
             states[right].motion(),
@@ -471,10 +446,7 @@ fn find_earliest_hits<const COLLECT_STATS: bool>(
 /// interval rejection. The swept bounds cover every position each body can occupy during the
 /// remaining constant-velocity interval, so this stage may produce false positives but must not
 /// reject a genuine TOI candidate.
-fn broad_phase_pairs<const COLLECT_STATS: bool>(
-    states: &[BodyState],
-    horizon_subticks: i128,
-) -> (Vec<(usize, usize)>, usize) {
+fn broad_phase_pairs(states: &[BodyState], horizon_subticks: i128) -> (Vec<(usize, usize)>, usize) {
     let mut entries = states
         .iter()
         .enumerate()
@@ -509,9 +481,7 @@ fn broad_phase_pairs<const COLLECT_STATS: bool>(
                 continue;
             }
 
-            if COLLECT_STATS {
-                pair_checks += 1;
-            }
+            pair_checks += 1;
             if intervals_overlap(other.min[1], other.max[1], current.min[1], current.max[1])
                 && intervals_overlap(other.min[2], other.max[2], current.min[2], current.max[2])
             {
@@ -561,13 +531,13 @@ const fn intervals_overlap(
     left_min <= right_max && right_min <= left_max
 }
 
-fn stabilize_contacts<const COLLECT_STATS: bool>(
+fn stabilize_contacts(
     states: &mut [BodyState],
     max_passes: usize,
     stats: &mut StepStats,
 ) -> Result<(), PhysicsError> {
     for _ in 0..max_passes {
-        let (candidate_pairs, _) = broad_phase_pairs::<false>(states, 0);
+        let (candidate_pairs, _) = broad_phase_pairs(states, 0);
         let mut changed = false;
 
         for (left, right) in candidate_pairs {
@@ -579,9 +549,7 @@ fn stabilize_contacts<const COLLECT_STATS: bool>(
                 changed = true;
             }
             if resolve_contact_velocity(states, left, right, contact.normal)? {
-                if COLLECT_STATS {
-                    stats.contact_resolutions += 1;
-                }
+                stats.contact_resolutions += 1;
                 changed = true;
             }
         }
@@ -589,9 +557,7 @@ fn stabilize_contacts<const COLLECT_STATS: bool>(
         if !changed {
             break;
         }
-        if COLLECT_STATS {
-            stats.stabilization_passes += 1;
-        }
+        stats.stabilization_passes += 1;
     }
     Ok(())
 }
