@@ -938,11 +938,7 @@ mod tests {
             1.0,
         );
         capsule.velocity = V(800.0, -2.0, 0.0);
-        let target = body(
-            2,
-            Shape::Box(V(500.0, 0.01, 10.0)),
-            V::ZERO,
-        );
+        let target = body(2, Shape::Box(V(500.0, 0.01, 10.0)), V::ZERO);
         let mut work = GeometryStats::default();
 
         let time = swept_time(&capsule, &target, 1.0, 0.02, &mut work).unwrap();
