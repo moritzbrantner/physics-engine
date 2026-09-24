@@ -612,8 +612,8 @@ fn poly_poly(a: &Body, b: &Body, work: &mut GeometryStats) -> PrimitiveContact {
     PrimitiveContact {
         normal: best_normal,
         separation: best_separation,
-        point_a: support_counted(a, best_normal, Some(work)),
-        point_b: support_counted(b, -best_normal, Some(work)),
+        point_a: support_counted(a, best_normal, work),
+        point_b: support_counted(b, -best_normal, work),
     }
 }
 
