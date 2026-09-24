@@ -201,6 +201,21 @@ impl World {
     /// requested interval continues with the post-impact velocity, so fast bodies cannot tunnel
     /// through thin fixed bodies merely because no frame landed on the contact point.
     pub fn step(&mut self, ticks: i32) -> Result<StepReport, PhysicsError> {
+        self.step_with_stats::<true>(ticks)
+    }
+
+    /// Advances the same authoritative simulation while compile-time-eliding `StepStats` updates.
+    ///
+    /// Collision events and world state remain identical to `step`; only diagnostic counters
+    /// are disabled and therefore remain at their default values.
+    pub fn step_without_stats(&mut self, ticks: i32) -> Result<StepReport, PhysicsError> {
+        self.step_with_stats::<false>(ticks)
+    }
+
+    fn step_with_stats<const COLLECT_STATS: bool>(
+        &mut self,
+        ticks: i32,
+    ) -> Result<StepReport, PhysicsError> {
         if ticks <= 0 {
             return Err(PhysicsError::NonPositiveTicks(ticks));
         }
@@ -217,12 +232,12 @@ impl World {
 
         let mut report = StepReport {
             events: Vec::new(),
-            stats: StepStats {
-                body_count: states.len(),
-                ..StepStats::default()
-            },
+            stats: StepStats::default(),
         };
-        stabilize_contacts(
+        if COLLECT_STATS {
+            report.stats.body_count = states.len();
+        }
+        stabilize_contacts::<COLLECT_STATS>(
             &mut states,
             self.config.stabilization_passes,
             &mut report.stats,
@@ -233,7 +248,8 @@ impl World {
         let mut event_count = 0_usize;
 
         while remaining_subticks > 0 {
-            let hits = find_earliest_hits(&states, remaining_subticks, &mut report.stats);
+            let hits =
+                find_earliest_hits::<COLLECT_STATS>(&states, remaining_subticks, &mut report.stats);
             if hits.is_empty() {
                 advance_all(&mut states, remaining_subticks)?;
                 break;
@@ -253,7 +269,9 @@ impl World {
             }
             for hit in hits {
                 let (left_id, right_id) = (states[hit.left].body.id, states[hit.right].body.id);
-                if resolve_contact_velocity(&mut states, hit.left, hit.right, hit.hit.normal)? {
+                let resolved =
+                    resolve_contact_velocity(&mut states, hit.left, hit.right, hit.hit.normal)?;
+                if COLLECT_STATS && resolved {
                     report.stats.contact_resolutions += 1;
                 }
                 let event_time = u64::try_from(elapsed_subticks)
@@ -264,11 +282,13 @@ impl World {
                     normal: hit.hit.normal,
                     time: TimeOfImpact::from_subticks(event_time),
                 });
-                report.stats.collision_events += 1;
+                if COLLECT_STATS {
+                    report.stats.collision_events += 1;
+                }
                 event_count += 1;
             }
 
-            stabilize_contacts(
+            stabilize_contacts::<COLLECT_STATS>(
                 &mut states,
                 self.config.stabilization_passes,
                 &mut report.stats,
