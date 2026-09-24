@@ -402,3 +402,150 @@ fn sleeping_neighborhood_bookkeeping_scaling_benchmark() {
         );
     }
 }
+
+fn reference_support_closure(
+    mut supported: Vec<bool>,
+    edges: &[(usize, usize)],
+) -> (Vec<bool>, u64) {
+    let mut edge_visits = 0_u64;
+    for _ in 0..supported.len() {
+        let mut changed = false;
+        for &(lower, upper) in edges {
+            edge_visits += 1;
+            if supported[lower] && !supported[upper] {
+                supported[upper] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    (supported, edge_visits)
+}
+
+#[test]
+fn support_frontier_matches_repeated_scan_reference_across_directed_graphs() {
+    let mut random = 0x6a09_e667_f3bc_c909_u64;
+    let mut next = || {
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        random as usize
+    };
+
+    let mut frontier = SupportPropagation::default();
+    for trial in 0..400 {
+        let body_count = 1 + next() % 64;
+        let edge_count = next() % (body_count * 4 + 1);
+        let edges = (0..edge_count)
+            .map(|_| (next() % body_count, next() % body_count))
+            .collect::<Vec<_>>();
+        let mut initial = (0..body_count)
+            .map(|_| next() % 5 == 0)
+            .collect::<Vec<_>>();
+        if !initial.iter().any(|supported| *supported) {
+            let seed = next() % body_count;
+            initial[seed] = true;
+        }
+
+        let (expected, _) = reference_support_closure(initial.clone(), &edges);
+        let mut actual = initial;
+        let mut work = BookkeepingStats::default();
+        frontier.propagate(&mut actual, &edges, &mut work);
+
+        assert_eq!(actual, expected, "support closure trial {trial}");
+        assert_eq!(
+            work.support_graph_builds,
+            if edges.is_empty() { 0 } else { 1 }
+        );
+        assert_eq!(work.support_edges_indexed, edges.len() as u64);
+        assert!(
+            work.support_edge_visits <= work.support_edges_indexed,
+            "reachable directed edges must be visited at most once in trial {trial}: {work:?}"
+        );
+    }
+}
+
+#[test]
+fn reverse_chain_support_work_is_linear_and_reuses_warmed_storage() {
+    const BODY_COUNT: usize = 1024;
+    let edges = (0..(BODY_COUNT - 1))
+        .rev()
+        .map(|lower| (lower, lower + 1))
+        .collect::<Vec<_>>();
+    let mut initial = vec![false; BODY_COUNT];
+    initial[0] = true;
+
+    let (expected, legacy_edge_visits) = reference_support_closure(initial.clone(), &edges);
+    assert_eq!(
+        legacy_edge_visits,
+        (BODY_COUNT * (BODY_COUNT - 1)) as u64,
+        "the reverse-ordered chain must exercise the old repeated-scan worst case"
+    );
+
+    let mut frontier = SupportPropagation::default();
+    let mut actual = initial.clone();
+    let mut work = BookkeepingStats::default();
+    frontier.propagate(&mut actual, &edges, &mut work);
+    assert_eq!(actual, expected);
+    assert!(actual.iter().all(|supported| *supported));
+    assert_eq!(work.support_graph_builds, 1);
+    assert_eq!(work.support_edges_indexed, (BODY_COUNT - 1) as u64);
+    assert_eq!(work.support_body_visits, (BODY_COUNT - 1) as u64);
+    assert_eq!(work.support_edge_visits, (BODY_COUNT - 1) as u64);
+    assert!(
+        legacy_edge_visits > work.support_edge_visits * 1000,
+        "ratchet must preserve the order-of-magnitude work reduction"
+    );
+
+    let retained_bytes = frontier.retained_bytes();
+    let mut warmed = initial;
+    let mut warmed_work = BookkeepingStats::default();
+    frontier.propagate(&mut warmed, &edges, &mut warmed_work);
+    assert_eq!(warmed, expected);
+    assert_eq!(warmed_work.scratch_growths, 0);
+    assert_eq!(frontier.retained_bytes(), retained_bytes);
+    assert_eq!(warmed_work.support_edge_visits, (BODY_COUNT - 1) as u64);
+}
+
+#[test]
+#[ignore = "advisory timing; deterministic support-edge ratchet is tested separately"]
+fn support_frontier_scaling_benchmark() {
+    use std::{hint::black_box, time::Instant};
+
+    for body_count in [64_usize, 256, 1024] {
+        let edges = (0..(body_count - 1))
+            .rev()
+            .map(|lower| (lower, lower + 1))
+            .collect::<Vec<_>>();
+        let mut initial = vec![false; body_count];
+        initial[0] = true;
+        let iterations = if body_count < 1024 { 32 } else { 8 };
+
+        let reference_start = Instant::now();
+        let mut reference_visits = 0_u64;
+        for _ in 0..iterations {
+            let (closure, visits) = reference_support_closure(initial.clone(), &edges);
+            black_box(closure);
+            reference_visits += visits;
+        }
+        let reference_elapsed = reference_start.elapsed();
+
+        let mut frontier = SupportPropagation::default();
+        let optimized_start = Instant::now();
+        let mut optimized_visits = 0_u64;
+        for _ in 0..iterations {
+            let mut supported = initial.clone();
+            let mut work = BookkeepingStats::default();
+            frontier.propagate(&mut supported, &edges, &mut work);
+            black_box(supported);
+            optimized_visits += work.support_edge_visits;
+        }
+        let optimized_elapsed = optimized_start.elapsed();
+
+        println!(
+            "SUPPORT_FRONTIER bodies={body_count} iterations={iterations} reference={reference_elapsed:?} frontier={optimized_elapsed:?} reference_edge_visits={reference_visits} frontier_edge_visits={optimized_visits}"
+        );
+    }
+}
