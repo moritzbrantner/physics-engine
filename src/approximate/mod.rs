@@ -85,8 +85,7 @@ impl Shape {
                 radius,
             } => {
                 half_segment.is_finite()
-                    && half_segment >= 0.0
-                    && half_segment < 1e12
+                    && (0.0..1e12).contains(&half_segment)
                     && radius.is_finite()
                     && (1e-6..1e12).contains(&radius)
             }
