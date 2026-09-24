@@ -79,6 +79,21 @@ impl PrimitivePair {
         }
     }
 
+    pub const fn kinds(self) -> (PrimitiveKind, PrimitiveKind) {
+        match self {
+            Self::SphereSphere => (PrimitiveKind::Sphere, PrimitiveKind::Sphere),
+            Self::SphereBox => (PrimitiveKind::Sphere, PrimitiveKind::Box),
+            Self::SphereCapsule => (PrimitiveKind::Sphere, PrimitiveKind::Capsule),
+            Self::SphereWedge => (PrimitiveKind::Sphere, PrimitiveKind::Wedge),
+            Self::BoxBox => (PrimitiveKind::Box, PrimitiveKind::Box),
+            Self::BoxCapsule => (PrimitiveKind::Box, PrimitiveKind::Capsule),
+            Self::BoxWedge => (PrimitiveKind::Box, PrimitiveKind::Wedge),
+            Self::CapsuleCapsule => (PrimitiveKind::Capsule, PrimitiveKind::Capsule),
+            Self::CapsuleWedge => (PrimitiveKind::Capsule, PrimitiveKind::Wedge),
+            Self::WedgeWedge => (PrimitiveKind::Wedge, PrimitiveKind::Wedge),
+        }
+    }
+
     pub fn canonical(left: Shape, right: Shape) -> (Self, bool) {
         let left_kind = PrimitiveKind::from_shape(left);
         let right_kind = PrimitiveKind::from_shape(right);
@@ -1059,6 +1074,36 @@ mod tests {
 
     fn body(id: u64, shape: Shape, position: V) -> Body {
         Body::new(crate::BodyId(id), shape, position, 0.0)
+    }
+
+    fn shape(kind: PrimitiveKind) -> Shape {
+        match kind {
+            PrimitiveKind::Sphere => Shape::Sphere(1.0),
+            PrimitiveKind::Box => Shape::Box(V(1.0, 0.8, 1.2)),
+            PrimitiveKind::Capsule => Shape::capsule(0.7, 0.6),
+            PrimitiveKind::Wedge => Shape::wedge(V(1.2, 0.9, 1.1)),
+        }
+    }
+
+    #[test]
+    fn primitive_pair_matrix_is_complete_canonical_and_dense() {
+        let mut seen = [false; 10];
+        for left in PrimitiveKind::ALL {
+            for right in PrimitiveKind::ALL {
+                let (pair, reversed) = PrimitivePair::canonical(shape(left), shape(right));
+                let (first, second) = pair.kinds();
+                assert!(first <= second);
+                assert_eq!(pair, PrimitivePair::ALL[pair.index()]);
+                assert_eq!(reversed, left > right);
+                seen[pair.index()] = true;
+
+                let (reverse_pair, reverse_reversed) =
+                    PrimitivePair::canonical(shape(right), shape(left));
+                assert_eq!(reverse_pair, pair);
+                assert_eq!(reverse_reversed, right > left);
+            }
+        }
+        assert!(seen.into_iter().all(|value| value));
     }
 
     #[test]
