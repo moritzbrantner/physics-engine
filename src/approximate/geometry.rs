@@ -21,6 +21,17 @@ pub struct GeometryStats {
     pub sat_axes_tested: u64,
     pub clip_passes: u64,
     pub sweep_queries: u64,
+    /// Canonical unordered pair dispatches by `PrimitivePair::index()`.
+    pub specialized_pair_dispatches: [u64; 10],
+    /// Production calls that could not use a specialized primitive kernel.
+    ///
+    /// All currently supported fixed-topology primitive pairs are specialized, so this is
+    /// ratcheted to zero until a deliberately generic shape is introduced.
+    pub generic_fallback_calls: u64,
+    /// Support-map evaluations performed by specialized primitive kernels.
+    pub support_evaluations: u64,
+    /// Contact manifolds admitted by fresh narrow-phase generation.
+    pub manifold_candidates: u64,
     /// Current-contact queries routed through capsule/wedge specialized geometry.
     pub primitive_queries: u64,
     /// Fixed SAT axes tested by wedge/box polyhedral queries.
