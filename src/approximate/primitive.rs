@@ -174,8 +174,7 @@ pub(super) fn swept_time(
     }
 
     let displacement = (b.velocity - a.velocity) * dt;
-    let speed = displacement.length();
-    if speed <= 1e-14 {
+    if displacement.dot(displacement) <= 1e-28 {
         return None;
     }
     let target = margin.max(1e-6);
@@ -193,11 +192,19 @@ pub(super) fn swept_time(
         if gap <= 0.0 {
             return Some(time);
         }
-        let remaining = 1.0 - time;
-        if gap > speed * remaining + tolerance {
+        // The current closest-feature normal is a separating direction for these convex
+        // fixed-orientation shapes. Advancing by total speed can make arbitrarily little progress
+        // when motion is mostly tangential, eventually exhausting the iteration bound and
+        // tunnelling. Use only the distance closed along that separating normal.
+        let closing = -displacement.dot(contact.normal);
+        if closing <= 1e-14 {
             return None;
         }
-        let advance = gap / speed;
+        let remaining = 1.0 - time;
+        if gap > closing * remaining + tolerance {
+            return None;
+        }
+        let advance = gap / closing;
         let next = time + advance;
         if next > 1.0 {
             return None;
@@ -920,6 +927,31 @@ mod tests {
         assert!(contact.separation.is_finite());
         assert!(work.primitive_axes_tested <= 24, "{work:?}");
         assert!(work.primitive_vertex_tests <= 600, "{work:?}");
+    }
+
+    #[test]
+    fn glancing_capsule_sweep_uses_normal_closing_speed() {
+        let mut capsule = Body::new(
+            crate::BodyId(1),
+            Shape::capsule(0.0, 0.1),
+            V(-400.0, 1.0, 0.0),
+            1.0,
+        );
+        capsule.velocity = V(800.0, -2.0, 0.0);
+        let target = body(
+            2,
+            Shape::Box(V(500.0, 0.01, 10.0)),
+            V::ZERO,
+        );
+        let mut work = GeometryStats::default();
+
+        let time = swept_time(&capsule, &target, 1.0, 0.02, &mut work).unwrap();
+
+        assert!((time - 0.435).abs() < 1e-9, "time={time}");
+        assert!(
+            work.primitive_sweep_iterations <= 3,
+            "glancing motion must not burn the bounded sweep budget: {work:?}"
+        );
     }
 
     #[test]
