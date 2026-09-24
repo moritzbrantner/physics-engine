@@ -417,13 +417,16 @@ struct BroadPhaseBounds {
     max: [i128; 3],
 }
 
-fn find_earliest_hits(
+fn find_earliest_hits<const COLLECT_STATS: bool>(
     states: &[BodyState],
     remaining_subticks: i128,
     stats: &mut StepStats,
 ) -> Vec<IndexedHit> {
-    let (candidate_pairs, pair_checks) = broad_phase_pairs(states, remaining_subticks);
-    stats.pair_checks += pair_checks;
+    let (candidate_pairs, pair_checks) =
+        broad_phase_pairs::<COLLECT_STATS>(states, remaining_subticks);
+    if COLLECT_STATS {
+        stats.pair_checks += pair_checks;
+    }
 
     let mut earliest_time: Option<Ratio> = None;
     let mut hits = Vec::new();
@@ -433,8 +436,10 @@ fn find_earliest_hits(
             continue;
         }
 
-        stats.swept_candidates += 1;
-        stats.toi_tests += 1;
+        if COLLECT_STATS {
+            stats.swept_candidates += 1;
+            stats.toi_tests += 1;
+        }
         let Some(hit) = sweep_motion(
             states[left].motion(),
             states[right].motion(),
@@ -466,7 +471,10 @@ fn find_earliest_hits(
 /// interval rejection. The swept bounds cover every position each body can occupy during the
 /// remaining constant-velocity interval, so this stage may produce false positives but must not
 /// reject a genuine TOI candidate.
-fn broad_phase_pairs(states: &[BodyState], horizon_subticks: i128) -> (Vec<(usize, usize)>, usize) {
+fn broad_phase_pairs<const COLLECT_STATS: bool>(
+    states: &[BodyState],
+    horizon_subticks: i128,
+) -> (Vec<(usize, usize)>, usize) {
     let mut entries = states
         .iter()
         .enumerate()
@@ -501,7 +509,9 @@ fn broad_phase_pairs(states: &[BodyState], horizon_subticks: i128) -> (Vec<(usiz
                 continue;
             }
 
-            pair_checks += 1;
+            if COLLECT_STATS {
+                pair_checks += 1;
+            }
             if intervals_overlap(other.min[1], other.max[1], current.min[1], current.max[1])
                 && intervals_overlap(other.min[2], other.max[2], current.min[2], current.max[2])
             {
@@ -551,13 +561,13 @@ const fn intervals_overlap(
     left_min <= right_max && right_min <= left_max
 }
 
-fn stabilize_contacts(
+fn stabilize_contacts<const COLLECT_STATS: bool>(
     states: &mut [BodyState],
     max_passes: usize,
     stats: &mut StepStats,
 ) -> Result<(), PhysicsError> {
     for _ in 0..max_passes {
-        let (candidate_pairs, _) = broad_phase_pairs(states, 0);
+        let (candidate_pairs, _) = broad_phase_pairs::<false>(states, 0);
         let mut changed = false;
 
         for (left, right) in candidate_pairs {
@@ -569,7 +579,9 @@ fn stabilize_contacts(
                 changed = true;
             }
             if resolve_contact_velocity(states, left, right, contact.normal)? {
-                stats.contact_resolutions += 1;
+                if COLLECT_STATS {
+                    stats.contact_resolutions += 1;
+                }
                 changed = true;
             }
         }
@@ -577,7 +589,9 @@ fn stabilize_contacts(
         if !changed {
             break;
         }
-        stats.stabilization_passes += 1;
+        if COLLECT_STATS {
+            stats.stabilization_passes += 1;
+        }
     }
     Ok(())
 }
