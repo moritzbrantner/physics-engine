@@ -273,10 +273,10 @@ impl RotatingWorld3d {
             return Ok(self.quiescent_report());
         }
         let mut changed_body_ids = BTreeSet::new();
-        let mut probe_work = [0_u64; 3];
-        let mut wake_retries = 0_u64;
+        let mut _probe_work = [0_u64; 3];
+        let mut _wake_retries = 0_u64;
         let mut report = loop {
-            let before = self.active.contact_work_counters();
+            let _before = self.active.contact_work_counters();
             match self.active.step_with_parked(
                 timestep_numerator,
                 timestep_denominator,
@@ -292,12 +292,14 @@ impl RotatingWorld3d {
                     if !self.parked.contains_key(&id) {
                         return Err(error);
                     }
-                    let after = self.active.contact_work_counters();
-                    for (sum, (after, before)) in
-                        probe_work.iter_mut().zip(after.into_iter().zip(before))
-                    {
-                        *sum = sum.saturating_add(after.saturating_sub(before));
-                    }
+                    crate::performance_counter!({
+                        let after = self.active.contact_work_counters();
+                        for (sum, (after, before)) in
+                            _probe_work.iter_mut().zip(after.into_iter().zip(_before))
+                        {
+                            *sum = sum.saturating_add(after.saturating_sub(before));
+                        }
+                    });
                     let island = self.contact_dependents(id, true)?;
                     for body in island {
                         if self.unpark_without_index(body)? {
@@ -305,36 +307,44 @@ impl RotatingWorld3d {
                         }
                     }
                     self.rebuild_parked_wake_index()?;
-                    wake_retries += 1;
+                    crate::performance_counter!(_wake_retries += 1);
                 }
             }
         };
-        report.stats.parked_wake_retries = wake_retries;
-        report.stats.wake_probe_broad_phase_queries = probe_work[0];
-        report.stats.wake_probe_tail_broad_phase_queries = probe_work[1];
-        report.stats.wake_probe_response_passes = probe_work[2];
-        report.stats.parked_bodies_woken = changed_body_ids.len();
+        crate::performance_counter!({
+            report.stats.parked_wake_retries = _wake_retries;
+            report.stats.wake_probe_broad_phase_queries = _probe_work[0];
+            report.stats.wake_probe_tail_broad_phase_queries = _probe_work[1];
+            report.stats.wake_probe_response_passes = _probe_work[2];
+            report.stats.parked_bodies_woken = changed_body_ids.len();
+        });
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         self.park_new_sleepers(&changed_body_ids)?;
         report.changed_body_ids = changed_body_ids.into_iter().collect();
-        report.stats.body_count = self
-            .active
-            .boxes()
-            .count()
-            .saturating_add(self.active.ballistic_sphere_count());
+        crate::performance_counter!({
+            report.stats.body_count = self
+                .active
+                .boxes()
+                .count()
+                .saturating_add(self.active.ballistic_sphere_count());
+        });
         Ok(report)
     }
 
     fn quiescent_report(&self) -> RotatingWorldStepReport3d {
         RotatingWorldStepReport3d {
             changed_body_ids: Vec::new(),
-            stats: RotatingWorldStepStats3d {
-                body_count: self
-                    .active
-                    .boxes()
-                    .count()
-                    .saturating_add(self.active.ballistic_sphere_count()),
-                ..RotatingWorldStepStats3d::default()
+            stats: if cfg!(feature = "performance-counters") {
+                RotatingWorldStepStats3d {
+                    body_count: self
+                        .active
+                        .boxes()
+                        .count()
+                        .saturating_add(self.active.ballistic_sphere_count()),
+                    ..RotatingWorldStepStats3d::default()
+                }
+            } else {
+                RotatingWorldStepStats3d::default()
             },
         }
     }
