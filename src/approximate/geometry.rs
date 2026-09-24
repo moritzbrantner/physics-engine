@@ -21,6 +21,14 @@ pub struct GeometryStats {
     pub sat_axes_tested: u64,
     pub clip_passes: u64,
     pub sweep_queries: u64,
+    /// Current-contact queries routed through capsule/wedge specialized geometry.
+    pub primitive_queries: u64,
+    /// Fixed SAT axes tested by wedge/box polyhedral queries.
+    pub primitive_axes_tested: u64,
+    /// Wedge vertex dot products; capsules and boxes use analytic support.
+    pub primitive_vertex_tests: u64,
+    /// Conservative-advance or swept-SAT iterations for new primitive CCD.
+    pub primitive_sweep_iterations: u64,
     pub pair_invalidations: u64,
     pub cached_pairs_peak: u64,
     /// Retained payload capacity, excluding BTreeMap node/allocator overhead.
@@ -44,6 +52,11 @@ impl ShapeKey {
         let shape = match b.shape {
             Shape::Box(h) => [0, h.0.to_bits(), h.1.to_bits(), h.2.to_bits()],
             Shape::Sphere(r) => [1, r.to_bits(), 0, 0],
+            Shape::Capsule {
+                half_segment,
+                radius,
+            } => [2, half_segment.to_bits(), radius.to_bits(), 0],
+            Shape::Wedge(h) => [3, h.0.to_bits(), h.1.to_bits(), h.2.to_bits()],
         };
         Self {
             id: b.id,
