@@ -198,7 +198,7 @@ pub(super) fn swept_time(
         bb.position = b.position + b.velocity * (dt * time);
         let contact = query(&aa, &bb, work)?;
         let gap = contact.separation - target;
-        if gap <= tolerance {
+        if gap <= 0.0 {
             return Some(time);
         }
         let remaining = 1.0 - time;
@@ -211,9 +211,14 @@ pub(super) fn swept_time(
             return None;
         }
         if next <= time {
-            return Some(time);
+            let bumped = Scalar::from_bits(time.to_bits() + 1);
+            if bumped > 1.0 {
+                return None;
+            }
+            time = bumped;
+        } else {
+            time = next;
         }
-        time = next;
     }
     None
 }
