@@ -441,9 +441,7 @@ fn support_frontier_matches_repeated_scan_reference_across_directed_graphs() {
         let edges = (0..edge_count)
             .map(|_| (next() % body_count, next() % body_count))
             .collect::<Vec<_>>();
-        let mut initial = (0..body_count)
-            .map(|_| next() % 5 == 0)
-            .collect::<Vec<_>>();
+        let mut initial = (0..body_count).map(|_| next() % 5 == 0).collect::<Vec<_>>();
         if !initial.iter().any(|supported| *supported) {
             let seed = next() % body_count;
             initial[seed] = true;

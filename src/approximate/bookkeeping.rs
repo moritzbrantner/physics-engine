@@ -231,11 +231,7 @@ impl SupportPropagation {
         }
 
         self.queue.clear();
-        reserve(
-            &mut self.queue,
-            supported.len().min(edges.len()),
-            work,
-        );
+        reserve(&mut self.queue, supported.len().min(edges.len()), work);
         for (index, is_supported) in supported.iter().copied().enumerate() {
             if is_supported && self.offsets[index] != self.offsets[index + 1] {
                 push(&mut self.queue, index, work);
@@ -264,10 +260,7 @@ impl SupportPropagation {
     }
 
     fn retained_bytes(&self) -> usize {
-        bytes(&self.offsets)
-            + bytes(&self.neighbors)
-            + bytes(&self.cursor)
-            + bytes(&self.queue)
+        bytes(&self.offsets) + bytes(&self.neighbors) + bytes(&self.cursor) + bytes(&self.queue)
     }
 }
 
