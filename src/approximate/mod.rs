@@ -112,11 +112,9 @@ impl Shape {
                 let total_volume = cylinder_volume + sphere_volume;
                 let cylinder_mass = mass * cylinder_volume / total_volume;
                 let sphere_mass = mass * sphere_volume / total_volume;
-                let axial = cylinder_mass * r * r * 0.5
-                    + sphere_mass * r * r * (2.0 / 5.0);
+                let axial = cylinder_mass * r * r * 0.5 + sphere_mass * r * r * (2.0 / 5.0);
                 let radial = cylinder_mass * (3.0 * r * r + 4.0 * h * h) / 12.0
-                    + sphere_mass
-                        * ((2.0 / 5.0) * r * r + h * h + (3.0 / 4.0) * h * r);
+                    + sphere_mass * ((2.0 / 5.0) * r * r + h * h + (3.0 / 4.0) * h * r);
                 Some(Vector(1.0 / radial, 1.0 / axial, 1.0 / radial))
             }
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
@@ -254,9 +252,7 @@ impl Body {
             && self.angular_velocity.abs().max_component() < 1e9
             && self.orientation.finite()
             && self.shape.valid_dimensions()
-            && (!matches!(self.shape, Shape::Wedge(_))
-                || self.rotation_locked
-                || !self.movable())
+            && (!matches!(self.shape, Shape::Wedge(_)) || self.rotation_locked || !self.movable())
             && self.mass.is_finite()
             && (self.mass == 0.0 || self.mass >= 1e-6)
             && self.mass < 1e12
