@@ -229,12 +229,7 @@ fn fast_capsule_does_not_tunnel_through_thin_box_or_wedge() {
 #[test]
 fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
     let mut w = world(V::ZERO);
-    let wedge = Body::new(
-        BodyId(1),
-        Shape::wedge(V(2.0, 1.0, 3.0)),
-        V::ZERO,
-        1.0,
-    );
+    let wedge = Body::new(BodyId(1), Shape::wedge(V(2.0, 1.0, 3.0)), V::ZERO, 1.0);
     assert!(w.add_body(wedge.clone()).is_err());
 
     let mut locked = wedge;
@@ -253,13 +248,8 @@ fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
 #[test]
 fn capsule_off_center_impulse_uses_capsule_inertia_without_quantization() {
     let mut w = world(V::ZERO);
-    w.add_body(Body::new(
-        BodyId(1),
-        Shape::capsule(1.5, 0.5),
-        V::ZERO,
-        2.0,
-    ))
-    .unwrap();
+    w.add_body(Body::new(BodyId(1), Shape::capsule(1.5, 0.5), V::ZERO, 2.0))
+        .unwrap();
     w.apply_impulse(BodyId(1), V(0.5, 0.0, 0.0), V(0.0, 1.0, 0.0))
         .unwrap();
     w.step(1.0 / 60.0).unwrap();
