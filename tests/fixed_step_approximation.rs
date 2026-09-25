@@ -227,6 +227,34 @@ fn fast_capsule_does_not_tunnel_through_thin_box_or_wedge() {
 }
 
 #[test]
+fn fast_cylinder_does_not_tunnel_through_thin_box_or_cylinder() {
+    for target in [
+        Shape::Box(V(10.0, 10.0, 0.02)),
+        Shape::cylinder(10.0, 0.02),
+    ] {
+        let mut w = world(V::ZERO);
+        w.add_body(Body::new(BodyId(1), target, V::ZERO, 0.0))
+            .unwrap();
+
+        let mut projectile = Body::new(
+            BodyId(2),
+            Shape::cylinder(0.5, 0.1),
+            V(0.0, 0.0, 10.0),
+            1.0,
+        );
+        projectile.velocity = V(0.0, 0.0, -10_000.0);
+        projectile.ccd = true;
+        projectile.retire_on_impact = true;
+        w.add_body(projectile).unwrap();
+
+        let report = w.step(1.0 / 60.0).unwrap();
+        assert_eq!(report.retired, vec![BodyId(2)]);
+        assert!(report.swept_contacts > 0);
+        assert!(report.geometry.primitive_queries > 0);
+    }
+}
+
+#[test]
 fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
     let mut w = world(V::ZERO);
     let wedge = Body::new(BodyId(1), Shape::wedge(V(2.0, 1.0, 3.0)), V::ZERO, 1.0);
