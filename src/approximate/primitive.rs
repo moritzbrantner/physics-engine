@@ -21,11 +21,18 @@ pub(super) enum PrimitiveKind {
     Box,
     Capsule,
     Wedge,
+    Cylinder,
 }
 
 impl PrimitiveKind {
     #[cfg(test)]
-    pub const ALL: [Self; 4] = [Self::Sphere, Self::Box, Self::Capsule, Self::Wedge];
+    pub const ALL: [Self; 5] = [
+        Self::Sphere,
+        Self::Box,
+        Self::Capsule,
+        Self::Wedge,
+        Self::Cylinder,
+    ];
 
     pub const fn from_shape(shape: Shape) -> Self {
         match shape {
@@ -33,6 +40,7 @@ impl PrimitiveKind {
             Shape::Box(_) => Self::Box,
             Shape::Capsule { .. } => Self::Capsule,
             Shape::Wedge(_) => Self::Wedge,
+            Shape::Cylinder { .. } => Self::Cylinder,
         }
     }
 }
@@ -49,11 +57,16 @@ pub(super) enum PrimitivePair {
     CapsuleCapsule,
     CapsuleWedge,
     WedgeWedge,
+    SphereCylinder,
+    BoxCylinder,
+    CapsuleCylinder,
+    WedgeCylinder,
+    CylinderCylinder,
 }
 
 impl PrimitivePair {
     #[cfg(test)]
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 15] = [
         Self::SphereSphere,
         Self::SphereBox,
         Self::SphereCapsule,
@@ -64,6 +77,11 @@ impl PrimitivePair {
         Self::CapsuleCapsule,
         Self::CapsuleWedge,
         Self::WedgeWedge,
+        Self::SphereCylinder,
+        Self::BoxCylinder,
+        Self::CapsuleCylinder,
+        Self::WedgeCylinder,
+        Self::CylinderCylinder,
     ];
 
     pub const fn index(self) -> usize {
@@ -78,6 +96,11 @@ impl PrimitivePair {
             Self::CapsuleCapsule => 7,
             Self::CapsuleWedge => 8,
             Self::WedgeWedge => 9,
+            Self::SphereCylinder => 10,
+            Self::BoxCylinder => 11,
+            Self::CapsuleCylinder => 12,
+            Self::WedgeCylinder => 13,
+            Self::CylinderCylinder => 14,
         }
     }
 
@@ -94,6 +117,11 @@ impl PrimitivePair {
             Self::CapsuleCapsule => (PrimitiveKind::Capsule, PrimitiveKind::Capsule),
             Self::CapsuleWedge => (PrimitiveKind::Capsule, PrimitiveKind::Wedge),
             Self::WedgeWedge => (PrimitiveKind::Wedge, PrimitiveKind::Wedge),
+            Self::SphereCylinder => (PrimitiveKind::Sphere, PrimitiveKind::Cylinder),
+            Self::BoxCylinder => (PrimitiveKind::Box, PrimitiveKind::Cylinder),
+            Self::CapsuleCylinder => (PrimitiveKind::Capsule, PrimitiveKind::Cylinder),
+            Self::WedgeCylinder => (PrimitiveKind::Wedge, PrimitiveKind::Cylinder),
+            Self::CylinderCylinder => (PrimitiveKind::Cylinder, PrimitiveKind::Cylinder),
         }
     }
 
@@ -117,6 +145,11 @@ impl PrimitivePair {
             (PrimitiveKind::Capsule, PrimitiveKind::Capsule) => Self::CapsuleCapsule,
             (PrimitiveKind::Capsule, PrimitiveKind::Wedge) => Self::CapsuleWedge,
             (PrimitiveKind::Wedge, PrimitiveKind::Wedge) => Self::WedgeWedge,
+            (PrimitiveKind::Sphere, PrimitiveKind::Cylinder) => Self::SphereCylinder,
+            (PrimitiveKind::Box, PrimitiveKind::Cylinder) => Self::BoxCylinder,
+            (PrimitiveKind::Capsule, PrimitiveKind::Cylinder) => Self::CapsuleCylinder,
+            (PrimitiveKind::Wedge, PrimitiveKind::Cylinder) => Self::WedgeCylinder,
+            (PrimitiveKind::Cylinder, PrimitiveKind::Cylinder) => Self::CylinderCylinder,
             _ => unreachable!("primitive kind ordering is exhaustive"),
         };
         (pair, reversed)
@@ -145,6 +178,16 @@ pub(super) fn bounds_extents(body: &Body) -> V {
         } => {
             let axis = body.orientation.rotate(V::Y).abs();
             V(radius, radius, radius) + axis * half_segment
+        }
+        Shape::Cylinder {
+            half_height,
+            radius,
+        } => {
+            let axis = body.orientation.rotate(V::Y);
+            let component = |value: Scalar| {
+                half_height * value.abs() + radius * (1.0 - value * value).max(0.0).sqrt()
+            };
+            V(component(axis.0), component(axis.1), component(axis.2))
         }
     }
 }
@@ -180,6 +223,22 @@ fn support_impl(body: &Body, direction: V, work: Option<&mut GeometryStats>) -> 
             let axis = body.orientation.rotate(V::Y);
             let end = axis * (half_segment * if direction.dot(axis) < 0.0 { -1.0 } else { 1.0 });
             body.position + end + n * radius
+        }
+        Shape::Cylinder {
+            half_height,
+            radius,
+        } => {
+            let axis = body.orientation.rotate(V::Y);
+            let axial = direction.dot(axis);
+            let radial = direction - axis * axial;
+            let radial_point = if radial.dot(radial) > 0.0 {
+                radial.unit() * radius
+            } else {
+                V::ZERO
+            };
+            body.position
+                + axis * (half_height * if axial < 0.0 { -1.0 } else { 1.0 })
+                + radial_point
         }
         Shape::Wedge(half) => {
             let vertices = wedge_vertices(half);
@@ -279,6 +338,29 @@ pub(super) fn query_canonical(
             };
             Some(capsule_wedge(a, b, half_segment, radius))
         }
+        PrimitivePair::SphereCylinder => {
+            let Shape::Sphere(sphere_radius) = a.shape else {
+                unreachable!()
+            };
+            let Shape::Cylinder {
+                half_height,
+                radius,
+            } = b.shape
+            else {
+                unreachable!()
+            };
+            Some(sphere_cylinder(
+                a,
+                b,
+                sphere_radius,
+                half_height,
+                radius,
+            ))
+        }
+        PrimitivePair::BoxCylinder
+        | PrimitivePair::CapsuleCylinder
+        | PrimitivePair::WedgeCylinder
+        | PrimitivePair::CylinderCylinder => None,
         PrimitivePair::SphereSphere | PrimitivePair::SphereBox | PrimitivePair::BoxBox => None,
     }
 }
@@ -417,6 +499,76 @@ pub(super) fn swept_time(
         }
     }
     None
+}
+
+fn sphere_cylinder(
+    sphere: &Body,
+    cylinder: &Body,
+    sphere_radius: Scalar,
+    half_height: Scalar,
+    cylinder_radius: Scalar,
+) -> PrimitiveContact {
+    let local = cylinder
+        .orientation
+        .inverse_rotate(sphere.position - cylinder.position);
+    let radial_length = (local.0 * local.0 + local.2 * local.2).sqrt();
+    let radial_outside = (radial_length - cylinder_radius).max(0.0);
+    let axial_outside = (local.1.abs() - half_height).max(0.0);
+
+    let (local_point, signed_point_distance) =
+        if radial_outside > 0.0 || axial_outside > 0.0 {
+            let radial_scale = if radial_length > cylinder_radius {
+                cylinder_radius / radial_length
+            } else {
+                1.0
+            };
+            let point = V(
+                local.0 * radial_scale,
+                local.1.clamp(-half_height, half_height),
+                local.2 * radial_scale,
+            );
+            (
+                point,
+                (radial_outside * radial_outside + axial_outside * axial_outside).sqrt(),
+            )
+        } else {
+            let side_depth = cylinder_radius - radial_length;
+            let cap_depth = half_height - local.1.abs();
+            if side_depth <= cap_depth {
+                let (x, z) = if radial_length > 1e-14 {
+                    (
+                        local.0 * cylinder_radius / radial_length,
+                        local.2 * cylinder_radius / radial_length,
+                    )
+                } else {
+                    (cylinder_radius, 0.0)
+                };
+                (V(x, local.1, z), -side_depth)
+            } else {
+                (
+                    V(
+                        local.0,
+                        if local.1 < 0.0 {
+                            -half_height
+                        } else {
+                            half_height
+                        },
+                        local.2,
+                    ),
+                    -cap_depth,
+                )
+            }
+        };
+
+    let point_b = cylinder.position + cylinder.orientation.rotate(local_point);
+    let delta = point_b - sphere.position;
+    let normal = fallback_normal(delta, cylinder.position - sphere.position);
+    PrimitiveContact {
+        normal,
+        separation: signed_point_distance - sphere_radius,
+        point_a: sphere.position + normal * sphere_radius,
+        point_b,
+    }
 }
 
 fn capsule_segment(body: &Body, half_segment: Scalar) -> (V, V) {
