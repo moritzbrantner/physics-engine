@@ -47,9 +47,7 @@ impl MovingObstacle {
         let current = self.axis.coordinate(current_velocity);
         let direction = if coordinate <= self.min {
             1
-        } else if coordinate >= self.max {
-            -1
-        } else if current < 0 {
+        } else if coordinate >= self.max || current < 0 {
             -1
         } else {
             1
