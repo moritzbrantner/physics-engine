@@ -128,7 +128,9 @@ pub(crate) fn earliest_ballistic_frontier(
     if projectiles.is_empty() || remaining.timestep_is_zero() {
         return Ok(None);
     }
-    work.query_rounds = work.query_rounds.saturating_add(1);
+    crate::performance_counter!({
+        work.query_rounds = work.query_rounds.saturating_add(1);
+    });
 
     let prepared_targets = projected_targets(boxes, remaining)?;
     let scene = BallisticSphereScene3d::prepare(prepared_targets.iter())?;
@@ -196,7 +198,9 @@ pub(crate) fn advance_ballistic_spheres_to_time(
     }
     let segment = remaining.scaled_fraction(time.numerator, time.denominator)?;
     for projectile in projectiles {
-        work.motion_samples = work.motion_samples.saturating_add(1);
+        crate::performance_counter!({
+            work.motion_samples = work.motion_samples.saturating_add(1);
+        });
         advance_projectile_exact(projectile, segment)?;
     }
     Ok(())
@@ -249,7 +253,9 @@ pub(crate) fn resolve_ballistic_frontier(
                 apply_projectile_impulse(&mut projectiles[projectile_index], impulse)?;
             }
         }
-        work.impacts = work.impacts.saturating_add(1);
+        crate::performance_counter!({
+            work.impacts = work.impacts.saturating_add(1);
+        });
         if retire_on_contact.contains(&candidate.projectile) {
             retired.insert(candidate.projectile);
         }
@@ -257,9 +263,11 @@ pub(crate) fn resolve_ballistic_frontier(
 
     if !retired.is_empty() {
         projectiles.retain(|projectile| !retired.contains(&projectile.id()));
-        work.retired = work
+        crate::performance_counter!({
+            work.retired = work
             .retired
             .saturating_add(u64::try_from(retired.len()).unwrap_or(u64::MAX));
+        });
     }
 
     Ok(modified_targets.into_iter().collect())
@@ -768,11 +776,17 @@ fn ballistic_time_to_sampled(
 }
 
 fn accumulate_query_stats(work: &mut BallisticStepWork3d, stats: BallisticSphereQueryStats3d) {
-    work.broad_phase_candidates = work
+    crate::performance_counter!({
+        work.broad_phase_candidates = work
         .broad_phase_candidates
         .saturating_add(stats.broad_phase_candidates);
-    work.toi_tests = work.toi_tests.saturating_add(stats.toi_tests);
-    work.feature_tests = work.feature_tests.saturating_add(stats.feature_tests);
+    });
+    crate::performance_counter!({
+        work.toi_tests = work.toi_tests.saturating_add(stats.toi_tests);
+    });
+    crate::performance_counter!({
+        work.feature_tests = work.feature_tests.saturating_add(stats.feature_tests);
+    });
 }
 
 fn add_impulse_axis(

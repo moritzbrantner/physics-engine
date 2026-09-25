@@ -8,7 +8,8 @@ use std::{
 use crate::{
     ANGULAR_VELOCITY_SCALE, BallisticSphere3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
     OrientedBox3d, OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-    RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    PerformanceCounterU64, RepeatedRotatingEventWorkStats3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d,
     RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
     RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
     SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
@@ -133,10 +134,10 @@ pub struct RotatingWorldStepReport3d {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TailStepStats3d {
-    contacts: usize,
-    slices: u64,
-    replays: u64,
-    candidate_pairs: u64,
+    contacts: PerformanceCounterU64,
+    slices: PerformanceCounterU64,
+    replays: PerformanceCounterU64,
+    candidate_pairs: PerformanceCounterU64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -596,8 +597,8 @@ impl RotatingWorld3d {
 
     pub(crate) fn contact_work_counters(&self) -> [u64; 3] {
         [
-            self.broad_phase.stats().queries,
-            self.tail_broad_phase.stats().queries,
+            self.broad_phase.stats().queries.value(),
+            self.tail_broad_phase.stats().queries.value(),
             self.response_scratch.response_passes_total(),
         ]
     }
@@ -633,13 +634,18 @@ impl RotatingWorld3d {
             };
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
-                stats: RotatingWorldStepStats3d {
-                    body_count: total_body_count,
-                    solver_body_count,
-                    solver_bypassed_body_count: total_body_count.saturating_sub(solver_body_count),
-                    response_authority_body_count,
-                    ballistic_sphere_count: self.ballistic_spheres.len(),
-                    ..RotatingWorldStepStats3d::default()
+                stats: if cfg!(feature = "performance-counters") {
+                    RotatingWorldStepStats3d {
+                        body_count: total_body_count,
+                        solver_body_count,
+                        solver_bypassed_body_count: total_body_count
+                            .saturating_sub(solver_body_count),
+                        response_authority_body_count,
+                        ballistic_sphere_count: self.ballistic_spheres.len(),
+                        ..RotatingWorldStepStats3d::default()
+                    }
+                } else {
+                    RotatingWorldStepStats3d::default()
                 },
             });
         }
@@ -820,7 +826,8 @@ impl RotatingWorld3d {
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
             changed_body_ids: changed_body_ids.into_iter().collect(),
-            stats: RotatingWorldStepStats3d {
+            stats: if cfg!(feature = "performance-counters") {
+                RotatingWorldStepStats3d {
                 body_count: self
                     .boxes
                     .len()
@@ -844,10 +851,10 @@ impl RotatingWorld3d {
                 wake_probe_tail_broad_phase_queries: 0,
                 wake_probe_response_passes: 0,
                 sampled_events,
-                tail_contacts: tail.contacts,
-                tail_slices: tail.slices,
-                tail_replays: tail.replays,
-                tail_candidate_pairs: tail.candidate_pairs,
+                tail_contacts: usize::try_from(tail.contacts.value()).unwrap_or(usize::MAX),
+                tail_slices: tail.slices.value(),
+                tail_replays: tail.replays.value(),
+                tail_candidate_pairs: tail.candidate_pairs.value(),
                 tail_broad_phase_queries: tail_broad_phase_after
                     .queries
                     .saturating_sub(tail_broad_phase_before.queries),
@@ -897,6 +904,9 @@ impl RotatingWorld3d {
                 ballistic_motion_samples: ballistic_work.motion_samples,
                 ballistic_impacts: ballistic_work.impacts,
                 ballistic_retired: ballistic_work.retired,
+                }
+            } else {
+                RotatingWorldStepStats3d::default()
             },
         })
     }
@@ -971,7 +981,9 @@ fn consume_tail_with_ballistics(
             None,
             wake_guard,
         )?;
-        stats.contacts = result.contact_count;
+        stats.contacts = PerformanceCounterU64::from_value(
+            u64::try_from(result.contact_count).unwrap_or(u64::MAX),
+        );
         return Ok((current, stats));
     }
 
@@ -1006,7 +1018,9 @@ fn consume_tail_with_ballistics(
                 current_contacts,
                 wake_guard,
             )?;
-            contact_count = contact_count.saturating_add(result.contact_count);
+            crate::performance_counter!(
+                contact_count = contact_count.saturating_add(result.contact_count)
+            );
             reusable_contacts = result.reusable_contacts;
             if unsafe_id.is_some() {
                 unsafe_body = unsafe_id;
@@ -1015,7 +1029,9 @@ fn consume_tail_with_ballistics(
         }
 
         if unsafe_body.is_none() {
-            stats.contacts = contact_count;
+            stats.contacts = PerformanceCounterU64::from_value(
+                u64::try_from(contact_count).unwrap_or(u64::MAX),
+            );
             return Ok((current, stats));
         }
 
@@ -1090,7 +1106,9 @@ fn advance_tail_slice_with_ballistics(
                 Some(journal),
                 wake_guard,
             )?;
-            contact_count = contact_count.saturating_add(result.contact_count);
+            crate::performance_counter!(
+                contact_count = contact_count.saturating_add(result.contact_count)
+            );
             return Ok((
                 TailSliceResult3d {
                     contact_count,
@@ -1235,7 +1253,9 @@ fn consume_tail(
             None,
             wake_guard,
         )?;
-        stats.contacts = result.contact_count;
+        stats.contacts = PerformanceCounterU64::from_value(
+            u64::try_from(result.contact_count).unwrap_or(u64::MAX),
+        );
         return Ok((current, stats));
     }
 
@@ -1267,12 +1287,16 @@ fn consume_tail(
                 Some(&mut journal),
                 wake_guard,
             )?;
-            contact_count = contact_count.saturating_add(result.contact_count);
+            crate::performance_counter!(
+                contact_count = contact_count.saturating_add(result.contact_count)
+            );
             reusable_contacts = result.reusable_contacts;
         }
 
         if unsafe_body.is_none() {
-            stats.contacts = contact_count;
+            stats.contacts = PerformanceCounterU64::from_value(
+                u64::try_from(contact_count).unwrap_or(u64::MAX),
+            );
             return Ok((current, stats));
         }
         stats.replays = stats.replays.saturating_add(1);

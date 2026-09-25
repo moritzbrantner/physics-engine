@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, OrientedBox3d,
+    PerformanceCounterU64,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
     SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
@@ -23,19 +24,19 @@ pub struct RotationalSweepPair3d {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RotatingBroadPhaseStats3d {
-    pub queries: u64,
-    pub rebuilds: u64,
-    pub reuses: u64,
-    pub incremental_updates: u64,
-    pub reinserts: u64,
-    pub rotations: u64,
-    pub partial_queries: u64,
-    pub partial_body_updates: u64,
+    pub queries: PerformanceCounterU64,
+    pub rebuilds: PerformanceCounterU64,
+    pub reuses: PerformanceCounterU64,
+    pub incremental_updates: PerformanceCounterU64,
+    pub reinserts: PerformanceCounterU64,
+    pub rotations: PerformanceCounterU64,
+    pub partial_queries: PerformanceCounterU64,
+    pub partial_body_updates: PerformanceCounterU64,
     /// Geometrically eligible solid pairs rejected because neither participant can receive solver mutation.
-    pub response_authority_pair_rejections: u64,
-    pub fixed_bound_reuses: u64,
-    pub fixed_bound_recomputations: u64,
-    pub dynamic_bound_recomputations: u64,
+    pub response_authority_pair_rejections: PerformanceCounterU64,
+    pub fixed_bound_reuses: PerformanceCounterU64,
+    pub fixed_bound_recomputations: PerformanceCounterU64,
+    pub dynamic_bound_recomputations: PerformanceCounterU64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

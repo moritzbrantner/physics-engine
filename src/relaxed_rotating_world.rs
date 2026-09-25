@@ -4,8 +4,9 @@ use crate::{
     AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind,
     InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
     OrientedBox3d, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, SolverParticipation3d, Vec3i, WakePropagation3d,
+    PerformanceCounterU64, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotatingWorldStepStats3d, SolverParticipation3d, Vec3i,
+    WakePropagation3d,
     rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
@@ -273,8 +274,8 @@ impl RotatingWorld3d {
             return Ok(self.quiescent_report());
         }
         let mut changed_body_ids = BTreeSet::new();
-        let mut probe_work = [0_u64; 3];
-        let mut wake_retries = 0_u64;
+        let mut probe_work = [PerformanceCounterU64::default(); 3];
+        let mut wake_retries = PerformanceCounterU64::default();
         let mut report = loop {
             let before = self.active.contact_work_counters();
             match self.active.step_with_parked(
@@ -305,36 +306,44 @@ impl RotatingWorld3d {
                         }
                     }
                     self.rebuild_parked_wake_index()?;
-                    wake_retries += 1;
+                    wake_retries = wake_retries.saturating_add(1);
                 }
             }
         };
-        report.stats.parked_wake_retries = wake_retries;
-        report.stats.wake_probe_broad_phase_queries = probe_work[0];
-        report.stats.wake_probe_tail_broad_phase_queries = probe_work[1];
-        report.stats.wake_probe_response_passes = probe_work[2];
-        report.stats.parked_bodies_woken = changed_body_ids.len();
+        crate::performance_counter!({
+            report.stats.parked_wake_retries = wake_retries.value();
+            report.stats.wake_probe_broad_phase_queries = probe_work[0].value();
+            report.stats.wake_probe_tail_broad_phase_queries = probe_work[1].value();
+            report.stats.wake_probe_response_passes = probe_work[2].value();
+            report.stats.parked_bodies_woken = changed_body_ids.len();
+        });
         changed_body_ids.extend(report.changed_body_ids.iter().copied());
         self.park_new_sleepers(&changed_body_ids)?;
         report.changed_body_ids = changed_body_ids.into_iter().collect();
-        report.stats.body_count = self
-            .active
-            .boxes()
-            .count()
-            .saturating_add(self.active.ballistic_sphere_count());
+        crate::performance_counter!({
+            report.stats.body_count = self
+                .active
+                .boxes()
+                .count()
+                .saturating_add(self.active.ballistic_sphere_count());
+        });
         Ok(report)
     }
 
     fn quiescent_report(&self) -> RotatingWorldStepReport3d {
         RotatingWorldStepReport3d {
             changed_body_ids: Vec::new(),
-            stats: RotatingWorldStepStats3d {
-                body_count: self
-                    .active
-                    .boxes()
-                    .count()
-                    .saturating_add(self.active.ballistic_sphere_count()),
-                ..RotatingWorldStepStats3d::default()
+            stats: if cfg!(feature = "performance-counters") {
+                RotatingWorldStepStats3d {
+                    body_count: self
+                        .active
+                        .boxes()
+                        .count()
+                        .saturating_add(self.active.ballistic_sphere_count()),
+                    ..RotatingWorldStepStats3d::default()
+                }
+            } else {
+                RotatingWorldStepStats3d::default()
             },
         }
     }
