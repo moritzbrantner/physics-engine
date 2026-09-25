@@ -290,9 +290,12 @@ pub(super) fn box_current_with_frames(
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
+    work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
     let projected_axes = frame_projection_axes(a, b, frames);
-    let best = select_axis(a, b, margin, projected_axes, work)?;
-    box_points(a, b, margin, best, frames, work, scratch)
+    let manifold = select_axis(a, b, margin, projected_axes, work)
+        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    work.manifold_candidates += u64::from(manifold.is_some());
+    manifold
 }
 
 pub(super) fn box_prepared(
@@ -304,8 +307,11 @@ pub(super) fn box_prepared(
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
-    let best = select_axis(a, b, margin, projections.axes.iter().copied(), work)?;
-    box_points(a, b, margin, best, frames, work, scratch)
+    work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
+    let manifold = select_axis(a, b, margin, projections.axes.iter().copied(), work)
+        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    work.manifold_candidates += u64::from(manifold.is_some());
+    manifold
 }
 
 fn box_points(
