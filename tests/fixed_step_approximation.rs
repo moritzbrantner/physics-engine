@@ -246,6 +246,42 @@ fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
 }
 
 #[test]
+fn cylinder_off_center_impulse_uses_solid_cylinder_inertia() {
+    let mut w = world(V::ZERO);
+    w.add_body(Body::new(
+        BodyId(1),
+        Shape::cylinder(2.0, 1.0),
+        V::ZERO,
+        3.0,
+    ))
+    .unwrap();
+    w.apply_impulse(BodyId(1), V(1.0, 0.0, 0.0), V(0.0, 1.0, 0.0))
+        .unwrap();
+    w.step(1.0 / 60.0).unwrap();
+    let body = w.body(BodyId(1)).unwrap();
+
+    let expected_inverse_radial = 12.0 / (3.0 * (3.0 + 16.0));
+    assert!((body.angular_velocity.2 + expected_inverse_radial).abs() <= 1e-12);
+    assert_ne!(body.orientation, Quaternion::IDENTITY);
+}
+
+#[test]
+fn cylinder_dimensions_must_be_finite_and_positive() {
+    let mut w = world(V::ZERO);
+    for shape in [
+        Shape::cylinder(0.0, 1.0),
+        Shape::cylinder(1.0, 0.0),
+        Shape::cylinder(f64::NAN, 1.0),
+        Shape::cylinder(1.0, f64::INFINITY),
+    ] {
+        assert!(
+            w.add_body(Body::new(BodyId(100), shape, V::ZERO, 1.0))
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn capsule_off_center_impulse_uses_capsule_inertia_without_quantization() {
     let mut w = world(V::ZERO);
     w.add_body(Body::new(BodyId(1), Shape::capsule(1.5, 0.5), V::ZERO, 2.0))
