@@ -336,9 +336,7 @@ mod tests {
     #[test]
     fn final_mover_stays_clear_of_the_fixed_finish_pillar() {
         let world = build_world(false, false).expect("valid parkour world");
-        let mover = world
-            .box_by_id(BodyId(65))
-            .expect("final moving platform");
+        let mover = world.box_by_id(BodyId(65)).expect("final moving platform");
         let pillar = world.box_by_id(BodyId(43)).expect("finish pillar");
         let route = MOVING_OBSTACLES[5];
 
