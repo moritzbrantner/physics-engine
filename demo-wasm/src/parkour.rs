@@ -3,9 +3,7 @@ use physics_engine::{
     Vec3i,
 };
 
-use crate::{
-    CRATE_FRICTION_MILLI, CRATE_RESTITUTION_MILLI, PLAYER_ID, rotating_box,
-};
+use crate::{CRATE_FRICTION_MILLI, CRATE_RESTITUTION_MILLI, PLAYER_ID, rotating_box};
 
 pub(super) const BODY_COUNT: usize = 48;
 
@@ -211,12 +209,7 @@ pub(super) fn build_world(
     .into_iter()
     .enumerate()
     {
-        add_crate(
-            &mut world,
-            100 + offset as u64,
-            position,
-            upright_crates,
-        )?;
+        add_crate(&mut world, 100 + offset as u64, position, upright_crates)?;
     }
 
     debug_assert_eq!(world.boxes().count(), BODY_COUNT);
@@ -258,13 +251,7 @@ fn add_player(
     linear_push: bool,
 ) -> Result<(), RotatingWorldError3d> {
     let player = rotating_box(
-        RigidBody::dynamic(
-            PLAYER_ID,
-            position,
-            Vec3i::ZERO,
-            Vec3i::new(12, 20, 12),
-        )
-        .with_mass(4),
+        RigidBody::dynamic(PLAYER_ID, position, Vec3i::ZERO, Vec3i::new(12, 20, 12)).with_mass(4),
     )
     .with_rotation_locked();
 
@@ -287,8 +274,7 @@ fn add_moving_obstacle(
             RigidBody::dynamic(id, position, velocity, half_extents)
                 .with_mass(8)
                 .with_material(
-                    Material::new(CRATE_RESTITUTION_MILLI)
-                        .with_friction(CRATE_FRICTION_MILLI),
+                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
                 ),
         )
         .with_rotation_locked()
@@ -303,16 +289,11 @@ fn add_crate(
     upright: bool,
 ) -> Result<(), RotatingWorldError3d> {
     let rigid_box = rotating_box(
-        RigidBody::dynamic(
-            BodyId(id),
-            position,
-            Vec3i::ZERO,
-            Vec3i::new(18, 18, 18),
-        )
-        .with_mass(2)
-        .with_material(
-            Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
-        ),
+        RigidBody::dynamic(BodyId(id), position, Vec3i::ZERO, Vec3i::new(18, 18, 18))
+            .with_mass(2)
+            .with_material(
+                Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
+            ),
     );
     world.add_box(if upright {
         rigid_box.with_rotation_locked()
