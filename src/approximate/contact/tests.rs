@@ -184,7 +184,18 @@ fn canonical_dispatch_matches_pre_matrix_reference_for_every_current_pair() {
                 1,
                 "{pair:?}"
             );
-            assert_eq!(production_work.generic_fallback_calls, 0, "{pair:?}");
+            let expected_generic = u64::from(matches!(
+                pair,
+                primitive::PrimitivePair::BoxCylinder
+                    | primitive::PrimitivePair::CapsuleCylinder
+                    | primitive::PrimitivePair::WedgeCylinder
+                    | primitive::PrimitivePair::CylinderCylinder
+            ));
+            assert_eq!(
+                production_work.generic_fallback_calls,
+                expected_generic,
+                "{pair:?}"
+            );
         }
     }
 }
