@@ -1230,12 +1230,13 @@ mod tests {
             PrimitiveKind::Box => Shape::Box(V(1.0, 0.8, 1.2)),
             PrimitiveKind::Capsule => Shape::capsule(0.7, 0.6),
             PrimitiveKind::Wedge => Shape::wedge(V(1.2, 0.9, 1.1)),
+            PrimitiveKind::Cylinder => Shape::cylinder(0.9, 0.7),
         }
     }
 
     #[test]
     fn primitive_pair_matrix_is_complete_canonical_and_dense() {
-        let mut seen = [false; 10];
+        let mut seen = [false; 15];
         for left in PrimitiveKind::ALL {
             for right in PrimitiveKind::ALL {
                 let (pair, reversed) = PrimitivePair::canonical(shape(left), shape(right));
