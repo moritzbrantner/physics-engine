@@ -5,9 +5,10 @@
 
 use super::{Body, Shape, Vector as V, geometry::GeometryStats};
 use geometry_kernels::primitive3::{
-    PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveWork3, bounds_extents as kernel_bounds,
-    query as kernel_query, query_canonical as kernel_query_canonical,
-    support_point as kernel_support_point, swept_time as kernel_swept_time,
+    PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveWork3,
+    bounds_extents as kernel_bounds, query as kernel_query,
+    query_canonical as kernel_query_canonical, support_point as kernel_support_point,
+    swept_time as kernel_swept_time,
 };
 
 pub(super) use geometry_kernels::primitive3::{
@@ -30,11 +31,7 @@ pub(super) fn bounds_extents(body: &Body) -> V {
     from_array(kernel_bounds(kernel_body(body)))
 }
 
-pub(super) fn support_point_counted(
-    body: &Body,
-    direction: V,
-    work: &mut GeometryStats,
-) -> V {
+pub(super) fn support_point_counted(body: &Body, direction: V, work: &mut GeometryStats) -> V {
     let mut kernel_work = PrimitiveWork3::default();
     let point = kernel_support_point(kernel_body(body), to_array(direction), &mut kernel_work);
     accumulate_work(work, kernel_work);
@@ -42,11 +39,7 @@ pub(super) fn support_point_counted(
 }
 
 #[cfg(test)]
-pub(super) fn query(
-    a: &Body,
-    b: &Body,
-    work: &mut GeometryStats,
-) -> Option<PrimitiveContact> {
+pub(super) fn query(a: &Body, b: &Body, work: &mut GeometryStats) -> Option<PrimitiveContact> {
     let (pair, reversed) = canonical_pair(a.shape, b.shape);
     let (left, right) = if reversed { (b, a) } else { (a, b) };
     let contact = query_canonical(pair, left, right, work)?;
@@ -61,12 +54,7 @@ pub(super) fn query_canonical(
 ) -> Option<PrimitiveContact> {
     work.primitive_queries += 1;
     let mut kernel_work = PrimitiveWork3::default();
-    let contact = kernel_query_canonical(
-        pair,
-        kernel_body(a),
-        kernel_body(b),
-        &mut kernel_work,
-    );
+    let contact = kernel_query_canonical(pair, kernel_body(a), kernel_body(b), &mut kernel_work);
     accumulate_work(work, kernel_work);
     Some(from_contact(contact))
 }
@@ -98,13 +86,7 @@ pub(super) fn swept_time(
     work: &mut GeometryStats,
 ) -> Option<f64> {
     let mut kernel_work = PrimitiveWork3::default();
-    let result = kernel_swept_time(
-        kernel_body(a),
-        kernel_body(b),
-        dt,
-        margin,
-        &mut kernel_work,
-    );
+    let result = kernel_swept_time(kernel_body(a), kernel_body(b), dt, margin, &mut kernel_work);
     accumulate_work(work, kernel_work);
     result
 }
@@ -140,11 +122,7 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
 }
 
 const fn identity_axes() -> [[f64; 3]; 3] {
-    [
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ]
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 }
 
 const fn to_array(value: V) -> [f64; 3] {
