@@ -485,7 +485,7 @@ pub(super) fn current_counted(
     work.current_queries += 1;
     work.manifold_refreshes += 1;
 
-    let (pair, reversed) = primitive::PrimitivePair::canonical(a.shape, b.shape);
+    let (pair, reversed) = primitive::canonical_pair(a.shape, b.shape);
     work.specialized_pair_dispatches[pair.index()] += 1;
     let (left, right) = if reversed { (b, a) } else { (a, b) };
 
@@ -653,7 +653,7 @@ pub(super) fn swept(
     work: &mut GeometryStats,
 ) -> Option<Manifold> {
     work.sweep_queries += 1;
-    let (pair, reversed) = primitive::PrimitivePair::canonical(a.shape, b.shape);
+    let (pair, reversed) = primitive::canonical_pair(a.shape, b.shape);
     let (left, right) = if reversed { (b, a) } else { (a, b) };
     let time = match pair {
         primitive::PrimitivePair::SphereBox => {
