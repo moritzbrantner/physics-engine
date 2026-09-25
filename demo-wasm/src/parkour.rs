@@ -1,6 +1,6 @@
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, Material, MotionAuthority3d, Orientation3d,
-    RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, Vec3i,
+    BodyId, Material, RigidBody, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    Vec3i,
 };
 
 use crate::{
@@ -283,16 +283,14 @@ fn add_moving_obstacle(
     half_extents: Vec3i,
 ) -> Result<(), RotatingWorldError3d> {
     world.add_box(
-        RigidBox3d::new(
+        rotating_box(
             RigidBody::dynamic(id, position, velocity, half_extents)
                 .with_mass(8)
                 .with_material(
                     Material::new(CRATE_RESTITUTION_MILLI)
                         .with_friction(CRATE_FRICTION_MILLI),
                 ),
-            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
-        .expect("parkour moving obstacle geometry must be valid")
         .with_rotation_locked()
         .with_external_motion(),
     )
@@ -326,9 +324,9 @@ fn add_crate(
 #[cfg(test)]
 mod tests {
     use super::{
-        BODY_COUNT, MOVING_OBSTACLES, MotionAuthority3d, PLAYER_ID, Vec3i, build_world,
-        update_moving_obstacles,
+        BODY_COUNT, MOVING_OBSTACLES, PLAYER_ID, Vec3i, build_world, update_moving_obstacles,
     };
+    use physics_engine::MotionAuthority3d;
 
     #[test]
     fn parkour_fixture_is_large_and_keeps_movers_engine_visible() {
