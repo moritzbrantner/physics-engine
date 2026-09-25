@@ -475,4 +475,10 @@ fn prepared_sweeps_preserve_thin_wall_and_changed_interval() {
     );
     assert_eq!(work.frame_preparations, 2);
     assert_eq!(work.sweep_queries, 3);
+    assert_eq!(
+        work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()],
+        1
+    );
+    assert_eq!(work.manifold_candidates, 1);
+    assert_eq!(work.generic_fallback_calls, 0);
 }
