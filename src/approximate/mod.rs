@@ -41,6 +41,11 @@ pub enum Shape {
         half_segment: Scalar,
         radius: Scalar,
     },
+    /// Finite local-Y solid cylinder centered on the body pose.
+    Cylinder {
+        half_height: Scalar,
+        radius: Scalar,
+    },
     /// Right triangular prism inside the local bounding box. The ramp rises toward -X.
     Wedge(Vector),
 }
@@ -48,6 +53,12 @@ impl Shape {
     pub const fn capsule(half_segment: Scalar, radius: Scalar) -> Self {
         Self::Capsule {
             half_segment,
+            radius,
+        }
+    }
+    pub const fn cylinder(half_height: Scalar, radius: Scalar) -> Self {
+        Self::Cylinder {
+            half_height,
             radius,
         }
     }
@@ -62,6 +73,10 @@ impl Shape {
                 half_segment,
                 radius,
             } => half_segment + radius,
+            Self::Cylinder {
+                half_height,
+                radius,
+            } => (half_height * half_height + radius * radius).sqrt(),
         }
     }
     pub fn half_extents(self) -> Vector {
@@ -72,6 +87,10 @@ impl Shape {
                 half_segment,
                 radius,
             } => Vector(radius, half_segment + radius, radius),
+            Self::Cylinder {
+                half_height,
+                radius,
+            } => Vector(radius, half_height, radius),
         }
     }
     fn valid_dimensions(self) -> bool {
@@ -86,6 +105,15 @@ impl Shape {
             } => {
                 half_segment.is_finite()
                     && (0.0..1e12).contains(&half_segment)
+                    && radius.is_finite()
+                    && (1e-6..1e12).contains(&radius)
+            }
+            Self::Cylinder {
+                half_height,
+                radius,
+            } => {
+                half_height.is_finite()
+                    && (1e-6..1e12).contains(&half_height)
                     && radius.is_finite()
                     && (1e-6..1e12).contains(&radius)
             }
@@ -114,6 +142,14 @@ impl Shape {
                 let axial = cylinder_mass * r * r * 0.5 + sphere_mass * r * r * (2.0 / 5.0);
                 let radial = cylinder_mass * (3.0 * r * r + 4.0 * h * h) / 12.0
                     + sphere_mass * ((2.0 / 5.0) * r * r + h * h + (3.0 / 4.0) * h * r);
+                Some(Vector(1.0 / radial, 1.0 / axial, 1.0 / radial))
+            }
+            Self::Cylinder {
+                half_height: h,
+                radius: r,
+            } => {
+                let axial = mass * r * r * 0.5;
+                let radial = mass * (3.0 * r * r + 4.0 * h * h) / 12.0;
                 Some(Vector(1.0 / radial, 1.0 / axial, 1.0 / radial))
             }
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
