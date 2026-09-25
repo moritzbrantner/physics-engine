@@ -202,6 +202,22 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     )
 }
 
+/// Reset the shared Rust/WASM sandbox with the large parkour layout.
+/// Moving platforms remain engine colliders with external motion; only their deterministic route is demo-owned.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_parkour_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        Sandbox::with_parkour_options,
+    )
+}
+
 /// Reset the shared Rust/WASM sandbox with the deterministic 32-crate tower layout.
 /// Layout selection stays separate from simulation rules so the browser remains an advisory consumer.
 #[unsafe(no_mangle)]
