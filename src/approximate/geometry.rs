@@ -22,7 +22,7 @@ pub struct GeometryStats {
     pub clip_passes: u64,
     pub sweep_queries: u64,
     /// Canonical unordered pair dispatches by `PrimitivePair::index()`.
-    pub specialized_pair_dispatches: [u64; 10],
+    pub specialized_pair_dispatches: [u64; 15],
     /// Production calls that could not use a specialized primitive kernel.
     ///
     /// All currently supported fixed-topology primitive pairs are specialized, so this is
@@ -68,6 +68,10 @@ impl ShapeKey {
                 radius,
             } => [2, half_segment.to_bits(), radius.to_bits(), 0],
             Shape::Wedge(h) => [3, h.0.to_bits(), h.1.to_bits(), h.2.to_bits()],
+            Shape::Cylinder {
+                half_height,
+                radius,
+            } => [4, half_height.to_bits(), radius.to_bits(), 0],
         };
         Self {
             id: b.id,
