@@ -615,12 +615,12 @@ fn generic_convex_contact(
                     point_b: V(hit.point_right[0], hit.point_right[1], hit.point_right[2]),
                 })
             } else {
-                work.generic_penetration_fallbacks += 1;
+                work.generic_convex_fallbacks += 1;
                 Some(conservative_projected_contact(a, b, work))
             }
         }
         GjkDistanceStatus::NoProgress | GjkDistanceStatus::IterationLimit => {
-            work.generic_penetration_fallbacks += 1;
+            work.generic_convex_fallbacks += 1;
             Some(conservative_projected_contact(a, b, work))
         }
     };
