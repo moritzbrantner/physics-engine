@@ -246,12 +246,12 @@ impl Sandbox {
     fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
-        if self.scenario == SandboxScenario::Parkour {
-            if let Err(error) = parkour::update_moving_obstacles(&mut self.world) {
-                self.error_code = 6;
-                self.error_detail = world_error_detail(error);
-                return self.error_code;
-            }
+        if self.scenario == SandboxScenario::Parkour
+            && let Err(error) = parkour::update_moving_obstacles(&mut self.world)
+        {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
         }
         if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
