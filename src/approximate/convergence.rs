@@ -89,8 +89,7 @@ fn projected_residual_rows<'a>(
         let rel = contact_velocity(&bodies[c.b], c.rb, c.spin)
             - contact_velocity(&bodies[c.a], c.ra, c.spin);
         let vn = rel.dot(c.n);
-        let normal_delta =
-            (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0) - c.normal_impulse;
+        let normal_delta = next_normal(c, vn) - c.normal_impulse;
         let mut tangent = [
             c.tangent_impulse[0] - rel.dot(c.t1) * c.tangent_mass[0],
             c.tangent_impulse[1] - rel.dot(c.t2) * c.tangent_mass[1],
@@ -101,7 +100,7 @@ fn projected_residual_rows<'a>(
             tangent[0] *= limit / length;
             tangent[1] *= limit / length;
         }
-        let normal_error = c.bias - vn;
+        let normal_error = normal_error(c, vn);
         let normal_residual = if c.normal_impulse > 0.0 {
             normal_error.abs()
         } else {
@@ -409,6 +408,31 @@ fn solve_rows<
     }
 }
 
+// Compile-time opt-in: ordinary builds retain the original hard row formula and layout.
+#[inline(always)]
+fn next_normal(c: &Constraint, vn: Scalar) -> Scalar {
+    #[cfg(feature = "experimental-soft-contact")]
+    if !c.hard_normal && !c.relaxing_normal {
+        let coefficients = c.normal_coefficients;
+        let delta = coefficients.mass_scale * c.normal_mass * (c.bias - vn)
+            - coefficients.impulse_scale * c.normal_impulse;
+        return (c.normal_impulse + delta).max(0.0);
+    }
+    (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0)
+}
+#[inline(always)]
+fn normal_error(c: &Constraint, vn: Scalar) -> Scalar {
+    #[cfg(feature = "experimental-soft-contact")]
+    if !c.hard_normal && !c.relaxing_normal {
+        let coefficients = c.normal_coefficients;
+        return c.bias
+            - vn
+            - coefficients.impulse_scale / (coefficients.mass_scale * c.normal_mass)
+                * c.normal_impulse;
+    }
+    c.bias - vn
+}
+
 #[derive(Default)]
 struct Change {
     impulse: [Scalar; 3],
@@ -427,7 +451,7 @@ fn solve_row<const PREPARED: bool, const READ_CHANGE: bool>(
     let vn = (contact_velocity(&bodies[c.b], c.rb, c.spin)
         - contact_velocity(&bodies[c.a], c.ra, c.spin))
     .dot(c.n);
-    let next = (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0);
+    let next = next_normal(c, vn);
     let dj = next - c.normal_impulse;
     c.normal_impulse = next;
     apply::<PREPARED>(bodies, responses, c, c.n * dj, report);
