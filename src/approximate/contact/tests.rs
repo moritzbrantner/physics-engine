@@ -99,3 +99,163 @@ fn inline_points_preserve_the_original_bounded_selection_and_iteration_order() {
         }
     }
 }
+
+fn primitive_shape(kind: primitive::PrimitiveKind) -> Shape {
+    match kind {
+        primitive::PrimitiveKind::Sphere => Shape::Sphere(1.0),
+        primitive::PrimitiveKind::Box => Shape::Box(V(1.0, 0.8, 1.2)),
+        primitive::PrimitiveKind::Capsule => Shape::capsule(0.7, 0.6),
+        primitive::PrimitiveKind::Wedge => Shape::wedge(V(1.2, 0.9, 1.1)),
+    }
+}
+
+fn pair_bodies(pair: primitive::PrimitivePair) -> (Body, Body) {
+    let (left, right) = pair.kinds();
+    let mut a = Body::new(
+        crate::BodyId(100 + pair.index() as u64 * 2),
+        primitive_shape(left),
+        V::ZERO,
+        1.0,
+    );
+    let mut b = Body::new(
+        crate::BodyId(101 + pair.index() as u64 * 2),
+        primitive_shape(right),
+        V(1.0, 0.2, -0.1),
+        1.0,
+    );
+    a.orientation = super::super::Quaternion(0.0, 0.0, 0.13052619222005157, 0.9914448613738104);
+    b.orientation = super::super::Quaternion(0.0, 0.25881904510252074, 0.0, 0.9659258262890683);
+    if matches!(a.shape, Shape::Wedge(_)) {
+        a.rotation_locked = true;
+    }
+    if matches!(b.shape, Shape::Wedge(_)) {
+        b.rotation_locked = true;
+    }
+    (a, b)
+}
+
+fn separations(manifold: &Manifold) -> Vec<Scalar> {
+    let mut values = manifold
+        .points
+        .clone()
+        .into_iter()
+        .map(|point| point.separation)
+        .collect::<Vec<_>>();
+    values.sort_by(Scalar::total_cmp);
+    values
+}
+
+#[test]
+fn canonical_dispatch_matches_pre_matrix_reference_for_every_current_pair() {
+    for pair in primitive::PrimitivePair::ALL {
+        let (a, b) = pair_bodies(pair);
+        let tolerance = 1e-9 * (1.0 + a.shape.radius() + b.shape.radius());
+        for (left, right) in [(&a, &b), (&b, &a)] {
+            let mut production_work = GeometryStats::default();
+            let production = current_counted(left, right, 0.02, &mut production_work);
+            let mut reference_work = GeometryStats::default();
+            let reference = reference_current_counted(left, right, 0.02, &mut reference_work);
+
+            assert_eq!(
+                production.is_some(),
+                reference.is_some(),
+                "presence mismatch for {pair:?}"
+            );
+            if let (Some(production), Some(reference)) = (production, reference) {
+                assert!(
+                    (production.normal - reference.normal).length() <= tolerance,
+                    "normal mismatch for {pair:?}: {:?} vs {:?}",
+                    production.normal,
+                    reference.normal
+                );
+                let production_sep = separations(&production);
+                let reference_sep = separations(&reference);
+                assert_eq!(production_sep.len(), reference_sep.len(), "{pair:?}");
+                for (actual, expected) in production_sep.into_iter().zip(reference_sep) {
+                    assert!(
+                        (actual - expected).abs() <= tolerance,
+                        "separation mismatch for {pair:?}: {actual} vs {expected}"
+                    );
+                }
+            }
+            assert_eq!(
+                production_work.specialized_pair_dispatches[pair.index()],
+                1,
+                "{pair:?}"
+            );
+            assert_eq!(production_work.generic_fallback_calls, 0, "{pair:?}");
+        }
+    }
+}
+
+#[test]
+fn reversing_primitive_pair_flips_contact_orientation_without_changing_separation() {
+    for pair in primitive::PrimitivePair::ALL {
+        let (a, b) = pair_bodies(pair);
+        let tolerance = 1e-9 * (1.0 + a.shape.radius() + b.shape.radius());
+        let mut forward_work = GeometryStats::default();
+        let forward = current_counted(&a, &b, 0.02, &mut forward_work)
+            .unwrap_or_else(|| panic!("forward fixture must contact for {pair:?}"));
+        let mut reverse_work = GeometryStats::default();
+        let reverse = current_counted(&b, &a, 0.02, &mut reverse_work)
+            .unwrap_or_else(|| panic!("reverse fixture must contact for {pair:?}"));
+
+        assert!(
+            (forward.normal + reverse.normal).length() <= tolerance,
+            "normal orientation mismatch for {pair:?}"
+        );
+        let forward_sep = separations(&forward);
+        let reverse_sep = separations(&reverse);
+        assert_eq!(forward_sep.len(), reverse_sep.len(), "{pair:?}");
+        for (left, right) in forward_sep.into_iter().zip(reverse_sep) {
+            assert!(
+                (left - right).abs() <= tolerance,
+                "separation changed on reverse for {pair:?}: {left} vs {right}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sphere_and_box_fast_paths_have_deterministic_work_budgets() {
+    let scenarios = [
+        primitive::PrimitivePair::SphereSphere,
+        primitive::PrimitivePair::SphereBox,
+        primitive::PrimitivePair::BoxBox,
+    ];
+    for pair in scenarios {
+        let (a, b) = pair_bodies(pair);
+        let mut work = GeometryStats::default();
+        let manifold = current_counted(&a, &b, 0.02, &mut work);
+        assert!(manifold.is_some(), "{pair:?}");
+        assert_eq!(
+            work.specialized_pair_dispatches[pair.index()],
+            1,
+            "{pair:?}"
+        );
+        assert_eq!(
+            work.specialized_pair_dispatches.into_iter().sum::<u64>(),
+            1,
+            "{pair:?}"
+        );
+        assert_eq!(work.generic_fallback_calls, 0, "{pair:?}");
+        assert_eq!(work.manifold_candidates, 1, "{pair:?}");
+        assert_eq!(work.primitive_queries, 0, "{pair:?}");
+
+        match pair {
+            primitive::PrimitivePair::SphereSphere | primitive::PrimitivePair::SphereBox => {
+                assert_eq!(work.sat_queries, 0, "{pair:?}");
+                assert_eq!(work.sat_axes_tested, 0, "{pair:?}");
+                assert_eq!(work.clip_passes, 0, "{pair:?}");
+                assert_eq!(work.support_evaluations, 0, "{pair:?}");
+            }
+            primitive::PrimitivePair::BoxBox => {
+                assert_eq!(work.sat_queries, 1);
+                assert!(work.sat_axes_tested <= 15, "{work:?}");
+                assert!(work.clip_passes <= 4, "{work:?}");
+                assert!(work.support_evaluations <= 2, "{work:?}");
+            }
+            _ => unreachable!(),
+        }
+    }
+}
