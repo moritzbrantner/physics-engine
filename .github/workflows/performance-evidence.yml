@@ -10,6 +10,7 @@ on:
       - "scripts/benchmark-fixed-step.mjs"
       - "scripts/benchmark-convergence.mjs"
       - "scripts/benchmark-prepared-response.mjs"
+      - "scripts/compare-primitive-kernel.sh"
       - "src/float_math.rs"
       - "src/numeric.rs"
       - "src/contact_wake.rs"
@@ -101,6 +102,11 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/run-sandbox-performance.sh
+
+      - name: Compare primitive-kernel extraction with base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: TRIALS=7 bash scripts/compare-primitive-kernel.sh
 
       - name: Compare fixed-step approximation with event solver
         run: node scripts/benchmark-fixed-step.mjs performance-evidence/head.wasm performance-evidence/fixed-step.json performance-evidence/base.wasm
