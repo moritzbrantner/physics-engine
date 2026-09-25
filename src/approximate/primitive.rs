@@ -7,8 +7,7 @@ use super::{Body, Shape, Vector as V, geometry::GeometryStats};
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveWork3,
     bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
-    support_point as kernel_support_point,
-    swept_time as kernel_swept_time,
+    support_point as kernel_support_point, swept_time as kernel_swept_time,
 };
 
 #[cfg(test)]
