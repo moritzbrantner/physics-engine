@@ -1,4 +1,4 @@
-use super::super::{Config, Report, World};
+use super::super::{Config, Report, World, primitive};
 use super::*;
 
 fn pair() -> [Body; 2] {
@@ -43,6 +43,60 @@ fn query(
         bits(&contact::current(&bodies[0], &bodies[1], margin))
     );
     (result, work)
+}
+
+#[test]
+fn optimized_box_paths_count_specialized_dispatch_and_fresh_manifolds() {
+    let mut cache = GeometryCache::default();
+    let mut bodies = pair();
+
+    cache.begin(2);
+    let mut rotating_work = GeometryStats::default();
+    let rotating = cache.query(
+        [0, 1],
+        [&bodies[0], &bodies[1]],
+        0.02,
+        &mut rotating_work,
+    );
+    assert!(rotating.is_some());
+    assert_eq!(
+        rotating_work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()],
+        1
+    );
+    assert_eq!(rotating_work.manifold_candidates, 1);
+    assert_eq!(rotating_work.generic_fallback_calls, 0);
+
+    bodies[1].rotation_locked = true;
+    cache.begin(2);
+    let mut prepared_work = GeometryStats::default();
+    let prepared = cache.query(
+        [0, 1],
+        [&bodies[0], &bodies[1]],
+        0.02,
+        &mut prepared_work,
+    );
+    assert!(prepared.is_some());
+    assert_eq!(
+        prepared_work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()],
+        1
+    );
+    assert_eq!(prepared_work.manifold_candidates, 1);
+    assert_eq!(prepared_work.generic_fallback_calls, 0);
+
+    bodies[1].position = Vector(100.0, 0.0, 0.0);
+    cache.begin(2);
+    let mut miss_work = GeometryStats::default();
+    assert!(
+        cache
+            .query([0, 1], [&bodies[0], &bodies[1]], 0.02, &mut miss_work)
+            .is_none()
+    );
+    assert_eq!(
+        miss_work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()],
+        1
+    );
+    assert_eq!(miss_work.manifold_candidates, 0);
+    assert_eq!(miss_work.generic_fallback_calls, 0);
 }
 
 #[test]
