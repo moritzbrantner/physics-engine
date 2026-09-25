@@ -4,6 +4,8 @@ Reusable deterministic physics simulation kernel extracted from the physics work
 
 The repository is intentionally a **physics engine, not a game engine**. It owns simulation semantics; ECS storage, rendering, input, audio, scenes, game loops and editor concerns remain consumers.
 
+Reusable collision mathematics is consumed from [`rust-kernels`](https://github.com/moritzbrantner/rust-kernels) when it is domain-neutral. Physics Engine remains authoritative for simulation policy, contact persistence, response, sleeping/waking, and how continuous collision participates in stepping.
+
 ## Floating-point default
 
 CPU simulation math defaults to **`f64`** through `numeric::Scalar`. Floating point is supported
