@@ -305,7 +305,7 @@ mod tests {
     use super::{
         BODY_COUNT, MOVING_OBSTACLES, PLAYER_ID, Vec3i, build_world, update_moving_obstacles,
     };
-    use physics_engine::MotionAuthority3d;
+    use physics_engine::{BodyId, MotionAuthority3d};
 
     #[test]
     fn parkour_fixture_is_large_and_keeps_movers_engine_visible() {
