@@ -11,9 +11,9 @@ use geometry_kernels::primitive3::{
     swept_time as kernel_swept_time,
 };
 
-pub(super) use geometry_kernels::primitive3::PrimitivePair3 as PrimitivePair;
 #[cfg(test)]
 pub(super) use geometry_kernels::primitive3::PrimitiveKind3 as PrimitiveKind;
+pub(super) use geometry_kernels::primitive3::PrimitivePair3 as PrimitivePair;
 #[cfg(test)]
 use geometry_kernels::primitive3::query as kernel_query;
 
