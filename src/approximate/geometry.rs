@@ -28,6 +28,15 @@ pub struct GeometryStats {
     /// All currently supported fixed-topology primitive pairs are specialized, so this is
     /// ratcheted to zero until a deliberately generic shape is introduced.
     pub generic_fallback_calls: u64,
+    /// Bounded reusable convex queries used when a fixed-topology pair has no cheaper exact kernel.
+    pub generic_convex_queries: u64,
+    /// GJK iterations consumed by reusable convex distance/intersection work.
+    pub generic_gjk_iterations: u64,
+    /// EPA iterations consumed by reusable convex penetration work.
+    pub generic_epa_iterations: u64,
+    /// Intersecting generic pairs that required the conservative projected-overlap fallback
+    /// because EPA did not produce a converged minimum-translation witness.
+    pub generic_penetration_fallbacks: u64,
     /// Support-map evaluations performed by specialized primitive kernels.
     pub support_evaluations: u64,
     /// Contact manifolds admitted by fresh narrow-phase generation.
