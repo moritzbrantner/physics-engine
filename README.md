@@ -225,3 +225,13 @@ Current structural sequence: persistent solver/lifecycle partitions → static/d
 4. **Targeted fast-body CCD** — keep swept/continuous handling for projectiles without making the entire resting stack pay for repeated sampled rotational search.
 5. **Local contact and wake work** — fixed supports must not connect otherwise independent dynamic solver islands; update topology and wake only affected bodies with dependency-complete checks.
 6. **Separate correctness and performance evidence** — preserve stable ordering and within-build replay, validate finite state and physical constraints, and report advisory timings only for comparable completed workloads. Do not raise event budgets or relax failing physical assertions to make evidence green.
+
+## Nix development environment
+
+Linux development can use the repository-local Nix shell:
+
+```sh
+nix develop
+```
+
+Nix owns the surrounding CLI environment. The repository's existing `rust-toolchain.toml` remains the Rust-version authority, so the `rustup` proxy supplied by Nix resolves that toolchain instead of duplicating the compiler version in `flake.nix`. Existing Cargo lockfiles and validation commands remain authoritative.

@@ -12,11 +12,17 @@ ran=0
 output="${PERFORMANCE_EVIDENCE_DIR:-$(pwd)/performance-evidence}"
 mkdir -p "$output/rust"
 
+time_binary="$(type -P time || true)"
+if [[ -z "$time_binary" ]]; then
+  echo "GNU time is required for performance evidence." >&2
+  exit 2
+fi
+
 run_integration() {
   local target="$1"
   [[ -f "tests/${target}.rs" ]] || return 0
   echo "::group::release performance evidence: integration target ${target}"
-  /usr/bin/time -v cargo test --release --locked --test "$target" -- \
+  "$time_binary" -v cargo test --release --locked --test "$target" -- \
     --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${target}.log"
   echo "::endgroup::"
   ran=1
@@ -25,7 +31,7 @@ run_integration() {
 run_library_module() {
   local module="$1"
   echo "::group::release performance evidence: library module ${module}"
-  /usr/bin/time -v cargo test --release --locked --lib "${module}::tests::" -- \
+  "$time_binary" -v cargo test --release --locked --lib "${module}::tests::" -- \
     --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${module}.log"
   echo "::endgroup::"
   ran=1

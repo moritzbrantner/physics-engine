@@ -18,20 +18,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Prepare Rust toolchain
-        run: rustc --version && cargo --version
-
-      - name: Run deterministic fast tier
-        uses: moritzbrantner/coding-tooling@20afb614772346991b3e7ac60b5857ecab5472e3
+      - name: Install Nix
+        uses: NixOS/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # v1.0.0
         with:
-          tier: fast
-          install-mode: none
+          installer-version: 2.35.2
+          enable-kvm: false
 
-      - name: Test Pages sandbox adapter replay
-        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
-
-      - name: Test character landing replay
-        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+      - name: Run deterministic validation in Nix shell
+        run: |
+          nix develop --command bash -lc '
+            set -euo pipefail
+            rustc --version
+            cargo --version
+            node --version
+            python --version
+            cargo fmt --all -- --check
+            cargo clippy --all-targets --locked -- -D warnings
+            cargo build --locked
+            cargo test --locked
+            cargo fmt --manifest-path demo-wasm/Cargo.toml --all -- --check
+            cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets --locked -- -D warnings
+            cargo build --manifest-path demo-wasm/Cargo.toml --locked
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
+            cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+          '
 
   build-pages:
     name: Build or reuse validated Pages artifact
