@@ -1256,6 +1256,49 @@ mod tests {
     }
 
     #[test]
+    fn sphere_cylinder_handles_side_cap_rim_and_containment_analytically() {
+        let cylinder = body(1, Shape::cylinder(2.0, 1.0), V::ZERO);
+        let cases = [
+            (V(1.5, 0.0, 0.0), 0.5, 0.0),
+            (V(0.0, 2.5, 0.0), 0.5, 0.0),
+            (V(1.3, 2.4, 0.0), 0.5, 0.0),
+            (V::ZERO, 0.2, -1.2),
+        ];
+        for (position, radius, expected) in cases {
+            let sphere = body(2, Shape::Sphere(radius), position);
+            let mut work = GeometryStats::default();
+            let contact = query(&sphere, &cylinder, &mut work).unwrap();
+            assert!(
+                (contact.separation - expected).abs() <= 1e-12,
+                "{position:?}: {:?}",
+                contact
+            );
+            assert_eq!(work.primitive_vertex_tests, 0);
+        }
+    }
+
+    #[test]
+    fn cylinder_support_and_bounds_are_analytic_for_rotated_axes() {
+        let mut cylinder = body(1, Shape::cylinder(2.0, 1.0), V(3.0, -2.0, 5.0));
+        cylinder.orientation = Quaternion(
+            0.0,
+            0.0,
+            std::f64::consts::FRAC_1_SQRT_2,
+            std::f64::consts::FRAC_1_SQRT_2,
+        );
+        let mut work = GeometryStats::default();
+        let support = support_point_counted(&cylinder, V::Y, &mut work);
+        assert!((support.1 + 1.0).abs() <= 1e-12);
+        assert_eq!(work.support_evaluations, 1);
+        assert_eq!(work.primitive_vertex_tests, 0);
+
+        let extents = bounds_extents(&cylinder);
+        assert!((extents.0 - 2.0).abs() <= 1e-12);
+        assert!((extents.1 - 1.0).abs() <= 1e-12);
+        assert!((extents.2 - 1.0).abs() <= 1e-12);
+    }
+
+    #[test]
     fn capsule_sphere_and_capsule_capsule_use_analytic_segment_distance() {
         let capsule = body(1, Shape::capsule(2.0, 0.5), V::ZERO);
         let sphere = body(2, Shape::Sphere(0.5), V(0.0, 3.0, 0.0));
