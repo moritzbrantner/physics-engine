@@ -1476,6 +1476,48 @@ mod tests {
     }
 
     #[test]
+    fn parallel_cylinders_use_the_analytic_lane_without_generic_convex_work() {
+        let a = body(1, Shape::cylinder(2.0, 1.0), V::ZERO);
+        let mut b = body(2, Shape::cylinder(1.5, 0.75), V(1.5, 0.2, 0.0));
+        let mut work = GeometryStats::default();
+        let contact = query(&a, &b, &mut work).unwrap();
+        assert!((contact.separation + 0.25).abs() <= 1e-12);
+        assert!((contact.normal - V::X).length() <= 1e-12);
+        assert_eq!(work.generic_fallback_calls, 0);
+        assert_eq!(work.generic_convex_queries, 0);
+
+        b.position = V(0.0, 4.0, 0.0);
+        let mut cap_work = GeometryStats::default();
+        let contact = query(&a, &b, &mut cap_work).unwrap();
+        assert!((contact.separation - 0.5).abs() <= 1e-12);
+        assert!((contact.normal - V::Y).length() <= 1e-12);
+        assert_eq!(cap_work.generic_fallback_calls, 0);
+
+        b.position = V(2.0, 4.0, 0.0);
+        let mut diagonal_work = GeometryStats::default();
+        let contact = query(&a, &b, &mut diagonal_work).unwrap();
+        assert!((contact.separation - (0.25_f64 * 0.25 + 0.5 * 0.5).sqrt()).abs() <= 1e-12);
+        assert_eq!(diagonal_work.generic_fallback_calls, 0);
+    }
+
+    #[test]
+    fn rotated_cylinder_pairs_use_bounded_generic_convex_work_explicitly() {
+        let a = body(1, Shape::cylinder(1.5, 0.7), V::ZERO);
+        let mut b = body(2, Shape::cylinder(1.0, 0.6), V(0.8, 0.2, 0.1));
+        b.orientation = Quaternion(0.2, 0.4, -0.1, 0.87).normalized();
+        let mut work = GeometryStats::default();
+        let contact = query(&a, &b, &mut work).unwrap();
+        assert!(contact.separation < 0.0);
+        assert_eq!(work.generic_fallback_calls, 1);
+        assert_eq!(work.generic_convex_queries, 1);
+        assert!(work.generic_gjk_iterations > 0);
+        assert!(work.support_evaluations > 0);
+        assert!(work.generic_gjk_iterations <= 176);
+        assert!(work.generic_epa_iterations <= 128);
+        assert!(work.generic_convex_fallbacks <= 1);
+    }
+
+    #[test]
     fn sphere_cylinder_handles_side_cap_rim_and_containment_analytically() {
         let cylinder = body(1, Shape::cylinder(2.0, 1.0), V::ZERO);
         let cases = [
