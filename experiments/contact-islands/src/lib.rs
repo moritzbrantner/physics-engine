@@ -216,6 +216,13 @@ fn bottom(b: &Body) -> f64 {
             half_segment,
             radius,
         } => b.orientation.rotate(V::Y).1.abs() * half_segment + radius,
+        Shape::Cylinder {
+            half_height,
+            radius,
+        } => {
+            let axis_y = b.orientation.rotate(V::Y).1;
+            axis_y.abs() * half_height + (1.0 - axis_y * axis_y).max(0.0).sqrt() * radius
+        }
         Shape::Box(_) | Shape::Wedge(_) => {
             b.orientation.rotate(V::X).1.abs() * h.0
                 + b.orientation.rotate(V::Y).1.abs() * h.1
