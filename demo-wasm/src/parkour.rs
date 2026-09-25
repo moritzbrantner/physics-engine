@@ -95,8 +95,8 @@ const MOVING_OBSTACLES: [MovingObstacle; 6] = [
     MovingObstacle {
         id: BodyId(65),
         axis: Axis::Z,
-        min: -820,
-        max: -690,
+        min: -900,
+        max: -790,
         speed: 90,
     },
 ];
@@ -182,7 +182,7 @@ pub(super) fn build_world(
         ),
         (
             MOVING_OBSTACLES[5],
-            Vec3i::new(0, 160, -820),
+            Vec3i::new(0, 160, -900),
             Vec3i::new(0, 0, -90),
             Vec3i::new(80, 8, 55),
         ),
@@ -331,6 +331,24 @@ mod tests {
                 obstacle.id.0
             );
         }
+    }
+
+    #[test]
+    fn final_mover_stays_clear_of_the_fixed_finish_pillar() {
+        let world = build_world(false, false).expect("valid parkour world");
+        let mover = world
+            .box_by_id(BodyId(65))
+            .expect("final moving platform");
+        let pillar = world.box_by_id(BodyId(43)).expect("finish pillar");
+        let route = MOVING_OBSTACLES[5];
+
+        let mover_front_at_max = route.max + mover.body().half_extents().z;
+        let pillar_back = pillar.body().position().z - pillar.body().half_extents().z;
+
+        assert!(
+            mover_front_at_max < pillar_back,
+            "final mover route must retain clearance from the finish pillar"
+        );
     }
 
     #[test]
