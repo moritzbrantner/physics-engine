@@ -77,6 +77,14 @@ fn radius(b: &Body, n: V) -> Scalar {
             half_segment,
             radius,
         } => n.dot(b.orientation.rotate(V::Y)).abs() * half_segment + radius,
+        Shape::Cylinder {
+            half_height,
+            radius,
+        } => {
+            let axis = b.orientation.rotate(V::Y);
+            let axial = n.dot(axis);
+            axial.abs() * half_height + (1.0 - axial * axial).max(0.0).sqrt() * radius
+        }
         Shape::Box(h) | Shape::Wedge(h) => {
             let a = b.orientation.axes();
             n.dot(a[0]).abs() * h.0 + n.dot(a[1]).abs() * h.1 + n.dot(a[2]).abs() * h.2
