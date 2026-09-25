@@ -106,6 +106,7 @@ fn primitive_shape(kind: primitive::PrimitiveKind) -> Shape {
         primitive::PrimitiveKind::Box => Shape::Box(V(1.0, 0.8, 1.2)),
         primitive::PrimitiveKind::Capsule => Shape::capsule(0.7, 0.6),
         primitive::PrimitiveKind::Wedge => Shape::wedge(V(1.2, 0.9, 1.1)),
+        primitive::PrimitiveKind::Cylinder => Shape::cylinder(0.9, 0.7),
     }
 }
 
