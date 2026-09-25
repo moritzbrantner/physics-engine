@@ -6,6 +6,12 @@
 //! advancement operate on immutable local geometry rather than materialized meshes.
 use super::{Body, Shape, Vector as V, geometry::GeometryStats};
 use crate::numeric::Scalar;
+use geometry_kernels::{
+    epa3::{Epa3Config, Epa3Status, epa_penetration_3d_with_config},
+    gjk_distance::{GjkDistanceConfig, GjkDistanceStatus, gjk_distance_with_config},
+    support::SupportMap3,
+};
+use std::cell::Cell;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct PrimitiveContact {
@@ -357,10 +363,12 @@ pub(super) fn query_canonical(
                 radius,
             ))
         }
+        PrimitivePair::CylinderCylinder => {
+            parallel_cylinder_contact(a, b, work).or_else(|| generic_convex_contact(a, b, work))
+        }
         PrimitivePair::BoxCylinder
         | PrimitivePair::CapsuleCylinder
-        | PrimitivePair::WedgeCylinder
-        | PrimitivePair::CylinderCylinder => None,
+        | PrimitivePair::WedgeCylinder => generic_convex_contact(a, b, work),
         PrimitivePair::SphereSphere | PrimitivePair::SphereBox | PrimitivePair::BoxBox => None,
     }
 }
@@ -435,6 +443,9 @@ pub(super) fn reference_query(
         (Shape::Wedge(_), Shape::Box(_))
         | (Shape::Box(_), Shape::Wedge(_))
         | (Shape::Wedge(_), Shape::Wedge(_)) => Some(poly_poly(a, b, work)),
+        (Shape::Cylinder { .. }, _) | (_, Shape::Cylinder { .. }) => {
+            generic_convex_contact(a, b, work)
+        }
         _ => None,
     }
 }
@@ -499,6 +510,215 @@ pub(super) fn swept_time(
         }
     }
     None
+}
+
+struct CountedSupport<'a> {
+    body: &'a Body,
+    calls: Cell<u64>,
+    wedge_vertex_tests: Cell<u64>,
+}
+
+impl<'a> CountedSupport<'a> {
+    fn new(body: &'a Body) -> Self {
+        Self {
+            body,
+            calls: Cell::new(0),
+            wedge_vertex_tests: Cell::new(0),
+        }
+    }
+}
+
+impl SupportMap3 for CountedSupport<'_> {
+    fn support_point(&self, direction: [f64; 3]) -> [f64; 3] {
+        self.calls.set(self.calls.get() + 1);
+        if matches!(self.body.shape, Shape::Wedge(_)) {
+            self.wedge_vertex_tests
+                .set(self.wedge_vertex_tests.get() + 6);
+        }
+        let point = support_impl(
+            self.body,
+            V(direction[0], direction[1], direction[2]),
+            None,
+        );
+        [point.0, point.1, point.2]
+    }
+}
+
+fn record_generic_support_work(
+    left: &CountedSupport<'_>,
+    right: &CountedSupport<'_>,
+    work: &mut GeometryStats,
+) {
+    work.support_evaluations += left.calls.get() + right.calls.get();
+    work.primitive_vertex_tests +=
+        left.wedge_vertex_tests.get() + right.wedge_vertex_tests.get();
+}
+
+fn generic_convex_contact(
+    a: &Body,
+    b: &Body,
+    work: &mut GeometryStats,
+) -> Option<PrimitiveContact> {
+    work.generic_fallback_calls += 1;
+    work.generic_convex_queries += 1;
+
+    let scale = 1.0 + a.shape.radius() + b.shape.radius();
+    let left = CountedSupport::new(a);
+    let right = CountedSupport::new(b);
+    let distance = gjk_distance_with_config(
+        &left,
+        &right,
+        GjkDistanceConfig {
+            max_iterations: 48,
+            relative_tolerance: 1e-12,
+            epsilon: 1e-12 * scale,
+        },
+    );
+    work.generic_gjk_iterations += distance.iterations as u64;
+
+    let contact = match distance.status {
+        GjkDistanceStatus::Converged => {
+            let closest = distance.closest?;
+            Some(PrimitiveContact {
+                normal: V(closest.normal[0], closest.normal[1], closest.normal[2]),
+                separation: closest.distance,
+                point_a: V(
+                    closest.point_left[0],
+                    closest.point_left[1],
+                    closest.point_left[2],
+                ),
+                point_b: V(
+                    closest.point_right[0],
+                    closest.point_right[1],
+                    closest.point_right[2],
+                ),
+            })
+        }
+        GjkDistanceStatus::Intersecting => {
+            let penetration = epa_penetration_3d_with_config(
+                &left,
+                &right,
+                &distance.intersection,
+                Epa3Config {
+                    max_iterations: 128,
+                    tolerance: 1e-8 * scale,
+                    epsilon: 1e-12 * scale,
+                },
+            );
+            work.generic_epa_iterations += penetration.iterations as u64;
+            if penetration.status == Epa3Status::Converged {
+                let hit = penetration.penetration?;
+                Some(PrimitiveContact {
+                    normal: V(hit.normal[0], hit.normal[1], hit.normal[2]),
+                    separation: -hit.depth,
+                    point_a: V(hit.point_left[0], hit.point_left[1], hit.point_left[2]),
+                    point_b: V(hit.point_right[0], hit.point_right[1], hit.point_right[2]),
+                })
+            } else {
+                work.generic_penetration_fallbacks += 1;
+                Some(conservative_projected_contact(a, b, work))
+            }
+        }
+        GjkDistanceStatus::NoProgress | GjkDistanceStatus::IterationLimit => {
+            work.generic_penetration_fallbacks += 1;
+            Some(conservative_projected_contact(a, b, work))
+        }
+    };
+
+    record_generic_support_work(&left, &right, work);
+    contact
+}
+
+fn conservative_projected_contact(
+    a: &Body,
+    b: &Body,
+    work: &mut GeometryStats,
+) -> PrimitiveContact {
+    let normal = fallback_normal(b.position - a.position, V::X);
+    let point_a = support_counted(a, normal, work);
+    let point_b = support_counted(b, -normal, work);
+    PrimitiveContact {
+        normal,
+        separation: (point_b - point_a).dot(normal),
+        point_a,
+        point_b,
+    }
+}
+
+fn stable_radial(axis: V) -> V {
+    let seed = if axis.0.abs() <= axis.1.abs() && axis.0.abs() <= axis.2.abs() {
+        V::X
+    } else if axis.1.abs() <= axis.2.abs() {
+        V::Y
+    } else {
+        V::Z
+    };
+    axis.cross(seed).unit()
+}
+
+fn parallel_cylinder_contact(
+    a: &Body,
+    b: &Body,
+    work: &mut GeometryStats,
+) -> Option<PrimitiveContact> {
+    let (
+        Shape::Cylinder {
+            half_height: a_half,
+            radius: a_radius,
+        },
+        Shape::Cylinder {
+            half_height: b_half,
+            radius: b_radius,
+        },
+    ) = (a.shape, b.shape)
+    else {
+        return None;
+    };
+
+    let axis = a.orientation.rotate(V::Y);
+    let other_axis = b.orientation.rotate(V::Y);
+    if axis.dot(other_axis).abs() < 1.0 - 1e-10 {
+        return None;
+    }
+
+    let delta = b.position - a.position;
+    let axial = delta.dot(axis);
+    let radial = delta - axis * axial;
+    let radial_distance = radial.length();
+    let radial_gap = radial_distance - a_radius - b_radius;
+    let axial_gap = axial.abs() - a_half - b_half;
+
+    let normal = if radial_gap > 0.0 || axial_gap > 0.0 {
+        let mut closest = V::ZERO;
+        if radial_gap > 0.0 {
+            closest += radial * (radial_gap / radial_distance);
+        }
+        if axial_gap > 0.0 {
+            closest += axis * (axial_gap * if axial < 0.0 { -1.0 } else { 1.0 });
+        }
+        closest.unit()
+    } else {
+        let radial_penetration = -radial_gap;
+        let axial_penetration = -axial_gap;
+        if radial_penetration <= axial_penetration {
+            if radial_distance > 1e-14 {
+                radial / radial_distance
+            } else {
+                stable_radial(axis)
+            }
+        } else {
+            axis * if axial < 0.0 { -1.0 } else { 1.0 }
+        }
+    };
+
+    let point_a = support_counted(a, normal, work);
+    let point_b = support_counted(b, -normal, work);
+    Some(PrimitiveContact {
+        normal,
+        separation: (point_b - point_a).dot(normal),
+        point_a,
+        point_b,
+    })
 }
 
 fn sphere_cylinder(
