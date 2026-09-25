@@ -168,7 +168,7 @@ pub(super) fn build_world(
         ),
         (
             MOVING_OBSTACLES[2],
-            Vec3i::new(-260, 18, -190),
+            Vec3i::new(-260, 18, -120),
             Vec3i::new(0, -72, 0),
             Vec3i::new(55, 8, 50),
         ),
@@ -180,7 +180,7 @@ pub(super) fn build_world(
         ),
         (
             MOVING_OBSTACLES[4],
-            Vec3i::new(220, 115, -560),
+            Vec3i::new(220, 115, -540),
             Vec3i::new(150, 0, 0),
             Vec3i::new(18, 55, 65),
         ),
