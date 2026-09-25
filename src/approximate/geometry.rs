@@ -36,7 +36,7 @@ pub struct GeometryStats {
     pub generic_epa_iterations: u64,
     /// Intersecting generic pairs that required the conservative projected-overlap fallback
     /// because EPA did not produce a converged minimum-translation witness.
-    pub generic_penetration_fallbacks: u64,
+    pub generic_convex_fallbacks: u64,
     /// Support-map evaluations performed by specialized primitive kernels.
     pub support_evaluations: u64,
     /// Contact manifolds admitted by fresh narrow-phase generation.
