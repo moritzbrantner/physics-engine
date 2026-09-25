@@ -52,12 +52,7 @@ fn optimized_box_paths_count_specialized_dispatch_and_fresh_manifolds() {
 
     cache.begin(2);
     let mut rotating_work = GeometryStats::default();
-    let rotating = cache.query(
-        [0, 1],
-        [&bodies[0], &bodies[1]],
-        0.02,
-        &mut rotating_work,
-    );
+    let rotating = cache.query([0, 1], [&bodies[0], &bodies[1]], 0.02, &mut rotating_work);
     assert!(rotating.is_some());
     assert_eq!(
         rotating_work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()],
@@ -69,12 +64,7 @@ fn optimized_box_paths_count_specialized_dispatch_and_fresh_manifolds() {
     bodies[1].rotation_locked = true;
     cache.begin(2);
     let mut prepared_work = GeometryStats::default();
-    let prepared = cache.query(
-        [0, 1],
-        [&bodies[0], &bodies[1]],
-        0.02,
-        &mut prepared_work,
-    );
+    let prepared = cache.query([0, 1], [&bodies[0], &bodies[1]], 0.02, &mut prepared_work);
     assert!(prepared.is_some());
     assert_eq!(
         prepared_work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()],
