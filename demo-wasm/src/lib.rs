@@ -8,6 +8,7 @@ use physics_engine::{
 };
 
 mod controller;
+mod parkour;
 mod render_snapshot;
 
 use controller::TICKS_PER_SECOND;
@@ -42,7 +43,15 @@ impl ProjectileType {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SandboxScenario {
+    General,
+    Tower,
+    Parkour,
+}
+
 struct Sandbox {
+    scenario: SandboxScenario,
     world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
@@ -76,7 +85,12 @@ impl Sandbox {
             Vec3i::new(98, 54, 120),
             Vec3i::new(0, 18, -70),
         ];
-        Self::with_crate_layout(linear_push, upright_crates, &crate_positions)
+        Self::with_crate_layout(
+            SandboxScenario::General,
+            linear_push,
+            upright_crates,
+            &crate_positions,
+        )
     }
 
     fn with_tower_options(
@@ -95,10 +109,25 @@ impl Sandbox {
                 }
             }
         }
-        Self::with_crate_layout(linear_push, upright_crates, &crate_positions)
+        Self::with_crate_layout(
+            SandboxScenario::Tower,
+            linear_push,
+            upright_crates,
+            &crate_positions,
+        )
+    }
+
+    fn with_parkour_options(
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
+        let world = parkour::build_world(linear_push, upright_crates)?;
+        Ok(Self::from_world(SandboxScenario::Parkour, world))
     }
 
     fn with_crate_layout(
+        scenario: SandboxScenario,
         linear_push: bool,
         upright_crates: bool,
         crate_positions: &[Vec3i],
@@ -170,7 +199,12 @@ impl Sandbox {
             })?;
         }
 
-        Ok(Self {
+        Ok(Self::from_world(scenario, world))
+    }
+
+    fn from_world(scenario: SandboxScenario, world: RotatingWorld3d) -> Self {
+        Self {
+            scenario,
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
@@ -184,7 +218,7 @@ impl Sandbox {
             projectiles_evicted_by_cap: 0,
             error_code: 0,
             error_detail: 0,
-        })
+        }
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
@@ -212,6 +246,13 @@ impl Sandbox {
     fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
+        if self.scenario == SandboxScenario::Parkour {
+            if let Err(error) = parkour::update_moving_obstacles(&mut self.world) {
+                self.error_code = 6;
+                self.error_detail = world_error_detail(error);
+                return self.error_code;
+            }
+        }
         if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
