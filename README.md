@@ -97,6 +97,14 @@ let report = world.step(1)?;
 # Ok::<(), physics_engine::PhysicsError>(())
 ```
 
+## Parkour world
+
+The Pages catalog includes a larger first-person parkour scenario under `scenarios/parkour/`.
+It contains 48 engine-visible bodies across an elevated course, including six externally driven
+moving platforms/blockers. The demo owns only their deterministic ping-pong routes; the moving
+bodies themselves use the engine's external-motion policy so swept collision detection, relative
+contact velocity, collision response, and authoritative body state stay in Rust.
+
 ## Interactive acceptance sandbox
 
 GitHub Pages now builds a small first-person acceptance world through `demo-wasm`. The adapter depends on this crate and exposes only the state needed by the browser consumer; it does not reimplement collision detection or response in JavaScript.
