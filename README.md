@@ -20,9 +20,9 @@ with the historical implementation; it is not used by Pages. The existing intege
 geometry APIs remain compatibility surfaces in this first migration, not the model for new work.
 
 Read [the numerical policy and migration boundary](docs/numerics.md). The canonical Tower Stability
-scenario uses the bounded floating-state solver and passes its recorded volley acceptance. The legacy
-event-solver tower and general dense-contact quality remain separate limitations; see
-[the tower runtime contract](docs/tower-stability.md) and issue #193.
+scenario uses the bounded floating-state solver and passes its recorded volley acceptance. The separate legacy frame-38 tower regression now passes its original 240-frame acceptance; see
+[the contact-continuation repair](docs/legacy-contact-continuation.md). General dense-contact quality
+remains under issue #193 and [the tower runtime contract](docs/tower-stability.md).
 
 For consumer API selection, current capability status, and integer-tick to persistent-f64 conversion,
 read [the supported world APIs and migration contract](docs/world-api-contract.md). A dependency update
@@ -121,7 +121,8 @@ Off-Centre Impact, Rotating Box Lab, Compact Stack, and Sleeping World. Each rou
 one Rust-owned fixture; the query gallery uses the engine's nearest AABB ray query over
 borrowed fixed targets. The General Sandbox, canonical floating-point Tower, and Parkour
 routes remain available. The compact legacy stack is a focused fixture, not the canonical
-tower acceptance or evidence that the larger legacy tower failure is repaired.
+tower acceptance. The larger legacy tower regression is covered separately by
+[the contact-continuation repair](docs/legacy-contact-continuation.md).
 
 ## Interactive acceptance sandbox
 

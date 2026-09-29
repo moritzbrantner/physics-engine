@@ -11,6 +11,19 @@ use crate::{
 };
 
 const MAX_CACHED_COARSE_SAMPLES: usize = 4_096;
+// One legacy position unit may represent at most 2^-10 of each minimum half-extent.
+// Poorly resolved geometry must retain strict clear/contact impact eligibility.
+const MAX_LEGACY_SUPPORT_RELEASE_RELATIVE_ERROR: crate::numeric::Scalar = 1.0 / 1024.0;
+
+pub(crate) fn legacy_support_has_release_budget(left: &RigidBox3d, right: &RigidBox3d) -> bool {
+    [left, right].into_iter().all(|body| {
+        let half = body.body().half_extents();
+        body.contact_persistence() == crate::ContactPersistence3d::Persistent
+            && crate::numeric::Scalar::from(half.x.min(half.y).min(half.z))
+                * MAX_LEGACY_SUPPORT_RELEASE_RELATIVE_ERROR
+                >= 1.0
+    })
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RecontactSearchWork3d {
@@ -20,6 +33,7 @@ pub(crate) struct RecontactSearchWork3d {
     pub coarse_pair_evaluations: u64,
     pub exact_contact_evaluations: u64,
     pub refinement_evaluations: u64,
+    pub continuation_evaluations: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +149,7 @@ struct PairState3d {
     left_index: usize,
     right_index: usize,
     last_clear: Option<u32>,
+    continuation: bool,
     contacts: PairContactCache3d,
 }
 
@@ -149,8 +164,10 @@ struct PairState3d {
 /// therefore stop globally after refining all eligible contacts in that row.
 ///
 /// Pair-local state retains only the previous exact contact result and the latest clear coarse numerator.
-/// No state survives a search or collision response, so repeated-event semantics and fail-closed behavior
-/// remain unchanged. The optimization changes work ordering only; it does not reuse sampled times across a
+/// The public query has no retained contact state. Internally, repeated-event stepping can pass
+/// pairs already admitted in the current interval: only a gap beyond the legacy position quantum
+/// releases that support for another impact. This changes release eligibility, never contact admission.
+/// No sampled geometry or times survive a collision response. The optimization changes work ordering only; it does not reuse sampled times across a
 /// response or reinterpret the sampled approximation as analytic CCD.
 pub fn sampled_rotating_recontact_search(
     boxes: &[RigidBox3d],
@@ -172,6 +189,31 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
     boxes: &[RigidBox3d],
     config: RotatingContactSearchConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<(Option<RotatingContactSearchHit3d>, RecontactSearchWork3d), RotatingContactSearchError3d>
+{
+    profiled_with_continuations(
+        boxes,
+        config,
+        broad_phase,
+        &std::collections::BTreeSet::new(),
+    )
+}
+
+pub(crate) fn sampled_rotating_recontact_search_with_continuations(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+    continuations: &std::collections::BTreeSet<RotationalSweepPair3d>,
+) -> Result<(Option<RotatingContactSearchHit3d>, RecontactSearchWork3d), RotatingContactSearchError3d>
+{
+    profiled_with_continuations(boxes, config, broad_phase, continuations)
+}
+
+fn profiled_with_continuations(
+    boxes: &[RigidBox3d],
+    config: RotatingContactSearchConfig3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+    continuations: &std::collections::BTreeSet<RotationalSweepPair3d>,
 ) -> Result<(Option<RotatingContactSearchHit3d>, RecontactSearchWork3d), RotatingContactSearchError3d>
 {
     validate_resolution(config)?;
@@ -212,15 +254,25 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
         let prepared_right =
             coarse_samples.prepare_geometry(right_index, boxes[right_index].oriented_box());
         work.initial_pair_evaluations = work.initial_pair_evaluations.saturating_add(1);
+        let continuation = continuations.contains(&pair)
+            && legacy_support_has_release_budget(&boxes[left_index], &boxes[right_index])
+            && quantum_near(
+                prepared_left.shape,
+                prepared_right.shape,
+                &mut work,
+                broad_phase,
+            )?;
         let initially_contacting = contacts
             .contact(&prepared_left, &prepared_right, &mut work)?
-            .is_some();
+            .is_some()
+            || continuation;
         states.push(PairState3d {
             pair,
             left_index,
             right_index,
             last_clear: (!initially_contacting).then_some(0),
             contacts,
+            continuation,
         });
     }
 
@@ -266,7 +318,19 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
                         row_best = Some(hit);
                     }
                 }
-                None => state.last_clear = Some(numerator),
+                None => {
+                    if !state.continuation
+                        || !quantum_near(
+                            sampled_left.shape,
+                            sampled_right.shape,
+                            &mut work,
+                            broad_phase,
+                        )?
+                    {
+                        state.last_clear = Some(numerator);
+                        state.continuation = false;
+                    }
+                }
             }
         }
         if row_best.is_some() {
@@ -275,6 +339,37 @@ pub(crate) fn sampled_rotating_recontact_search_profiled(
     }
 
     Ok((None, work))
+}
+
+// Legacy poses round to one integer position unit. Each support can move by one unit
+// during iterative projection. A pair already admitted in this advance remains support
+// across that gap; only strict SAT creates contacts or authorizes a wake/impulse.
+// Eligibility is bounded relative to shape size; floating-state worlds never use this margin.
+fn quantum_near(
+    left: OrientedBox3d,
+    right: OrientedBox3d,
+    work: &mut RecontactSearchWork3d,
+    broad_phase: &mut RotatingBroadPhase3d,
+) -> Result<bool, RotatingContactSearchError3d> {
+    let expand = |shape: OrientedBox3d| -> Option<OrientedBox3d> {
+        let h = shape.half_extents;
+        Some(OrientedBox3d {
+            center: shape.center,
+            half_extents: crate::Vec3i::new(
+                h.x.checked_add(1)?,
+                h.y.checked_add(1)?,
+                h.z.checked_add(1)?,
+            ),
+            orientation: shape.orientation,
+        })
+    };
+    let (Some(left), Some(right)) = (expand(left), expand(right)) else {
+        return Ok(false);
+    };
+    broad_phase.record_continuation_contact_evaluation();
+    work.continuation_evaluations = work.continuation_evaluations.saturating_add(1);
+    work.exact_contact_evaluations = work.exact_contact_evaluations.saturating_add(1);
+    Ok(crate::obb_contact_seed(left, right)?.is_some())
 }
 
 fn validate_resolution(
@@ -428,6 +523,111 @@ mod tests {
             sampled_rotating_recontact_search_profiled(boxes, config, &mut ordered_broad_phase)
                 .expect("ordered re-contact search");
         assert_eq!(actual, expected);
+    }
+
+    fn continued_search(
+        boxes: &[RigidBox3d],
+        config: RotatingContactSearchConfig3d,
+    ) -> Option<crate::RotatingContactSearchHit3d> {
+        let pair = crate::RotationalSweepPair3d {
+            left: BodyId(1),
+            right: BodyId(2),
+        };
+        super::sampled_rotating_recontact_search_with_continuations(
+            boxes,
+            config,
+            &mut RotatingBroadPhase3d::default(),
+            &std::collections::BTreeSet::from([pair]),
+        )
+        .unwrap()
+        .0
+    }
+
+    fn resolved_dynamic(position: Vec3i, velocity: Vec3i) -> RigidBox3d {
+        RigidBox3d::new(
+            RigidBody::dynamic(BodyId(1), position, velocity, Vec3i::new(1024, 1024, 1024)),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .unwrap()
+    }
+
+    fn resolved_fixed() -> RigidBox3d {
+        RigidBox3d::new(
+            RigidBody::fixed(BodyId(2), Vec3i::ZERO, Vec3i::new(1024, 1024, 1024)),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn continuation_requires_prior_admission_and_does_not_admit_margin_geometry() {
+        let boxes = [
+            resolved_dynamic(Vec3i::new(-2049, 0, 0), Vec3i::new(1, 0, 0)),
+            resolved_fixed(),
+        ];
+        // A single integer-unit gap stays part of the already resolved support.
+        assert_eq!(continued_search(&boxes, config(16)), None);
+        // The same gap without admission must retain swept impact eligibility.
+        assert!(
+            super::sampled_rotating_recontact_search(&boxes, config(16))
+                .unwrap()
+                .is_some()
+        );
+        let no_contact = [
+            resolved_dynamic(Vec3i::new(-2049, 0, 0), Vec3i::ZERO),
+            resolved_fixed(),
+        ];
+        assert_eq!(continued_search(&no_contact, config(16)), None);
+    }
+
+    #[test]
+    fn continuation_releases_after_real_separation_and_readmits_returning_contact() {
+        let boxes = [
+            resolved_dynamic(Vec3i::new(-2048, 0, 0), Vec3i::new(-32, 0, 0)),
+            resolved_fixed(),
+        ];
+        let mut search = config(32);
+        search.free_flight = RigidBoxFreeFlightConfig3d::new(Vec3i::new(64, 0, 0), 1, 1);
+        let expected = super::sampled_rotating_recontact_search(&boxes, search)
+            .unwrap()
+            .unwrap();
+        let actual = continued_search(&boxes, search).unwrap();
+        assert_eq!(actual, expected);
+        assert!(actual.time.numerator * 4 > actual.time.denominator);
+        let mut reversed = boxes;
+        reversed.reverse();
+        assert_eq!(continued_search(&reversed, search), Some(expected));
+    }
+
+    #[test]
+    fn a_stale_continuation_cannot_suppress_an_initially_separated_swept_hit() {
+        let boxes = [
+            resolved_dynamic(Vec3i::new(-2068, 0, 0), Vec3i::new(30, 0, 0)),
+            resolved_fixed(),
+        ];
+        assert_eq!(
+            continued_search(&boxes, config(64)),
+            super::sampled_rotating_recontact_search(&boxes, config(64)).unwrap()
+        );
+    }
+
+    #[test]
+    fn continuation_preserves_swept_eligibility_for_coarse_shapes_and_transient_impacts() {
+        let coarse = [
+            dynamic(1, Vec3i::new(-3, 0, 0), Vec3i::new(1, 0, 0)),
+            fixed(2, Vec3i::ZERO),
+        ];
+        assert_eq!(
+            continued_search(&coarse, config(16)),
+            super::sampled_rotating_recontact_search(&coarse, config(16)).unwrap()
+        );
+        assert!(continued_search(&coarse, config(16)).is_some());
+        let transient = [
+            resolved_dynamic(Vec3i::new(-2049, 0, 0), Vec3i::new(1, 0, 0))
+                .with_transient_contacts(),
+            resolved_fixed(),
+        ];
+        assert!(continued_search(&transient, config(16)).is_some());
     }
 
     #[test]

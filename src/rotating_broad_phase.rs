@@ -24,6 +24,7 @@ pub struct RotationalSweepPair3d {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RotatingBroadPhaseStats3d {
     pub queries: PerformanceCounterU64,
+    pub continuation_contact_evaluations: PerformanceCounterU64,
     pub rebuilds: PerformanceCounterU64,
     pub reuses: PerformanceCounterU64,
     pub incremental_updates: PerformanceCounterU64,
@@ -376,6 +377,13 @@ impl RotatingBroadPhase3d {
             .response_authority_pair_rejections
             .saturating_add(u64::try_from(rejected_pairs.len()).unwrap_or(u64::MAX));
         Ok(pairs.into_iter().collect())
+    }
+
+    pub(crate) fn record_continuation_contact_evaluation(&mut self) {
+        self.stats.continuation_contact_evaluations = self
+            .stats
+            .continuation_contact_evaluations
+            .saturating_add(1);
     }
 
     #[must_use]

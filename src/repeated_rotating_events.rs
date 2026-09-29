@@ -24,7 +24,7 @@ use crate::{
         resolve_rotating_contact_frontier_with_activity_and_scratch,
     },
     rotating_contact_search::sampled_rotating_contact_search_with_broad_phase,
-    rotating_recontact_search::sampled_rotating_recontact_search_with_broad_phase,
+    rotating_recontact_search::sampled_rotating_recontact_search_with_continuations,
 };
 
 pub const MAX_REPEATED_ROTATING_EVENTS: u16 = 64;
@@ -61,6 +61,8 @@ pub struct RotatingResolvedEvent3d {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RepeatedRotatingEventWorkStats3d {
     pub event_response_passes: u64,
+    /// Additional exact SAT probes used to release previously admitted legacy supports.
+    pub continuation_contact_evaluations: u64,
     pub stabilization_passes: u64,
     pub stabilizations_hitting_limit: u64,
     pub stabilization_candidate_pairs: u64,
@@ -215,6 +217,26 @@ impl BodyMotionDelta3d {
     }
 }
 
+fn retain_admitted_supports(
+    boxes: &[RigidBox3d],
+    contacts: &[RotatingContactSearchHit3d],
+    scratch: &RotatingContactResponseScratch3d,
+    continuations: &mut BTreeSet<crate::RotationalSweepPair3d>,
+) -> Result<(), RepeatedRotatingEventError3d> {
+    for contact in contacts {
+        let left = scratch.indexed_box(boxes, contact.pair.left).ok_or(
+            RotatingContactResponseError3d::MissingBody(contact.pair.left),
+        )?;
+        let right = scratch.indexed_box(boxes, contact.pair.right).ok_or(
+            RotatingContactResponseError3d::MissingBody(contact.pair.right),
+        )?;
+        if crate::rotating_recontact_search::legacy_support_has_release_budget(left, right) {
+            continuations.insert(contact.pair);
+        }
+    }
+    Ok(())
+}
+
 /// Advances through sampled events and returns an owned result for standalone callers.
 ///
 /// The public boundary intentionally materializes one caller-owned working world because the borrowed input
@@ -281,6 +303,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     };
     advance_state_to_time(boxes, first_search.free_flight, first_hit.time)?;
     let mut event_time = first_hit.time;
+    let mut continuations = BTreeSet::new();
     let mut frontier =
         current_frontier_from_admitted_hit(boxes, first_hit, broad_phase, response_scratch)?;
 
@@ -304,6 +327,12 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             remaining,
             event_remaining_numerator(event_time)?,
             event_time,
+        )?;
+        retain_admitted_supports(
+            boxes,
+            &frontier.contacts,
+            response_scratch,
+            &mut continuations,
         )?;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
@@ -336,10 +365,19 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         }
 
         let next_search = search_with_free_flight(config.search, remaining);
-        let Some(next_hit) =
-            sampled_rotating_recontact_search_with_broad_phase(boxes, next_search, broad_phase)
-                .map_err(RotatingContactFrontierError3d::from)?
-        else {
+        let (next_hit, _search_work) = sampled_rotating_recontact_search_with_continuations(
+            boxes,
+            next_search,
+            broad_phase,
+            &continuations,
+        )
+        .map_err(RotatingContactFrontierError3d::from)?;
+        crate::performance_counter!({
+            work.continuation_contact_evaluations = work
+                .continuation_contact_evaluations
+                .saturating_add(_search_work.continuation_evaluations);
+        });
+        let Some(next_hit) = next_hit else {
             break;
         };
         advance_state_to_time(boxes, next_search.free_flight, next_hit.time)?;
@@ -384,6 +422,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     let mut rigid_event_count = 0_usize;
     let mut ballistic_event_count = 0_usize;
     let mut current_contacts_resolved = false;
+    let mut continuations = BTreeSet::new();
     response_scratch.ensure_body_index(boxes);
 
     while !remaining.timestep_is_zero() {
@@ -393,8 +432,19 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
         // duplicate response authority and broad-phase work.
         let search = search_with_free_flight(config.search, remaining);
         let rigid_hit = if current_contacts_resolved {
-            sampled_rotating_recontact_search_with_broad_phase(boxes, search, broad_phase)
-                .map_err(RotatingContactFrontierError3d::from)?
+            let (hit, _search_work) = sampled_rotating_recontact_search_with_continuations(
+                boxes,
+                search,
+                broad_phase,
+                &continuations,
+            )
+            .map_err(RotatingContactFrontierError3d::from)?;
+            crate::performance_counter!({
+                work.continuation_contact_evaluations = work
+                    .continuation_contact_evaluations
+                    .saturating_add(_search_work.continuation_evaluations);
+            });
+            hit
         } else {
             sampled_rotating_contact_search_with_broad_phase(boxes, search, broad_phase)
                 .map_err(RotatingContactFrontierError3d::from)?
@@ -432,6 +482,12 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 )?;
             remaining =
                 scale_remaining_time(remaining, event_remaining_numerator(hit.time)?, hit.time)?;
+            retain_admitted_supports(
+                boxes,
+                &frontier.contacts,
+                response_scratch,
+                &mut continuations,
+            )?;
             let response_contacts = response.contacts;
             let response_passes = response.passes_used;
             crate::performance_counter!({

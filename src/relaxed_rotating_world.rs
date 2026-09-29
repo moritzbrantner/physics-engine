@@ -276,7 +276,7 @@ impl RotatingWorld3d {
             return Ok(self.quiescent_report());
         }
         let mut changed_body_ids = BTreeSet::new();
-        let mut probe_work = [PerformanceCounterU64::default(); 3];
+        let mut probe_work = [PerformanceCounterU64::default(); 4];
         let mut wake_retries = PerformanceCounterU64::default();
         let mut report = loop {
             let before = self.active.contact_work_counters();
@@ -316,6 +316,10 @@ impl RotatingWorld3d {
             report.stats.wake_probe_broad_phase_queries = probe_work[0].value();
             report.stats.wake_probe_tail_broad_phase_queries = probe_work[1].value();
             report.stats.wake_probe_response_passes = probe_work[2].value();
+            report.stats.continuation_contact_evaluations = report
+                .stats
+                .continuation_contact_evaluations
+                .saturating_add(probe_work[3].value());
             report.stats.parked_bodies_woken = changed_body_ids.len();
         });
         changed_body_ids.extend(report.changed_body_ids.iter().copied());

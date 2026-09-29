@@ -1,3 +1,6 @@
+#[path = "fixtures/legacy_tower.rs"]
+mod legacy_tower;
+
 #[cfg(not(feature = "performance-counters"))]
 use physics_engine::RotatingWorldStepStats3d;
 use physics_engine::{
@@ -215,4 +218,42 @@ fn collision_events_and_failures_have_identical_cross_build_snapshots() {
         );
         snapshot("budget", &world);
     }
+}
+
+#[test]
+fn legacy_crossing_edge_contacts_have_identical_counter_build_snapshots() {
+    let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+        gravity: Vec3i::new(0, -36_000, 0),
+        sample_count: 8,
+        refinement_steps: 4,
+        solver_passes: 10,
+        max_events: 64,
+    });
+    for body in legacy_tower::minimized_frame_38() {
+        world.add_box(body).unwrap();
+    }
+    snapshot("legacy-edge-before", &world);
+    let report = world.step(1, 60).unwrap();
+    #[cfg(not(feature = "performance-counters"))]
+    assert_eq!(report.stats, RotatingWorldStepStats3d::default());
+    #[cfg(feature = "performance-counters")]
+    assert!(report.stats.continuation_contact_evaluations > 0);
+    snapshot("legacy-edge-after", &world);
+}
+
+#[test]
+fn high_resolution_same_step_ricochets_have_identical_counter_build_snapshots() {
+    let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+        gravity: Vec3i::ZERO,
+        sample_count: 64,
+        refinement_steps: 4,
+        solver_passes: 4,
+        max_events: 64,
+    });
+    for body in legacy_tower::elastic_corridor() {
+        world.add_box(body).unwrap();
+    }
+    snapshot("legacy-ricochet-before", &world);
+    world.step(1, 1).unwrap();
+    snapshot("legacy-ricochet-after", &world);
 }

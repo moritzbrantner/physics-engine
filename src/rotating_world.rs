@@ -105,6 +105,8 @@ pub struct RotatingWorldStepStats3d {
     /// Response body-index scratch rebuilds during this step. Stable solver membership should normally report zero after warm-up.
     pub response_scratch_index_rebuilds: u64,
     pub event_response_passes: u64,
+    /// Exact SAT release probes for already admitted legacy support pairs.
+    pub continuation_contact_evaluations: u64,
     pub stabilization_passes: u64,
     pub stabilizations_hitting_limit: u64,
     pub stabilization_candidate_pairs: u64,
@@ -642,11 +644,15 @@ impl RotatingWorld3d {
         self.step_guarded(timestep_numerator, timestep_denominator, None)
     }
 
-    pub(crate) fn contact_work_counters(&self) -> [u64; 3] {
+    pub(crate) fn contact_work_counters(&self) -> [u64; 4] {
         [
             self.broad_phase.stats().queries.value(),
             self.tail_broad_phase.stats().queries.value(),
             self.response_scratch.response_passes_total(),
+            self.broad_phase
+                .stats()
+                .continuation_contact_evaluations
+                .value(),
         ]
     }
 
@@ -943,6 +949,9 @@ impl RotatingWorld3d {
                         .saturating_sub(broad_phase_before.partial_body_updates),
                     response_scratch_index_rebuilds: work.response_scratch_index_rebuilds,
                     event_response_passes: work.event_response_passes,
+                    continuation_contact_evaluations: broad_phase_after
+                        .continuation_contact_evaluations
+                        .saturating_sub(broad_phase_before.continuation_contact_evaluations),
                     stabilization_passes: work.stabilization_passes,
                     stabilizations_hitting_limit: work.stabilizations_hitting_limit,
                     stabilization_candidate_pairs: work.stabilization_candidate_pairs,

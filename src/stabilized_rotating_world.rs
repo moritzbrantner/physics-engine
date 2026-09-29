@@ -361,7 +361,7 @@ impl RotatingWorld3d {
         self.step_with_parked(timestep_numerator, timestep_denominator, &BTreeMap::new())
     }
 
-    pub(crate) fn contact_work_counters(&self) -> [u64; 3] {
+    pub(crate) fn contact_work_counters(&self) -> [u64; 4] {
         self.inner.contact_work_counters()
     }
 
