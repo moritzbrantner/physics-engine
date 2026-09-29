@@ -8,6 +8,7 @@ use physics_engine::{
 };
 
 mod controller;
+mod parkour;
 mod render_snapshot;
 
 use controller::TICKS_PER_SECOND;
@@ -22,13 +23,12 @@ const PROJECTILE_SPEED_LIMIT: i32 = 120;
 const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
-// Mass units are relative. Scale every rigid sandbox participant together so rigid-vs-rigid
-// behavior stays unchanged while the tiny analytic sphere remains meaningfully lighter than a crate.
-const SANDBOX_RIGID_MASS_SCALE: u32 = 1;
-const PLAYER_MASS_UNITS: u32 = 4 * SANDBOX_RIGID_MASS_SCALE;
-const CRATE_MASS_UNITS: u32 = 2 * SANDBOX_RIGID_MASS_SCALE;
-const RIGID_PROJECTILE_MASS_UNITS: u32 = SANDBOX_RIGID_MASS_SCALE;
-const SPHERE_RESPONSE_MASS_MILLI_UNITS: u32 = 750;
+const PLAYER_MASS_UNITS: u32 = 4;
+const CRATE_MASS_UNITS: u32 = 2;
+const RIGID_PROJECTILE_MASS_UNITS: u32 = 1;
+// Equal nominal density: a radius-3 sphere has PI/1296 of a 36-unit crate's volume.
+const SPHERE_RESPONSE_MASS: physics_engine::numeric::Scalar =
+    CRATE_MASS_UNITS as physics_engine::numeric::Scalar * std::f64::consts::PI / 1296.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -49,7 +49,15 @@ impl ProjectileType {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SandboxScenario {
+    General,
+    Tower,
+    Parkour,
+}
+
 struct Sandbox {
+    scenario: SandboxScenario,
     world: RotatingWorld3d,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
@@ -75,6 +83,61 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
+        let crate_positions = [
+            Vec3i::new(-75, 18, 135),
+            Vec3i::new(-75, 54, 135),
+            Vec3i::new(80, 18, 120),
+            Vec3i::new(116, 18, 120),
+            Vec3i::new(98, 54, 120),
+            Vec3i::new(0, 18, -70),
+        ];
+        Self::with_crate_layout(
+            SandboxScenario::General,
+            linear_push,
+            upright_crates,
+            &crate_positions,
+        )
+    }
+
+    fn with_tower_options(
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        let mut crate_positions = Vec::with_capacity(32);
+        for level in 0..4 {
+            for depth in 0..2 {
+                for column in 0..4 {
+                    crate_positions.push(Vec3i::new(
+                        -54 + column * 36,
+                        18 + level * 36,
+                        82 + depth * 36,
+                    ));
+                }
+            }
+        }
+        Self::with_crate_layout(
+            SandboxScenario::Tower,
+            linear_push,
+            upright_crates,
+            &crate_positions,
+        )
+    }
+
+    fn with_parkour_options(
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
+        let world = parkour::build_world(linear_push, upright_crates)?;
+        Ok(Self::from_world(SandboxScenario::Parkour, world))
+    }
+
+    fn with_crate_layout(
+        scenario: SandboxScenario,
+        linear_push: bool,
+        upright_crates: bool,
+        crate_positions: &[Vec3i],
+    ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::new(0, -3_600, 0),
@@ -122,15 +185,7 @@ impl Sandbox {
             player
         })?;
 
-        let crate_positions = [
-            Vec3i::new(-75, 18, 135),
-            Vec3i::new(-75, 54, 135),
-            Vec3i::new(80, 18, 120),
-            Vec3i::new(116, 18, 120),
-            Vec3i::new(98, 54, 120),
-            Vec3i::new(0, 18, -70),
-        ];
-        for (offset, position) in crate_positions.into_iter().enumerate() {
+        for (offset, position) in crate_positions.iter().copied().enumerate() {
             let crate_body = rotating_box(
                 RigidBody::dynamic(
                     BodyId(100 + offset as u64),
@@ -150,7 +205,12 @@ impl Sandbox {
             })?;
         }
 
-        Ok(Self {
+        Ok(Self::from_world(scenario, world))
+    }
+
+    fn from_world(scenario: SandboxScenario, world: RotatingWorld3d) -> Self {
+        Self {
+            scenario,
             world,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
@@ -164,7 +224,7 @@ impl Sandbox {
             projectiles_evicted_by_cap: 0,
             error_code: 0,
             error_detail: 0,
-        })
+        }
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
@@ -192,6 +252,13 @@ impl Sandbox {
     fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
+        if self.scenario == SandboxScenario::Parkour
+            && let Err(error) = parkour::update_moving_obstacles(&mut self.world)
+        {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
+        }
         if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
@@ -324,10 +391,8 @@ impl Sandbox {
                 .with_transient_contacts(),
             ),
             Some(ProjectileType::Sphere) => {
-                let Ok(projectile) =
-                    BallisticSphere3d::new(id, spawn, velocity, 3, 1).and_then(|projectile| {
-                        projectile.with_response_mass_milli_units(SPHERE_RESPONSE_MASS_MILLI_UNITS)
-                    })
+                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1)
+                    .and_then(|projectile| projectile.with_response_mass(SPHERE_RESPONSE_MASS))
                 else {
                     self.error_code = 5;
                     return -1;
@@ -608,6 +673,15 @@ fn with_sandbox<R>(callback: impl FnOnce(&Sandbox) -> R) -> R {
 
 fn with_sandbox_mut<R>(callback: impl FnOnce(&mut Sandbox) -> R) -> R {
     SANDBOX.with(|sandbox| callback(&mut sandbox.borrow_mut()))
+}
+
+/// Identify the compiled math backend without inferring it from timings or build flags.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_numeric_backend() -> i32 {
+    match physics_engine::numeric::NUMERICAL_BACKEND {
+        physics_engine::numeric::NumericalBackend::Float64 => 64,
+        physics_engine::numeric::NumericalBackend::ExactReference => 0,
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1000,8 +1074,8 @@ mod tests {
     };
 
     use super::{
-        CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, SPHERE_RESPONSE_MASS_MILLI_UNITS, Sandbox,
-        rotating_box, world_error_detail,
+        CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, SPHERE_RESPONSE_MASS, Sandbox, rotating_box,
+        world_error_detail,
     };
 
     fn settle_player(sandbox: &mut Sandbox) {
@@ -1109,6 +1183,35 @@ mod tests {
     }
 
     #[test]
+    fn sleeping_player_keeps_ground_support_during_remote_projectile_activity() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        let before = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .unwrap()
+            .body()
+            .position();
+        assert!(sandbox.shoot(38, 0, -88) >= 0);
+        for tick in 0..40 {
+            assert_eq!(sandbox.step_velocity(0, 0, false), 0);
+            assert_eq!(
+                sandbox
+                    .world
+                    .box_by_id(PLAYER_ID)
+                    .unwrap()
+                    .body()
+                    .position(),
+                before
+            );
+            assert!(
+                sandbox.grounded().unwrap(),
+                "unchanged floor support disappeared at tick {tick}"
+            );
+        }
+    }
+
+    #[test]
     fn grounded_player_can_jump() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
@@ -1211,10 +1314,7 @@ mod tests {
             .expect("spawned analytic sphere projectile");
         assert_eq!(projectile.radius(), 3);
         assert_eq!(projectile.mass_units(), 1);
-        assert_eq!(
-            projectile.response_mass_milli_units(),
-            SPHERE_RESPONSE_MASS_MILLI_UNITS
-        );
+        assert_eq!(projectile.response_mass(), SPHERE_RESPONSE_MASS);
         assert_eq!(sandbox.active_projectile_count(), 1);
     }
 
@@ -1360,6 +1460,57 @@ mod tests {
                 .into_iter()
                 .all(|id| sandbox.world.is_sleeping(id)),
             "impacted pyramid must settle after the shot"
+        );
+    }
+
+    #[test]
+    fn tower_sphere_impact_does_not_readmit_stabilized_contacts_as_rigid_events() {
+        let mut sandbox = Sandbox::with_tower_options(true, true).expect("valid tower sandbox");
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, true)
+                .expect("impact-retire tower rules");
+        super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
+            .expect("apply impact-retire tower rules");
+        settle_player(&mut sandbox);
+        assert!(
+            sandbox.is_quiescent(),
+            "tower fixture must settle before the impact"
+        );
+
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        assert!(sandbox.shoot(0, 0, -96) >= 0);
+
+        let mut peak_sampled_events = 0_usize;
+        let mut peak_stabilization_limit_hits = 0_u64;
+        for tick in 0..120 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "tower sphere impact tick {tick}, detail {}",
+                sandbox.error_detail
+            );
+            peak_sampled_events = peak_sampled_events.max(sandbox.last_step_stats.sampled_events);
+            peak_stabilization_limit_hits = peak_stabilization_limit_hits
+                .max(sandbox.last_step_stats.stabilizations_hitting_limit);
+            if sandbox.projectiles_retired_on_contact == 1 && sandbox.is_quiescent() {
+                break;
+            }
+        }
+
+        assert_eq!(sandbox.projectiles_retired_on_contact, 1);
+        assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
+        assert!(
+            peak_sampled_events < 8,
+            "one localized sphere impact re-admitted {peak_sampled_events} sampled rigid events"
+        );
+        assert!(
+            peak_stabilization_limit_hits < 8,
+            "one localized sphere impact exhausted stabilization {peak_stabilization_limit_hits} times"
         );
     }
 
@@ -1569,3 +1720,60 @@ mod tests {
 #[cfg(test)]
 #[path = "character_interaction_tests.rs"]
 mod character_interaction_tests;
+
+#[cfg(test)]
+mod projectile_wake_tests;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_sleeping_body_count() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.world.sleeping_body_count() as u64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_sleeping(index: u32) -> i32 {
+    with_sandbox(|sandbox| {
+        sandbox
+            .world
+            .boxes()
+            .nth(index as usize)
+            .map_or(-1, |body| {
+                i32::from(sandbox.world.is_sleeping(body.body().id()))
+            })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_parked_bodies_woken() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.parked_bodies_woken as u64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_parked_wake_retries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.parked_wake_retries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.response_authority_body_count as u64)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.wake_probe_broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_tail_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.wake_probe_tail_broad_phase_queries)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_response_passes() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.wake_probe_response_passes))
+}
+
+mod approximate;

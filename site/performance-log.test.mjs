@@ -69,6 +69,13 @@ test("session output keeps raw timings and derives stable summaries", () => {
     max_ms: 2,
   });
   assert.deepEqual(result.summary.physics_work, {
+    fixed_position_passes: 0,
+    fixed_position_bounds_tests: 0,
+    fixed_position_contact_tests: 0,
+    fixed_position_corrections: 0,
+
+    fixed_substeps: 0, fixed_pair_tests: 0, fixed_narrow_tests: 0, fixed_contact_points: 0,
+    fixed_impulse_iterations: 0, fixed_integrated_bodies: 0, fixed_woken_bodies: 0, fixed_swept_contacts: 0,
     sampled_events: 3,
     tail_contacts: 5,
     tail_slices: 7,
@@ -193,4 +200,13 @@ test("invalid timing evidence fails instead of being silently normalized", () =>
     }),
     /frame_interval_ms/,
   );
+});
+test('fixed-step telemetry is retained without inventing legacy event work', () => {
+  const recorder = createPerformanceSessionRecorder({now:()=>0, wallClock:()=>new Date(0)});
+  recorder.start();
+  recorder.recordFrame({frame_interval_ms:16,callback_ms:1,render_performed:false,render_ms:null,physics_steps_ms:[1],physics_step_stats:[{fixed_substeps:8,fixed_impulse_iterations:36,fixed_contact_points:14}],dropped_accumulator_ms:0});
+  const result=recorder.finish();
+  assert.equal(result.summary.physics_work.fixed_substeps,8);
+  assert.equal(result.summary.physics_work.fixed_impulse_iterations,36);
+  assert.equal(result.raw.frames[0].physics_step_stats[0].sampled_events,null);
 });

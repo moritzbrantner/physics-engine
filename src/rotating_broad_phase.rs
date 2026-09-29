@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, OrientedBox3d,
-    RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotationalSweepBounds3d,
-    SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
+    BodyId, BodyKind, CollisionLayers3d, ContactPersistence3d, OrientedBox3d,
+    PerformanceCounterU64, RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d,
+    RotationalSweepBounds3d, SolverParticipation3d, rigid_box_free_flight_sweep_bounds,
 };
 
 #[path = "rotating_broad_phase_tree.rs"]
@@ -23,19 +23,19 @@ pub struct RotationalSweepPair3d {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RotatingBroadPhaseStats3d {
-    pub queries: u64,
-    pub rebuilds: u64,
-    pub reuses: u64,
-    pub incremental_updates: u64,
-    pub reinserts: u64,
-    pub rotations: u64,
-    pub partial_queries: u64,
-    pub partial_body_updates: u64,
+    pub queries: PerformanceCounterU64,
+    pub rebuilds: PerformanceCounterU64,
+    pub reuses: PerformanceCounterU64,
+    pub incremental_updates: PerformanceCounterU64,
+    pub reinserts: PerformanceCounterU64,
+    pub rotations: PerformanceCounterU64,
+    pub partial_queries: PerformanceCounterU64,
+    pub partial_body_updates: PerformanceCounterU64,
     /// Geometrically eligible solid pairs rejected because neither participant can receive solver mutation.
-    pub response_authority_pair_rejections: u64,
-    pub fixed_bound_reuses: u64,
-    pub fixed_bound_recomputations: u64,
-    pub dynamic_bound_recomputations: u64,
+    pub response_authority_pair_rejections: PerformanceCounterU64,
+    pub fixed_bound_reuses: PerformanceCounterU64,
+    pub fixed_bound_recomputations: PerformanceCounterU64,
+    pub dynamic_bound_recomputations: PerformanceCounterU64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,9 +109,9 @@ pub(crate) struct RotatingBroadPhase3d {
 }
 
 impl RotatingBroadPhase3d {
-    pub fn candidate_pairs(
+    pub fn candidate_pairs<'a>(
         &mut self,
-        boxes: &[RigidBox3d],
+        boxes: impl IntoIterator<Item = &'a RigidBox3d>,
         config: RigidBoxFreeFlightConfig3d,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
         self.candidate_pairs_with_admission(boxes, config, false)
@@ -129,9 +129,9 @@ impl RotatingBroadPhase3d {
         self.candidate_pairs_with_admission(boxes, config, true)
     }
 
-    fn candidate_pairs_with_admission(
+    fn candidate_pairs_with_admission<'a>(
         &mut self,
-        boxes: &[RigidBox3d],
+        boxes: impl IntoIterator<Item = &'a RigidBox3d>,
         config: RigidBoxFreeFlightConfig3d,
         require_response_authority: bool,
     ) -> Result<Vec<RotationalSweepPair3d>, RotatingBroadPhaseError3d> {
@@ -142,6 +142,22 @@ impl RotatingBroadPhase3d {
             self.stats.rebuilds = self.stats.rebuilds.saturating_add(1);
             self.rebuild(exact);
         } else {
+            // A parked proxy retains the same geometry/identity. Refresh dynamic and authority
+            // metadata in place instead of rebuilding an entire BVH when it sleeps or wakes.
+            let mut metadata_changed = false;
+            for body in &exact {
+                let previous = self.exact[&body.id];
+                if previous.kind != body.kind
+                    || previous.solver_participation != body.solver_participation
+                    || previous.receives_solver_response != body.receives_solver_response
+                {
+                    self.tree.update_metadata(*body);
+                    metadata_changed = true;
+                }
+            }
+            if metadata_changed {
+                self.stats.incremental_updates = self.stats.incremental_updates.saturating_add(1);
+            }
             let mut escaped = exact
                 .iter()
                 .copied()
@@ -234,6 +250,8 @@ impl RotatingBroadPhase3d {
     ///
     /// Resting stabilization deliberately omits transient impact pairs after response; observable contact
     /// queries must retain them so lifecycle consumers can see the impact before removing the body.
+    /// Existing bodies may also change response eligibility (including sleep proxies); update their
+    /// leaves locally so fixed/fixed pruning and ancestor dynamic flags follow the new state.
     pub(crate) fn candidate_pairs_for_changed_current_query_bodies<'a>(
         &mut self,
         changed_boxes: impl IntoIterator<Item = &'a RigidBox3d>,
@@ -268,22 +286,24 @@ impl RotatingBroadPhase3d {
                     body.id,
                 ));
             };
-            if previous.kind != body.kind
+            let eligibility_changed = previous.kind != body.kind
                 || previous.collision_layers != body.collision_layers
                 || previous.solver_participation != body.solver_participation
-                || previous.receives_solver_response != body.receives_solver_response
-            {
+                || previous.receives_solver_response != body.receives_solver_response;
+            if eligibility_changed && omit_transient_contacts {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
                 ));
             }
+            // A later full query must not reuse a fixed envelope from before this local update.
+            self.fixed_bounds.remove(&body.id);
             self.exact.insert(body.id, body);
             let Some(fat) = self.tree.leaf_bounds(body.id) else {
                 return Err(RotatingBroadPhaseError3d::IncrementalQueryUnsynchronized(
                     body.id,
                 ));
             };
-            if !contains_bounds(fat, body.bounds) {
+            if eligibility_changed || !contains_bounds(fat, body.bounds) {
                 let mut fat_body = body;
                 fat_body.bounds = fatten_bounds(body.bounds);
                 escaped.push(fat_body);
@@ -341,7 +361,10 @@ impl RotatingBroadPhase3d {
                         return;
                     }
                     let pair = RotationalSweepPair3d { left, right };
-                    if !left_body.receives_solver_response && !right_body.receives_solver_response {
+                    if omit_transient_contacts
+                        && !left_body.receives_solver_response
+                        && !right_body.receives_solver_response
+                    {
                         rejected_pairs.insert(pair);
                         return;
                     }
@@ -360,15 +383,16 @@ impl RotatingBroadPhase3d {
         self.stats
     }
 
-    fn bounded_bodies(
+    fn bounded_bodies<'a>(
         &mut self,
-        boxes: &[RigidBox3d],
+        boxes: impl IntoIterator<Item = &'a RigidBox3d>,
         config: RigidBoxFreeFlightConfig3d,
     ) -> Result<Vec<BoundedBody3d>, RotatingBroadPhaseError3d> {
-        config.exact_timestep()?;
+        config.timestep()?;
         let mut ids = BTreeSet::new();
         let mut fixed_ids = BTreeSet::new();
-        let mut bounded = Vec::with_capacity(boxes.len());
+        let boxes = boxes.into_iter();
+        let mut bounded = Vec::with_capacity(boxes.size_hint().0);
 
         for rigid_box in boxes {
             let id = rigid_box.body().id();
@@ -416,13 +440,9 @@ impl RotatingBroadPhase3d {
         if exact.len() != self.exact.len() || exact.len() != self.tree.len() {
             return false;
         }
-        exact.iter().all(|body| {
-            self.exact.get(&body.id).is_some_and(|previous| {
-                previous.kind == body.kind
-                    && previous.solver_participation == body.solver_participation
-                    && previous.receives_solver_response == body.receives_solver_response
-            }) && self.tree.has_leaf(body.id)
-        })
+        exact
+            .iter()
+            .all(|body| self.exact.contains_key(&body.id) && self.tree.has_leaf(body.id))
     }
 
     fn rebuild(&mut self, exact: Vec<BoundedBody3d>) {
@@ -440,12 +460,14 @@ impl RotatingBroadPhase3d {
 
 /// Retained stationary-bounds index for wrapper-level spatial queries such as parked-body wake discovery.
 ///
-/// Membership changes rebuild the deterministic tree once, while ordinary frame queries traverse the retained
-/// topology and exact stationary bounds without reconstructing every parked body's envelope.
+/// Membership changes update only the affected leaf and its ancestors. Ordinary queries traverse retained
+/// topology and exact stationary bounds without reconstructing unchanged bodies' envelopes.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RotatingBoundsIndex3d {
     tree: IndexedBvh3d,
     exact: BTreeMap<BodyId, RotationalSweepBounds3d>,
+    #[cfg(test)]
+    pub(crate) bounds_preparations: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -455,6 +477,41 @@ pub(crate) struct RotatingBoundsQuery3d {
 }
 
 impl RotatingBoundsIndex3d {
+    pub(crate) fn insert_stationary(
+        &mut self,
+        rigid_box: &RigidBox3d,
+    ) -> Result<(), RotatingBroadPhaseError3d> {
+        if rigid_box.solver_participation() != SolverParticipation3d::Solid {
+            self.remove(rigid_box.body().id());
+            return Ok(());
+        }
+        let current = RigidBoxFreeFlightConfig3d::new(crate::Vec3i::ZERO, 0, 1);
+        let mut body = bounded_body(rigid_box, current)?;
+        #[cfg(test)]
+        {
+            self.bounds_preparations += 1;
+        }
+        self.exact.insert(body.id, body.bounds);
+        if self
+            .tree
+            .leaf_bounds(body.id)
+            .is_some_and(|fat| contains_bounds(fat, body.bounds))
+        {
+            return Ok(());
+        }
+        body.bounds = fatten_bounds(body.bounds);
+        let mut rotations = 0;
+        if !self.tree.reinsert(body, &mut rotations) {
+            self.tree.insert(body, &mut rotations);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn remove(&mut self, id: BodyId) {
+        self.exact.remove(&id);
+        self.tree.remove_leaf(id, &mut 0);
+    }
+
     pub(crate) fn rebuild_stationary<'a>(
         &mut self,
         boxes: impl IntoIterator<Item = &'a RigidBox3d>,
@@ -473,6 +530,10 @@ impl RotatingBoundsIndex3d {
                 continue;
             }
             let mut body = bounded_body(rigid_box, current)?;
+            #[cfg(test)]
+            {
+                self.bounds_preparations += 1;
+            }
             exact.insert(body.id, body.bounds);
             body.bounds = fatten_bounds(body.bounds);
             fat.push(body);
@@ -481,6 +542,10 @@ impl RotatingBoundsIndex3d {
         self.exact = exact;
         self.tree.rebuild(&mut fat);
         Ok(())
+    }
+
+    pub(crate) fn bounds(&self, id: BodyId) -> Option<RotationalSweepBounds3d> {
+        self.exact.get(&id).copied()
     }
 
     #[must_use]
@@ -535,8 +600,7 @@ fn bounded_body(
         kind: rigid_box.body().kind(),
         collision_layers: rigid_box.collision_layers(),
         solver_participation: rigid_box.solver_participation(),
-        receives_solver_response: rigid_box.body().kind() == BodyKind::Dynamic
-            && rigid_box.motion_authority() == MotionAuthority3d::Physics,
+        receives_solver_response: rigid_box.receives_physics_response(),
         bounds: rigid_box_free_flight_sweep_bounds(rigid_box, config)?,
     })
 }
@@ -616,7 +680,7 @@ fn overlaps_on_axis(
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
     use crate::{
         AngularState3d, AngularVelocity3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
@@ -802,6 +866,43 @@ mod tests {
                 .expect("valid sensor candidate query")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn sleep_wake_metadata_updates_preserve_pairs_without_tree_rebuilds() {
+        let config = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
+        let mut retained = RotatingBroadPhase3d::default();
+        let stationary = fixed(1, Vec3i::ZERO);
+        let neighbor = fixed(2, Vec3i::new(1, 0, 0));
+        assert!(
+            retained
+                .response_candidate_pairs(&[stationary.clone(), neighbor.clone()], config)
+                .unwrap()
+                .is_empty()
+        );
+        let initial = retained.stats().rebuilds;
+        for active in [true, false, true, false] {
+            let body = if active {
+                dynamic(1, Vec3i::ZERO, Vec3i::ZERO)
+            } else {
+                stationary.clone()
+            };
+            let boxes = [body, neighbor.clone()];
+            let expected = RotatingBroadPhase3d::default()
+                .response_candidate_pairs(&boxes, config)
+                .unwrap();
+            assert_eq!(
+                retained.response_candidate_pairs(&boxes, config).unwrap(),
+                expected
+            );
+            assert_eq!(
+                retained.stats().rebuilds,
+                initial,
+                "metadata changes do not discard spatial topology"
+            );
+            retained.tree.validate_structure().unwrap();
+        }
+        assert_eq!(retained.stats().incremental_updates, 4);
     }
 
     #[test]
@@ -1252,6 +1353,61 @@ mod tests {
             query.visited_nodes,
             boxes.len()
         );
+    }
+
+    #[test]
+    fn stationary_index_membership_churn_matches_rebuild() {
+        let mut boxes: BTreeMap<_, _> = (1..=256)
+            .map(|id| {
+                (
+                    BodyId(id),
+                    dynamic(id, Vec3i::new(id as i32 * 16, 0, 0), Vec3i::ZERO),
+                )
+            })
+            .collect();
+        let mut index = RotatingBoundsIndex3d::default();
+        for body in boxes.values() {
+            index.insert_stationary(body).unwrap();
+        }
+        for id in (1..=256).step_by(3) {
+            index.remove(BodyId(id));
+            boxes.remove(&BodyId(id));
+        }
+        let after_insert = index.bounds_preparations;
+        for id in (2..=256).step_by(3) {
+            let body = boxes.get_mut(&BodyId(id)).unwrap();
+            body.body.position.y = 10;
+            index.insert_stationary(body).unwrap();
+        }
+        assert_eq!(after_insert, 256, "removal must prepare no bounds");
+        let mut rebuilt = RotatingBoundsIndex3d::default();
+        rebuilt.rebuild_stationary(boxes.values()).unwrap();
+        for body in boxes.values() {
+            let bounds = rebuilt.bounds(body.body().id()).unwrap();
+            assert_eq!(
+                index.overlapping_ids(bounds).body_ids,
+                rebuilt.overlapping_ids(bounds).body_ids
+            );
+        }
+        index.tree.validate_structure().unwrap();
+        assert!(
+            index.tree.height() <= 18,
+            "ordered insertion must retain a balanced tree"
+        );
+        for id in boxes.keys() {
+            index.remove(*id);
+        }
+        index.tree.validate_structure().unwrap();
+        assert_eq!(index.tree.len(), 0);
+        let body = dynamic(1, Vec3i::ZERO, Vec3i::ZERO);
+        index.insert_stationary(&body).unwrap();
+        assert_eq!(
+            index
+                .overlapping_ids(index.bounds(BodyId(1)).unwrap())
+                .body_ids,
+            vec![BodyId(1)]
+        );
+        index.tree.validate_structure().unwrap();
     }
 
     #[test]

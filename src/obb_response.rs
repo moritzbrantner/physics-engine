@@ -3,9 +3,9 @@ use std::{error::Error, fmt};
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE,
     MotionAuthority3d, ORIENTATION_SCALE, ObbAxisFeature3d, ObbContactSeed3d, Orientation3d,
-    OrientedBoxError3d, RigidBox3d, SolverParticipation3d, Vec3i, box_inertia, obb_contact_seed,
-    oriented_box_vertices,
-    wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
+    OrientedBoxError3d, RigidBox3d, SolverParticipation3d, Vec3i, box_inertia,
+    numeric::{ArithmeticError, mul_div_round_i128, mul_div_round_u128},
+    obb_contact_seed, oriented_box_vertices,
 };
 
 const RESPONSE_SCALE: i128 = 1_i128 << 50;
@@ -78,8 +78,8 @@ impl From<OrientedBoxError3d> for ObbContactResponseError3d {
     }
 }
 
-impl From<WideRatioError> for ObbContactResponseError3d {
-    fn from(_: WideRatioError) -> Self {
+impl From<ArithmeticError> for ObbContactResponseError3d {
+    fn from(_: ArithmeticError) -> Self {
         Self::ArithmeticOverflow
     }
 }

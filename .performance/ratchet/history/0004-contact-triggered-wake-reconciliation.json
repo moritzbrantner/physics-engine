@@ -1,0 +1,441 @@
+{
+  "schemaVersion": 1,
+  "ordinal": 4,
+  "id": "contact-triggered-wake-reconciliation",
+  "epoch": 3,
+  "reason": "Reconcile the already-landed #152 f64/contact-triggered activation with archived pre-migration fixtures; preserve settled-idle and current-main active replays, account for all discarded wake probes, and restore delta-only parked-index updates plus unchanged sleep-cache ceilings.",
+  "recordedAt": "2026-09-29T20:29:30.872Z",
+  "previousSha256": "aae2fdb8dcc30abaded7e7df629d76ad5de3119806d916579f6a58550c0545a4",
+  "fixtureSha256": "e9669766fcfc76c3e20c4456a3db1d4fa824a317365e1dddb456325f8e59c56c",
+  "source": {
+    "revision": "1b98f84d409796b2a15b84f3fa4ed7f03a11f8bd",
+    "dirty": true,
+    "snapshotSha256": "bdac6bea8d45434a6a8ed93f113c8406015dbd447065b1595a68442c803d22bd",
+    "conventionsSourceRevision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3"
+  },
+  "environment": {
+    "platform": "linux",
+    "arch": "x64",
+    "osRelease": "7.0.0-34-generic",
+    "cpu": "AMD Ryzen 7 5700X 8-Core Processor",
+    "node": "v24.16.0",
+    "v8": "13.6.233.17-node.49",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "profile": "release",
+    "nativeTestThreads": 1,
+    "rustflags": ""
+  },
+  "wasmSha256": "4edc751347c044eb76d5c1cbf215d039daa0bd3129e50974500523455238835b",
+  "rows": {
+    "native/ballistic-index/2048": {
+      "work": {
+        "bound_checks": 5888
+      },
+      "correctness": {
+        "hits": 256
+      },
+      "timing": {
+        "median_ms": 0.353987
+      }
+    },
+    "native/ballistic-index/256": {
+      "work": {
+        "bound_checks": 4352
+      },
+      "correctness": {
+        "hits": 256
+      },
+      "timing": {
+        "median_ms": 0.19695100000000001
+      }
+    },
+    "native/ballistic-index/32": {
+      "work": {
+        "bound_checks": 2816
+      },
+      "correctness": {
+        "hits": 256
+      },
+      "timing": {
+        "median_ms": 0.179779
+      }
+    },
+    "native/sat-prepared": {
+      "work": {},
+      "correctness": {
+        "queries": 20480,
+        "contacts": 9800
+      },
+      "timing": {
+        "median_ms": 54.613255,
+        "reference_median_ms": 57.680711
+      }
+    },
+    "native/sat-projection": {
+      "work": {
+        "dot_products": 4
+      },
+      "correctness": {
+        "projections": 1
+      },
+      "timing": {}
+    },
+    "native/sleep-transition/128": {
+      "work": {
+        "graph_builds": 0,
+        "subject_rebuilds": 12
+      },
+      "correctness": {
+        "queries": 1024,
+        "contacts": 1024,
+        "cycles": 4
+      },
+      "timing": {
+        "elapsed_ms": 5.014471
+      }
+    },
+    "native/sleep-transition/32": {
+      "work": {
+        "graph_builds": 0,
+        "subject_rebuilds": 12
+      },
+      "correctness": {
+        "queries": 256,
+        "contacts": 256,
+        "cycles": 4
+      },
+      "timing": {
+        "elapsed_ms": 1.7254180000000001
+      }
+    },
+    "native/sleep-transition/512": {
+      "work": {
+        "graph_builds": 0,
+        "subject_rebuilds": 12
+      },
+      "correctness": {
+        "queries": 4096,
+        "contacts": 4096,
+        "cycles": 4
+      },
+      "timing": {
+        "elapsed_ms": 33.90178
+      }
+    },
+    "native/stationary-cache/2048": {
+      "work": {
+        "bounds_prepared": 64,
+        "subject_rebuilds": 64
+      },
+      "correctness": {
+        "queries": 131072
+      },
+      "timing": {
+        "elapsed_ms": 7.301997999999999
+      }
+    },
+    "native/stationary-cache/256": {
+      "work": {
+        "bounds_prepared": 64,
+        "subject_rebuilds": 64
+      },
+      "correctness": {
+        "queries": 16384
+      },
+      "timing": {
+        "elapsed_ms": 0.458333
+      }
+    },
+    "native/stationary-cache/32": {
+      "work": {
+        "bounds_prepared": 64,
+        "subject_rebuilds": 64
+      },
+      "correctness": {
+        "queries": 2048
+      },
+      "timing": {
+        "elapsed_ms": 0.091682
+      }
+    },
+    "native/wake-chain/32": {
+      "work": {
+        "queries": 32
+      },
+      "correctness": {
+        "awakened": 32
+      },
+      "timing": {}
+    },
+    "native/wake-chain/8": {
+      "work": {
+        "queries": 8
+      },
+      "correctness": {
+        "awakened": 8
+      },
+      "timing": {}
+    },
+    "native/wake-local/128": {
+      "work": {
+        "bounds_prepared": 0,
+        "queries": 0
+      },
+      "correctness": {
+        "sleepers": 127
+      },
+      "timing": {}
+    },
+    "native/wake-local/32": {
+      "work": {
+        "bounds_prepared": 0,
+        "queries": 0
+      },
+      "correctness": {
+        "sleepers": 31
+      },
+      "timing": {}
+    },
+    "sandbox/settled-idle": {
+      "work": {
+        "parked_bodies_woken": 0,
+        "parked_wake_retries": 0,
+        "wake_probe_broad_phase_queries": 0,
+        "wake_probe_tail_broad_phase_queries": 0,
+        "wake_probe_response_passes": 0,
+        "sampled_events": 0,
+        "tail_contacts": 0,
+        "tail_slices": 0,
+        "tail_replays": 0,
+        "tail_candidate_pairs": 0,
+        "tail_broad_phase_queries": 0,
+        "tail_broad_phase_rebuilds": 0,
+        "broad_phase_queries": 0,
+        "broad_phase_rebuilds": 0,
+        "broad_phase_incremental_updates": 0,
+        "broad_phase_reinserts": 0,
+        "broad_phase_rotations": 0,
+        "broad_phase_partial_queries": 0,
+        "broad_phase_partial_body_updates": 0,
+        "response_scratch_index_rebuilds": 0,
+        "event_response_passes": 0,
+        "stabilization_passes": 0,
+        "stabilizations_hitting_limit": 0,
+        "stabilization_candidate_pairs": 0,
+        "stabilization_exact_contacts": 0,
+        "stabilization_active_bodies": 0
+      },
+      "correctness": {
+        "replay_sha256": "e7cb00c2d032c44859efa17d82912a22438d22ba7ec04969e97b492e1cbe11c2",
+        "bodies": 18,
+        "events": 0,
+        "steps": 180
+      },
+      "timing": {
+        "mean_step_ms": 0.0005138222222227126,
+        "worst_trial_p95_ms": 0.000941000000011627
+      }
+    },
+    "sandbox/six-shots-idle": {
+      "work": {
+        "parked_bodies_woken": 6,
+        "parked_wake_retries": 3,
+        "wake_probe_broad_phase_queries": 21,
+        "wake_probe_tail_broad_phase_queries": 0,
+        "wake_probe_response_passes": 17,
+        "sampled_events": 1029,
+        "tail_contacts": 1181,
+        "tail_slices": 263,
+        "tail_replays": 0,
+        "tail_candidate_pairs": 2612,
+        "tail_broad_phase_queries": 462,
+        "tail_broad_phase_rebuilds": 6,
+        "broad_phase_queries": 2727,
+        "broad_phase_rebuilds": 6,
+        "broad_phase_incremental_updates": 95,
+        "broad_phase_reinserts": 118,
+        "broad_phase_rotations": 128,
+        "broad_phase_partial_queries": 468,
+        "broad_phase_partial_body_updates": 547,
+        "response_scratch_index_rebuilds": 6,
+        "event_response_passes": 2621,
+        "stabilization_passes": 1030,
+        "stabilizations_hitting_limit": 25,
+        "stabilization_candidate_pairs": 941,
+        "stabilization_exact_contacts": 498,
+        "stabilization_active_bodies": 3691
+      },
+      "correctness": {
+        "replay_sha256": "8633fac2fc77b60815b85ff1fe5fd4eaacee299644127f2894b6a7abbf5e3eaa",
+        "bodies": 24,
+        "events": 2210,
+        "steps": 180
+      },
+      "timing": {
+        "mean_step_ms": 5.86578747500003,
+        "worst_trial_p95_ms": 9.485979999999472
+      }
+    },
+    "sandbox/thirty-shots-walking": {
+      "work": {
+        "parked_bodies_woken": 6,
+        "parked_wake_retries": 3,
+        "wake_probe_broad_phase_queries": 20,
+        "wake_probe_tail_broad_phase_queries": 0,
+        "wake_probe_response_passes": 12,
+        "sampled_events": 901,
+        "tail_contacts": 1055,
+        "tail_slices": 237,
+        "tail_replays": 0,
+        "tail_candidate_pairs": 2755,
+        "tail_broad_phase_queries": 474,
+        "tail_broad_phase_rebuilds": 0,
+        "broad_phase_queries": 2839,
+        "broad_phase_rebuilds": 0,
+        "broad_phase_incremental_updates": 35,
+        "broad_phase_reinserts": 29,
+        "broad_phase_rotations": 26,
+        "broad_phase_partial_queries": 710,
+        "broad_phase_partial_body_updates": 765,
+        "response_scratch_index_rebuilds": 0,
+        "event_response_passes": 2814,
+        "stabilization_passes": 1453,
+        "stabilizations_hitting_limit": 84,
+        "stabilization_candidate_pairs": 1552,
+        "stabilization_exact_contacts": 1134,
+        "stabilization_active_bodies": 3664
+      },
+      "correctness": {
+        "replay_sha256": "ee3467aabb319609b02a19e00e58c6514f6b72012cafe97fc65888a83155cf3b",
+        "bodies": 18,
+        "events": 2029,
+        "steps": 240
+      },
+      "timing": {
+        "mean_step_ms": 4.07818118125,
+        "worst_trial_p95_ms": 9.89103299999988
+      }
+    },
+    "sandbox/three-shots-idle": {
+      "work": {
+        "parked_bodies_woken": 5,
+        "parked_wake_retries": 2,
+        "wake_probe_broad_phase_queries": 6,
+        "wake_probe_tail_broad_phase_queries": 0,
+        "wake_probe_response_passes": 0,
+        "sampled_events": 727,
+        "tail_contacts": 963,
+        "tail_slices": 272,
+        "tail_replays": 2,
+        "tail_candidate_pairs": 2107,
+        "tail_broad_phase_queries": 488,
+        "tail_broad_phase_rebuilds": 3,
+        "broad_phase_queries": 2258,
+        "broad_phase_rebuilds": 3,
+        "broad_phase_incremental_updates": 83,
+        "broad_phase_reinserts": 88,
+        "broad_phase_rotations": 67,
+        "broad_phase_partial_queries": 618,
+        "broad_phase_partial_body_updates": 679,
+        "response_scratch_index_rebuilds": 3,
+        "event_response_passes": 1752,
+        "stabilization_passes": 953,
+        "stabilizations_hitting_limit": 57,
+        "stabilization_candidate_pairs": 1620,
+        "stabilization_exact_contacts": 1082,
+        "stabilization_active_bodies": 2215
+      },
+      "correctness": {
+        "replay_sha256": "28b636f26465e2ffc8ae1fcab3b6eb356e6cc80f3644649c403cc35e7fa1b105",
+        "bodies": 21,
+        "events": 1690,
+        "steps": 180
+      },
+      "timing": {
+        "mean_step_ms": 3.71865590277778,
+        "worst_trial_p95_ms": 9.14872600000001
+      }
+    },
+    "sandbox/three-shots-walking": {
+      "work": {
+        "parked_bodies_woken": 5,
+        "parked_wake_retries": 3,
+        "wake_probe_broad_phase_queries": 12,
+        "wake_probe_tail_broad_phase_queries": 0,
+        "wake_probe_response_passes": 2,
+        "sampled_events": 710,
+        "tail_contacts": 1259,
+        "tail_slices": 226,
+        "tail_replays": 0,
+        "tail_candidate_pairs": 2787,
+        "tail_broad_phase_queries": 426,
+        "tail_broad_phase_rebuilds": 3,
+        "broad_phase_queries": 3064,
+        "broad_phase_rebuilds": 3,
+        "broad_phase_incremental_updates": 45,
+        "broad_phase_reinserts": 43,
+        "broad_phase_rotations": 25,
+        "broad_phase_partial_queries": 1452,
+        "broad_phase_partial_body_updates": 1575,
+        "response_scratch_index_rebuilds": 3,
+        "event_response_passes": 2530,
+        "stabilization_passes": 2243,
+        "stabilizations_hitting_limit": 224,
+        "stabilization_candidate_pairs": 3828,
+        "stabilization_exact_contacts": 2652,
+        "stabilization_active_bodies": 4836
+      },
+      "correctness": {
+        "replay_sha256": "50c2820da669eae5ccd2c980ffbdf9fc3e01e8b4b60a3fdfa3e35fd48bca7f8a",
+        "bodies": 21,
+        "events": 1969,
+        "steps": 180
+      },
+      "timing": {
+        "mean_step_ms": 4.889507255555573,
+        "worst_trial_p95_ms": 8.000282999999854
+      }
+    },
+    "sandbox/walking-no-shots": {
+      "work": {
+        "parked_bodies_woken": 2,
+        "parked_wake_retries": 2,
+        "wake_probe_broad_phase_queries": 6,
+        "wake_probe_tail_broad_phase_queries": 0,
+        "wake_probe_response_passes": 0,
+        "sampled_events": 232,
+        "tail_contacts": 321,
+        "tail_slices": 180,
+        "tail_replays": 0,
+        "tail_candidate_pairs": 657,
+        "tail_broad_phase_queries": 360,
+        "tail_broad_phase_rebuilds": 0,
+        "broad_phase_queries": 782,
+        "broad_phase_rebuilds": 0,
+        "broad_phase_incremental_updates": 16,
+        "broad_phase_reinserts": 13,
+        "broad_phase_rotations": 13,
+        "broad_phase_partial_queries": 132,
+        "broad_phase_partial_body_updates": 142,
+        "response_scratch_index_rebuilds": 0,
+        "event_response_passes": 430,
+        "stabilization_passes": 379,
+        "stabilizations_hitting_limit": 39,
+        "stabilization_candidate_pairs": 327,
+        "stabilization_exact_contacts": 262,
+        "stabilization_active_bodies": 591
+      },
+      "correctness": {
+        "replay_sha256": "1f278dcbebb99170efd5ecb9e734ab2ef0a70f74f570e90cc6657dd70c9df27e",
+        "bodies": 18,
+        "events": 553,
+        "steps": 180
+      },
+      "timing": {
+        "mean_step_ms": 0.5107344527777777,
+        "worst_trial_p95_ms": 1.7069329999999923
+      }
+    }
+  }
+}

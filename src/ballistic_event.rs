@@ -3,10 +3,11 @@ use std::{collections::BTreeSet, error::Error, fmt};
 use crate::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularVelocity3d, BallisticSphere3d,
     BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
-    BallisticSphereSweepHit3d, BodyId, BodyKind, MATERIAL_SCALE, ORIENTATION_SCALE, Orientation3d,
+    BallisticSphereSweepHit3d, BodyId, MATERIAL_SCALE, ORIENTATION_SCALE, Orientation3d,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, SampledContactTime3d, Vec3i,
-    box_inertia, sample_rigid_box_free_flight,
-    wide_ratio::{WideRatioError, mul_div_round_i128, mul_div_round_u128},
+    box_inertia,
+    numeric::{ArithmeticError, Scalar, mul_div_round_i128, mul_div_round_u128},
+    sample_rigid_box_free_flight,
 };
 
 const BALLISTIC_TIME_SCALE: u64 = 1_u64 << 32;
@@ -94,8 +95,8 @@ impl From<AngularError3d> for BallisticTimelineError3d {
     }
 }
 
-impl From<WideRatioError> for BallisticTimelineError3d {
-    fn from(_: WideRatioError) -> Self {
+impl From<ArithmeticError> for BallisticTimelineError3d {
+    fn from(_: ArithmeticError) -> Self {
         Self::ArithmeticOverflow
     }
 }
@@ -121,27 +122,28 @@ pub(crate) fn earliest_ballistic_frontier(
     boxes: &[RigidBox3d],
     projectiles: &[BallisticSphere3d],
     remaining: RigidBoxFreeFlightConfig3d,
-    resolved_pairs: &BTreeSet<(BodyId, BodyId)>,
     work: &mut BallisticStepWork3d,
 ) -> Result<Option<BallisticFrontier3d>, BallisticTimelineError3d> {
     if projectiles.is_empty() || remaining.timestep_is_zero() {
         return Ok(None);
     }
-    work.query_rounds = work.query_rounds.saturating_add(1);
+    crate::performance_counter!({
+        work.query_rounds = work.query_rounds.saturating_add(1);
+    });
 
-    let prepared_targets = projected_targets(boxes, remaining)?;
-    let scene = BallisticSphereScene3d::prepare(prepared_targets.iter())?;
+    let scene = BallisticSphereScene3d::prepare_with_velocity(boxes, |rigid_box| {
+        let end = sample_rigid_box_free_flight(rigid_box, remaining, 1, 1)?;
+        displacement_velocity(rigid_box.body.position, end.body.position)
+    })?;
     let step = scene.prepare_step(1, 1)?;
-    work.target_bound_checks = work.target_bound_checks.saturating_add(
-        u64::try_from(scene.target_count().saturating_mul(projectiles.len())).unwrap_or(u64::MAX),
-    );
 
     let mut earliest_time = None;
     let mut candidates = Vec::new();
     for projectile in projectiles.iter().copied() {
         let query = projected_projectile(projectile, remaining)?;
         let mut stats = BallisticSphereQueryStats3d::default();
-        let hit = step.earliest_hit_excluding_pairs(query, resolved_pairs, &mut stats)?;
+        let hit =
+            step.earliest_hit_with_bound_checks(query, &mut stats, &mut work.target_bound_checks)?;
         accumulate_query_stats(work, stats);
         let Some(hit) = hit else {
             continue;
@@ -188,14 +190,16 @@ pub(crate) fn advance_ballistic_spheres_to_time(
     projectiles: &mut [BallisticSphere3d],
     remaining: RigidBoxFreeFlightConfig3d,
     time: SampledContactTime3d,
-    work: &mut BallisticStepWork3d,
+    _work: &mut BallisticStepWork3d,
 ) -> Result<(), BallisticTimelineError3d> {
     if time == SampledContactTime3d::ZERO || projectiles.is_empty() {
         return Ok(());
     }
     let segment = remaining.scaled_fraction(time.numerator, time.denominator)?;
     for projectile in projectiles {
-        work.motion_samples = work.motion_samples.saturating_add(1);
+        crate::performance_counter!({
+            _work.motion_samples = _work.motion_samples.saturating_add(1);
+        });
         advance_projectile_exact(projectile, segment)?;
     }
     Ok(())
@@ -222,7 +226,7 @@ pub(crate) fn resolve_ballistic_frontier(
     projectiles: &mut Vec<BallisticSphere3d>,
     retire_on_contact: &BTreeSet<BodyId>,
     frontier: &BallisticFrontier3d,
-    work: &mut BallisticStepWork3d,
+    _work: &mut BallisticStepWork3d,
 ) -> Result<Vec<BodyId>, BallisticTimelineError3d> {
     let mut modified_targets = BTreeSet::new();
     let mut retired = BTreeSet::new();
@@ -243,12 +247,16 @@ pub(crate) fn resolve_ballistic_frontier(
         let impulse =
             apply_ballistic_target_impulse(projectile, &mut boxes[target_index], candidate.hit)?;
         if impulse != [0; 3] {
-            modified_targets.insert(candidate.hit.body);
+            if boxes[target_index].receives_physics_response() {
+                modified_targets.insert(candidate.hit.body);
+            }
             if !retire_on_contact.contains(&candidate.projectile) {
                 apply_projectile_impulse(&mut projectiles[projectile_index], impulse)?;
             }
         }
-        work.impacts = work.impacts.saturating_add(1);
+        crate::performance_counter!({
+            _work.impacts = _work.impacts.saturating_add(1);
+        });
         if retire_on_contact.contains(&candidate.projectile) {
             retired.insert(candidate.projectile);
         }
@@ -256,9 +264,11 @@ pub(crate) fn resolve_ballistic_frontier(
 
     if !retired.is_empty() {
         projectiles.retain(|projectile| !retired.contains(&projectile.id()));
-        work.retired = work
-            .retired
-            .saturating_add(u64::try_from(retired.len()).unwrap_or(u64::MAX));
+        crate::performance_counter!({
+            _work.retired = _work
+                .retired
+                .saturating_add(u64::try_from(retired.len()).unwrap_or(u64::MAX));
+        });
     }
 
     Ok(modified_targets.into_iter().collect())
@@ -280,22 +290,6 @@ pub(crate) fn compare_time(
 ) -> std::cmp::Ordering {
     (u128::from(left.numerator) * u128::from(right.denominator))
         .cmp(&(u128::from(right.numerator) * u128::from(left.denominator)))
-}
-
-fn projected_targets(
-    boxes: &[RigidBox3d],
-    remaining: RigidBoxFreeFlightConfig3d,
-) -> Result<Vec<RigidBox3d>, BallisticTimelineError3d> {
-    boxes
-        .iter()
-        .map(|rigid_box| {
-            let end = sample_rigid_box_free_flight(rigid_box, remaining, 1, 1)?;
-            let mut projected = rigid_box.clone();
-            projected.body.velocity =
-                displacement_velocity(rigid_box.body.position, end.body.position)?;
-            Ok(projected)
-        })
-        .collect()
 }
 
 fn projected_projectile(
@@ -329,7 +323,7 @@ fn advance_projectile_exact(
     projectile: &mut BallisticSphere3d,
     free_flight: RigidBoxFreeFlightConfig3d,
 ) -> Result<(), BallisticTimelineError3d> {
-    let timestep = free_flight.exact_timestep()?;
+    let timestep = free_flight.timestep()?;
     if timestep.is_zero() {
         return Ok(());
     }
@@ -377,24 +371,9 @@ fn apply_ballistic_target_impulse(
         return Ok([0; 3]);
     }
 
-    let response_scale_milli = (RESPONSE_SCALE as u128)
-        .checked_mul(u128::from(MATERIAL_SCALE))
-        .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
-    let sphere_inverse_mass = i128::try_from(mul_div_round_u128(
-        axis_length_squared,
-        response_scale_milli,
-        u128::from(projectile.response_mass_milli_units()),
-    )?)
-    .map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+    let mass = projectile.response_mass();
     let target_inverse_mass =
         body_effective_inverse_mass_scaled(target, target_offset, axis, axis_length_squared)?;
-    let effective_inverse_mass = sphere_inverse_mass
-        .checked_add(target_inverse_mass)
-        .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
-    if effective_inverse_mass <= 0 {
-        return Ok([0; 3]);
-    }
-
     let restitution = projectile
         .material()
         .restitution_milli()
@@ -403,16 +382,46 @@ fn apply_ballistic_target_impulse(
         .checked_neg()
         .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
     let mut impulse = [0_i128; 3];
-    for (output, axis_component) in impulse.iter_mut().zip(axis) {
-        *output = response_impulse_component(
-            closing_speed,
-            restitution,
-            axis_component,
-            effective_inverse_mass,
-        )?;
+    if mass == Scalar::from(projectile.mass_units()) {
+        // Preserve established whole-unit compatibility arithmetic, including diagnostic replay.
+        let sphere_inverse_mass = i128::try_from(mul_div_round_u128(
+            axis_length_squared,
+            RESPONSE_SCALE as u128,
+            u128::from(projectile.mass_units()),
+        )?)
+        .map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+        let effective_inverse_mass = sphere_inverse_mass
+            .checked_add(target_inverse_mass)
+            .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
+        if effective_inverse_mass <= 0 {
+            return Ok(impulse);
+        }
+        for (output, axis_component) in impulse.iter_mut().zip(axis) {
+            *output = response_impulse_component(
+                closing_speed,
+                restitution,
+                axis_component,
+                effective_inverse_mass,
+            )?;
+        }
+    } else {
+        // Fractional inverse mass stays floating point until the legacy impulse boundary.
+        // Q32 normals and a small mass can exceed i128 in the scaled denominator even
+        // when the final physical impulse is small and representable.
+        let effective_inverse_mass = axis_length_squared as Scalar
+            * (RESPONSE_SCALE as Scalar / mass)
+            + target_inverse_mass as Scalar;
+        let restitution_factor = 1.0 + Scalar::from(restitution) / Scalar::from(MATERIAL_SCALE);
+        for (output, axis_component) in impulse.iter_mut().zip(axis) {
+            *output = rounded_response_integer(
+                closing_speed as Scalar * axis_component as Scalar * RESPONSE_SCALE as Scalar
+                    / effective_inverse_mass
+                    * restitution_factor,
+            )?;
+        }
     }
 
-    if target.body.kind != BodyKind::Fixed {
+    if target.receives_physics_response() {
         apply_body_impulse(target, target_offset, negate_axis(impulse)?)?;
     }
     Ok(impulse)
@@ -454,13 +463,22 @@ fn apply_projectile_impulse(
     projectile: &mut BallisticSphere3d,
     impulse: [i128; 3],
 ) -> Result<(), BallisticTimelineError3d> {
-    let mass_milli = i128::from(projectile.response_mass_milli_units());
+    let mass = projectile.response_mass();
     let velocity = projectile.velocity();
-    projectile.set_velocity(Vec3i::new(
-        add_impulse_axis_milli(velocity.x, impulse[0], mass_milli)?,
-        add_impulse_axis_milli(velocity.y, impulse[1], mass_milli)?,
-        add_impulse_axis_milli(velocity.z, impulse[2], mass_milli)?,
-    ));
+    let mut next = [0; 3];
+    for (axis, current) in [velocity.x, velocity.y, velocity.z].into_iter().enumerate() {
+        next[axis] = if mass == Scalar::from(projectile.mass_units()) {
+            add_impulse_axis(current, impulse[axis], i128::from(projectile.mass_units()))?
+        } else {
+            let delta = rounded_response_integer(impulse[axis] as Scalar * (1.0 / mass))?;
+            to_i32(
+                i128::from(current)
+                    .checked_add(delta)
+                    .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
+            )?
+        };
+    }
+    projectile.set_velocity(Vec3i::new(next[0], next[1], next[2]));
     Ok(())
 }
 
@@ -470,7 +488,7 @@ fn body_effective_inverse_mass_scaled(
     axis: [i128; 3],
     axis_length_squared: u128,
 ) -> Result<i128, BallisticTimelineError3d> {
-    if rigid_box.body.kind == BodyKind::Fixed {
+    if !rigid_box.receives_physics_response() {
         return Ok(0);
     }
     let translational = i128::try_from(mul_div_round_u128(
@@ -511,7 +529,7 @@ fn apply_body_impulse(
     contact_offset: [i64; 3],
     impulse: [i128; 3],
 ) -> Result<(), BallisticTimelineError3d> {
-    if rigid_box.body.kind == BodyKind::Fixed {
+    if !rigid_box.receives_physics_response() {
         return Ok(());
     }
     let mass = i128::from(rigid_box.body.mass_units);
@@ -769,12 +787,18 @@ fn ballistic_time_to_sampled(
     })
 }
 
-fn accumulate_query_stats(work: &mut BallisticStepWork3d, stats: BallisticSphereQueryStats3d) {
-    work.broad_phase_candidates = work
-        .broad_phase_candidates
-        .saturating_add(stats.broad_phase_candidates);
-    work.toi_tests = work.toi_tests.saturating_add(stats.toi_tests);
-    work.feature_tests = work.feature_tests.saturating_add(stats.feature_tests);
+fn accumulate_query_stats(_work: &mut BallisticStepWork3d, _stats: BallisticSphereQueryStats3d) {
+    crate::performance_counter!({
+        _work.broad_phase_candidates = _work
+            .broad_phase_candidates
+            .saturating_add(_stats.broad_phase_candidates);
+    });
+    crate::performance_counter!({
+        _work.toi_tests = _work.toi_tests.saturating_add(_stats.toi_tests);
+    });
+    crate::performance_counter!({
+        _work.feature_tests = _work.feature_tests.saturating_add(_stats.feature_tests);
+    });
 }
 
 fn add_impulse_axis(
@@ -789,17 +813,14 @@ fn add_impulse_axis(
     )
 }
 
-fn add_impulse_axis_milli(
-    current: i32,
-    impulse: i128,
-    mass_milli: i128,
-) -> Result<i32, BallisticTimelineError3d> {
-    let delta = mul_div_round_i128(impulse, i128::from(MATERIAL_SCALE), mass_milli)?;
-    to_i32(
-        i128::from(current)
-            .checked_add(delta)
-            .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
-    )
+// The positive i128 endpoint is exclusive because float-to-integer casts otherwise saturate.
+fn rounded_response_integer(value: Scalar) -> Result<i128, BallisticTimelineError3d> {
+    const LIMIT: Scalar = 170_141_183_460_469_231_731_687_303_715_884_105_728.0;
+    let rounded = value.round();
+    if !rounded.is_finite() || !(-LIMIT..LIMIT).contains(&rounded) {
+        return Err(BallisticTimelineError3d::ArithmeticOverflow);
+    }
+    Ok(rounded as i128)
 }
 
 fn add_angular_axis(current: i32, delta: i128) -> Result<i32, BallisticTimelineError3d> {
@@ -924,6 +945,32 @@ mod timeline_time_tests {
         MATERIAL_SCALE, RESPONSE_SCALE, TIMELINE_TIME_SCALE, ballistic_time_to_sampled,
         checked_add, checked_mul, response_impulse_component,
     };
+
+    #[test]
+    fn floating_response_boundary_rejects_non_finite_and_overflowing_values() {
+        let limit = 170141183460469231731687303715884105728.0;
+        for value in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            limit,
+            -2.0 * limit,
+        ] {
+            assert!(super::rounded_response_integer(value).is_err());
+        }
+        assert_eq!(
+            super::rounded_response_integer(-limit).expect("inclusive minimum"),
+            i128::MIN
+        );
+        assert_eq!(
+            super::rounded_response_integer(1.5).expect("rounded response"),
+            2
+        );
+        assert_eq!(
+            super::rounded_response_integer(-1.5).expect("rounded response"),
+            -2
+        );
+    }
 
     #[test]
     fn zero_q32_hit_rounds_up_to_first_positive_timeline_tick() {

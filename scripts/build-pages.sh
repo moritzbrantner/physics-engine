@@ -13,6 +13,9 @@ cargo build \
   --release \
   --locked
 
+node scripts/check-diagnostic-exports.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm production
+
 node --input-type=module <<'NODE'
 import { readFile } from "node:fs/promises";
 
@@ -22,8 +25,19 @@ const bytes = await readFile(
 const { instance } = await WebAssembly.instantiate(bytes, {});
 const exports = instance.exports;
 const requiredFunctions = [
+  "approximate_reset_tower",
+  "approximate_position_stat",
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
+  "sandbox_reset_tower_with_baking_options",
+  "sandbox_reset_parkour_with_baking_options",
+  "sandbox_step_velocity",
+  "sandbox_body_count",
+  "sandbox_numeric_backend",
+  "sandbox_body_sleeping",
+  "sandbox_last_response_authority_body_count",
+  "sandbox_last_parked_bodies_woken",
+  "sandbox_last_parked_wake_retries",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -39,12 +53,31 @@ for (const name of requiredFunctions) {
     throw new Error(`missing WASM sandbox export: ${name}`);
   }
 }
+if (exports.sandbox_numeric_backend() !== 64) {
+  throw new Error("Pages must use the production f64 numerical backend, not exact-reference");
+}
 if (!(exports.memory instanceof WebAssembly.Memory)) {
   throw new Error("WASM module does not export linear memory for the render snapshot");
 }
 
 if (exports.sandbox_reset_with_baking_options(0, 0, 0) !== 0) {
   throw new Error("runtime fixed-geometry reference mode failed to initialize");
+}
+if (exports.sandbox_reset_tower_with_baking_options(0, 0, 0) !== 0) {
+  throw new Error("tower scenario failed to initialize");
+}
+if (exports.sandbox_body_count() !== 44) {
+  throw new Error(`tower scenario expected 44 bodies, got ${exports.sandbox_body_count()}`);
+}
+
+if (exports.sandbox_reset_parkour_with_baking_options(0, 0, 0) !== 0) {
+  throw new Error("parkour scenario failed to initialize");
+}
+if (exports.sandbox_body_count() !== 48) {
+  throw new Error(`parkour scenario expected 48 bodies, got ${exports.sandbox_body_count()}`);
+}
+if (exports.sandbox_step_velocity(0, 0, 0) !== 0) {
+  throw new Error(`parkour scenario failed its first physics tick, detail ${exports.sandbox_error_detail()}`);
 }
 if (
   exports.sandbox_fixed_geometry_mode() !== 0 ||
@@ -91,6 +124,17 @@ if (pointer < 0 || byteEnd > exports.memory.buffer.byteLength) {
 }
 new Int32Array(exports.memory.buffer, pointer, length);
 NODE
+
+# Exercise the real shipped WASM, including sleep/retirement, rather than only counting bodies.
+node scripts/benchmark-projectile-wake.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  demo-wasm/target/pages-projectile-wake.json
+
+# The canonical page is a different consumer from the comparison page: exercise its real adapter.
+TOWER_TICKS=600 node scripts/test-tower-runtime.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  demo-wasm/target/pages-tower-runtime.json
+node --test site/tower-runtime.test.mjs
 
 node --input-type=module --check < site/app.js
 node --input-type=module --check < site/webgpu-renderer.js
@@ -139,6 +183,7 @@ const wasm = await readFile("pages-dist/physics_engine_demo.wasm");
 const settingsWasm = await readFile("pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm");
 const provenance = {
   schema_version: 1,
+  numerical_backend: "float64",
   repository: "moritzbrantner/physics-engine",
   revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   wasm_sha256: createHash("sha256").update(wasm).digest("hex"),
@@ -155,6 +200,8 @@ NODE
 test -s pages-dist/index.html
 test -s pages-dist/catalog.css
 test -s pages-dist/scenarios/sandbox/index.html
+test -s pages-dist/scenarios/tower/index.html
+test -s pages-dist/scenarios/parkour/index.html
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
 test -s pages-dist/physics-settings.mjs
@@ -172,3 +219,6 @@ test -s pages-dist/vendor/settings/settings-browser.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm
 test -s pages-dist/vendor/settings/SOURCE_SHA
+
+test -s pages-dist/scenarios/fixed-step/index.html
+test -s pages-dist/fixed-step-lab.js
