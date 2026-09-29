@@ -203,7 +203,7 @@
     {
       "id": "thirty-shots-walking",
       "kind": "stress",
-      "description": "Deterministic high-projectile walking workload reproducing the population-driven stabilization and tail pressure seen in interactive browser sessions.",
+      "description": "Thirty equal-density light spheres under walking input. PR150 intentionally changes contact/wake patterns; epoch 4 records the complete trace and exact observed work ceilings. Other workloads keep their previous limits.",
       "dimensions": {
         "ticks": 240,
         "projectiles": 30,
@@ -224,7 +224,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "max": 3179
+            "max": 3503
           }
         },
         {
@@ -234,7 +234,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "max": 1051
+            "max": 2124
           }
         },
         {
@@ -254,7 +254,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "max": 4449
+            "max": 6462
           }
         },
         {
