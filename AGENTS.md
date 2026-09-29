@@ -2,7 +2,7 @@
 
 ## Authority
 
-This repository owns reusable physics semantics. Keep ECS, rendering, game-loop, scene, editor and UI concepts outside the engine.
+This repository owns reusable physics semantics. Domain-neutral geometry and algorithm kernels belong in `rust-kernels`; Physics Engine should consume those kernels rather than duplicate them, while retaining authority over body/world state, contact persistence, CCD admission, wake/sleep policy, and response. Keep ECS, rendering, game-loop, scene, editor and UI concepts outside the engine.
 
 ## Numerical policy
 
