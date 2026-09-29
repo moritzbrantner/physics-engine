@@ -37,8 +37,10 @@ repeatable. Cross-target or cross-compiler bit identity is a separate acceptance
 explicit native/WASM and architecture coverage; merely using either floats or integers does not
 establish that claim.
 
-This change does **not** replace the box-contact solver or cure the known free-rotating tower
-convergence failure. Default-path correctness tests do not stand in for that acceptance case.
+The arithmetic migration did **not** replace the box-contact solver or cure the legacy rotating-event
+tower failure. Later work moved the canonical Tower Stability runtime to `approximate::World` with
+bounded fixed-contact position correction; its recorded volley matrix passes. This remains a specific
+acceptance result, not a general dense-contact repair. See [the tower runtime](tower-stability.md).
 
 ## Safety and tolerances
 
@@ -82,8 +84,10 @@ The tower matrix uses the real Pages reset and projectile exports for physical/l
 modes, free/upright crates, and sphere/arrow/rigid projectiles. Each case runs twice by default,
 checks the observable replay, verifies that the projectile changes the crates, and records failed
 steps and raw timings. A failure sets a nonzero exit status. `--report-only` is an explicit
-investigation mode; it writes the same failures and does not relabel them as passes. This matrix
-remains a failing acceptance diagnostic until the box-contact redesign completes.
+investigation mode; it writes the same failures and does not relabel them as passes. This legacy event-solver matrix
+remains a separate failing diagnostic. Canonical floating-state acceptance runs through
+`node scripts/test-tower-runtime.mjs engine.wasm tower-runtime.json`, as required by the Pages build.
+Neither matrix substitutes for the other.
 
 Wall-clock measurements are advisory, recorded separately from behavioral assertions. Do not
 claim a speedup for an incomplete or failed simulation compared with a completed one.

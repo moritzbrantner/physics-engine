@@ -15,9 +15,14 @@ fractions. The optional `exact-reference` Cargo feature exists only for diagnost
 with the historical implementation; it is not used by Pages. The existing integer body and
 geometry APIs remain compatibility surfaces in this first migration, not the model for new work.
 
-Read [the numerical policy and migration boundary](docs/numerics.md). The free-rotating tower
-contact-convergence problem remains a separate solver defect; changing number types alone is
-not a claim to have fixed it.
+Read [the numerical policy and migration boundary](docs/numerics.md). The canonical Tower Stability
+scenario uses the bounded floating-state solver and passes its recorded volley acceptance. The legacy
+event-solver tower and general dense-contact quality remain separate limitations; see
+[the tower runtime contract](docs/tower-stability.md) and issue #193.
+
+For consumer API selection, current capability status, and integer-tick to persistent-f64 conversion,
+read [the supported world APIs and migration contract](docs/world-api-contract.md). A dependency update
+does not itself migrate a consumer to another world surface.
 
 ## Fixed-step comparison
 
@@ -110,7 +115,8 @@ The fixture currently exercises:
 - pause, reset and single-step controls for inspecting deterministic behavior;
 - lightweight per-tick collision/broad-phase evidence from the actual `World` step report.
 
-The legacy acceptance player remains box-shaped because that sandbox still uses the translational/AABB-only `World` path. The f64 fixed-step engine now owns capsule and wedge/ramp collision geometry; wiring those primitives into a dedicated character-controller scenario remains a consumer-facing follow-up rather than renderer-owned collision logic. Rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
+The General Sandbox player remains a rotation-locked box on `RotatingWorld3d`. The original translational
+`World` is a separate compatibility API used by existing games. The f64 fixed-step engine now owns capsule and wedge/ramp collision geometry; wiring those primitives into a dedicated character-controller scenario remains a consumer-facing follow-up rather than renderer-owned collision logic. Rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
 
 ## Contact-triggered parked-body activation
 
