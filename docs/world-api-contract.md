@@ -111,6 +111,46 @@ friction_f64       = friction_milli / 1000
 Keep `BodyId` stable. Preserve relative mass ratios; do not invent a mass-unit conversion unless the
 consumer has an external physical unit contract.
 
+### Gravity, force and impulse meanings
+
+The compatibility `World` does **not** expose a public force or impulse command. Its `gravity` is an
+integer velocity delta per engine tick that is applied before motion. Therefore there is no honest
+force/impulse value to mechanically copy from `World`; a consumer that introduces those commands must
+define their physical meaning instead of relabeling an old gameplay number.
+
+In `approximate::World` the public quantities have ordinary second-based meanings:
+
+- `gravity` is acceleration in distance units per second squared;
+- `Body::mass` is the mass scale used by response and by force/impulse integration;
+- `add_force(id, F)` accumulates force for the next step; the solver applies `F / mass` as acceleration
+  during that step's substeps and clears accumulated force after a successful step;
+- `apply_impulse(id, J, point)` is an instantaneous momentum change applied before the first substep:
+  linear velocity changes by `J / mass`, and the off-center component contributes angular impulse through
+  the lever arm;
+- collider dimensions use the same distance conversion as positions; box dimensions in both APIs are
+  **half extents**, not full widths.
+
+Because `World` has no force/impulse API, conversion tests should compare the common position, velocity,
+gravity, mass/material and collision boundary first. New force/impulse gameplay needs its own acceptance
+fixture with units stated explicitly.
+
+### Query result conventions
+
+Do not normalize different query surfaces in game code by inventing missing data:
+
+- `World::overlap_query` returns matching `BodyId` values in stable `BodyId` order.
+- `World::cast_aabb` and `World::ray_cast` query the **current snapshot**: target body velocities are
+  intentionally ignored. Hits are ordered by time of impact and then `BodyId`. An initial overlap is
+  reported at time zero with `normal: None`; swept hits carry a contact normal.
+- `World::ray_cast_first` has the same ordering semantics without allocating the complete hit list.
+- `RotatingWorld3d::overlap_query` exposes exact current oriented-box overlap identities.
+  `body_contacts` is subject-relative: contacts are ordered by the other `BodyId` and its SAT axis is
+  oriented from the queried subject toward that body. `body_overlaps` is the sensor/trigger seam and does
+  not promote overlaps into solver contacts.
+- `approximate::World` does not yet expose a general ray/cast/overlap query contract. `has_support` is
+  a solver-facing support predicate, not a substitute for physical query results. Consumers must wait for
+  #194 rather than reconstructing a second query engine from exported body state.
+
 The executable compatibility test in `tests/world_migration_contract.rs` uses `U = 1` and
 `T = 60` and proves the no-contact, one-substep integration boundary against the compatibility
 `World`. It intentionally does **not** claim cross-solver contact equivalence: contact manifolds,
@@ -156,6 +196,27 @@ slice proves all of the guarantees it actually needs:
 
 Until those conditions are demonstrated, `World` remains supported for its existing consumers and
 `approximate::World` remains explicitly limited rather than being renamed or substituted silently.
+
+## Owning issues for missing migration prerequisites
+
+Missing behavior stays visible and owned upstream:
+
+| Missing or limited prerequisite | Owning issue |
+| --- | --- |
+| General ray/overlap/sphere/capsule casts, stable feature-rich query results, and reusable character collide-and-slide | #194 |
+| Heightfield/terrain support integrated through that query contract | #195 |
+| Dense/resting contact quality beyond the currently passing bounded fixtures | #193 |
+| Complete primitive-pair specialization/quality coverage where a consumer needs it | #183 |
+| Static arbitrary triangle-mesh collision | #182 |
+| General CCD ownership beyond today's translational sweeps, sampled rotation, and dedicated ballistic lane | #3 |
+| Failure-safe floating steps and continuation-complete physical checkpoints | #198 |
+| Supported native/WASM consumer seams beyond scenario-specific demo adapters | #201 |
+| Same-mode/cross-solver/cross-target reference evidence and deterministic ratchets | #202 |
+| Portable physical failure replay/debug capture for consumer failures | #203 |
+
+Compatibility-only omissions such as collision layers on the old translational `World` are not invitations
+to extend it indefinitely. If a migration requires a capability, add it to the destination world under the
+owning issue and prove it with that consumer; do not build a game-local fallback.
 
 ## Compiling examples
 
