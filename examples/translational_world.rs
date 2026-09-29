@@ -15,6 +15,9 @@ fn main() -> Result<(), PhysicsError> {
     ))?;
     world.step(1)?;
 
-    assert_eq!(world.body(id).expect("body remains").position(), Vec3i::new(1, 0, 0));
+    assert_eq!(
+        world.body(id).expect("body remains").position(),
+        Vec3i::new(1, 0, 0)
+    );
     Ok(())
 }
