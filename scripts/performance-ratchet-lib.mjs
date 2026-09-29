@@ -49,6 +49,12 @@ export function compareRows(baseline, candidate) {
   return improvements;
 }
 
+export function validateNativeTests(stdout, expected) {
+  const available = new Set(stdout.split("\n").filter((line) => line.endsWith(": test"))
+    .map((line) => line.slice(0, -6)));
+  for (const name of expected) assert(available.has(name), `missing native fixture test ${name}`);
+}
+
 export function parseNative(stdout, expected) {
   const rows = {};
   const marker = "PERFORMANCE_RATCHET ";

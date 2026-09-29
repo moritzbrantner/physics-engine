@@ -36,6 +36,8 @@ pub struct RotatingWorld3d {
     parked: BTreeMap<BodyId, RigidBox3d>,
     parked_wake_index: RotatingBoundsIndex3d,
     active_dynamic_count: usize,
+    #[cfg(test)]
+    dependency_queries: std::cell::Cell<usize>,
 }
 
 impl RotatingWorld3d {
@@ -46,6 +48,8 @@ impl RotatingWorld3d {
             parked: BTreeMap::new(),
             parked_wake_index: RotatingBoundsIndex3d::default(),
             active_dynamic_count: 0,
+            #[cfg(test)]
+            dependency_queries: std::cell::Cell::new(0),
         }
     }
 
@@ -150,6 +154,7 @@ impl RotatingWorld3d {
             .unwrap_or_else(|_| self.parked.keys().copied().collect());
         let removed = if self.parked.contains_key(&id) {
             self.active.remove_box(id)?;
+            self.parked_wake_index.remove(id);
             self.parked.remove(&id)?
         } else {
             let removed = self.active.remove_box(id)?;
@@ -161,11 +166,9 @@ impl RotatingWorld3d {
         self.active.clear_body_interaction_category(id);
 
         for dependent in dependents {
-            self.unpark_without_index(dependent)
+            self.unpark_body(dependent)
                 .expect("parked bodies are valid and disjoint from active dynamics");
         }
-        self.rebuild_parked_wake_index()
-            .expect("remaining parked geometry is valid");
         Some(removed)
     }
 
@@ -300,11 +303,10 @@ impl RotatingWorld3d {
                     }
                     let island = self.contact_dependents(id, true)?;
                     for body in island {
-                        if self.unpark_without_index(body)? {
+                        if self.unpark_body(body)? {
                             changed_body_ids.insert(body);
                         }
                     }
-                    self.rebuild_parked_wake_index()?;
                     wake_retries += 1;
                 }
             }
@@ -352,7 +354,6 @@ impl RotatingWorld3d {
                 })
             })
             .collect::<Vec<_>>();
-        let mut parked_any = false;
 
         for id in sleepers {
             let rigid_box = self
@@ -363,27 +364,25 @@ impl RotatingWorld3d {
             self.active.transition_parked_body(id, BodyKind::Fixed)?;
             self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
             self.parked.insert(id, rigid_box);
-            parked_any = true;
-        }
-        if parked_any {
-            self.rebuild_parked_wake_index()?;
+            self.parked_wake_index
+                .insert_stationary(&self.parked[&id])
+                .map_err(map_broad_phase_error)?;
         }
         Ok(())
     }
 
     fn unpark(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
-        if self.unpark_without_index(id)? {
-            self.rebuild_parked_wake_index()?;
-        }
+        self.unpark_body(id)?;
         Ok(())
     }
 
-    fn unpark_without_index(&mut self, id: BodyId) -> Result<bool, RotatingWorldError3d> {
+    fn unpark_body(&mut self, id: BodyId) -> Result<bool, RotatingWorldError3d> {
         if !self.parked.contains_key(&id) {
             return Ok(false);
         }
         self.active.transition_parked_body(id, BodyKind::Dynamic)?;
         self.parked.remove(&id);
+        self.parked_wake_index.remove(id);
         self.active_dynamic_count = self.active_dynamic_count.saturating_add(1);
         Ok(true)
     }
@@ -391,15 +390,9 @@ impl RotatingWorld3d {
     fn unpark_all(&mut self) -> Result<(), RotatingWorldError3d> {
         let ids = self.parked.keys().copied().collect::<Vec<_>>();
         for id in ids {
-            self.unpark_without_index(id)?;
+            self.unpark_body(id)?;
         }
-        self.rebuild_parked_wake_index()
-    }
-
-    fn rebuild_parked_wake_index(&mut self) -> Result<(), RotatingWorldError3d> {
-        self.parked_wake_index
-            .rebuild_stationary(self.parked.values())
-            .map_err(map_broad_phase_error)
+        Ok(())
     }
 
     /// Traverse dynamic contact dependencies only. A shared fixed floor is not an island edge.
@@ -426,6 +419,9 @@ impl RotatingWorld3d {
                 source,
                 RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
             )?;
+            #[cfg(test)]
+            self.dependency_queries
+                .set(self.dependency_queries.get() + 1);
             let mut candidates = self.parked_wake_index.overlapping_ids(bounds).body_ids;
             // The raw current-contact graph excludes parked↔parked (fixed proxy) pairs;
             // the parked index above supplies those edges using original dynamic geometry.
@@ -650,5 +646,141 @@ mod tests {
         assert!(world.parked.is_empty());
         assert!(world.active.box_by_id(BodyId(9)).is_some());
         assert_eq!(world.boxes().count(), 1);
+    }
+    #[test]
+    #[ignore = "release-mode contact-cache reuse across sleep transitions"]
+    fn sleep_transition_contact_reuse_benchmark() {
+        for count in [32, 128, 512] {
+            let mut world = world();
+            for index in 0..count {
+                world
+                    .add_box(dynamic(
+                        index as u64 + 1,
+                        Vec3i::new((index / 2) * 16 + (index % 2) * 2, 0, 0),
+                        Vec3i::ZERO,
+                    ))
+                    .unwrap();
+            }
+            settle(&mut world, BodyId(1));
+            let query_all = |world: &RotatingWorld3d| {
+                for id in 1..=count as u64 {
+                    let contacts = world.body_contacts(BodyId(id)).unwrap();
+                    assert_eq!(contacts.len(), 1);
+                    assert_eq!(
+                        contacts[0].other,
+                        BodyId(if id % 2 == 1 { id + 1 } else { id - 1 })
+                    );
+                }
+            };
+            query_all(&world);
+            let before = world.active.current_contact_cache_stats();
+            let start = std::time::Instant::now();
+            for _ in 0..4 {
+                world.set_linear_velocity(BodyId(1), Vec3i::ZERO).unwrap();
+                query_all(&world);
+                settle(&mut world, BodyId(1));
+                query_all(&world);
+                assert_eq!(world.sleeping_body_count(), count as usize);
+            }
+            let elapsed = start.elapsed();
+            let after = world.active.current_contact_cache_stats();
+            crate::performance_ratchet::record(
+                &format!("sleep-transition/{count}"),
+                &[
+                    ("graph_builds", after.0 - before.0),
+                    ("subject_rebuilds", after.1 - before.1),
+                ],
+                &[
+                    ("queries", 8 * count as u64),
+                    ("contacts", 8 * count as u64),
+                    ("cycles", 4),
+                ],
+                &[("elapsed_ms", elapsed.as_secs_f64() * 1_000.0)],
+            );
+        }
+    }
+
+    #[test]
+    fn contact_island_queries_each_source_once_in_a_touching_chain() {
+        for count in [8, 32] {
+            let mut world = world();
+            for index in 0..count {
+                world
+                    .add_box(dynamic(
+                        index as u64 + 1,
+                        Vec3i::new(index * 2, 0, 0),
+                        Vec3i::ZERO,
+                    ))
+                    .unwrap();
+            }
+            world
+                .add_box(dynamic(999, Vec3i::new(10_000, 0, 0), Vec3i::ZERO))
+                .unwrap();
+            settle(&mut world, BodyId(1));
+            world.dependency_queries.set(0);
+            // This is the contact-island traversal used after the narrow phase admits a hit.
+            // Sweep proximity is deliberately not an activation mechanism.
+            let island = world.contact_dependents(BodyId(1), true).unwrap();
+            assert_eq!(island, (1..=count as u64).map(BodyId).collect());
+            assert_eq!(world.dependency_queries.get(), count as usize);
+            for id in &island {
+                world.unpark(*id).unwrap();
+                assert!(!world.is_sleeping(*id));
+            }
+            assert!(world.is_sleeping(BodyId(999)));
+            crate::performance_ratchet::record(
+                &format!("wake-chain/{count}"),
+                &[("queries", world.dependency_queries.get() as u64)],
+                &[("awakened", island.len() as u64)],
+                &[],
+            );
+        }
+    }
+
+    #[test]
+    fn waking_one_body_keeps_other_sleepers_prepared() {
+        for count in [32, 128] {
+            let mut world = world();
+            for index in 0..count {
+                world
+                    .add_box(dynamic(
+                        index as u64 + 1,
+                        Vec3i::new(index * 16, 0, 0),
+                        Vec3i::ZERO,
+                    ))
+                    .unwrap();
+            }
+            settle(&mut world, BodyId(1));
+            let preparations = world.parked_wake_index.bounds_preparations;
+            world.dependency_queries.set(0);
+            world
+                .set_linear_velocity(BodyId(1), Vec3i::new(-1, 0, 0))
+                .unwrap();
+            assert_eq!(
+                world.parked_wake_index.bounds_preparations, preparations,
+                "waking one body must not re-prepare unchanged sleeping geometry"
+            );
+            assert_eq!(world.sleeping_body_count(), count as usize - 1);
+            let report = world.step(1, 60).unwrap();
+            assert_eq!(report.stats.parked_wake_retries, 0);
+            assert_eq!(report.stats.parked_bodies_woken, 0);
+            assert_eq!(
+                world.dependency_queries.get(),
+                0,
+                "a miss does not traverse contact islands"
+            );
+            crate::performance_ratchet::record(
+                &format!("wake-local/{count}"),
+                &[
+                    (
+                        "bounds_prepared",
+                        (world.parked_wake_index.bounds_preparations - preparations) as u64,
+                    ),
+                    ("queries", world.dependency_queries.get() as u64),
+                ],
+                &[("sleepers", world.sleeping_body_count() as u64)],
+                &[],
+            );
+        }
     }
 }

@@ -38,7 +38,7 @@ shared runners and changing host load do not support reliable absolute milliseco
 | Sparse ballistic targets: 32 / 256 / 2,048 | Actual target-bound checks; 256 successful hits |
 | Stationary query cache: 32 / 256 / 2,048 | Bound preparations and subject rebuilds over 64 changing generations; fixed query volume |
 | Touching wake chains: 8 / 32 | Wake queries and number of awakened bodies |
-| Local wake: 32 / 128 sleepers | Neighbor bounds prepared, awake sources visited, query count, remaining sleepers |
+| Local wake: 32 / 128 sleepers | Unchanged bounds prepared, contact-island query count, remaining sleepers |
 | Repeated wake/park: 32 / 128 / 512 bodies | Subject and graph rebuilds over four cycles; every paired contact remains exact |
 | SAT projection | Actual dot-product calls and parity with eight-vertex projection |
 | Prepared SAT | Query/contact counts; candidate and reference timings recorded |
@@ -111,3 +111,33 @@ point onward, record each accepted improvement as its own ledger entry to trace 
 The sleep-transition coverage entry adds three scenarios before optimizing them. Its new workload epoch
 preserves all original ceilings and replay fingerprints; the following optimization entry tightens the
 new counters within that epoch. This keeps the measured before/after evidence in the ledger.
+
+## Contact-triggered wake reconciliation
+
+The first two epochs measured the pre-migration proximity-wake implementation. Its wake-chain and
+local-wake tests were lost when #152 replaced swept-proximity waking with contact-triggered activation;
+the sleep-transition fixture was listed but omitted from the committed source. The archived source
+snapshot for entry 0003 restores the original paired-contact fixture and its unchanged ceilings:
+zero graph builds and 12 subject rebuilds over four cycles at each population size.
+
+The replacement wake-chain fixture exercises the current contact-island traversal after contact
+admission, visits each 8/32-body chain member once, and keeps a disconnected body asleep. Local waking
+of one body among 32/128 sleepers performs no contact-island traversal for its subsequent miss. Parking,
+activation and removal now insert/remove affected BVH leaves instead of rebuilding all parked bounds;
+explicit waking therefore prepares zero unchanged bounds. Real-impact, shielding, ricochet, independent
+island and support-removal acceptance remains in `tests/projectile_wake_admission.rs`.
+
+A new epoch records the already-landed #152 numerical/contact-wake semantics. The previous archived
+WASM replay differs from current main in five active scenarios; settled idle is identical. This is not
+a numerical- or wake-policy change made by this reconciliation. Against current main, all six candidate
+replay hashes, events and previously exported work counters must match. Additional raw activation and
+probe counters make discarded work independently inspectable instead of hiding it in combined totals.
+
+The legacy query ceilings change only where the admitted-contact repair already introduced additional
+probe work: walking 776 → 782, three shots while walking 3,052 → 3,064, and six idle shots 2,718 → 2,727.
+The walking/three-shot differences are exactly 6/12 discarded probe queries. Six idle shots now
+perform 2,706 committed queries plus 21 probe queries, compared with the historical 2,718 committed
+queries. Other absolute ceilings remain unchanged. The append-only history preserves earlier evidence, records
+all increases/decreases explicitly, and enforces the current completed workload thereafter. The runner
+now verifies every exact native test name before collecting release measurements, so a removed/renamed
+fixture fails before the expensive benchmark rather than succeeding with zero tests.
