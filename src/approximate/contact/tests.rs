@@ -1,5 +1,31 @@
 use super::*;
 
+#[test]
+fn box_edge_contact_keeps_the_midpoint_of_tied_support_features() {
+    let a = Body::new(crate::BodyId(1), Shape::Box(V(1.0, 2.0, 3.0)), V::ZERO, 1.0);
+    let b = Body::new(
+        crate::BodyId(2),
+        Shape::Box(V(1.0, 2.0, 3.0)),
+        V(1.9, 0.0, 0.0),
+        1.0,
+    );
+    let mut work = GeometryStats::default();
+    let manifold = box_points(
+        &a,
+        &b,
+        0.0,
+        (-0.1, V::X, 6),
+        [a.orientation.axes(), b.orientation.axes()],
+        &mut work,
+        &mut ClipScratch::default(),
+    )
+    .unwrap();
+    let point = manifold.points.into_iter().next().unwrap();
+    assert_eq!(point.ra, V(0.95, 0.0, 0.0));
+    assert_eq!(point.rb, V(-0.95, 0.0, 0.0));
+    assert_eq!(work.support_evaluations, 2);
+}
+
 // Independent pre-change allocating clipper; this is a test oracle, not a production path.
 fn reference_clip(input: &[V], n: V, limit: Scalar) -> Vec<V> {
     let mut out = Vec::with_capacity(8);

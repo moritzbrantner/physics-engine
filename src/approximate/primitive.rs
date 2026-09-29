@@ -7,7 +7,7 @@ use super::{Body, Shape, Vector as V, geometry::GeometryStats};
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveWork3,
     bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
-    support_point as kernel_support_point, swept_time as kernel_swept_time,
+    swept_time as kernel_swept_time,
 };
 
 #[cfg(test)]
@@ -30,13 +30,6 @@ pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool)
 
 pub(super) fn bounds_extents(body: &Body) -> V {
     from_array(kernel_bounds(kernel_body(body)))
-}
-
-pub(super) fn support_point_counted(body: &Body, direction: V, work: &mut GeometryStats) -> V {
-    let mut kernel_work = PrimitiveWork3::default();
-    let point = kernel_support_point(kernel_body(body), to_array(direction), &mut kernel_work);
-    accumulate_work(work, kernel_work);
-    from_array(point)
 }
 
 #[cfg(test)]

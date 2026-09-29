@@ -134,8 +134,21 @@ fn clip_into(input: &[V], n: V, limit: Scalar, out: &mut Vec<V>) {
     }
 }
 
-fn support(b: &Body, n: V, work: &mut GeometryStats) -> V {
-    primitive::support_point_counted(b, n, work)
+/// Contact policy selects the center of tied box features, preserving the lever arm.
+/// The shared kernel may choose any extreme point for a geometric support query.
+fn box_contact_support(b: &Body, n: V, work: &mut GeometryStats) -> V {
+    let Shape::Box(half) = b.shape else {
+        unreachable!()
+    };
+    work.support_evaluations += 1;
+    let mut point = b.position;
+    for (index, axis) in b.orientation.axes().into_iter().enumerate() {
+        let dot = n.dot(axis);
+        if dot.abs() > 1e-12 {
+            point += axis * (half.at(index) * dot.signum());
+        }
+    }
+    point
 }
 /// Shape/orientation-dependent support projections. Centers are deliberately not cached here.
 #[derive(Clone, Debug, Default)]
@@ -384,8 +397,8 @@ fn box_points(
         }
     }
     if points.is_empty() {
-        let a_support = support(a, n, work);
-        let b_support = support(b, -n, work);
+        let a_support = box_contact_support(a, n, work);
+        let b_support = box_contact_support(b, -n, work);
         let p = (a_support + b_support) * 0.5;
         points.push(Point {
             ra: p - a.position,
