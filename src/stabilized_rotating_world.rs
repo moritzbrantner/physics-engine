@@ -348,6 +348,11 @@ impl RotatingWorld3d {
         self.inner.body_overlaps(body)
     }
 
+    #[cfg(test)]
+    pub(crate) fn current_contact_cache_stats(&self) -> (u64, u64, u64, u64) {
+        self.inner.current_contact_cache_stats()
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
