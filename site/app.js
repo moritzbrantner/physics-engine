@@ -44,8 +44,14 @@ const projectileShortcuts = new Map(
   ]),
 );
 const scenarioId = document.body.dataset.scenario ?? "sandbox";
+const scenarioResetExport = new Map([
+  ["sandbox", "sandbox_reset_with_baking_options"],
+  ["tower", "sandbox_reset_tower_with_baking_options"],
+  ["parkour", "sandbox_reset_parkour_with_baking_options"],
+]).get(scenarioId);
+if (!scenarioResetExport) throw new Error(`Unknown physics scenario: ${scenarioId}`);
 const scenarioDefaults =
-  scenarioId === "tower"
+  scenarioId === "tower" || scenarioId === "parkour"
     ? { character: "physical", crates: "free", bake: "load" }
     : { character: "linear", crates: "upright", bake: "load" };
 const characterParameters = new URLSearchParams(window.location.search);
@@ -198,10 +204,7 @@ function selectProjectileType(projectileType) {
 
 function reset() {
   if (!engine || !renderer) return;
-  const resetWithOptions =
-    scenarioId === "tower"
-      ? engine.sandbox_reset_tower_with_baking_options
-      : engine.sandbox_reset_with_baking_options;
+  const resetWithOptions = engine[scenarioResetExport];
   if (
     typeof resetWithOptions !== "function" ||
     resetWithOptions(
@@ -244,7 +247,9 @@ function reset() {
   status.textContent =
     scenarioId === "tower"
       ? `Tower ready · fixed-step f64. WASD moves, Space jumps, F shoots, 1/2/3 selects a projectile. Rendering with ${renderer.backend}.`
-      : `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
+      : scenarioId === "parkour"
+        ? `Parkour ready · moving platforms and obstacles use engine-owned collision response. WASD moves, Space jumps, and R resets the course. Rendering with ${renderer.backend}.`
+        : `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
 function movementVelocity() {
@@ -882,14 +887,13 @@ try {
   if (typeof engine.sandbox_step_velocity !== "function") {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
-  if (scenarioId !== "tower" && (
-    typeof engine.sandbox_reset_with_baking_options !== "function" ||
-    (scenarioId === "tower" &&
-      typeof engine.sandbox_reset_tower_with_baking_options !== "function") ||
-    typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
-    typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
-  )) {
-    throw new Error("WASM sandbox does not expose fixed geometry comparison controls");
+  if (
+    typeof engine[scenarioResetExport] !== "function" ||
+    (scenarioId !== "tower" &&
+      (typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
+        typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"))
+  ) {
+    throw new Error("WASM sandbox does not expose the selected scenario controls");
   }
   ensureCrosshair();
   characterModeControl.disabled = false;

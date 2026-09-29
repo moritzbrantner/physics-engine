@@ -259,7 +259,7 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
     validate_config(config)?;
 
     let mut work = RepeatedRotatingEventWorkStats3d::default();
-    let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
+    let _scratch_rebuilds_before = response_scratch.body_index_rebuilds();
     let mut remaining = config.search.free_flight;
     response_scratch.ensure_body_index(boxes);
 
@@ -268,9 +268,11 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         sampled_rotating_contact_search_with_broad_phase(boxes, first_search, broad_phase)
             .map_err(RotatingContactFrontierError3d::from)?
     else {
-        work.response_scratch_index_rebuilds = response_scratch
-            .body_index_rebuilds()
-            .saturating_sub(scratch_rebuilds_before);
+        crate::performance_counter!({
+            work.response_scratch_index_rebuilds = response_scratch
+                .body_index_rebuilds()
+                .saturating_sub(_scratch_rebuilds_before);
+        });
         return Ok(RepeatedRotatingEventProgress3d {
             events: Vec::new(),
             remaining,
@@ -305,9 +307,11 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
         )?;
         let response_contacts = response.contacts;
         let response_passes = response.passes_used;
-        work.event_response_passes = work
-            .event_response_passes
-            .saturating_add(u64::from(response_passes));
+        crate::performance_counter!({
+            work.event_response_passes = work
+                .event_response_passes
+                .saturating_add(u64::from(response_passes));
+        });
         stabilize_current_contacts(
             boxes,
             config.solver_passes,
@@ -344,9 +348,11 @@ pub(crate) fn advance_repeated_rotating_events_with_broad_phase(
             current_frontier_from_admitted_hit(boxes, next_hit, broad_phase, response_scratch)?;
     }
 
-    work.response_scratch_index_rebuilds = response_scratch
-        .body_index_rebuilds()
-        .saturating_sub(scratch_rebuilds_before);
+    crate::performance_counter!({
+        work.response_scratch_index_rebuilds = response_scratch
+            .body_index_rebuilds()
+            .saturating_sub(_scratch_rebuilds_before);
+    });
     Ok(RepeatedRotatingEventProgress3d {
         events,
         remaining,
@@ -362,7 +368,6 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
-    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
     wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
@@ -370,7 +375,7 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     validate_unique_ballistic_ids(boxes, projectiles)?;
 
     let mut work = RepeatedRotatingEventWorkStats3d::default();
-    let scratch_rebuilds_before = response_scratch.body_index_rebuilds();
+    let _scratch_rebuilds_before = response_scratch.body_index_rebuilds();
     let mut remaining = config.search.free_flight;
     let mut events = Vec::new();
     // Rigid sampled contacts and analytic projectile impacts are independent event lanes.
@@ -394,13 +399,8 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             sampled_rotating_contact_search_with_broad_phase(boxes, search, broad_phase)
                 .map_err(RotatingContactFrontierError3d::from)?
         };
-        let ballistic_frontier = earliest_ballistic_frontier(
-            boxes,
-            projectiles,
-            remaining,
-            resolved_ballistic_pairs,
-            ballistic_work,
-        )?;
+        let ballistic_frontier =
+            earliest_ballistic_frontier(boxes, projectiles, remaining, ballistic_work)?;
 
         let choose_rigid = match (rigid_hit.as_ref(), ballistic_frontier.as_ref()) {
             (None, None) => break,
@@ -434,9 +434,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 scale_remaining_time(remaining, event_remaining_numerator(hit.time)?, hit.time)?;
             let response_contacts = response.contacts;
             let response_passes = response.passes_used;
-            work.event_response_passes = work
-                .event_response_passes
-                .saturating_add(u64::from(response_passes));
+            crate::performance_counter!({
+                work.event_response_passes = work
+                    .event_response_passes
+                    .saturating_add(u64::from(response_passes));
+            });
             stabilize_current_contacts(
                 boxes,
                 config.solver_passes,
@@ -482,9 +484,6 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 &frontier,
                 ballistic_work,
             )?;
-            for candidate in &frontier.hits {
-                resolved_ballistic_pairs.insert((candidate.projectile, candidate.hit.body));
-            }
             if !modified_targets.is_empty() {
                 stabilize_current_contacts(
                     boxes,
@@ -509,9 +508,11 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
         }
     }
 
-    work.response_scratch_index_rebuilds = response_scratch
-        .body_index_rebuilds()
-        .saturating_sub(scratch_rebuilds_before);
+    crate::performance_counter!({
+        work.response_scratch_index_rebuilds = response_scratch
+            .body_index_rebuilds()
+            .saturating_sub(_scratch_rebuilds_before);
+    });
     Ok(RepeatedRotatingEventProgress3d {
         events,
         remaining,
@@ -620,7 +621,7 @@ fn stabilize_current_contacts(
     broad_phase: &mut RotatingBroadPhase3d,
     seed: StabilizationSeed3d<'_>,
     response_scratch: &mut RotatingContactResponseScratch3d,
-    work: &mut RepeatedRotatingEventWorkStats3d,
+    _work: &mut RepeatedRotatingEventWorkStats3d,
     wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(), RepeatedRotatingEventError3d> {
     response_scratch.ensure_body_index(boxes);
@@ -645,9 +646,11 @@ fn stabilize_current_contacts(
         if active.is_empty() {
             break;
         }
-        work.stabilization_active_bodies = work
-            .stabilization_active_bodies
-            .saturating_add(u64::try_from(active.len()).unwrap_or(u64::MAX));
+        crate::performance_counter!({
+            _work.stabilization_active_bodies = _work
+                .stabilization_active_bodies
+                .saturating_add(u64::try_from(active.len()).unwrap_or(u64::MAX));
+        });
         let current = refresh_current_contacts_for_changed_bodies(
             boxes,
             &geometry_active,
@@ -656,17 +659,23 @@ fn stabilize_current_contacts(
             broad_phase,
             response_scratch,
         )?;
-        work.stabilization_candidate_pairs = work
-            .stabilization_candidate_pairs
-            .saturating_add(u64::try_from(current.candidate_pairs).unwrap_or(u64::MAX));
-        work.stabilization_exact_contacts = work
-            .stabilization_exact_contacts
-            .saturating_add(u64::try_from(current.recomputed_contacts).unwrap_or(u64::MAX));
+        crate::performance_counter!({
+            _work.stabilization_candidate_pairs = _work
+                .stabilization_candidate_pairs
+                .saturating_add(u64::try_from(current.candidate_pairs).unwrap_or(u64::MAX));
+        });
+        crate::performance_counter!({
+            _work.stabilization_exact_contacts = _work
+                .stabilization_exact_contacts
+                .saturating_add(u64::try_from(current.recomputed_contacts).unwrap_or(u64::MAX));
+        });
         let Some(frontier) = current.frontier else {
             active.clear();
             break;
         };
-        work.stabilization_passes = work.stabilization_passes.saturating_add(1);
+        crate::performance_counter!({
+            _work.stabilization_passes = _work.stabilization_passes.saturating_add(1);
+        });
         if let Some(guard) = wake_guard {
             guard.rigid_contacts(boxes, &frontier.contacts)?;
         }
@@ -692,7 +701,10 @@ fn stabilize_current_contacts(
     }
 
     if exhausted_with_changes {
-        work.stabilizations_hitting_limit = work.stabilizations_hitting_limit.saturating_add(1);
+        crate::performance_counter!({
+            _work.stabilizations_hitting_limit =
+                _work.stabilizations_hitting_limit.saturating_add(1);
+        });
     }
     Ok(())
 }
@@ -700,7 +712,9 @@ fn stabilize_current_contacts(
 #[derive(Clone, Debug)]
 struct CurrentContactFrontierResult3d {
     frontier: Option<RotatingContactFrontier3d>,
+    #[cfg_attr(not(feature = "performance-counters"), allow(dead_code))]
     candidate_pairs: usize,
+    #[cfg_attr(not(feature = "performance-counters"), allow(dead_code))]
     recomputed_contacts: usize,
 }
 
@@ -1226,7 +1240,6 @@ mod tests {
         let retire_on_contact = BTreeSet::from([projectile_id]);
         let mut broad_phase = RotatingBroadPhase3d::default();
         let mut response_scratch = RotatingContactResponseScratch3d::default();
-        let mut resolved_ballistic_pairs = BTreeSet::new();
         let mut ballistic_work = BallisticStepWork3d::default();
 
         let progress = advance_repeated_rotating_events_with_ballistics(
@@ -1236,7 +1249,6 @@ mod tests {
             config(1),
             &mut broad_phase,
             &mut response_scratch,
-            &mut resolved_ballistic_pairs,
             &mut ballistic_work,
             None,
         )

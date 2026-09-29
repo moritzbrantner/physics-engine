@@ -3,6 +3,10 @@ use std::{cmp::Ordering, error::Error, fmt};
 use crate::{AngularError3d, ORIENTATION_SCALE, Orientation3d, Vec3i};
 
 const MAX_SAT_AXES: usize = 15;
+
+#[cfg(test)]
+#[path = "oriented_box_parity_tests.rs"]
+mod parity_tests;
 const CORNER_SIGNS: [[i64; 3]; 8] = [
     [-1, -1, -1],
     [1, -1, -1],
@@ -575,13 +579,20 @@ fn negate_axis(axis: [i128; 3]) -> Result<[i128; 3], OrientedBoxError3d> {
 }
 
 fn projection(vertices: &[Vec3i; 8], axis: [i128; 3]) -> Result<(i128, i128), OrientedBoxError3d> {
-    let first = dot_position(vertices[0], axis)?;
-    vertices[1..]
-        .iter()
-        .try_fold((first, first), |range, vertex| {
-            let value = dot_position(*vertex, axis)?;
-            Ok((range.0.min(value), range.1.max(value)))
-        })
+    // Vertices are sums of the same three quantized basis vectors, not independently rounded
+    // corners. Every corner projection is therefore the origin plus a subset of three edge
+    // projections. Four dot products give exactly the same extrema as scanning all eight.
+    // SAT axes come from i32 vertex differences (at most 65 bits), so these intermediate
+    // projections also fit i128, including at the public coordinate limits.
+    let origin = dot_position(vertices[0], axis)?;
+    let mut minimum = origin;
+    let mut maximum = origin;
+    for index in [1, 2, 4] {
+        let edge = checked_sub(dot_position(vertices[index], axis)?, origin)?;
+        minimum = checked_add(minimum, edge.min(0))?;
+        maximum = checked_add(maximum, edge.max(0))?;
+    }
+    Ok((minimum, maximum))
 }
 
 #[cfg(test)]
@@ -599,6 +610,8 @@ fn projection_wide_reference(
 }
 
 fn dot_position(position: Vec3i, axis: [i128; 3]) -> Result<i128, OrientedBoxError3d> {
+    #[cfg(test)]
+    crate::performance_ratchet::PROJECTION_DOTS.with(|count| count.set(count.get() + 1));
     checked_dot(
         [
             i128::from(position.x),

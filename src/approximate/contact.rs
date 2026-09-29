@@ -1,4 +1,4 @@
-use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar};
+use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar, primitive};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
@@ -67,19 +67,17 @@ pub(super) struct Manifold {
 }
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
-    let e = match b.shape {
-        Shape::Sphere(r) => V(r, r, r),
-        Shape::Box(h) => {
-            let a = b.orientation.axes();
-            a[0].abs() * h.0 + a[1].abs() * h.1 + a[2].abs() * h.2
-        }
-    };
+    let e = primitive::bounds_extents(b);
     (b.position - e, b.position + e)
 }
 fn radius(b: &Body, n: V) -> Scalar {
     match b.shape {
         Shape::Sphere(r) => r,
-        Shape::Box(h) => {
+        Shape::Capsule {
+            half_segment,
+            radius,
+        } => n.dot(b.orientation.rotate(V::Y)).abs() * half_segment + radius,
+        Shape::Box(h) | Shape::Wedge(h) => {
             let a = b.orientation.axes();
             n.dot(a[0]).abs() * h.0 + n.dot(a[1]).abs() * h.1 + n.dot(a[2]).abs() * h.2
         }
@@ -136,21 +134,21 @@ fn clip_into(input: &[V], n: V, limit: Scalar, out: &mut Vec<V>) {
     }
 }
 
-fn support(b: &Body, n: V) -> V {
-    match b.shape {
-        Shape::Sphere(r) => b.position + n * r,
-        Shape::Box(h) => {
-            let a = b.orientation.axes();
-            let mut p = b.position;
-            for (i, axis) in a.iter().enumerate() {
-                let d = n.dot(*axis);
-                if d.abs() > 1e-8 {
-                    p += *axis * (h.at(i) * d.signum());
-                }
-            }
-            p
+/// Contact policy selects the center of tied box features, preserving the lever arm.
+/// The shared kernel may choose any extreme point for a geometric support query.
+fn box_contact_support(b: &Body, n: V, work: &mut GeometryStats) -> V {
+    let Shape::Box(half) = b.shape else {
+        unreachable!()
+    };
+    work.support_evaluations += 1;
+    let mut point = b.position;
+    for (index, axis) in b.orientation.axes().into_iter().enumerate() {
+        let dot = n.dot(axis);
+        if dot.abs() > 1e-12 {
+            point += axis * (half.at(index) * dot.signum());
         }
     }
+    point
 }
 /// Shape/orientation-dependent support projections. Centers are deliberately not cached here.
 #[derive(Clone, Debug, Default)]
@@ -305,9 +303,12 @@ pub(super) fn box_current_with_frames(
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
+    work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
     let projected_axes = frame_projection_axes(a, b, frames);
-    let best = select_axis(a, b, margin, projected_axes, work)?;
-    box_points(a, b, margin, best, frames, work, scratch)
+    let manifold = select_axis(a, b, margin, projected_axes, work)
+        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    work.manifold_candidates += u64::from(manifold.is_some());
+    manifold
 }
 
 pub(super) fn box_prepared(
@@ -319,8 +320,11 @@ pub(super) fn box_prepared(
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
-    let best = select_axis(a, b, margin, projections.axes.iter().copied(), work)?;
-    box_points(a, b, margin, best, frames, work, scratch)
+    work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
+    let manifold = select_axis(a, b, margin, projections.axes.iter().copied(), work)
+        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    work.manifold_candidates += u64::from(manifold.is_some());
+    manifold
 }
 
 fn box_points(
@@ -393,7 +397,9 @@ fn box_points(
         }
     }
     if points.is_empty() {
-        let p = (support(a, n) + support(b, -n)) * 0.5;
+        let a_support = box_contact_support(a, n, work);
+        let b_support = box_contact_support(b, -n, work);
+        let p = (a_support + b_support) * 0.5;
         points.push(Point {
             ra: p - a.position,
             rb: p - b.position,
@@ -450,6 +456,35 @@ fn sphere_box(s: &Body, b: &Body, r: Scalar, margin: Scalar) -> Option<Manifold>
         time: 0.0,
     })
 }
+
+fn sphere_sphere(a: &Body, b: &Body, ra: Scalar, rb: Scalar, margin: Scalar) -> Option<Manifold> {
+    let d = b.position - a.position;
+    let l = d.length();
+    let separation = l - ra - rb;
+    if separation > margin {
+        return None;
+    }
+    let n = if l > 1e-10 { d / l } else { V::X };
+    Some(Manifold {
+        normal: n,
+        points: Points::one(Point {
+            ra: n * ra,
+            rb: -n * rb,
+            separation,
+        }),
+        swept: false,
+        time: 0.0,
+    })
+}
+
+fn flip_manifold(mut manifold: Manifold) -> Manifold {
+    manifold.normal = -manifold.normal;
+    for point in &mut manifold.points {
+        std::mem::swap(&mut point.ra, &mut point.rb);
+    }
+    manifold
+}
+
 pub(super) fn current(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
     current_counted(a, b, margin, &mut GeometryStats::default())
 }
@@ -462,35 +497,80 @@ pub(super) fn current_counted(
 ) -> Option<Manifold> {
     work.current_queries += 1;
     work.manifold_refreshes += 1;
-    match (a.shape, b.shape) {
-        (Shape::Box(_), Shape::Box(_)) => box_manifold(a, b, margin, work),
-        (Shape::Sphere(r), Shape::Box(_)) => sphere_box(a, b, r, margin),
-        (Shape::Box(_), Shape::Sphere(r)) => sphere_box(b, a, r, margin).map(|mut m| {
-            m.normal = -m.normal;
-            for p in &mut m.points {
-                std::mem::swap(&mut p.ra, &mut p.rb);
-            }
-            m
-        }),
-        (Shape::Sphere(ra), Shape::Sphere(rb)) => {
-            let d = b.position - a.position;
-            let l = d.length();
-            let sep = l - ra - rb;
-            if sep > margin {
+
+    let (pair, reversed) = primitive::canonical_pair(a.shape, b.shape);
+    work.specialized_pair_dispatches[pair.index()] += 1;
+    let (left, right) = if reversed { (b, a) } else { (a, b) };
+
+    let manifold = match pair {
+        primitive::PrimitivePair::SphereSphere => {
+            let Shape::Sphere(ra) = left.shape else {
+                unreachable!()
+            };
+            let Shape::Sphere(rb) = right.shape else {
+                unreachable!()
+            };
+            sphere_sphere(left, right, ra, rb, margin)
+        }
+        primitive::PrimitivePair::SphereBox => {
+            let Shape::Sphere(radius) = left.shape else {
+                unreachable!()
+            };
+            sphere_box(left, right, radius, margin)
+        }
+        primitive::PrimitivePair::BoxBox => box_manifold(left, right, margin, work),
+        _ => primitive::query_canonical(pair, left, right, work).and_then(|contact| {
+            if contact.separation > margin {
                 return None;
             }
-            let n = if l > 1e-10 { d / l } else { V::X };
             Some(Manifold {
-                normal: n,
+                normal: contact.normal,
                 points: Points::one(Point {
-                    ra: n * ra,
-                    rb: -n * rb,
-                    separation: sep,
+                    ra: contact.point_a - left.position,
+                    rb: contact.point_b - right.position,
+                    separation: contact.separation,
                 }),
                 swept: false,
                 time: 0.0,
             })
-        }
+        }),
+    };
+    let manifold = if reversed {
+        manifold.map(flip_manifold)
+    } else {
+        manifold
+    };
+    work.manifold_candidates += u64::from(manifold.is_some());
+    manifold
+}
+
+#[cfg(test)]
+fn reference_current_counted(
+    a: &Body,
+    b: &Body,
+    margin: Scalar,
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    match (a.shape, b.shape) {
+        (Shape::Box(_), Shape::Box(_)) => box_manifold(a, b, margin, work),
+        (Shape::Sphere(r), Shape::Box(_)) => sphere_box(a, b, r, margin),
+        (Shape::Box(_), Shape::Sphere(r)) => sphere_box(b, a, r, margin).map(flip_manifold),
+        (Shape::Sphere(ra), Shape::Sphere(rb)) => sphere_sphere(a, b, ra, rb, margin),
+        _ => primitive::reference_query(a, b, work).and_then(|contact| {
+            if contact.separation > margin {
+                return None;
+            }
+            Some(Manifold {
+                normal: contact.normal,
+                points: Points::one(Point {
+                    ra: contact.point_a - a.position,
+                    rb: contact.point_b - b.position,
+                    separation: contact.separation,
+                }),
+                swept: false,
+                time: 0.0,
+            })
+        }),
     }
 }
 
@@ -586,26 +666,39 @@ pub(super) fn swept(
     work: &mut GeometryStats,
 ) -> Option<Manifold> {
     work.sweep_queries += 1;
-    let time = match (a.shape, b.shape) {
-        (Shape::Sphere(r), Shape::Box(_)) => sphere_box_time(a, b, r, dt)?,
-        (Shape::Box(_), Shape::Sphere(r)) => sphere_box_time(b, a, r, dt)?,
-        (Shape::Sphere(ra), Shape::Sphere(rb)) => {
-            let d = b.position - a.position;
-            let v = (b.velocity - a.velocity) * dt;
+    let (pair, reversed) = primitive::canonical_pair(a.shape, b.shape);
+    let (left, right) = if reversed { (b, a) } else { (a, b) };
+    let time = match pair {
+        primitive::PrimitivePair::SphereBox => {
+            let Shape::Sphere(radius) = left.shape else {
+                unreachable!()
+            };
+            sphere_box_time(left, right, radius, dt)?
+        }
+        primitive::PrimitivePair::SphereSphere => {
+            let Shape::Sphere(ra) = left.shape else {
+                unreachable!()
+            };
+            let Shape::Sphere(rb) = right.shape else {
+                unreachable!()
+            };
+            let d = right.position - left.position;
+            let v = (right.velocity - left.velocity) * dt;
             roots(v.dot(v), 2.0 * d.dot(v), d.dot(d) - (ra + rb) * (ra + rb))
                 .into_iter()
                 .flatten()
                 .filter(|t| (0.0..=1.0).contains(t))
                 .min_by(Scalar::total_cmp)?
         }
-        (Shape::Box(_), Shape::Box(_)) => box_sweep_time(
-            a,
-            b,
+        primitive::PrimitivePair::BoxBox => box_sweep_time(
+            left,
+            right,
             dt,
-            axes(a, b)
+            axes(left, right)
                 .into_iter()
-                .map(|(axis, feature)| (axis, feature, radius(a, axis), radius(b, axis))),
+                .map(|(axis, feature)| (axis, feature, radius(left, axis), radius(right, axis))),
         )?,
+        _ => primitive::swept_time(left, right, dt, margin, work)?,
     };
     finish_sweep(a, b, dt, time, |aa, bb| {
         current_counted(aa, bb, margin.max(1e-6), work)

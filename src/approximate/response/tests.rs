@@ -1,6 +1,6 @@
 use super::*;
 use crate::BodyId;
-use crate::approximate::{Config, Quaternion, World};
+use crate::approximate::{Config, Quaternion, Shape, World};
 
 fn vector_bits(v: Vector) -> [u64; 3] {
     [v.0.to_bits(), v.1.to_bits(), v.2.to_bits()]

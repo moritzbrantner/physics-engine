@@ -6,12 +6,12 @@ use std::{
 };
 
 use crate::{
-    ANGULAR_VELOCITY_SCALE, BallisticSphere3d, BodyId, BodyKind, MotionAuthority3d, Orientation3d,
-    OrientedBox3d, OrientedBoxError3d, RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d,
-    RepeatedRotatingEventWorkStats3d, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactResponseError3d,
-    RotatingContactSearchConfig3d, RotatingContactSearchHit3d, SampledContactTime3d,
-    SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
+    ANGULAR_VELOCITY_SCALE, BallisticSphere3d, BodyId, BodyKind, Orientation3d, OrientedBox3d,
+    OrientedBoxError3d, PerformanceCounterU64, RepeatedRotatingEventConfig3d,
+    RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, RotatingContactFrontier3d,
+    RotatingContactResponseError3d, RotatingContactSearchConfig3d, RotatingContactSearchHit3d,
+    SampledContactTime3d, SolverParticipation3d, Vec3i, obb_contact_seed, oriented_box_vertices,
     sample_rigid_box_free_flight,
 };
 use crate::{
@@ -113,6 +113,7 @@ pub struct RotatingWorldStepStats3d {
     /// Rotation-invariant spheres currently owned by the analytic projectile lane.
     pub ballistic_sphere_count: usize,
     pub ballistic_query_rounds: u64,
+    /// Actual ballistic spatial-index bound tests, including branches and leaves.
     pub ballistic_target_bound_checks: u64,
     pub ballistic_broad_phase_candidates: u64,
     pub ballistic_toi_tests: u64,
@@ -133,10 +134,10 @@ pub struct RotatingWorldStepReport3d {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TailStepStats3d {
-    contacts: usize,
-    slices: u64,
-    replays: u64,
-    candidate_pairs: u64,
+    contacts: PerformanceCounterU64,
+    slices: PerformanceCounterU64,
+    replays: PerformanceCounterU64,
+    candidate_pairs: PerformanceCounterU64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -303,6 +304,13 @@ struct SolverPartitions3d {
     response_authority_body_ids: BTreeSet<BodyId>,
 }
 
+/// Internal lifecycle/stabilization deltas preserve identity and unrelated body state.
+pub(crate) enum BodyStateChange3d {
+    Position(Vec3i),
+    SleepProxy(BodyKind),
+    StopMotion,
+}
+
 impl SolverPartitions3d {
     fn insert(&mut self, rigid_box: &RigidBox3d) {
         let id = rigid_box.body().id();
@@ -388,6 +396,45 @@ impl RotatingWorld3d {
         removed
     }
 
+    pub(crate) fn apply_body_change(
+        &mut self,
+        id: BodyId,
+        change: BodyStateChange3d,
+    ) -> Result<(), RotatingWorldError3d> {
+        let body = self
+            .boxes
+            .get_mut(&id)
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        let old_kind = body.body.kind;
+        let old_position = body.body.position;
+        match change {
+            BodyStateChange3d::Position(position) => body.body.position = position,
+            BodyStateChange3d::SleepProxy(kind) => {
+                body.body.kind = kind;
+                if kind == BodyKind::Fixed {
+                    body.body.velocity = Vec3i::ZERO;
+                    body.angular.angular_velocity = crate::AngularVelocity3d::default();
+                }
+            }
+            BodyStateChange3d::StopMotion => {
+                if body.body.kind == BodyKind::Dynamic {
+                    body.body.velocity = Vec3i::ZERO;
+                    body.angular.angular_velocity = crate::AngularVelocity3d::default();
+                }
+            }
+        }
+        let kind_changed = body.body.kind != old_kind;
+        let position_changed = body.body.position != old_position;
+        if kind_changed {
+            self.solver_partitions.remove(id);
+            self.solver_partitions.insert(body);
+        }
+        if kind_changed || position_changed {
+            self.mark_contact_geometry_changed_for(&BTreeSet::from([id]));
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn box_by_id(&self, id: BodyId) -> Option<&RigidBox3d> {
         self.boxes.get(&id)
@@ -447,8 +494,9 @@ impl RotatingWorld3d {
 
     /// Returns exact current contacts for one known body without discovering that body from query geometry.
     ///
-    /// A one-off query uses the precise subject path. Repeated queries within the same contact-geometry
-    /// generation reuse the cached subject result, and an already-built graph is shared when available.
+    /// Queries share a retained bounds index and cache each subject's result. Geometry changes invalidate
+    /// only potentially affected neighborhoods. An already-built contact graph is shared for dynamic
+    /// subjects; fixed subjects also include fixed/fixed contacts omitted by that graph.
     pub fn body_contacts(
         &self,
         body: BodyId,
@@ -596,8 +644,8 @@ impl RotatingWorld3d {
 
     pub(crate) fn contact_work_counters(&self) -> [u64; 3] {
         [
-            self.broad_phase.stats().queries,
-            self.tail_broad_phase.stats().queries,
+            self.broad_phase.stats().queries.value(),
+            self.tail_broad_phase.stats().queries.value(),
             self.response_scratch.response_passes_total(),
         ]
     }
@@ -633,13 +681,18 @@ impl RotatingWorld3d {
             };
             return Ok(RotatingWorldStepReport3d {
                 changed_body_ids: Vec::new(),
-                stats: RotatingWorldStepStats3d {
-                    body_count: total_body_count,
-                    solver_body_count,
-                    solver_bypassed_body_count: total_body_count.saturating_sub(solver_body_count),
-                    response_authority_body_count,
-                    ballistic_sphere_count: self.ballistic_spheres.len(),
-                    ..RotatingWorldStepStats3d::default()
+                stats: if cfg!(feature = "performance-counters") {
+                    RotatingWorldStepStats3d {
+                        body_count: total_body_count,
+                        solver_body_count,
+                        solver_bypassed_body_count: total_body_count
+                            .saturating_sub(solver_body_count),
+                        response_authority_body_count,
+                        ballistic_sphere_count: self.ballistic_spheres.len(),
+                        ..RotatingWorldStepStats3d::default()
+                    }
+                } else {
+                    RotatingWorldStepStats3d::default()
                 },
             });
         }
@@ -698,7 +751,6 @@ impl RotatingWorld3d {
         let solver_body_count = solver_boxes.len();
         let solver_bypassed_body_count = total_body_count.saturating_sub(solver_body_count);
         let mut ballistic_work = BallisticStepWork3d::default();
-        let mut resolved_ballistic_pairs = BTreeSet::new();
 
         let (solver_boxes, sampled_events, tail, work) = if mixed_ballistic_step {
             if solver_boxes.is_empty() {
@@ -729,7 +781,6 @@ impl RotatingWorld3d {
                     ),
                     &mut self.broad_phase,
                     &mut self.response_scratch,
-                    &mut resolved_ballistic_pairs,
                     &mut ballistic_work,
                     wake_guard,
                 )?;
@@ -744,9 +795,9 @@ impl RotatingWorld3d {
                         &self.ballistic_retire_on_contact,
                         advance.remaining,
                         self.config.solver_passes,
+                        self.config.max_events,
                         &mut self.tail_broad_phase,
                         &mut self.response_scratch,
-                        &mut resolved_ballistic_pairs,
                         &mut ballistic_work,
                         wake_guard,
                     )?
@@ -803,100 +854,112 @@ impl RotatingWorld3d {
             .retain(|id| live_ballistic_ids.contains(id));
 
         let mut changed_body_ids = BTreeSet::new();
+        let mut geometry_changed_ids = BTreeSet::new();
         for rigid_box in solver_boxes.into_iter().chain(bypassed_updates) {
             let id = rigid_box.body().id();
             if self.boxes.get(&id) == Some(&rigid_box) {
                 continue;
             }
+            if self
+                .boxes
+                .get(&id)
+                .is_none_or(|previous| previous.oriented_box() != rigid_box.oriented_box())
+            {
+                geometry_changed_ids.insert(id);
+            }
             self.boxes.insert(id, rigid_box);
             changed_body_ids.insert(id);
         }
 
-        if !changed_body_ids.is_empty() {
-            self.mark_contact_geometry_changed_for(&changed_body_ids);
+        if !geometry_changed_ids.is_empty() {
+            self.mark_contact_geometry_changed_for(&geometry_changed_ids);
         }
 
         let broad_phase_after = self.broad_phase.stats();
         let tail_broad_phase_after = self.tail_broad_phase.stats();
         Ok(RotatingWorldStepReport3d {
             changed_body_ids: changed_body_ids.into_iter().collect(),
-            stats: RotatingWorldStepStats3d {
-                body_count: self
-                    .boxes
-                    .len()
-                    .saturating_add(self.ballistic_spheres.len()),
-                solver_body_count,
-                solver_bypassed_body_count,
-                response_authority_body_count,
-                response_authority_pair_rejections: broad_phase_after
-                    .response_authority_pair_rejections
-                    .saturating_sub(broad_phase_before.response_authority_pair_rejections)
-                    .saturating_add(
-                        tail_broad_phase_after
-                            .response_authority_pair_rejections
-                            .saturating_sub(
-                                tail_broad_phase_before.response_authority_pair_rejections,
-                            ),
-                    ),
-                parked_wake_retries: 0,
-                parked_bodies_woken: 0,
-                wake_probe_broad_phase_queries: 0,
-                wake_probe_tail_broad_phase_queries: 0,
-                wake_probe_response_passes: 0,
-                sampled_events,
-                tail_contacts: tail.contacts,
-                tail_slices: tail.slices,
-                tail_replays: tail.replays,
-                tail_candidate_pairs: tail.candidate_pairs,
-                tail_broad_phase_queries: tail_broad_phase_after
-                    .queries
-                    .saturating_sub(tail_broad_phase_before.queries),
-                tail_broad_phase_rebuilds: tail_broad_phase_after
-                    .rebuilds
-                    .saturating_sub(tail_broad_phase_before.rebuilds),
-                tail_broad_phase_reuses: tail_broad_phase_after
-                    .reuses
-                    .saturating_sub(tail_broad_phase_before.reuses),
-                broad_phase_queries: broad_phase_after
-                    .queries
-                    .saturating_sub(broad_phase_before.queries),
-                broad_phase_rebuilds: broad_phase_after
-                    .rebuilds
-                    .saturating_sub(broad_phase_before.rebuilds),
-                broad_phase_reuses: broad_phase_after
-                    .reuses
-                    .saturating_sub(broad_phase_before.reuses),
-                broad_phase_incremental_updates: broad_phase_after
-                    .incremental_updates
-                    .saturating_sub(broad_phase_before.incremental_updates),
-                broad_phase_reinserts: broad_phase_after
-                    .reinserts
-                    .saturating_sub(broad_phase_before.reinserts),
-                broad_phase_rotations: broad_phase_after
-                    .rotations
-                    .saturating_sub(broad_phase_before.rotations),
-                broad_phase_partial_queries: broad_phase_after
-                    .partial_queries
-                    .saturating_sub(broad_phase_before.partial_queries),
-                broad_phase_partial_body_updates: broad_phase_after
-                    .partial_body_updates
-                    .saturating_sub(broad_phase_before.partial_body_updates),
-                response_scratch_index_rebuilds: work.response_scratch_index_rebuilds,
-                event_response_passes: work.event_response_passes,
-                stabilization_passes: work.stabilization_passes,
-                stabilizations_hitting_limit: work.stabilizations_hitting_limit,
-                stabilization_candidate_pairs: work.stabilization_candidate_pairs,
-                stabilization_exact_contacts: work.stabilization_exact_contacts,
-                stabilization_active_bodies: work.stabilization_active_bodies,
-                ballistic_sphere_count: self.ballistic_spheres.len(),
-                ballistic_query_rounds: ballistic_work.query_rounds,
-                ballistic_target_bound_checks: ballistic_work.target_bound_checks,
-                ballistic_broad_phase_candidates: ballistic_work.broad_phase_candidates,
-                ballistic_toi_tests: ballistic_work.toi_tests,
-                ballistic_feature_tests: ballistic_work.feature_tests,
-                ballistic_motion_samples: ballistic_work.motion_samples,
-                ballistic_impacts: ballistic_work.impacts,
-                ballistic_retired: ballistic_work.retired,
+            stats: if cfg!(feature = "performance-counters") {
+                RotatingWorldStepStats3d {
+                    body_count: self
+                        .boxes
+                        .len()
+                        .saturating_add(self.ballistic_spheres.len()),
+                    solver_body_count,
+                    solver_bypassed_body_count,
+                    response_authority_body_count,
+                    response_authority_pair_rejections: broad_phase_after
+                        .response_authority_pair_rejections
+                        .saturating_sub(broad_phase_before.response_authority_pair_rejections)
+                        .saturating_add(
+                            tail_broad_phase_after
+                                .response_authority_pair_rejections
+                                .saturating_sub(
+                                    tail_broad_phase_before.response_authority_pair_rejections,
+                                ),
+                        ),
+                    parked_wake_retries: 0,
+                    parked_bodies_woken: 0,
+                    wake_probe_broad_phase_queries: 0,
+                    wake_probe_tail_broad_phase_queries: 0,
+                    wake_probe_response_passes: 0,
+                    sampled_events,
+                    tail_contacts: usize::try_from(tail.contacts.value()).unwrap_or(usize::MAX),
+                    tail_slices: tail.slices.value(),
+                    tail_replays: tail.replays.value(),
+                    tail_candidate_pairs: tail.candidate_pairs.value(),
+                    tail_broad_phase_queries: tail_broad_phase_after
+                        .queries
+                        .saturating_sub(tail_broad_phase_before.queries),
+                    tail_broad_phase_rebuilds: tail_broad_phase_after
+                        .rebuilds
+                        .saturating_sub(tail_broad_phase_before.rebuilds),
+                    tail_broad_phase_reuses: tail_broad_phase_after
+                        .reuses
+                        .saturating_sub(tail_broad_phase_before.reuses),
+                    broad_phase_queries: broad_phase_after
+                        .queries
+                        .saturating_sub(broad_phase_before.queries),
+                    broad_phase_rebuilds: broad_phase_after
+                        .rebuilds
+                        .saturating_sub(broad_phase_before.rebuilds),
+                    broad_phase_reuses: broad_phase_after
+                        .reuses
+                        .saturating_sub(broad_phase_before.reuses),
+                    broad_phase_incremental_updates: broad_phase_after
+                        .incremental_updates
+                        .saturating_sub(broad_phase_before.incremental_updates),
+                    broad_phase_reinserts: broad_phase_after
+                        .reinserts
+                        .saturating_sub(broad_phase_before.reinserts),
+                    broad_phase_rotations: broad_phase_after
+                        .rotations
+                        .saturating_sub(broad_phase_before.rotations),
+                    broad_phase_partial_queries: broad_phase_after
+                        .partial_queries
+                        .saturating_sub(broad_phase_before.partial_queries),
+                    broad_phase_partial_body_updates: broad_phase_after
+                        .partial_body_updates
+                        .saturating_sub(broad_phase_before.partial_body_updates),
+                    response_scratch_index_rebuilds: work.response_scratch_index_rebuilds,
+                    event_response_passes: work.event_response_passes,
+                    stabilization_passes: work.stabilization_passes,
+                    stabilizations_hitting_limit: work.stabilizations_hitting_limit,
+                    stabilization_candidate_pairs: work.stabilization_candidate_pairs,
+                    stabilization_exact_contacts: work.stabilization_exact_contacts,
+                    stabilization_active_bodies: work.stabilization_active_bodies,
+                    ballistic_sphere_count: self.ballistic_spheres.len(),
+                    ballistic_query_rounds: ballistic_work.query_rounds,
+                    ballistic_target_bound_checks: ballistic_work.target_bound_checks,
+                    ballistic_broad_phase_candidates: ballistic_work.broad_phase_candidates,
+                    ballistic_toi_tests: ballistic_work.toi_tests,
+                    ballistic_feature_tests: ballistic_work.feature_tests,
+                    ballistic_motion_samples: ballistic_work.motion_samples,
+                    ballistic_impacts: ballistic_work.impacts,
+                    ballistic_retired: ballistic_work.retired,
+                }
+            } else {
+                RotatingWorldStepStats3d::default()
             },
         })
     }
@@ -939,8 +1002,7 @@ impl RotatingWorld3d {
 
 fn receives_solver_response(rigid_box: &RigidBox3d) -> bool {
     rigid_box.solver_participation() == SolverParticipation3d::Solid
-        && rigid_box.body().kind() == BodyKind::Dynamic
-        && rigid_box.motion_authority() == MotionAuthority3d::Physics
+        && rigid_box.receives_physics_response()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -950,9 +1012,9 @@ fn consume_tail_with_ballistics(
     retire_on_contact: &BTreeSet<BodyId>,
     remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
+    max_events: u16,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
-    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
     wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(Vec<RigidBox3d>, TailStepStats3d), RotatingWorldError3d> {
@@ -971,7 +1033,9 @@ fn consume_tail_with_ballistics(
             None,
             wake_guard,
         )?;
-        stats.contacts = result.contact_count;
+        stats.contacts = PerformanceCounterU64::from_value(
+            u64::try_from(result.contact_count).unwrap_or(u64::MAX),
+        );
         return Ok((current, stats));
     }
 
@@ -981,8 +1045,7 @@ fn consume_tail_with_ballistics(
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
         let projectile_start = projectiles.clone();
-        let resolved_pairs_start = resolved_ballistic_pairs.clone();
-        let mut contact_count = 0_usize;
+        let mut contact_count = PerformanceCounterU64::default();
         let mut unsafe_body = None;
 
         for _ in 0..slice_count {
@@ -997,16 +1060,17 @@ fn consume_tail_with_ballistics(
                 retire_on_contact,
                 slice_config,
                 solver_passes,
+                max_events,
                 broad_phase,
                 response_scratch,
                 &mut stats,
                 &mut journal,
-                resolved_ballistic_pairs,
                 ballistic_work,
                 current_contacts,
                 wake_guard,
             )?;
-            contact_count = contact_count.saturating_add(result.contact_count);
+            contact_count = contact_count
+                .saturating_add(u64::try_from(result.contact_count).unwrap_or(u64::MAX));
             reusable_contacts = result.reusable_contacts;
             if unsafe_id.is_some() {
                 unsafe_body = unsafe_id;
@@ -1031,7 +1095,6 @@ fn consume_tail_with_ballistics(
         let next_slice_count = next_representable_tail_slice_count(remaining, target)?;
         journal.rollback(&mut current);
         *projectiles = projectile_start;
-        *resolved_ballistic_pairs = resolved_pairs_start;
         reusable_contacts = Some(initial_contacts.clone());
         slice_count = next_slice_count;
     }
@@ -1044,17 +1107,18 @@ fn advance_tail_slice_with_ballistics(
     retire_on_contact: &BTreeSet<BodyId>,
     mut remaining: RigidBoxFreeFlightConfig3d,
     solver_passes: u8,
+    max_events: u16,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
     stats: &mut TailStepStats3d,
     journal: &mut TailMutationJournal3d,
-    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
     initial_contacts: Vec<RotatingContactSearchHit3d>,
     wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<(TailSliceResult3d, Option<BodyId>), RotatingWorldError3d> {
     let mut contact_count = 0_usize;
     let mut reusable_contacts = Some(initial_contacts);
+    let mut ballistic_event_count = 0_usize;
 
     while !remaining.timestep_is_zero() {
         let current_contacts = match reusable_contacts.take() {
@@ -1071,13 +1135,8 @@ fn advance_tail_slice_with_ballistics(
             ));
         }
 
-        let Some(frontier) = earliest_ballistic_frontier(
-            boxes,
-            projectiles,
-            remaining,
-            resolved_ballistic_pairs,
-            ballistic_work,
-        )?
+        let Some(frontier) =
+            earliest_ballistic_frontier(boxes, projectiles, remaining, ballistic_work)?
         else {
             advance_ballistic_spheres_full(projectiles, remaining, ballistic_work)?;
             let result = free_flight_and_stabilize_in_place(
@@ -1090,7 +1149,9 @@ fn advance_tail_slice_with_ballistics(
                 Some(journal),
                 wake_guard,
             )?;
-            contact_count = contact_count.saturating_add(result.contact_count);
+            crate::performance_counter!(
+                contact_count = contact_count.saturating_add(result.contact_count)
+            );
             return Ok((
                 TailSliceResult3d {
                     contact_count,
@@ -1099,6 +1160,11 @@ fn advance_tail_slice_with_ballistics(
                 None,
             ));
         };
+
+        if ballistic_event_count >= usize::from(max_events) {
+            return Err(RepeatedRotatingEventError3d::BallisticEventLimit(max_events).into());
+        }
+        ballistic_event_count += 1;
 
         let segment =
             remaining.scaled_fraction(frontier.time.numerator, frontier.time.denominator)?;
@@ -1138,9 +1204,6 @@ fn advance_tail_slice_with_ballistics(
             &frontier,
             ballistic_work,
         )?;
-        for candidate in &frontier.hits {
-            resolved_ballistic_pairs.insert((candidate.projectile, candidate.hit.body));
-        }
 
         // Ballistic response changes velocity/angular velocity but not current geometry, so any exact
         // contact evidence retained by the pre-impact solve remains valid for the next safety check.
@@ -1235,7 +1298,9 @@ fn consume_tail(
             None,
             wake_guard,
         )?;
-        stats.contacts = result.contact_count;
+        stats.contacts = PerformanceCounterU64::from_value(
+            u64::try_from(result.contact_count).unwrap_or(u64::MAX),
+        );
         return Ok((current, stats));
     }
 
@@ -1244,7 +1309,7 @@ fn consume_tail(
     let mut reusable_contacts = Some(initial_contacts.clone());
     loop {
         let slice_config = tail_slice_config(remaining, slice_count)?;
-        let mut contact_count = 0_usize;
+        let mut contact_count = PerformanceCounterU64::default();
         let mut unsafe_body = None;
 
         for _ in 0..slice_count {
@@ -1267,7 +1332,8 @@ fn consume_tail(
                 Some(&mut journal),
                 wake_guard,
             )?;
-            contact_count = contact_count.saturating_add(result.contact_count);
+            contact_count = contact_count
+                .saturating_add(u64::try_from(result.contact_count).unwrap_or(u64::MAX));
             reusable_contacts = result.reusable_contacts;
         }
 
@@ -1567,6 +1633,10 @@ fn map_tail_broad_phase_error(error: RotatingBroadPhaseError3d) -> RotatingWorld
 }
 
 #[cfg(test)]
+#[path = "rotating_world_lifecycle_tests.rs"]
+mod lifecycle_tests;
+
+#[cfg(test)]
 mod tests {
     use std::{hint::black_box, time::Instant};
 
@@ -1821,7 +1891,7 @@ mod tests {
         assert!(stats.slices > 0, "fixture must exercise sliced tail work");
         assert_eq!(stats.replays, 0, "fixture should not need a replay");
         assert!(
-            broad_phase.stats().queries <= stats.slices.saturating_mul(2),
+            broad_phase.stats().queries <= stats.slices.value().saturating_mul(2),
             "tail re-queried current contacts at both sides of every slice: stats={stats:?}, broad_phase={:?}",
             broad_phase.stats()
         );

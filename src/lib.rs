@@ -23,13 +23,88 @@
 //! eligibility or physical coefficients. Per-body solver participation, motion authority, and sleep mode
 //! provide orthogonal foundations for overlap-only sensors, externally-driven kinematic bodies, and
 //! aggressively sleeping debris without introducing gameplay-specific body kinds. The public
-//! `RotatingWorld3d` defaults to an ECS-backed
-//! entity/component world that runs the performance-oriented parked-sleep physics system; the raw solver
-//! resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! `RotatingWorld3d` wraps the parked-sleep physics kernel with retained fixed-geometry preparation;
+//! it owns no second entity/component body store. `PhysicsWorld3dKernel` exposes the same parked-sleep
+//! kernel without that preparation wrapper for lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
 #![forbid(unsafe_code)]
+
+macro_rules! performance_counter {
+    ($expression:expr) => {{
+        #[cfg(feature = "performance-counters")]
+        {
+            $expression;
+        }
+    }};
+}
+pub(crate) use performance_counter;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PerformanceCounterU64 {
+    #[cfg(feature = "performance-counters")]
+    value: u64,
+}
+
+impl PerformanceCounterU64 {
+    #[must_use]
+    pub(crate) const fn from_value(value: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self { value }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = value;
+            Self {}
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn value(self) -> u64 {
+        #[cfg(feature = "performance-counters")]
+        {
+            self.value
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            0
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn saturating_add(self, rhs: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self {
+                value: self.value.saturating_add(rhs),
+            }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = rhs;
+            self
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn saturating_sub(self, rhs: Self) -> u64 {
+        self.value().saturating_sub(rhs.value())
+    }
+}
+
+impl PartialEq<u64> for PerformanceCounterU64 {
+    fn eq(&self, other: &u64) -> bool {
+        self.value() == *other
+    }
+}
+
+impl PartialOrd<u64> for PerformanceCounterU64 {
+    fn partial_cmp(&self, other: &u64) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(other)
+    }
+}
 
 mod angular;
 mod ballistic_event;
@@ -47,6 +122,8 @@ mod math;
 mod obb_friction;
 mod obb_response;
 mod oriented_box;
+#[cfg(test)]
+mod performance_ratchet;
 mod query;
 mod relaxed_rotating_world;
 mod repeated_rotating_events;

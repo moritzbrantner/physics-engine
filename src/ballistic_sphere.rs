@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, error::Error, fmt};
+use std::{error::Error, fmt};
 
 use crate::{
     AngularError3d, BodyId, CollisionLayers3d, Material, ORIENTATION_SCALE, Orientation3d,
@@ -9,6 +9,10 @@ use crate::{
 
 const BALLISTIC_TIME_SCALE: u64 = 1_u64 << 32;
 const BALLISTIC_TIME_SCALE_I128: i128 = 1_i128 << 32;
+
+#[path = "ballistic_target_index.rs"]
+mod target_index;
+use target_index::BallisticTargetIndex3d;
 
 /// Lightweight projectile state for a rotation-invariant spherical body.
 ///
@@ -264,7 +268,8 @@ struct PreparedBallisticStepTarget3d {
 /// Immutable rigid-scene preparation shared by ballistic sphere queries across frames.
 ///
 /// Target OBB geometry is prepared once from the rigid world. A [`BallisticSphereStep3d`] then prepares
-/// only per-step target displacement and swept bounds once for all projectiles in that simulation step.
+/// per-step target displacement, swept bounds, and an immutable spatial index once for all projectiles
+/// in that simulation interval. Every admitted candidate still uses the exact rounded-OBB narrow phase.
 #[derive(Clone, Debug, Default)]
 pub struct BallisticSphereScene3d {
     targets: Vec<PreparedBallisticTarget3d>,
@@ -274,9 +279,25 @@ impl BallisticSphereScene3d {
     pub fn prepare<'a>(
         boxes: impl IntoIterator<Item = &'a RigidBox3d>,
     ) -> Result<Self, BallisticSphereError3d> {
+        Self::prepare_with_velocity(boxes, |rigid_box| Ok(rigid_box.body().velocity()))
+    }
+
+    /// Prepares only derived geometry and motion. The chronological world lane supplies the projected
+    /// displacement as velocity over a unit interval, without materializing a second world of bodies.
+    pub(crate) fn prepare_with_velocity<'a, E>(
+        boxes: impl IntoIterator<Item = &'a RigidBox3d>,
+        mut velocity: impl FnMut(&RigidBox3d) -> Result<Vec3i, E>,
+    ) -> Result<Self, E>
+    where
+        E: From<BallisticSphereError3d>,
+    {
         let mut targets = boxes
             .into_iter()
-            .map(prepare_target)
+            .map(|rigid_box| -> Result<_, E> {
+                let mut target = prepare_target(rigid_box)?;
+                target.velocity = velocity(rigid_box)?;
+                Ok(target)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         targets.sort_by_key(|target| target.id);
         Ok(Self { targets })
@@ -306,6 +327,9 @@ impl BallisticSphereScene3d {
             scene: self,
             timestep_numerator,
             timestep_denominator,
+            target_index: BallisticTargetIndex3d::build(
+                prepared_targets.iter().map(|target| target.swept_bounds),
+            ),
             prepared_targets,
         })
     }
@@ -332,6 +356,7 @@ pub struct BallisticSphereStep3d<'a> {
     timestep_numerator: i32,
     timestep_denominator: i32,
     prepared_targets: Vec<PreparedBallisticStepTarget3d>,
+    target_index: BallisticTargetIndex3d,
 }
 
 impl BallisticSphereStep3d<'_> {
@@ -340,23 +365,14 @@ impl BallisticSphereStep3d<'_> {
         sphere: BallisticSphere3d,
         stats: &mut BallisticSphereQueryStats3d,
     ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
-        self.earliest_hit_filtered(sphere, None, stats)
+        self.earliest_hit_with_bound_checks(sphere, stats, &mut 0)
     }
 
-    pub(crate) fn earliest_hit_excluding_pairs(
+    pub(crate) fn earliest_hit_with_bound_checks(
         &self,
         sphere: BallisticSphere3d,
-        excluded_pairs: &BTreeSet<(BodyId, BodyId)>,
         stats: &mut BallisticSphereQueryStats3d,
-    ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
-        self.earliest_hit_filtered(sphere, Some(excluded_pairs), stats)
-    }
-
-    fn earliest_hit_filtered(
-        &self,
-        sphere: BallisticSphere3d,
-        excluded_pairs: Option<&BTreeSet<(BodyId, BodyId)>>,
-        stats: &mut BallisticSphereQueryStats3d,
+        _target_bound_checks: &mut u64,
     ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
         if self.timestep_numerator == 0 {
             return Ok(None);
@@ -368,39 +384,42 @@ impl BallisticSphereStep3d<'_> {
         )?;
         let sphere_bounds = swept_sphere_bounds(sphere, sphere_displacement)?;
         let mut earliest = None;
-        for (target, step_target) in self
-            .scene
-            .targets
-            .iter()
-            .zip(self.prepared_targets.iter().copied())
-        {
-            if target.id == sphere.id
-                || excluded_pairs.is_some_and(|pairs| pairs.contains(&(sphere.id, target.id)))
-                || !sphere
-                    .collision_layers
-                    .collides_with(target.collision_layers)
-                || !bounds_overlap(sphere_bounds, step_target.swept_bounds)
-            {
-                continue;
-            }
-            stats.broad_phase_candidates = stats.broad_phase_candidates.saturating_add(1);
-            stats.toi_tests = stats.toi_tests.saturating_add(1);
-            let Some(hit) = swept_sphere_target(
-                sphere,
-                sphere_displacement,
-                target,
-                step_target.displacement,
-                stats,
-            )?
-            else {
-                continue;
-            };
-            if earliest.is_none_or(|current: BallisticSphereSweepHit3d| {
-                hit.time < current.time || (hit.time == current.time && hit.body < current.body)
-            }) {
-                earliest = Some(hit);
-            }
-        }
+        let _bound_checks = self
+            .target_index
+            .for_each_overlapping(sphere_bounds, |index| {
+                let target = &self.scene.targets[index];
+                let step_target = self.prepared_targets[index];
+                if target.id == sphere.id
+                    || !sphere
+                        .collision_layers
+                        .collides_with(target.collision_layers)
+                {
+                    return Ok::<_, BallisticSphereError3d>(());
+                }
+                crate::performance_counter!({
+                    stats.broad_phase_candidates = stats.broad_phase_candidates.saturating_add(1);
+                    stats.toi_tests = stats.toi_tests.saturating_add(1);
+                });
+                let Some(hit) = swept_sphere_target(
+                    sphere,
+                    sphere_displacement,
+                    target,
+                    step_target.displacement,
+                    stats,
+                )?
+                else {
+                    return Ok(());
+                };
+                if earliest.is_none_or(|current: BallisticSphereSweepHit3d| {
+                    hit.time < current.time || (hit.time == current.time && hit.body < current.body)
+                }) {
+                    earliest = Some(hit);
+                }
+                Ok(())
+            })?;
+        crate::performance_counter!({
+            *_target_bound_checks = _target_bound_checks.saturating_add(_bound_checks);
+        });
         Ok(earliest)
     }
 }
@@ -441,7 +460,7 @@ fn swept_sphere_target(
     sphere_displacement: [i64; 3],
     target: &PreparedBallisticTarget3d,
     target_displacement: [i64; 3],
-    stats: &mut BallisticSphereQueryStats3d,
+    _stats: &mut BallisticSphereQueryStats3d,
 ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
     let inverse = transpose(target.rotation);
     let relative_position = rotate_vector(
@@ -475,7 +494,9 @@ fn swept_sphere_target(
     let mut best: Option<(u64, [i128; 3])> = None;
     for axis in 0..3 {
         for sign in [-1_i64, 1] {
-            stats.feature_tests = stats.feature_tests.saturating_add(1);
+            crate::performance_counter!({
+                _stats.feature_tests = _stats.feature_tests.saturating_add(1);
+            });
             if let Some(time) = face_hit_time(
                 relative_position,
                 relative_displacement,
@@ -493,7 +514,9 @@ fn swept_sphere_target(
         let side_axes = other_axes(free_axis);
         for first_sign in [-1_i64, 1] {
             for second_sign in [-1_i64, 1] {
-                stats.feature_tests = stats.feature_tests.saturating_add(1);
+                crate::performance_counter!({
+                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
+                });
                 if let Some(time) = edge_hit_time(
                     relative_position,
                     relative_displacement,
@@ -520,7 +543,9 @@ fn swept_sphere_target(
     for x_sign in [-1_i64, 1] {
         for y_sign in [-1_i64, 1] {
             for z_sign in [-1_i64, 1] {
-                stats.feature_tests = stats.feature_tests.saturating_add(1);
+                crate::performance_counter!({
+                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
+                });
                 let signs = [x_sign, y_sign, z_sign];
                 if let Some(time) = corner_hit_time(
                     relative_position,
@@ -863,7 +888,9 @@ fn point_aabb_distance_squared(
     extents: [i64; 3],
 ) -> Result<i128, BallisticSphereError3d> {
     (0..3).try_fold(0_i128, |sum, axis| {
-        let distance = i128::from(position[axis].abs().saturating_sub(extents[axis]));
+        // Interior coordinates contribute zero. Signed saturating_sub only guards integer overflow;
+        // it does not clamp a negative geometric distance and would invent new hits for existing overlap.
+        let distance = (i128::from(position[axis]).abs() - i128::from(extents[axis])).max(0);
         checked_add(sum, checked_mul(distance, distance)?)
     })
 }
@@ -1314,3 +1341,7 @@ mod rotated_normal_scale_tests {
         assert!(world.iter().any(|component| *component != 0));
     }
 }
+
+#[cfg(test)]
+#[path = "ballistic_target_index_tests.rs"]
+mod indexed_tests;
