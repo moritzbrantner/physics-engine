@@ -1,5 +1,7 @@
 # physics-engine
 
+Integration status and opt-in studies: [physics improvement reconciliation](docs/improvement-reconciliation.md).
+
 Reusable deterministic physics simulation kernel extracted from the physics work that had accumulated inside `ecs-lab`.
 
 The repository is intentionally a **physics engine, not a game engine**. It owns simulation semantics; ECS storage, rendering, input, audio, scenes, game loops and editor concerns remain consumers.

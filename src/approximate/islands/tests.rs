@@ -24,6 +24,12 @@ fn row(a: usize, b: usize) -> Constraint {
         normal_mass: 1.0,
         tangent_mass: [1.0; 2],
         bias: 0.0,
+        #[cfg(feature = "experimental-soft-contact")]
+        hard_normal: true,
+        #[cfg(feature = "experimental-soft-contact")]
+        relaxing_normal: false,
+        #[cfg(feature = "experimental-soft-contact")]
+        normal_coefficients: super::super::correction::Coefficients::RIGID,
         friction: 0.5,
         normal_impulse: 0.0,
         tangent_impulse: [0.0; 2],
