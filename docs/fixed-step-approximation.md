@@ -55,8 +55,9 @@ zero interpenetration or energy conservation. The reference fixture's crate widt
 - The API accepts finite durations from zero through 0.1 s; the demo uses 1/60 s. Positive durations
   too small to represent a substep are rejected. It does not adapt iteration counts to achieve
   an arbitrarily exact solution.
-- This experimental API supports boxes and spheres, collision masks, fixed/external bodies,
-  rotation locks, basic linear-support response and sleep. It is not a drop-in implementation of
+- This limited API supports boxes, spheres, capsules and wedges, collision masks, fixed/external bodies,
+  rotation locks, basic linear-support response and sleep. Movable wedges require rotation locking;
+  wedge angular inertia is not yet general. It is not a drop-in implementation of
   every existing interaction-policy setting, query, ECS binding or network serialization contract.
 - Gyroscopic angular terms are omitted. Arrow orientation is fixed at launch in the comparison
   adapter; there is no aerodynamic or skeletal animation model.

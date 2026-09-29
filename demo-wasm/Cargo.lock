@@ -3,8 +3,19 @@
 version = 4
 
 [[package]]
+name = "geometry-kernels"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=9dd083cdf6ad9e79fb1a9d3183bcf7601442a5d3#9dd083cdf6ad9e79fb1a9d3183bcf7601442a5d3"
+dependencies = [
+ "spatial-kernels",
+]
+
+[[package]]
 name = "physics-engine"
 version = "0.1.0"
+dependencies = [
+ "geometry-kernels",
+]
 
 [[package]]
 name = "physics-engine-demo"
@@ -12,3 +23,8 @@ version = "0.1.0"
 dependencies = [
  "physics-engine",
 ]
+
+[[package]]
+name = "spatial-kernels"
+version = "0.1.0"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=9dd083cdf6ad9e79fb1a9d3183bcf7601442a5d3#9dd083cdf6ad9e79fb1a9d3183bcf7601442a5d3"

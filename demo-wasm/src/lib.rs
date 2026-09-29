@@ -1169,6 +1169,35 @@ mod tests {
     }
 
     #[test]
+    fn sleeping_player_keeps_ground_support_during_remote_projectile_activity() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        let before = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .unwrap()
+            .body()
+            .position();
+        assert!(sandbox.shoot(38, 0, -88) >= 0);
+        for tick in 0..40 {
+            assert_eq!(sandbox.step_velocity(0, 0, false), 0);
+            assert_eq!(
+                sandbox
+                    .world
+                    .box_by_id(PLAYER_ID)
+                    .unwrap()
+                    .body()
+                    .position(),
+                before
+            );
+            assert!(
+                sandbox.grounded().unwrap(),
+                "unchanged floor support disappeared at tick {tick}"
+            );
+        }
+    }
+
+    #[test]
     fn grounded_player_can_jump() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);

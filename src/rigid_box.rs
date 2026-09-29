@@ -283,6 +283,12 @@ impl RigidBox3d {
         self.motion_authority
     }
 
+    /// Whether contact response may change this body's motion or pose. Shared by all response lanes;
+    /// collision admission and relative contact velocity remain independent of mutation authority.
+    pub(crate) fn receives_physics_response(&self) -> bool {
+        self.body.kind() == BodyKind::Dynamic && self.motion_authority == MotionAuthority3d::Physics
+    }
+
     #[must_use]
     pub const fn sleep_mode(&self) -> SleepMode3d {
         self.sleep_mode
