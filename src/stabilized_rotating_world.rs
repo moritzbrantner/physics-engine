@@ -4,11 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d};
 
 use crate::{
-    AngularVelocity3d, BodyCurrentContact3d, BodyId, BodyKind, OrientedBox3d, RigidBox3d,
+    ANGULAR_VELOCITY_SCALE, AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId,
+    BodyKind, InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d,
+    InteractionPolicy3d, MotionAuthority3d, Orientation3d, OrientedBox3d, RigidBox3d,
     RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, Vec3i,
-    obb_contact_seed, obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
-    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d,
+    SolverParticipation3d, Vec3i, WakePropagation3d, obb_contact_seed,
+    obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds,
+    rotating_world::{BodyStateChange3d, RotatingWorld3d as InnerRotatingWorld3d},
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
@@ -16,8 +20,8 @@ const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
 const SLEEP_STABLE_STEPS_AT_60_HZ: u8 = 12;
 const SLEEP_TIME_SCALE: u128 = 1_u128 << 64;
 const SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 5;
+const AGGRESSIVE_SLEEP_STABLE_DURATION_Q64: u128 = SLEEP_TIME_SCALE / 20;
 const SLEEP_LINEAR_SPEED_LIMIT: u32 = 120;
-const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 
 /// Engine-owned rotating world with bounded fixed-boundary stabilization and deterministic sleeping.
 ///
@@ -31,21 +35,23 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 /// contract: each changed dynamic queries only its own current overlap neighborhood, and iterative projection
 /// re-queries only that candidate geometry. Unchanged dynamics are not cloned, indexed, or traversed.
 ///
-/// Dynamic bodies whose linear and angular speeds remain below the deterministic sleep thresholds for a
-/// continuous simulated duration are put to sleep only when they are already motionless or a current
-/// contact can physically dissipate the residual motion. Sleep stability time is accumulated in deterministic
-/// Q64 units from the requested rational timestep, so equivalent elapsed simulation time reaches the same
-/// sleep threshold independently of 30, 60, or 120 Hz step partitioning. A contact qualifies when its normal
-/// constraint is still opposing relative approach, or when non-zero pair friction belongs to a low-motion
-/// support chain that is ultimately anchored by fixed geometry or an existing sleeper. Gravity-supported
-/// bodies settle position-only against already anchored supports before becoming sleepers, so quantized
-/// equal-mass projection cannot freeze residual penetration into a resting stack. This preserves ordinary
-/// low-speed free-flight and frictionless tangential inertia while letting gravity-loaded rough stacks
-/// converge to sleep as one supported island instead of repeatedly waking their lower members. Sleeping
-/// bodies are presented to the inner solver as fixed proxies, so gravity and persistent-contact stabilization
-/// cannot keep nudging a settled body. Before each step, conservative free-flight sweep bounds wake every
-/// sleeping body that an awake dynamic body may reach, including transitive sleeping islands. Explicit
-/// velocity changes also wake their target, adding fixed geometry invalidates existing sleepers
+/// Dynamic bodies whose conservative point-speed bound remains below the deterministic sleep threshold for a
+/// continuous simulated duration are put to sleep only when they are already motionless or a current contact
+/// can physically dissipate the residual motion. The point-speed bound combines translation with a
+/// body-size-aware bound on rotational surface motion, so fixed-point angular units are judged in the same
+/// spatial units as linear velocity instead of against a shape-independent angular constant. Sleep stability
+/// time is accumulated in deterministic Q64 units from the requested rational timestep, so equivalent elapsed
+/// simulation time reaches the same sleep threshold independently of 30, 60, or 120 Hz step partitioning. A
+/// contact qualifies when its normal constraint is still opposing relative approach, or when non-zero pair
+/// friction belongs to a low-motion support chain that is ultimately anchored by fixed geometry or an existing
+/// sleeper. Gravity-supported bodies settle position-only against already anchored supports before becoming
+/// sleepers, so quantized equal-mass projection cannot freeze residual penetration into a resting stack. This
+/// preserves ordinary low-speed free-flight and frictionless tangential inertia while letting gravity-loaded
+/// rough stacks converge to sleep as one supported island instead of repeatedly waking their lower members.
+/// Sleeping bodies are presented to the inner solver as fixed proxies, so gravity and persistent-contact
+/// stabilization cannot keep nudging a settled body. Before each step, conservative free-flight sweep bounds
+/// wake every sleeping body that an awake dynamic body may reach, including transitive sleeping islands.
+/// Explicit velocity changes also wake their target, adding fixed geometry invalidates existing sleepers
 /// conservatively, and any successful body removal invalidates sleep because world membership and contact
 /// topology changed.
 ///
@@ -63,8 +69,10 @@ const SLEEP_ANGULAR_SPEED_LIMIT: u32 = 75_000;
 pub struct RotatingWorld3d {
     inner: InnerRotatingWorld3d,
     sleeping: BTreeSet<BodyId>,
+    sleep_candidates: BTreeSet<BodyId>,
     sleep_stable_time_q64: BTreeMap<BodyId, u128>,
     pending_fixed_boundary_body_ids: BTreeSet<BodyId>,
+    interaction_policies: InteractionPolicies3d,
 }
 
 impl RotatingWorld3d {
@@ -73,14 +81,99 @@ impl RotatingWorld3d {
         Self {
             inner: InnerRotatingWorld3d::new(config),
             sleeping: BTreeSet::new(),
+            sleep_candidates: BTreeSet::new(),
             sleep_stable_time_q64: BTreeMap::new(),
             pending_fixed_boundary_body_ids: BTreeSet::new(),
+            interaction_policies: InteractionPolicies3d::default(),
         }
     }
 
     #[must_use]
     pub fn config(&self) -> RotatingWorldConfig3d {
         self.inner.config()
+    }
+
+    #[must_use]
+    pub fn body_interaction_category(&self, id: BodyId) -> InteractionCategory3d {
+        self.interaction_policies.body_category(id)
+    }
+
+    pub fn set_body_interaction_category(
+        &mut self,
+        id: BodyId,
+        category: InteractionCategory3d,
+    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {
+        if self.inner.box_by_id(id).is_none() {
+            return Err(RotatingWorldError3d::MissingBody(id));
+        }
+        Ok(self.interaction_policies.set_body_category(id, category))
+    }
+
+    pub(crate) fn clear_body_interaction_category(
+        &mut self,
+        id: BodyId,
+    ) -> Option<InteractionCategory3d> {
+        self.interaction_policies.clear_body_category(id)
+    }
+
+    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
+        self.interaction_policies.set_default_policy(policy);
+    }
+
+    #[must_use]
+    pub fn interaction_policy_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionPolicy3d {
+        self.interaction_policies.policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.interaction_policies
+            .execution_plan_for_bodies(source, target)
+    }
+
+    pub fn set_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .set_pair_policy(left, right, policy)
+    }
+
+    pub fn clear_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies.clear_pair_policy(left, right)
+    }
+
+    pub fn set_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .set_directional_policy(source, target, policy)
+    }
+
+    pub fn clear_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.interaction_policies
+            .clear_directional_policy(source, target)
     }
 
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
@@ -105,6 +198,7 @@ impl RotatingWorld3d {
         self.inner.add_box(rigid_box)?;
         if kind == BodyKind::Dynamic {
             self.pending_fixed_boundary_body_ids.insert(id);
+            self.sleep_candidates.insert(id);
         } else {
             self.pending_fixed_boundary_body_ids
                 .extend(affected_dynamic_ids);
@@ -116,8 +210,81 @@ impl RotatingWorld3d {
     pub fn remove_box(&mut self, id: BodyId) -> Option<RigidBox3d> {
         let removed = self.inner.remove_box(id)?;
         self.pending_fixed_boundary_body_ids.remove(&id);
+        self.sleep_candidates.remove(&id);
+        self.sleeping.remove(&id);
+        self.sleep_stable_time_q64.remove(&id);
         self.wake_all_sleepers();
         Some(removed)
+    }
+
+    /// A parked proxy changes response eligibility, not scene membership or geometry.
+    pub(crate) fn transition_parked_body(
+        &mut self,
+        id: BodyId,
+        kind: BodyKind,
+    ) -> Result<(), RotatingWorldError3d> {
+        // Parking makes this body an immovable boundary. Preserve the old insertion path's
+        // local stabilization obligations, using retained contacts instead of a scene-wide scan.
+        let affected = if kind == BodyKind::Fixed {
+            self.inner
+                .body_contacts(id)?
+                .into_iter()
+                .filter_map(|contact| {
+                    self.inner
+                        .box_by_id(contact.other)
+                        .filter(|other| {
+                            other.body.kind == BodyKind::Dynamic
+                                && other.receives_physics_response()
+                        })
+                        .map(|_| contact.other)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::SleepProxy(kind))?;
+        self.sleeping.remove(&id);
+        self.sleep_stable_time_q64.remove(&id);
+        // Preserve the facade's existing sleep-timer invalidation on proxy transitions. This
+        // bookkeeping is independent of scene membership and must not discard geometric evidence.
+        self.wake_all_sleepers();
+        if kind == BodyKind::Dynamic {
+            self.sleep_candidates.insert(id);
+            self.pending_fixed_boundary_body_ids.insert(id);
+        } else {
+            self.sleep_candidates.remove(&id);
+            self.pending_fixed_boundary_body_ids.remove(&id);
+            self.pending_fixed_boundary_body_ids.extend(affected);
+        }
+        Ok(())
+    }
+
+    pub fn add_ballistic_sphere(
+        &mut self,
+        projectile: BallisticSphere3d,
+        retire_on_contact: bool,
+    ) -> Result<(), RotatingWorldError3d> {
+        self.inner
+            .add_ballistic_sphere(projectile, retire_on_contact)
+    }
+
+    pub fn remove_ballistic_sphere(&mut self, id: BodyId) -> Option<BallisticSphere3d> {
+        self.inner.remove_ballistic_sphere(id)
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_by_id(&self, id: BodyId) -> Option<&BallisticSphere3d> {
+        self.inner.ballistic_sphere_by_id(id)
+    }
+
+    pub fn ballistic_spheres(&self) -> impl Iterator<Item = &BallisticSphere3d> {
+        self.inner.ballistic_spheres()
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_count(&self) -> usize {
+        self.inner.ballistic_sphere_count()
     }
 
     #[must_use]
@@ -146,8 +313,23 @@ impl RotatingWorld3d {
     ) -> Result<(), RotatingWorldError3d> {
         self.inner.set_linear_velocity(id, velocity)?;
         self.sleeping.remove(&id);
+        self.sleep_candidates.insert(id);
         self.sleep_stable_time_q64.remove(&id);
         self.pending_fixed_boundary_body_ids.insert(id);
+        Ok(())
+    }
+
+    pub fn set_orientations(
+        &mut self,
+        updates: &[(BodyId, Orientation3d)],
+    ) -> Result<(), RotatingWorldError3d> {
+        self.inner.set_orientations(updates)?;
+        for (id, _) in updates {
+            self.sleeping.remove(id);
+            self.sleep_candidates.insert(*id);
+            self.sleep_stable_time_q64.remove(id);
+            self.pending_fixed_boundary_body_ids.insert(*id);
+        }
         Ok(())
     }
 
@@ -162,10 +344,32 @@ impl RotatingWorld3d {
         self.inner.body_contacts(body)
     }
 
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        self.inner.body_overlaps(body)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_contact_cache_stats(&self) -> (u64, u64, u64, u64) {
+        self.inner.current_contact_cache_stats()
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
+    ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
+        self.step_with_parked(timestep_numerator, timestep_denominator, &BTreeMap::new())
+    }
+
+    pub(crate) fn contact_work_counters(&self) -> [u64; 4] {
+        self.inner.contact_work_counters()
+    }
+
+    pub(crate) fn step_with_parked(
+        &mut self,
+        timestep_numerator: i32,
+        timestep_denominator: i32,
+        parked: &BTreeMap<BodyId, RigidBox3d>,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
         if timestep_numerator <= 0 || timestep_denominator <= 0 {
             return self.inner.step(timestep_numerator, timestep_denominator);
@@ -178,7 +382,15 @@ impl RotatingWorld3d {
         let mut fixed_boundary_subjects = changed_body_ids.clone();
         fixed_boundary_subjects.extend(self.pending_fixed_boundary_body_ids.iter().copied());
         self.freeze_sleeping_bodies()?;
-        let mut report = match self.inner.step(timestep_numerator, timestep_denominator) {
+        let guard = crate::contact_wake::ContactWakeGuard3d {
+            parked,
+            policies: &self.interaction_policies,
+        };
+        let mut report = match self.inner.step_guarded(
+            timestep_numerator,
+            timestep_denominator,
+            (!parked.is_empty()).then_some(&guard),
+        ) {
             Ok(report) => report,
             Err(error) => {
                 let _ = self.restore_sleeping_bodies();
@@ -198,7 +410,9 @@ impl RotatingWorld3d {
             }
         }
         self.restore_sleeping_bodies()?;
-        changed_body_ids.extend(self.update_sleep_state(sleep_time_increment)?);
+        let mut sleep_subjects = self.sleep_candidates.clone();
+        sleep_subjects.extend(changed_body_ids.iter().copied());
+        changed_body_ids.extend(self.update_sleep_state(sleep_time_increment, &sleep_subjects)?);
         report.changed_body_ids = changed_body_ids.into_iter().collect();
         Ok(report)
     }
@@ -223,7 +437,9 @@ impl RotatingWorld3d {
         let mut sleeper_bounds = BTreeMap::new();
 
         for rigid_box in self.inner.boxes() {
-            if rigid_box.body.kind != BodyKind::Dynamic {
+            if rigid_box.body.kind != BodyKind::Dynamic
+                || rigid_box.solver_participation() != SolverParticipation3d::Solid
+            {
                 continue;
             }
             let id = rigid_box.body.id;
@@ -248,7 +464,11 @@ impl RotatingWorld3d {
                 .filter(|id| {
                     sleeper_bounds.get(id).is_some_and(|sleeping_bounds| {
                         awake_bounds.iter().any(|(awake_id, bounds)| {
-                            sweep_bounds_overlap(*bounds, *sleeping_bounds)
+                            self.interaction_policies
+                                .execution_plan_for_bodies(*awake_id, *id)
+                                .wake_propagation()
+                                == WakePropagation3d::Full
+                                && sweep_bounds_overlap(*bounds, *sleeping_bounds)
                                 && !self.inner.box_by_id(*awake_id).is_some_and(|awake| {
                                     self.inner.box_by_id(*id).is_some_and(|sleeping| {
                                         crate::linear_contact::sweep_is_passive_support(
@@ -266,6 +486,7 @@ impl RotatingWorld3d {
 
             for id in newly_awake {
                 self.sleeping.remove(&id);
+                self.sleep_candidates.insert(id);
                 self.sleep_stable_time_q64.remove(&id);
                 sleeper_bounds.remove(&id);
                 awakened.insert(id);
@@ -298,58 +519,62 @@ impl RotatingWorld3d {
     }
 
     fn set_sleep_proxy(&mut self, id: BodyId, sleeping: bool) -> Result<(), RotatingWorldError3d> {
-        let mut rigid_box = self
-            .inner
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        rigid_box.body.kind = if sleeping {
+        let kind = if sleeping {
             BodyKind::Fixed
         } else {
             BodyKind::Dynamic
         };
-        if sleeping {
-            rigid_box.body.velocity = Vec3i::ZERO;
-            rigid_box.angular.angular_velocity = AngularVelocity3d::default();
-        }
-        self.inner.add_box(rigid_box)
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::SleepProxy(kind))
     }
 
     fn update_sleep_state(
         &mut self,
         sleep_time_increment: u128,
+        subjects: &BTreeSet<BodyId>,
     ) -> Result<BTreeSet<BodyId>, RotatingWorldError3d> {
-        let motion = self
-            .inner
-            .boxes()
-            .filter(|rigid_box| {
-                rigid_box.body.kind == BodyKind::Dynamic
-                    && !self.sleeping.contains(&rigid_box.body.id)
-            })
-            .map(|rigid_box| {
-                (
-                    rigid_box.body.id,
-                    low_motion(rigid_box),
-                    motion_is_zero(rigid_box),
-                    rigid_box.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut seen = BTreeSet::new();
         let mut direct_sleep = Vec::new();
         let mut supported_sleep = BTreeSet::new();
         let mut changed_body_ids = BTreeSet::new();
 
-        for (id, is_low_motion, is_stationary, rigid_box) in motion {
-            seen.insert(id);
+        for id in subjects.iter().copied() {
+            if self.sleeping.contains(&id) {
+                self.sleep_candidates.remove(&id);
+                continue;
+            }
+            let Some(rigid_box) = self.inner.box_by_id(id).cloned() else {
+                self.sleep_candidates.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
+                continue;
+            };
+            if rigid_box.body.kind != BodyKind::Dynamic {
+                self.sleep_candidates.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
+                continue;
+            }
+            let is_low_motion = low_motion(&rigid_box);
+            let is_stationary = motion_is_zero(&rigid_box);
+            let sleep_mode = rigid_box.sleep_mode();
+            if sleep_mode == SleepMode3d::Never {
+                self.sleep_candidates.remove(&id);
+                self.sleep_stable_time_q64.remove(&id);
+                continue;
+            }
             let has_dissipative_contact = if is_low_motion && !is_stationary {
                 self.has_dissipative_sleep_contact(&rigid_box)?
             } else {
                 false
             };
             if is_low_motion && (is_stationary || has_dissipative_contact) {
+                self.sleep_candidates.insert(id);
                 let stable_time = self.sleep_stable_time_q64.entry(id).or_default();
                 *stable_time = stable_time.saturating_add(sleep_time_increment);
-                if *stable_time >= SLEEP_STABLE_DURATION_Q64 {
+                let stable_duration = match sleep_mode {
+                    SleepMode3d::Normal => SLEEP_STABLE_DURATION_Q64,
+                    SleepMode3d::Aggressive => AGGRESSIVE_SLEEP_STABLE_DURATION_Q64,
+                    SleepMode3d::Never => unreachable!("never-sleep bodies are filtered above"),
+                };
+                if *stable_time >= stable_duration {
                     if self.has_gravity_support_chain(id)? {
                         supported_sleep.insert(id);
                     } else {
@@ -357,14 +582,18 @@ impl RotatingWorld3d {
                     }
                 }
             } else {
+                // Motion itself remains a dependency: an awake dynamic can become sleep-eligible on a
+                // later step even when no topology or explicit control delta occurs. Keep the retained
+                // candidate membership, but reset only the stability deadline.
+                self.sleep_candidates.insert(id);
                 self.sleep_stable_time_q64.remove(&id);
             }
         }
-        self.sleep_stable_time_q64.retain(|id, _| seen.contains(id));
 
         for id in direct_sleep {
             self.put_body_to_sleep(id)?;
             self.sleeping.insert(id);
+            self.sleep_candidates.remove(&id);
             self.sleep_stable_time_q64.remove(&id);
             changed_body_ids.insert(id);
         }
@@ -391,6 +620,7 @@ impl RotatingWorld3d {
                 }
                 self.put_body_to_sleep(id)?;
                 self.sleeping.insert(id);
+                self.sleep_candidates.remove(&id);
                 self.sleep_stable_time_q64.remove(&id);
                 changed_body_ids.insert(id);
             }
@@ -609,12 +839,8 @@ impl RotatingWorld3d {
             return Ok(true);
         }
 
-        let mut rigid_box = self
-            .inner
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        rigid_box.body.position = candidate.body.position;
-        self.inner.add_box(rigid_box)?;
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::Position(candidate.body.position))?;
         Ok(true)
     }
 
@@ -660,18 +886,12 @@ impl RotatingWorld3d {
     }
 
     fn put_body_to_sleep(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
-        let mut rigid_box = self
-            .inner
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        if rigid_box.body.kind == BodyKind::Dynamic {
-            rigid_box.body.velocity = Vec3i::ZERO;
-            rigid_box.angular.angular_velocity = AngularVelocity3d::default();
-        }
-        self.inner.add_box(rigid_box)
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::StopMotion)
     }
 
     fn wake_all_sleepers(&mut self) {
+        self.sleep_candidates.extend(self.sleeping.iter().copied());
         self.sleeping.clear();
         self.sleep_stable_time_q64.clear();
     }
@@ -686,7 +906,10 @@ impl RotatingWorld3d {
             let Some(current) = self.inner.box_by_id(id) else {
                 return Err(RotatingWorldError3d::MissingBody(id));
             };
-            if current.body.kind != BodyKind::Dynamic {
+            if current.body.kind != BodyKind::Dynamic
+                || current.motion_authority() == MotionAuthority3d::External
+                || current.solver_participation() != SolverParticipation3d::Solid
+            {
                 continue;
             }
 
@@ -694,7 +917,7 @@ impl RotatingWorld3d {
             let original_position = candidate.body.position;
             let mut converged = false;
 
-            for _ in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
+            for pass in 0..MAX_FIXED_POSITION_STABILIZATION_PASSES {
                 let before = candidate.body.position;
                 let mut corrections = PositionCorrectionAccumulator::default();
 
@@ -711,6 +934,15 @@ impl RotatingWorld3d {
                             .collision_layers()
                             .collides_with(fixed.collision_layers())
                     {
+                        continue;
+                    }
+                    let pass_limit = self
+                        .interaction_policies
+                        .execution_plan_for_bodies(id, fixed_id)
+                        .fixed_boundary_stabilization_pass_limit(
+                            MAX_FIXED_POSITION_STABILIZATION_PASSES,
+                        );
+                    if pass >= pass_limit {
                         continue;
                     }
 
@@ -752,12 +984,8 @@ impl RotatingWorld3d {
                 continue;
             }
 
-            let mut rigid_box = self
-                .inner
-                .remove_box(id)
-                .ok_or(RotatingWorldError3d::MissingBody(id))?;
-            rigid_box.body.position = candidate.body.position;
-            self.inner.add_box(rigid_box)?;
+            self.inner
+                .apply_body_change(id, BodyStateChange3d::Position(candidate.body.position))?;
             changed_body_ids.insert(id);
         }
 
@@ -910,18 +1138,30 @@ fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
 
 fn low_motion(rigid_box: &RigidBox3d) -> bool {
     let velocity = rigid_box.body.velocity();
-    let linear_speed = velocity
-        .x
-        .unsigned_abs()
-        .max(velocity.y.unsigned_abs())
-        .max(velocity.z.unsigned_abs());
+    let linear_speed = u128::from(
+        velocity
+            .x
+            .unsigned_abs()
+            .max(velocity.y.unsigned_abs())
+            .max(velocity.z.unsigned_abs()),
+    );
     let angular = rigid_box.angular().angular_velocity;
-    let angular_speed = angular
-        .x
-        .unsigned_abs()
-        .max(angular.y.unsigned_abs())
-        .max(angular.z.unsigned_abs());
-    linear_speed <= SLEEP_LINEAR_SPEED_LIMIT && angular_speed <= SLEEP_ANGULAR_SPEED_LIMIT
+    let angular_speed_l1 = if rigid_box.rotation_locked() {
+        0
+    } else {
+        u128::from(angular.x.unsigned_abs())
+            .saturating_add(u128::from(angular.y.unsigned_abs()))
+            .saturating_add(u128::from(angular.z.unsigned_abs()))
+    };
+    let half = rigid_box.body.half_extents();
+    let radius_bound = u128::from(half.x.unsigned_abs())
+        .saturating_add(u128::from(half.y.unsigned_abs()))
+        .saturating_add(u128::from(half.z.unsigned_abs()));
+    let rotational_surface_speed = radius_bound
+        .saturating_mul(angular_speed_l1)
+        .div_ceil(u128::from(ANGULAR_VELOCITY_SCALE.unsigned_abs()));
+
+    linear_speed.saturating_add(rotational_surface_speed) <= u128::from(SLEEP_LINEAR_SPEED_LIMIT)
 }
 
 fn motion_is_zero(rigid_box: &RigidBox3d) -> bool {
@@ -945,7 +1185,7 @@ fn fixed_dynamic_pairs(
         .map(|(index, rigid_box)| (rigid_box.body.id, index))
         .collect::<BTreeMap<_, _>>();
     let candidates = broad_phase
-        .candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
+        .response_candidate_pairs(boxes, RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1))
         .map_err(map_fixed_boundary_broad_phase_error)?;
     let mut pairs = Vec::with_capacity(candidates.len());
     for pair in candidates {
@@ -1005,8 +1245,9 @@ mod tests {
     use std::{collections::BTreeSet, hint::black_box, time::Instant};
 
     use crate::{
-        AngularState3d, AngularVelocity3d, BodyId, Material, Orientation3d, RigidBody, RigidBox3d,
-        RotatingWorldConfig3d, Vec3i, obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,
+        AngularState3d, AngularVelocity3d, BodyId, InteractionCategory3d, InteractionPolicy3d,
+        Material, Orientation3d, RigidBody, RigidBox3d, RotatingWorldConfig3d, Vec3i,
+        obb_contact_seed, rotating_broad_phase::RotatingBroadPhase3d,
     };
 
     use super::{
@@ -1072,6 +1313,23 @@ mod tests {
             solver_passes: 4,
             max_events: 8,
         })
+    }
+
+    #[test]
+    fn moving_sleep_candidate_stays_scheduled_until_motion_can_settle() {
+        let id = BodyId(1);
+        let mut world = zero_gravity_world();
+        world
+            .add_box(dynamic(id.0, Vec3i::ZERO, Vec3i::new(500, 0, 0)))
+            .expect("add moving body");
+
+        world.step(1, 60).expect("moving step");
+
+        assert!(!world.is_sleeping(id));
+        assert!(
+            world.sleep_candidates.contains(&id),
+            "awake dynamics must stay scheduled for later sleep eligibility"
+        );
     }
 
     #[test]
@@ -1200,6 +1458,46 @@ mod tests {
             Vec3i::ZERO
         );
         assert_eq!(world.box_by_id(BodyId(66)), Some(&before_unrelated));
+    }
+
+    #[test]
+    fn pair_policy_can_disable_fixed_boundary_stabilization_for_one_pair() {
+        let target = BodyId(1);
+        let terrain = BodyId(1000);
+        let crate_category = InteractionCategory3d::new(1);
+        let terrain_category = InteractionCategory3d::new(2);
+        let mut world = zero_gravity_world();
+        world
+            .add_box(fixed(terrain.0, Vec3i::ZERO))
+            .expect("fixed obstacle");
+        world
+            .add_box(dynamic(target.0, Vec3i::ZERO, Vec3i::ZERO))
+            .expect("overlapping target");
+        world
+            .set_body_interaction_category(target, crate_category)
+            .expect("categorize crate");
+        world
+            .set_body_interaction_category(terrain, terrain_category)
+            .expect("categorize terrain");
+        world.set_pair_interaction_policy(
+            crate_category,
+            terrain_category,
+            InteractionPolicy3d::default().with_fixed_boundary_stabilization_pass_limit(0),
+        );
+
+        let changed = world
+            .stabilize_fixed_boundaries(&BTreeSet::from([target]))
+            .expect("policy-bounded stabilization");
+
+        assert!(changed.is_empty());
+        assert_eq!(
+            world
+                .box_by_id(target)
+                .expect("target remains")
+                .body()
+                .position(),
+            Vec3i::ZERO
+        );
     }
 
     #[test]

@@ -1,72 +1,29 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use crate::fixed_geometry::{FixedGeometryPreparationCache3d, with_fixed_geometry_context};
 use crate::{
-    BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d, FixedGeometryPreparationStats3d,
-    OrientedBox3d, RigidBox3d, RotatingWorldConfig3d, RotatingWorldError3d,
-    RotatingWorldStepReport3d, Vec3i,
+    BallisticSphere3d, BodyCurrentContact3d, BodyId, FixedGeometryPreparationMode3d,
+    FixedGeometryPreparationStats3d, InteractionCategory3d, InteractionExecutionPlan3d,
+    InteractionPolicy3d, Orientation3d, OrientedBox3d, RigidBox3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, RotatingWorldStepReport3d, Vec3i,
     stabilized_rotating_world::RotatingWorld3d as PhysicsSystem3d,
 };
 
-#[derive(Clone, Debug)]
-struct ComponentStore<T> {
-    values: BTreeMap<BodyId, T>,
-}
-
-impl<T> Default for ComponentStore<T> {
-    fn default() -> Self {
-        Self {
-            values: BTreeMap::new(),
-        }
-    }
-}
-
-impl<T> ComponentStore<T> {
-    fn insert(&mut self, entity: BodyId, value: T) -> Option<T> {
-        self.values.insert(entity, value)
-    }
-
-    fn get(&self, entity: BodyId) -> Option<&T> {
-        self.values.get(&entity)
-    }
-
-    fn get_mut(&mut self, entity: BodyId) -> Option<&mut T> {
-        self.values.get_mut(&entity)
-    }
-
-    fn remove(&mut self, entity: BodyId) -> Option<T> {
-        self.values.remove(&entity)
-    }
-
-    fn values(&self) -> impl Iterator<Item = &T> {
-        self.values.values()
-    }
-
-    fn len(&self) -> usize {
-        self.values.len()
-    }
-}
-
-/// ECS-backed consumer world for rotating rigid-body physics.
+/// Public rotating rigid-body world backed by one authoritative mutable physics state.
 ///
-/// Entity membership and the `RigidBox3d` physics component live in deterministic component storage.
-/// The performance-oriented rotating solver is retained as a system-owned resource so broad-phase caches,
-/// sleeping state, collision discovery, and response authority stay inside the physics engine. After a
-/// successful active system step, authoritative solver state is written back into the ECS component store.
-/// When the physics system was already fully quiescent before the step, its parked-state contract guarantees
-/// that no body state can change, so the ECS boundary skips the otherwise linear component-clone pass as
-/// well. Component slots are reused in place during active stepping.
+/// Earlier revisions mirrored every `RigidBox3d` into a second ECS component map and cloned changed
+/// bodies back out of the physics system after each active step. That made the integration boundary own
+/// two live copies of the same world and forced synchronization work that was unrelated to collision
+/// semantics.
 ///
-/// Optional fixed-geometry preparation is also owned here, at the stable public scene boundary. Only fixed
-/// bodies inserted by the consumer are registered for preparation; internal persistent sleep proxies never
-/// cross this boundary and therefore can never become baked static geometry.
+/// The physics system is now the sole body-state authority. Queries borrow that state directly and
+/// mutations are delegated to the physics mutation boundary. The wrapper retains only derived fixed-
+/// geometry preparation data, which is invalidated from explicit body lifecycle changes and never acts as
+/// an alternate world representation.
 ///
-/// This is the default public `RotatingWorld3d` integration. Consumers that deliberately need the raw
-/// solver resource can use `PhysicsWorld3dKernel` instead.
+/// This is the first migration step toward the repository's delta-only runtime architecture. The inner
+/// solver still has legacy owned-state paths that will be removed separately; this boundary must not
+/// reintroduce a mirrored body store while that migration proceeds.
 #[derive(Clone, Debug)]
 pub struct EcsRotatingWorld3d {
-    entities: BTreeSet<BodyId>,
-    rigid_boxes: ComponentStore<RigidBox3d>,
     physics: PhysicsSystem3d,
     fixed_geometry: FixedGeometryPreparationCache3d,
 }
@@ -75,8 +32,6 @@ impl EcsRotatingWorld3d {
     #[must_use]
     pub fn new(config: RotatingWorldConfig3d) -> Self {
         Self {
-            entities: BTreeSet::new(),
-            rigid_boxes: ComponentStore::default(),
             physics: PhysicsSystem3d::new(config),
             fixed_geometry: FixedGeometryPreparationCache3d::default(),
         }
@@ -87,6 +42,79 @@ impl EcsRotatingWorld3d {
         self.physics.config()
     }
 
+    #[must_use]
+    pub fn body_interaction_category(&self, entity: BodyId) -> InteractionCategory3d {
+        self.physics.body_interaction_category(entity)
+    }
+
+    pub fn set_body_interaction_category(
+        &mut self,
+        entity: BodyId,
+        category: InteractionCategory3d,
+    ) -> Result<Option<InteractionCategory3d>, RotatingWorldError3d> {
+        self.physics.set_body_interaction_category(entity, category)
+    }
+
+    pub fn set_default_interaction_policy(&mut self, policy: InteractionPolicy3d) {
+        self.physics.set_default_interaction_policy(policy);
+    }
+
+    #[must_use]
+    pub fn interaction_policy_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionPolicy3d {
+        self.physics.interaction_policy_for_bodies(source, target)
+    }
+
+    #[must_use]
+    pub fn interaction_execution_plan_for_bodies(
+        &self,
+        source: BodyId,
+        target: BodyId,
+    ) -> InteractionExecutionPlan3d {
+        self.physics
+            .interaction_execution_plan_for_bodies(source, target)
+    }
+
+    pub fn set_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics
+            .set_pair_interaction_policy(left, right, policy)
+    }
+
+    pub fn clear_pair_interaction_policy(
+        &mut self,
+        left: InteractionCategory3d,
+        right: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics.clear_pair_interaction_policy(left, right)
+    }
+
+    pub fn set_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+        policy: InteractionPolicy3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics
+            .set_directional_interaction_policy(source, target, policy)
+    }
+
+    pub fn clear_directional_interaction_policy(
+        &mut self,
+        source: InteractionCategory3d,
+        target: InteractionCategory3d,
+    ) -> Option<InteractionPolicy3d> {
+        self.physics
+            .clear_directional_interaction_policy(source, target)
+    }
+
     /// Switches between the existing runtime preparation path and retained prepare-at-load geometry.
     ///
     /// Enabling prepare-at-load immediately prepares every currently registered genuine fixed body. Later
@@ -94,8 +122,7 @@ impl EcsRotatingWorld3d {
     /// Dynamic bodies are never registered here, including bodies that the inner sleep system presents as
     /// persistent fixed proxies after they settle.
     pub fn set_fixed_geometry_preparation_mode(&mut self, mode: FixedGeometryPreparationMode3d) {
-        self.fixed_geometry
-            .set_mode(mode, self.rigid_boxes.values());
+        self.fixed_geometry.set_mode(mode, self.physics.boxes());
     }
 
     #[must_use]
@@ -103,49 +130,72 @@ impl EcsRotatingWorld3d {
         self.fixed_geometry.stats()
     }
 
-    /// Adds one entity with its rotating rigid-body component.
+    /// Adds one rotating rigid body to the authoritative world.
     ///
-    /// The physics system validates the component before ECS membership is committed, so failed inserts
-    /// leave both representations unchanged.
+    /// Fixed-geometry preparation is registered only after physics validation succeeds, so failed inserts
+    /// leave both authoritative and derived state unchanged.
     pub fn add_box(&mut self, rigid_box: RigidBox3d) -> Result<(), RotatingWorldError3d> {
         let entity = rigid_box.body().id();
-        self.physics.add_box(rigid_box.clone())?;
-        self.fixed_geometry.register_fixed(&rigid_box);
-        let inserted = self.entities.insert(entity);
-        debug_assert!(inserted);
-        let previous = self.rigid_boxes.insert(entity, rigid_box);
-        debug_assert!(previous.is_none());
+        self.physics.add_box(rigid_box)?;
+        let inserted = self
+            .physics
+            .box_by_id(entity)
+            .expect("successful physics insertion must retain the body");
+        self.fixed_geometry.register_fixed(inserted);
         Ok(())
     }
 
     pub fn remove_box(&mut self, entity: BodyId) -> Option<RigidBox3d> {
         let removed = self.physics.remove_box(entity)?;
         self.fixed_geometry.unregister(entity);
-        let was_alive = self.entities.remove(&entity);
-        debug_assert!(was_alive);
-        let component = self.rigid_boxes.remove(entity);
-        debug_assert!(component.is_some());
         Some(removed)
+    }
+
+    pub fn add_ballistic_sphere(
+        &mut self,
+        projectile: BallisticSphere3d,
+        retire_on_contact: bool,
+    ) -> Result<(), RotatingWorldError3d> {
+        self.physics
+            .add_ballistic_sphere(projectile, retire_on_contact)
+    }
+
+    pub fn remove_ballistic_sphere(&mut self, entity: BodyId) -> Option<BallisticSphere3d> {
+        self.physics.remove_ballistic_sphere(entity)
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_by_id(&self, entity: BodyId) -> Option<&BallisticSphere3d> {
+        self.physics.ballistic_sphere_by_id(entity)
+    }
+
+    pub fn ballistic_spheres(&self) -> impl Iterator<Item = &BallisticSphere3d> {
+        self.physics.ballistic_spheres()
+    }
+
+    #[must_use]
+    pub fn ballistic_sphere_count(&self) -> usize {
+        self.physics.ballistic_sphere_count()
     }
 
     #[must_use]
     pub fn box_by_id(&self, entity: BodyId) -> Option<&RigidBox3d> {
-        self.rigid_boxes.get(entity)
+        self.physics.box_by_id(entity)
     }
 
-    /// Iterates physics components in stable entity-id order.
+    /// Iterates authoritative physics bodies in stable entity-id order.
     pub fn boxes(&self) -> impl Iterator<Item = &RigidBox3d> {
-        self.rigid_boxes.values()
+        self.physics.boxes()
     }
 
-    /// Iterates live ECS entity ids in stable order.
+    /// Iterates live entity ids in stable order without maintaining duplicate membership state.
     pub fn entities(&self) -> impl Iterator<Item = BodyId> + '_ {
-        self.entities.iter().copied()
+        self.physics.boxes().map(|rigid_box| rigid_box.body().id())
     }
 
     #[must_use]
     pub fn entity_count(&self) -> usize {
-        self.entities.len()
+        self.physics.boxes().count()
     }
 
     #[must_use]
@@ -163,9 +213,14 @@ impl EcsRotatingWorld3d {
         entity: BodyId,
         velocity: Vec3i,
     ) -> Result<(), RotatingWorldError3d> {
-        self.physics.set_linear_velocity(entity, velocity)?;
-        self.sync_entity_from_physics(entity);
-        Ok(())
+        self.physics.set_linear_velocity(entity, velocity)
+    }
+
+    pub fn set_orientations(
+        &mut self,
+        updates: &[(BodyId, Orientation3d)],
+    ) -> Result<(), RotatingWorldError3d> {
+        self.physics.set_orientations(updates)
     }
 
     pub fn overlap_query(&self, query: OrientedBox3d) -> Result<Vec<BodyId>, RotatingWorldError3d> {
@@ -184,37 +239,29 @@ impl EcsRotatingWorld3d {
         self.with_prepared_fixed_geometry(|| self.physics.body_contacts(body))
     }
 
-    /// Runs the physics system and writes authoritative active results back to ECS components.
-    /// Runs the physics system and writes back only bodies named by the authoritative step delta.
+    /// Returns exact current overlaps for one known body without promoting those overlaps to solver
+    /// contacts. This is the intended sensor/trigger query.
+    pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
+        self.with_prepared_fixed_geometry(|| self.physics.body_overlaps(body))
+    }
+
+    /// Runs the physics system against the single authoritative body state.
+    ///
+    /// `changed_body_ids` remains the precise observable delta report for callers, but no body clone/writeback
+    /// pass is required at this boundary because there is no mirrored component store to synchronize.
     pub fn step(
         &mut self,
         timestep_numerator: i32,
         timestep_denominator: i32,
     ) -> Result<RotatingWorldStepReport3d, RotatingWorldError3d> {
         let prepared = self.fixed_geometry.clone();
-        let report = with_fixed_geometry_context(&prepared, || {
+        with_fixed_geometry_context(&prepared, || {
             self.physics.step(timestep_numerator, timestep_denominator)
-        })?;
-        for entity in report.changed_body_ids.iter().copied() {
-            self.sync_entity_from_physics(entity);
-        }
-        debug_assert_eq!(self.rigid_boxes.len(), self.entities.len());
-        Ok(report)
+        })
     }
 
     pub(crate) fn with_prepared_fixed_geometry<R>(&self, callback: impl FnOnce() -> R) -> R {
         with_fixed_geometry_context(&self.fixed_geometry, callback)
-    }
-
-    fn sync_entity_from_physics(&mut self, entity: BodyId) {
-        let Some(rigid_box) = self.physics.box_by_id(entity) else {
-            return;
-        };
-        let component = self
-            .rigid_boxes
-            .get_mut(entity)
-            .expect("live physics entity must retain its ECS component");
-        component.clone_from(rigid_box);
     }
 }
 
@@ -269,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn physics_system_writes_motion_back_to_components() {
+    fn physics_system_mutates_the_authoritative_body_directly() {
         let mut world = world();
         world
             .add_box(dynamic(3, Vec3i::ZERO, Vec3i::new(60, 0, 0)))
@@ -280,7 +327,7 @@ mod tests {
         assert_eq!(
             world
                 .box_by_id(BodyId(3))
-                .expect("synced component")
+                .expect("authoritative body")
                 .body()
                 .position(),
             Vec3i::new(1, 0, 0)
@@ -303,7 +350,7 @@ mod tests {
                 .expect("unrelated stationary entity");
         }
 
-        let report = world.step(1, 60).expect("precise writeback step");
+        let report = world.step(1, 60).expect("precise delta step");
 
         assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
         assert_eq!(
@@ -325,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn controlled_velocity_updates_solver_and_component_together() {
+    fn controlled_velocity_mutates_the_authoritative_body_once() {
         let mut world = world();
         world
             .add_box(dynamic(5, Vec3i::ZERO, Vec3i::ZERO))
@@ -333,12 +380,12 @@ mod tests {
 
         world
             .set_linear_velocity(BodyId(5), Vec3i::new(120, 0, 0))
-            .expect("set ECS physics velocity");
+            .expect("set physics velocity");
 
         assert_eq!(
             world
                 .box_by_id(BodyId(5))
-                .expect("updated component")
+                .expect("updated authoritative body")
                 .body()
                 .velocity(),
             Vec3i::new(120, 0, 0)

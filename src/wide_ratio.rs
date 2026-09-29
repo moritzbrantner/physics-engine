@@ -1,3 +1,5 @@
+//! Opt-in historical exact arithmetic for diagnostic replay; never compiled by the default build.
+
 use std::{cmp::Ordering, error::Error, fmt};
 
 const EXACT_LIMBS: usize = 40;
@@ -70,6 +72,38 @@ pub(crate) struct ExactRatio {
 }
 
 impl ExactRatio {
+    /// Interpret a finite nonnegative binary64 value exactly in the diagnostic backend.
+    pub(crate) fn from_scalar(value: f64) -> Result<Self, WideRatioError> {
+        if !value.is_finite() || value < 0.0 {
+            return Err(WideRatioError::QuotientOverflow);
+        }
+        if value == 0.0 {
+            return Self::new(0, 1);
+        }
+        let bits = value.to_bits();
+        let encoded_exponent = ((bits >> 52) & 0x7ff) as i32;
+        let mut mantissa = bits & ((1_u64 << 52) - 1);
+        let mut exponent = if encoded_exponent == 0 {
+            -1074
+        } else {
+            mantissa |= 1_u64 << 52;
+            encoded_exponent - 1023 - 52
+        };
+        let mut ratio = Self::new(u128::from(mantissa), 1)?;
+        while exponent != 0 {
+            let shift = exponent.unsigned_abs().min(31);
+            let factor = 1_u32 << shift;
+            ratio = if exponent > 0 {
+                exponent -= shift as i32;
+                ratio.scaled_u32(factor, 1)?
+            } else {
+                exponent += shift as i32;
+                ratio.scaled_u32(1, factor)?
+            };
+        }
+        Ok(ratio)
+    }
+
     pub(crate) fn new(numerator: u128, denominator: u128) -> Result<Self, WideRatioError> {
         if denominator == 0 {
             return Err(WideRatioError::ZeroDenominator);

@@ -123,3 +123,37 @@ fn query_rejects_invalid_geometry_and_time() {
         Err(QueryError::NonPositiveTicks(0))
     );
 }
+
+#[test]
+fn borrowed_ray_query_matches_exhaustive_order_without_world_reconstruction() {
+    let bodies = [
+        fixed(9, Vec3i::new(8, 0, 0), Vec3i::new(1, 2, 2)),
+        fixed(3, Vec3i::new(8, 0, 0), Vec3i::new(1, 2, 2)),
+        fixed(1, Vec3i::new(18, 0, 0), Vec3i::new(1, 2, 2)),
+    ];
+    let mut world = World::default();
+    for body in bodies.iter().cloned() {
+        world.add_body(body).unwrap();
+    }
+    for (origin, direction, ticks) in [
+        (Vec3i::ZERO, Vec3i::new(10, 0, 0), 2),
+        (Vec3i::new(8, 0, 0), Vec3i::ZERO, 1),
+        (Vec3i::ZERO, Vec3i::new(1, 0, 0), 1),
+        (Vec3i::new(0, 10, 0), Vec3i::new(10, 0, 0), 2),
+    ] {
+        let ray = Ray::new(origin, direction);
+        let expected = world.ray_cast(ray, ticks).unwrap().first().copied();
+        assert_eq!(
+            physics_engine::ray_cast_first(bodies.iter(), ray, ticks).unwrap(),
+            expected
+        );
+        assert_eq!(
+            physics_engine::ray_cast_first(bodies.iter().rev(), ray, ticks).unwrap(),
+            expected
+        );
+    }
+    assert_eq!(
+        physics_engine::ray_cast_first(bodies.iter(), Ray::new(Vec3i::ZERO, Vec3i::ZERO), 0),
+        Err(QueryError::NonPositiveTicks(0))
+    );
+}

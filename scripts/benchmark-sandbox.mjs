@@ -16,6 +16,7 @@ const names = [
   "three-shots-idle",
   "three-shots-walking",
   "six-shots-idle",
+  "thirty-shots-walking",
 ];
 const cases = process.env.CASE ? names.filter((name) => name === process.env.CASE) : names;
 if (cases.length === 0) throw new Error("unknown CASE");
@@ -36,9 +37,15 @@ function sumKnown(values, key) {
   return known.length === values.length ? known.reduce((sum, value) => sum + value, 0) : null;
 }
 function shotTicks(name) {
+  if (name === "thirty-shots-walking") {
+    return Array.from({ length: 30 }, (_, index) => index * 5);
+  }
   if (name === "six-shots-idle") return [0, 30, 60, 90, 120, 150];
   if (name.startsWith("three-shots-")) return [0, 40, 80];
   return [];
+}
+function caseTicks(name) {
+  return name === "thirty-shots-walking" ? 240 : 180;
 }
 function ratio(head, baseline) {
   return baseline === 0 ? null : head / baseline;
@@ -56,15 +63,20 @@ async function measure(path) {
   }
   function stepWork() {
     return {
+      parked_bodies_woken: readCounter("sandbox_last_parked_bodies_woken"),
+      parked_wake_retries: readCounter("sandbox_last_parked_wake_retries"),
+      wake_probe_broad_phase_queries: readCounter("sandbox_last_wake_probe_broad_phase_queries"),
+      wake_probe_tail_broad_phase_queries: readCounter("sandbox_last_wake_probe_tail_broad_phase_queries"),
+      wake_probe_response_passes: readCounter("sandbox_last_wake_probe_response_passes"),
       sampled_events: readCounter("sandbox_last_sampled_events"),
       tail_contacts: readCounter("sandbox_last_tail_contacts"),
       tail_slices: readCounter("sandbox_last_tail_slices"),
       tail_replays: readCounter("sandbox_last_tail_replays"),
       tail_candidate_pairs: readCounter("sandbox_last_tail_candidate_pairs"),
-      tail_broad_phase_queries: readCounter("sandbox_last_tail_broad_phase_queries"),
+      tail_broad_phase_queries: readCounter("sandbox_last_tail_broad_phase_queries") + (readCounter("sandbox_last_wake_probe_tail_broad_phase_queries") ?? 0),
       tail_broad_phase_rebuilds: readCounter("sandbox_last_tail_broad_phase_rebuilds"),
       tail_broad_phase_reuses: readCounter("sandbox_last_tail_broad_phase_reuses"),
-      broad_phase_queries: readCounter("sandbox_last_broad_phase_queries"),
+      broad_phase_queries: readCounter("sandbox_last_broad_phase_queries") + (readCounter("sandbox_last_wake_probe_broad_phase_queries") ?? 0),
       broad_phase_rebuilds: readCounter("sandbox_last_broad_phase_rebuilds"),
       broad_phase_reuses: readCounter("sandbox_last_broad_phase_reuses"),
       broad_phase_incremental_updates: readCounter("sandbox_last_broad_phase_incremental_updates"),
@@ -72,6 +84,8 @@ async function measure(path) {
       broad_phase_rotations: readCounter("sandbox_last_broad_phase_rotations"),
       broad_phase_partial_queries: readCounter("sandbox_last_broad_phase_partial_queries"),
       broad_phase_partial_body_updates: readCounter("sandbox_last_broad_phase_partial_body_updates"),
+      response_scratch_index_rebuilds: readCounter("sandbox_last_response_scratch_index_rebuilds"),
+      continuation_contact_evaluations: readCounter("sandbox_last_continuation_contact_evaluations"),
       event_response_passes: readCounter("sandbox_last_event_response_passes"),
       stabilization_passes: readCounter("sandbox_last_stabilization_passes"),
       stabilizations_hitting_limit: readCounter("sandbox_last_stabilizations_hitting_limit"),
@@ -87,17 +101,31 @@ async function measure(path) {
   }
   settle();
   for (let tick = 0; tick < 120; tick += 1) step(0, -420);
-  const result = { wasm_sha256: hash(bytes), cases: [] };
+  const result = {
+    wasm_sha256: hash(bytes),
+    numerical_backend: typeof engine.sandbox_numeric_backend === "function"
+      ? (engine.sandbox_numeric_backend() === 64 ? "float64" : "exact-reference")
+      : "legacy-unreported",
+    cases: [],
+  };
   for (const name of cases) {
     const measurements = [];
     for (let trial = 0; trial < trials; trial += 1) {
       settle();
+      if (name === "thirty-shots-walking") {
+        if (typeof engine.sandbox_set_projectile_type !== "function") {
+          throw new Error("thirty-shots-walking requires explicit projectile type selection");
+        }
+        if (engine.sandbox_set_projectile_type(0) !== 0) {
+          throw new Error("failed to select sphere projectile stress lane");
+        }
+      }
       const times = [];
       const events = [];
       const work = [];
       const trace = createHash("sha256");
       const shots = shotTicks(name);
-      for (let tick = 0; tick < 180; tick += 1) {
+      for (let tick = 0; tick < caseTicks(name); tick += 1) {
         const shotIndex = shots.indexOf(tick);
         if (shotIndex >= 0) {
           const projectileX = shotIndex % 2 === 0 ? 38 : -38;
@@ -106,7 +134,7 @@ async function measure(path) {
             throw new Error("projectile creation failed");
           }
         }
-        const moving = name === "walking-no-shots" || name === "three-shots-walking";
+        const moving = name === "walking-no-shots" || name.endsWith("-walking");
         const x = moving && tick >= 80 ? Math.round(420 * Math.sin(0.7)) : 0;
         const z = moving ? (tick >= 80 ? -Math.round(420 * Math.cos(0.7)) : -420) : 0;
         const start = performance.now();
@@ -137,6 +165,11 @@ async function measure(path) {
         body_count: engine.sandbox_body_count(),
         event_sum: events.reduce((a, b) => a + b, 0),
         work: {
+          parked_bodies_woken: sumKnown(work, "parked_bodies_woken"),
+          parked_wake_retries: sumKnown(work, "parked_wake_retries"),
+          wake_probe_broad_phase_queries: sumKnown(work, "wake_probe_broad_phase_queries"),
+          wake_probe_tail_broad_phase_queries: sumKnown(work, "wake_probe_tail_broad_phase_queries"),
+          wake_probe_response_passes: sumKnown(work, "wake_probe_response_passes"),
           sampled_events: sumKnown(work, "sampled_events"),
           tail_contacts: sumKnown(work, "tail_contacts"),
           tail_slices: sumKnown(work, "tail_slices"),
@@ -153,6 +186,8 @@ async function measure(path) {
           broad_phase_rotations: sumKnown(work, "broad_phase_rotations"),
           broad_phase_partial_queries: sumKnown(work, "broad_phase_partial_queries"),
           broad_phase_partial_body_updates: sumKnown(work, "broad_phase_partial_body_updates"),
+          response_scratch_index_rebuilds: sumKnown(work, "response_scratch_index_rebuilds"),
+          continuation_contact_evaluations: sumKnown(work, "continuation_contact_evaluations"),
           event_response_passes: sumKnown(work, "event_response_passes"),
           stabilization_passes: sumKnown(work, "stabilization_passes"),
           stabilizations_hitting_limit: sumKnown(work, "stabilizations_hitting_limit"),
@@ -169,8 +204,8 @@ async function measure(path) {
   return result;
 }
 const result = {
-  workload: "sandbox-projectiles-v4",
-  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v4 keeps exact within-build replay determinism and scenario/body-count validity, while baseline/head replay differences are recorded rather than rejected so deliberate deterministic physics approximations can be evaluated by behavior and performance evidence.",
+  workload: "sandbox-projectiles-v5",
+  note: "Warmed Node/V8 WASM physics only; not browser FPS or GPU performance. Timings are advisory. v5 adds a deterministic 30-shot walking stress trace while keeping exact within-build replay determinism and scenario validity. Baseline/head replay and final body-count differences are recorded for the analytic sphere stress lane because projectile representation and out-of-bounds retirement are deliberately different.",
   environment: { node: process.version, v8: process.versions.v8, platform: platform(), arch: arch(), cpu: cpus()[0]?.model },
   head_revision: process.env.HEAD_SHA ?? null,
   baseline_revision: process.env.BASE_SHA ?? null,
@@ -183,12 +218,17 @@ try {
       name: entry.name,
       trials: entry.trials.map((trial, trialIndex) => {
         const baseline = result.baseline.cases[index].trials[trialIndex];
-        if (trial.body_count !== baseline.body_count) {
+        const bodyCountMatches = trial.body_count === baseline.body_count;
+        const representationMayDiffer = entry.name === "thirty-shots-walking";
+        if (!representationMayDiffer && !bodyCountMatches) {
           throw new Error(`baseline/head body-count mismatch for ${entry.name}`);
         }
         return {
           replay_matches: trial.replay_sha256 === baseline.replay_sha256,
-          body_count_matches: true,
+          body_count_matches: bodyCountMatches,
+          head_body_count: trial.body_count,
+          baseline_body_count: baseline.body_count,
+          body_count_delta: trial.body_count - baseline.body_count,
           event_sum_delta: trial.event_sum - baseline.event_sum,
           mean_time_ratio: ratio(trial.steps.mean_ms, baseline.steps.mean_ms),
           p95_time_ratio: ratio(trial.steps.p95_ms, baseline.steps.p95_ms),

@@ -1,4 +1,8 @@
-//! Reusable deterministic physics simulation primitives.
+//! Reusable physics simulation primitives with floating-point arithmetic by default.
+//!
+//! [`numeric::Scalar`] is f64. Production time composition and shared scaled-arithmetic helpers
+//! do not use multi-limb exact rationals. Existing quantized geometry/state APIs remain compatibility
+//! surfaces during migration; they are not a requirement for new solver work.
 //!
 //! The engine owns deterministic translational rigid-body stepping plus engine-local rotational and
 //! contact geometry foundations: gravity, fixed/dynamic bodies, continuous collision detection,
@@ -9,27 +13,117 @@
 //! sampled rotating contact/re-contact search, shared first/re-contact frontiers, deterministic
 //! OBB/frontier response, Coulomb-limited OBB friction, bounded repeated sampled-event advancement,
 //! and a rotating-box world that consumes persistent contact tails deterministically. The original
-//! `World` solver remains translational and AABB-only. The public `RotatingWorld3d` defaults to an
-//! ECS-backed entity/component world that runs the performance-oriented parked-sleep physics system; the
-//! raw solver resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level
-//! integrations.
+//! `World` solver remains translational and AABB-only. Rotation-invariant ballistic spheres use a
+//! dedicated rounded-OBB feature sweep so they do not enter sampled rotating-body collision work.
+//! A ballistic scene is an immutable snapshot of target pose, velocity, shape, and collision layers;
+//! consumers must prepare a new snapshot after any of those authoritative target properties change.
+//! Reusing one across frames is valid only while those target properties remain unchanged, such as for
+//! fixed scene geometry. Interaction categories and deterministic pair policies are separate from both
+//! collision layers and materials, so consumers can tune simulation budgets without changing collision
+//! eligibility or physical coefficients. Per-body solver participation, motion authority, and sleep mode
+//! provide orthogonal foundations for overlap-only sensors, externally-driven kinematic bodies, and
+//! aggressively sleeping debris without introducing gameplay-specific body kinds. The public
+//! `RotatingWorld3d` wraps the parked-sleep physics kernel with retained fixed-geometry preparation;
+//! it owns no second entity/component body store. `PhysicsWorld3dKernel` exposes the same parked-sleep
+//! kernel without that preparation wrapper for lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
 #![forbid(unsafe_code)]
 
+macro_rules! performance_counter {
+    ($expression:expr) => {{
+        #[cfg(feature = "performance-counters")]
+        {
+            $expression;
+        }
+    }};
+}
+pub(crate) use performance_counter;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PerformanceCounterU64 {
+    #[cfg(feature = "performance-counters")]
+    value: u64,
+}
+
+impl PerformanceCounterU64 {
+    #[must_use]
+    pub(crate) const fn from_value(value: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self { value }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = value;
+            Self {}
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn value(self) -> u64 {
+        #[cfg(feature = "performance-counters")]
+        {
+            self.value
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            0
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn saturating_add(self, rhs: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self {
+                value: self.value.saturating_add(rhs),
+            }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = rhs;
+            self
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn saturating_sub(self, rhs: Self) -> u64 {
+        self.value().saturating_sub(rhs.value())
+    }
+}
+
+impl PartialEq<u64> for PerformanceCounterU64 {
+    fn eq(&self, other: &u64) -> bool {
+        self.value() == *other
+    }
+}
+
+impl PartialOrd<u64> for PerformanceCounterU64 {
+    fn partial_cmp(&self, other: &u64) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(other)
+    }
+}
+
 mod angular;
+mod ballistic_event;
+mod ballistic_sphere;
 mod body;
 mod collider;
 mod collision;
+mod contact_wake;
 mod current_contact_query;
 mod ecs_world;
 mod fixed_geometry;
+mod interaction_policy;
 mod linear_contact;
 mod math;
 mod obb_friction;
 mod obb_response;
 mod oriented_box;
+#[cfg(test)]
+mod performance_ratchet;
 mod query;
 mod relaxed_rotating_world;
 mod repeated_rotating_events;
@@ -38,7 +132,11 @@ mod rigid_box_free_flight;
 mod rotating_broad_phase;
 mod rotating_contact_frontier;
 mod rotating_contact_response;
+#[path = "rotating_contact_search_ordered.rs"]
 mod rotating_contact_search;
+#[allow(dead_code)]
+#[path = "rotating_contact_search.rs"]
+mod rotating_contact_search_reference;
 #[path = "rotating_recontact_search_ordered.rs"]
 mod rotating_recontact_search;
 #[cfg(test)]
@@ -51,13 +149,22 @@ mod strict_stabilized_rotating_world;
 mod stabilized_rotating_world {
     pub(crate) use crate::relaxed_rotating_world::RotatingWorld3d;
 }
+#[cfg(not(feature = "exact-reference"))]
+mod float_math;
+pub mod numeric;
 mod support_query;
+#[cfg(feature = "exact-reference")]
 mod wide_ratio;
 mod world;
 
 pub use angular::{
     ANGULAR_VELOCITY_SCALE, AngularError3d, AngularState3d, AngularVelocity3d, BoxInertia3d,
     ORIENTATION_SCALE, Orientation3d, box_inertia, contact_angular_impulse, integrate_orientation,
+};
+pub use ballistic_event::BallisticTimelineError3d;
+pub use ballistic_sphere::{
+    BallisticSphere3d, BallisticSphereError3d, BallisticSphereQueryStats3d, BallisticSphereScene3d,
+    BallisticSphereStep3d, BallisticSphereSweepHit3d, BallisticTime3d,
 };
 pub use body::{BodyId, BodyKind, MATERIAL_SCALE, Material, RigidBody};
 pub use collider::{Collider, ColliderContact, ColliderError, ColliderShape, collider_contact};
@@ -70,20 +177,27 @@ pub use fixed_geometry::{
     FIXED_GEOMETRY_PREPARATION_VERSION, FixedGeometryPreparationMode3d,
     FixedGeometryPreparationStats3d, obb_contact_seed, rigid_box_free_flight_sweep_bounds,
 };
+pub use interaction_policy::{
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicies3d, InteractionPolicy3d,
+    WakePropagation3d,
+};
 pub use math::Vec3i;
 pub use obb_friction::resolve_obb_contact;
 pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResolvedContact3d};
 pub use oriented_box::{
     ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, oriented_box_vertices,
 };
-pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use query::{Aabb, QueryError, QueryHit, Ray, ray_cast_first};
 pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
     RepeatedRotatingEventError3d, RepeatedRotatingEventWorkStats3d, RotatingResolvedEvent3d,
     advance_repeated_rotating_events,
 };
-pub use rigid_box::{CollisionLayers3d, ContactMode3d, RigidBox3d, RigidBoxError3d};
+pub use rigid_box::{
+    CollisionLayers3d, ContactMode3d, ContactPersistence3d, MotionAuthority3d, RigidBox3d,
+    RigidBoxError3d, SleepMode3d, SolverParticipation3d,
+};
 pub use rigid_box_free_flight::{
     RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, sample_rigid_box_free_flight,
 };
@@ -112,3 +226,5 @@ pub use rotational_sweep::{
 };
 pub use support_query::body_has_support;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
+
+pub mod approximate;

@@ -4,7 +4,7 @@ const DETAIL_LABELS = new Map([
   [603, "persistent-tail arithmetic overflow"],
   [610, "repeated-event failure"],
   [611, "repeated-event limit"],
-  [612, "exact remaining-time ratio capacity"],
+  [612, "remaining-time numerical range"],
   [613, "invalid repeated-event remainder"],
   [614, "contact-frontier failure"],
   [615, "repeated-event response failure"],

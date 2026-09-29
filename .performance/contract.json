@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "suite": "physics-engine/sandbox-projectiles-v4",
-  "description": "Representative WASM physics work contract. Correctness/replay remains authoritative; deterministic work counters block architectural regressions while wall-clock timing remains advisory on shared runners.",
+  "suite": "physics-engine/sandbox-projectiles-v5",
+  "description": "Absolute deterministic work ceilings seeded from the corrected architecture/sleeping baseline. The append-only ratchet additionally protects all six replays and native scaling fixtures without requiring a comparison build. Wall-clock timing remains advisory on shared runners. Contact-triggered activation includes discarded wake-probe queries; see docs/performance-ratchet.md for the explicit migration from proximity waking.",
   "scenarios": [
     {
       "id": "settled-idle",
@@ -24,7 +24,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "max": 0 }
+          "budget": {
+            "max": 0
+          }
         },
         {
           "name": "tail_slices",
@@ -32,7 +34,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "max": 0 }
+          "budget": {
+            "max": 0
+          }
         },
         {
           "name": "broad_phase_queries",
@@ -40,7 +44,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "max": 0 }
+          "budget": {
+            "max": 0
+          }
         },
         {
           "name": "mean_step_ms",
@@ -54,7 +60,7 @@
     {
       "id": "walking-no-shots",
       "kind": "common",
-      "description": "Active character movement without projectiles exercises ordinary stepping, grounding, contacts and retained broad-phase reuse.",
+      "description": "Active character movement without projectiles exercises ordinary stepping, grounding, contacts and retained broad-phase reuse; at most one additional lifecycle rebuild may park newly settled bodies.",
       "dimensions": {
         "ticks": 180,
         "projectiles": 0,
@@ -72,7 +78,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 782
+          }
         },
         {
           "name": "broad_phase_rebuilds",
@@ -80,7 +88,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 2
+          }
         },
         {
           "name": "mean_step_ms",
@@ -113,7 +123,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 710
+          }
         },
         {
           "name": "tail_slices",
@@ -121,7 +133,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 226
+          }
         },
         {
           "name": "broad_phase_queries",
@@ -129,7 +143,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 3064
+          }
         },
         {
           "name": "p95_step_ms",
@@ -161,7 +177,9 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 2727
+          }
         },
         {
           "name": "tail_candidate_pairs",
@@ -169,7 +187,85 @@
           "direction": "lower",
           "signal": "operation-count",
           "blocking": true,
-          "budget": { "relativeRegressionPercent": 10 }
+          "budget": {
+            "max": 3022
+          }
+        },
+        {
+          "name": "p95_step_ms",
+          "unit": "ms",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "thirty-shots-walking",
+      "kind": "stress",
+      "description": "Thirty equal-density light spheres under walking input. PR150 intentionally changes contact/wake patterns; epoch 4 records the complete trace and exact observed work ceilings. Other workloads keep their previous limits.",
+      "dimensions": {
+        "ticks": 240,
+        "projectiles": 30,
+        "character": "walking",
+        "projectile_type": "sphere"
+      },
+      "correctnessEvidence": [
+        "within-build replay fingerprint",
+        "body-count validity",
+        "collision/event evidence",
+        "no fail-closed physics error"
+      ],
+      "metrics": [
+        {
+          "name": "broad_phase_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": {
+            "max": 3503
+          }
+        },
+        {
+          "name": "broad_phase_partial_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": {
+            "max": 2124
+          }
+        },
+        {
+          "name": "tail_broad_phase_queries",
+          "unit": "queries",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": {
+            "max": 476
+          }
+        },
+        {
+          "name": "stabilization_active_bodies",
+          "unit": "bodies",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": {
+            "max": 6462
+          }
+        },
+        {
+          "name": "response_scratch_index_rebuilds",
+          "unit": "rebuilds",
+          "direction": "lower",
+          "signal": "operation-count",
+          "blocking": true,
+          "budget": {
+            "max": 0
+          }
         },
         {
           "name": "p95_step_ms",

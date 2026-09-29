@@ -3,149 +3,162 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>physics-engine · interactive sandbox</title>
-    <link rel="stylesheet" href="styles.css" />
+    <title>physics-engine · scenarios</title>
+    <link rel="stylesheet" href="catalog.css" />
   </head>
   <body>
-    <main>
-      <header>
+    <main class="catalog-shell">
+      <header class="catalog-header">
         <p class="eyebrow">physics-engine</p>
-        <h1>Walk through the physics.</h1>
-        <p class="lede">
-          This acceptance sandbox runs the repository's ECS-backed Rust <code>RotatingWorld3d</code> in
-          WebAssembly. The browser owns input and presentation; body state, gravity, collision detection,
-          continuous time of impact, friction, sleeping and response stay authoritative in the physics engine.
+        <h1>Browser scenarios</h1>
+        <p class="intro">
+          Focused Rust-backed fixtures progress from isolated collision mechanics to larger worlds.
+          The browser configures, drives, and visualizes them; simulation state, contacts, queries,
+          sleeping, and collision response remain engine authority.
         </p>
       </header>
 
-      <section class="demo" aria-labelledby="demo-title">
-        <div class="demo-heading">
+      <section class="scenario-section" aria-labelledby="focused-title">
+        <div class="section-heading">
           <div>
-            <p class="eyebrow">Interactive acceptance world</p>
-            <h2 id="demo-title">Movement, jumping, dynamic bodies and projectile CCD</h2>
+            <p class="eyebrow">Levels 1–2</p>
+            <h2 id="focused-title">Focused mechanics</h2>
           </div>
-          <div class="actions" aria-label="Simulation controls">
-            <button id="reset" type="button">Reset</button>
-            <button id="pause" type="button">Pause</button>
-            <button id="single-step" type="button">Step</button>
-          </div>
+          <p class="section-note">Small fixtures make one physical behavior easy to inspect before larger worlds combine them.</p>
         </div>
 
-        <fieldset>
-          <legend>Simulation rules</legend>
-          <p>
-            These scenario rules are authoritative for interaction eligibility and response. Changing a rule
-            resets the scene so comparisons start from identical initial state.
-          </p>
-          <label for="character-response">Character response</label>
-          <select id="character-response" disabled>
-            <option value="linear">Constrained linear push · no induced rotation</option>
-            <option value="physical">Full physical impact</option>
-          </select>
-          <label for="crate-motion">Crate motion</label>
-          <select id="crate-motion" disabled>
-            <option value="free">Free rigid-body rotation</option>
-            <option value="upright">Translation only · keep upright</option>
-          </select>
-          <p>Projectiles always use full rigid-body response, including off-center torque.</p>
-          <table class="rules-table">
-            <thead><tr><th>Collision pair</th><th>Enabled</th></tr></thead>
-            <tbody>
-              <tr><td>World ↔ world</td><td><input type="checkbox" data-collision-pair="world-world" checked disabled></td></tr>
-              <tr><td>World ↔ character</td><td><input type="checkbox" data-collision-pair="world-character" checked disabled></td></tr>
-              <tr><td>World ↔ crate</td><td><input type="checkbox" data-collision-pair="world-crate" checked disabled></td></tr>
-              <tr><td>World ↔ projectile</td><td><input type="checkbox" data-collision-pair="world-projectile" checked disabled></td></tr>
-              <tr><td>Character ↔ character</td><td><input type="checkbox" data-collision-pair="character-character" checked disabled></td></tr>
-              <tr><td>Character ↔ crate</td><td><input type="checkbox" data-collision-pair="character-crate" checked disabled></td></tr>
-              <tr><td>Character ↔ projectile</td><td><input type="checkbox" data-collision-pair="character-projectile" checked disabled></td></tr>
-              <tr><td>Crate ↔ crate</td><td><input type="checkbox" data-collision-pair="crate-crate" checked disabled></td></tr>
-              <tr><td>Crate ↔ projectile</td><td><input type="checkbox" data-collision-pair="crate-projectile" checked disabled></td></tr>
-              <tr><td>Projectile ↔ projectile</td><td><input type="checkbox" data-collision-pair="projectile-projectile" checked disabled></td></tr>
-            </tbody>
-          </table>
-          <select id="character-mode" hidden disabled>
-            <option value="1">Linear</option>
-            <option value="0">Physical</option>
-          </select>
-          <input id="upright-crates" type="checkbox" hidden disabled>
-        </fieldset>
-        <fieldset>
-          <legend>Engine preparation</legend>
-          <label for="fixed-geometry-mode">Fixed collision geometry</label>
-          <select id="fixed-geometry-mode" disabled>
-            <option value="0">Runtime preparation · reference path</option>
-            <option value="1">Prepare fixed geometry at load</option>
-          </select>
-          <p>
-            Prepare-at-load reuses immutable fixed collision geometry only; it does not bake motion or
-            sleeping dynamic bodies. This is a performance/storage axis, not a gameplay rule.
-          </p>
-        </fieldset>
-        <fieldset>
-          <legend>Performance log</legend>
-          <p>
-            Capture a bounded local browser session with raw frame, rendering and physics-step timings,
-            scenario settings, engine revision and environment details. Nothing is uploaded automatically.
-          </p>
-          <div class="actions performance-log-actions">
-            <button id="start-performance-log" type="button" disabled>Start performance log</button>
-            <button id="download-performance-log" type="button" disabled>Stop and download JSON</button>
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 1 · continuous collision detection</p>
+            <h3>CCD Gauntlet</h3>
+            <p>Fire fast projectiles through a field of deliberately thin targets to inspect tunnelling resistance and chronological impact handling.</p>
           </div>
-          <p id="performance-log-status" class="status" aria-live="polite">
-            Start a log before reproducing a slowdown or frame spike.
-          </p>
-          <p class="privacy-note">
-            The export contains browser and hardware metadata for comparison. Review it before sharing if
-            those details are sensitive.
-          </p>
-        </fieldset>
-        <div class="viewport-shell">
-          <canvas id="scene" width="1280" height="720" tabindex="0" aria-label="First-person physics sandbox"></canvas>
-          <div class="help" aria-hidden="true">WASD move · Space jump · Mouse / arrows look · Click / F shoot · R reset · P pause · N step</div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/ccd-gauntlet/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 1 · spatial queries</p>
+            <h3>Collision Query Lab</h3>
+            <p>Aim through a gallery of fixed shapes. The highlighted target is selected by the engine's deterministic ray query, not browser hit testing.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/collision-query-lab/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 2 · angular response</p>
+            <h3>Off-Centre Impact</h3>
+            <p>Shoot a raised rigid box away from its center of mass and inspect translation, rotation, friction, and settling after impact.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/off-centre-impact/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 2 · rotating bodies</p>
+            <h3>Rotating Box Lab</h3>
+            <p>Observe free-rotation boxes with different proportions and offset collisions on separate plinths, then compare against upright locking.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/rotating-box-lab/">Open scenario</a></div>
+        </article>
+      </section>
+
+      <section class="scenario-section" aria-labelledby="world-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Levels 3–4</p>
+            <h2 id="world-title">World behavior</h2>
+          </div>
+          <p class="section-note">These fixtures combine many contacts and bodies so solver convergence, sleeping, and locality become visible.</p>
         </div>
-        <p id="debug" class="debug" aria-live="polite"></p>
-        <p id="status" class="status" aria-live="polite">Loading the Rust physics sandbox…</p>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 3 · stacked contacts</p>
+            <h3>Compact Stack</h3>
+            <p>A compact multi-level stack exercises repeated contacts, stabilization, friction, and deterministic settling in a compact fixture. The separate Tower scenario exercises the canonical floating-point solver.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/tower-stability/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Level 4 · sleeping and locality</p>
+            <h3>Sleeping World</h3>
+            <p>Walk between distant clusters of settled bodies to inspect how a larger world becomes quiescent and how local interaction reactivates work.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/sleeping-world/">Open scenario</a></div>
+        </article>
       </section>
 
-      <section class="notes" aria-labelledby="fixture-title">
-        <p class="eyebrow">What this fixture exercises</p>
-        <h2 id="fixture-title">A deliberately small but real integration surface</h2>
-        <p>
-          The world contains a grounded player body, stacked dynamic boxes, platforms and steps, plus
-          a thin wall placed in the projectile path. Fast shots therefore exercise rotating continuous
-          collision handling instead of relying on frame-end overlap. Pause and single-step make failures
-          easier to inspect.
-        </p>
-        <p>
-          The graphics path prefers browser WebGPU and falls back to WebGL2 when WebGPU is unavailable.
-          Both backends consume the same authoritative Rust/Wasm body positions and orientations; neither
-          renderer is allowed to own or approximate physics state.
-        </p>
-        <p>
-          Procedural floor, wall, concrete and crate materials keep the fixture readable without an asset
-          dependency. Dynamic crates use engine-owned contact friction and deterministic sleeping so they can
-          settle instead of drifting forever.
-        </p>
+      <section class="scenario-section" aria-labelledby="integrated-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Integrated</p>
+            <h2 id="integrated-title">General sandbox</h2>
+          </div>
+          <p class="section-note">The original acceptance world remains available as the mixed-feature consumer.</p>
+        </div>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Integrated · mixed interaction</p>
+            <h3>General sandbox</h3>
+            <p>Character movement, crate interactions, projectiles, collision-pair policies, fixed-geometry preparation, and portable performance logging in one world.</p>
+          </div>
+          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/sandbox/">Open scenario</a></div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Large moving world</p>
+            <h3>Parkour world</h3>
+            <p>
+              Traverse a long elevated course with six engine-colliding moving platforms and blockers,
+              side routes, stacked crates, large gaps, and a lower recovery floor. External motion stays
+              deterministic in Rust while normal collision response, CCD, and character physics remain
+              engine-owned.
+            </p>
+          </div>
+          <div class="scenario-actions">
+            <span class="status">Interactive</span>
+            <a class="primary-link" href="./scenarios/parkour/">Open scenario</a>
+          </div>
+        </article>
+
+        <article class="scenario-row">
+          <div class="scenario-copy">
+            <p class="scenario-kicker">Stack stability</p>
+            <h3>Tower stability</h3>
+            <p>
+              Exercise a 32-crate tower using the bounded f64 fixed-step solver in Rust/WASM. Let the
+              stack settle, disturb it with movement or projectiles, and inspect collapse behavior without
+              moving body placement or collision authority into the browser.
+            </p>
+          </div>
+          <div class="scenario-actions">
+            <span class="status">Interactive</span>
+            <a class="primary-link" href="./scenarios/tower/">Open scenario</a>
+          </div>
+        </article>
+        <article class="scenario-row">
+          <div class="scenario-copy"><p class="scenario-kicker">Solver comparison</p><h3>Fixed-step approximation</h3>
+            <p>Compare bounded f64 impulse integration with sampled-event stepping on the same Rust tower.
+              Test direct hits, near misses, and free rotation. The approximation is explicitly selectable,
+              not a silent change to the existing sandbox.</p></div>
+          <div class="scenario-actions"><span class="status">Experimental</span><a class="primary-link" href="./scenarios/fixed-step/">Compare solvers</a></div>
+        </article>
       </section>
 
-      <section class="architecture" aria-labelledby="boundary-title">
-        <p class="eyebrow">Boundary</p>
-        <h2 id="boundary-title">The demo consumes the engine; it does not become the engine</h2>
-        <pre>browser input + WebGPU/WebGL presentation
-          |
-          v
- demo-wasm acceptance adapter
-          |
-          v
- ECS-backed physics world
-          |
-          v
- deterministic physics kernel
- CCD · contacts · friction · inertia · sleeping</pre>
+      <section class="scenario-contract" aria-labelledby="contract-title">
+        <p class="eyebrow">Scenario contract</p>
+        <h2 id="contract-title">One shared browser harness, multiple engine fixtures</h2>
+        <p>
+          Focused routes are generated from the same page template and select a Rust fixture by stable
+          scenario ID. JavaScript never reconstructs collision, response, query, or sleep truth.
+        </p>
       </section>
     </main>
-    <script type="module" src="simulation-rules.mjs"></script>
-    <script type="module" src="interaction-controls.mjs"></script>
-    <script type="module" src="app.js"></script>
   </body>
 </html>

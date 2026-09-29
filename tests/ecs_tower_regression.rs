@@ -1,8 +1,10 @@
+#[path = "fixtures/legacy_tower.rs"]
+mod legacy_tower;
+
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, BodyKind, MATERIAL_SCALE, Material, Orientation3d,
-    RepeatedRotatingEventConfig3d, RigidBody, RigidBox3d, RigidBoxFreeFlightConfig3d,
-    RotatingContactSearchConfig3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
-    advance_repeated_rotating_events, obb_contact_seed,
+    AngularState3d, AngularVelocity3d, BallisticSphere3d, BodyId, BodyKind, MATERIAL_SCALE,
+    Material, Orientation3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d, Vec3i,
+    obb_contact_seed,
 };
 
 const SCALE: i32 = 3_600;
@@ -127,12 +129,27 @@ fn damped_box(rigid_box: &RigidBox3d) -> RigidBox3d {
     .expect("damped tower body remains valid")
 }
 
-fn step_frame(boxes: &[RigidBox3d], frame: u32) -> Vec<RigidBox3d> {
+fn step_frame(boxes: &[RigidBox3d], frame: u32, with_ballistic: bool) -> Vec<RigidBox3d> {
     let mut world = RotatingWorld3d::new(world_config());
     for rigid_box in boxes {
         world
             .add_box(rigid_box.clone())
             .expect("tower body should enter engine world");
+    }
+    if with_ballistic {
+        world
+            .add_ballistic_sphere(
+                BallisticSphere3d::new(
+                    BodyId(100),
+                    Vec3i::new(200 * SCALE, 200 * SCALE, 0),
+                    Vec3i::ZERO,
+                    360,
+                    1,
+                )
+                .unwrap(),
+                false,
+            )
+            .unwrap();
     }
     let report = world
         .step(1, 60)
@@ -161,64 +178,42 @@ fn assert_no_floor_penetration(boxes: &[RigidBox3d], frame: u32) {
 }
 
 #[test]
-#[ignore = "diagnostic-only event trace; production remains capped at 64"]
-fn diagnose_frame_38_repeated_event_sequence() {
-    let mut boxes = tower_boxes();
-    for frame in 1..=37 {
-        boxes = step_frame(&boxes, frame);
-    }
-
-    let config = world_config();
-    let free_flight = RigidBoxFreeFlightConfig3d::new(config.gravity, 1, 60);
-    let diagnostic = advance_repeated_rotating_events(
-        &boxes,
-        RepeatedRotatingEventConfig3d::new(
-            RotatingContactSearchConfig3d::new(
-                free_flight,
-                config.sample_count,
-                config.refinement_steps,
-            ),
-            config.solver_passes,
-            512,
-        ),
-    );
-
-    match diagnostic {
-        Ok(advance) => {
-            eprintln!(
-                "frame 38 diagnostic completed with {} sampled events; remaining={:?}",
-                advance.events.len(),
-                advance.remaining,
-            );
-            for (index, event) in advance.events.iter().enumerate() {
-                let pairs = event
-                    .contacts
-                    .iter()
-                    .map(|contact| (contact.pair.left.0, contact.pair.right.0))
-                    .collect::<Vec<_>>();
-                eprintln!(
-                    "frame 38 event {}: time={}/{} pairs={pairs:?} response_passes={}",
-                    index + 1,
-                    event.time.numerator,
-                    event.time.denominator,
-                    event.response_passes,
-                );
-            }
+fn minimized_crossing_edge_contact_completes_without_event_churn() {
+    // Removing the floor and 28 unrelated blocks still reproduces the original 64-event failure.
+    let boxes = legacy_tower::minimized_frame_38();
+    let run = || {
+        let mut world = RotatingWorld3d::new(world_config());
+        for body in &boxes {
+            world.add_box(body.clone()).unwrap();
         }
-        Err(error) => eprintln!("frame 38 diagnostic still failed with 512 slots: {error:?}"),
-    }
+        let report = world.step(1, 60).unwrap();
+        let result = world.boxes().cloned().collect::<Vec<_>>();
+        (report, result)
+    };
+    let first = run();
+    assert_eq!(first, run());
+    assert_eq!(first.1.len(), 3);
+    assert!(first.0.changed_body_ids.contains(&BodyId(12)));
+    println!("COUNTER_SNAPSHOT minimized-edge-contact: {:?}", first.1);
 }
 
 #[test]
 #[ignore = "long deterministic ECS tower acceptance runs explicitly in Validate"]
 fn ecs_tower_completes_long_horizon_without_event_churn() {
     let mut boxes = tower_boxes();
+    let mut mixed_boxes = boxes.clone();
     let mut maximum_spinning_blocks = 0_usize;
     let mut projectile_passed_front_face = false;
 
     assert_eq!(boxes.len(), 32);
     for frame in 1..=240 {
-        boxes = step_frame(&boxes, frame);
+        boxes = step_frame(&boxes, frame, false);
+        mixed_boxes = step_frame(&mixed_boxes, frame, true);
+        assert_eq!(boxes.len(), 32, "body count changed at frame {frame}");
+        assert_eq!(
+            mixed_boxes, boxes,
+            "an unrelated analytic projectile changed rigid contact results at frame {frame}"
+        );
         if frame <= 180 {
             maximum_spinning_blocks = maximum_spinning_blocks.max(
                 boxes
@@ -234,4 +229,39 @@ fn ecs_tower_completes_long_horizon_without_event_churn() {
 
     assert!(projectile_passed_front_face);
     assert!(maximum_spinning_blocks >= 4);
+}
+
+#[test]
+fn admitted_persistent_pair_can_ricochet_and_recontact_in_the_same_step() {
+    let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+        gravity: Vec3i::ZERO,
+        sample_count: 64,
+        refinement_steps: 4,
+        solver_passes: 4,
+        max_events: 64,
+    });
+    for body in legacy_tower::elastic_corridor() {
+        world.add_box(body).unwrap();
+    }
+    let report = world.step(1, 1).unwrap();
+    let moving = world.box_by_id(BodyId(1)).unwrap();
+    assert!(moving.body().position().x.abs() <= 2048);
+    assert_eq!(moving.body().velocity().x.abs(), 20_000);
+    for id in [BodyId(2), BodyId(3)] {
+        assert!(
+            obb_contact_seed(
+                moving.oriented_box(),
+                world.box_by_id(id).unwrap().oriented_box()
+            )
+            .unwrap()
+            .is_none_or(|c| c.overlap_numerator == 0)
+        );
+    }
+    #[cfg(feature = "performance-counters")]
+    assert!(report.stats.sampled_events >= 4);
+    #[cfg(not(feature = "performance-counters"))]
+    assert_eq!(
+        report.stats,
+        physics_engine::RotatingWorldStepStats3d::default()
+    );
 }

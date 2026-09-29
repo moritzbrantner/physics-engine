@@ -8,7 +8,7 @@ test("session output keeps raw timings and derives stable summaries", () => {
   const timestamps = ["2026-09-15T10:00:00.000Z", "2026-09-15T10:00:01.000Z"];
   const recorder = createPerformanceSessionRecorder({
     environment: { renderer: "webgl2" },
-    scenario: { character: "linear" },
+    scenario: { character: "linear", projectile_impact: "impact-retire" },
     now: () => monotonic,
     wallClock: () => timestamps.shift(),
   });
@@ -49,6 +49,11 @@ test("session output keeps raw timings and derives stable summaries", () => {
       },
     ],
     body_count: 12,
+    projectile_count: 4,
+    active_projectile_count: 3,
+    projectiles_retired_on_contact: 2,
+    projectiles_retired_out_of_bounds: 1,
+    projectiles_evicted_by_cap: 0,
     collision_contacts: 2,
     paused: false,
   });
@@ -64,6 +69,13 @@ test("session output keeps raw timings and derives stable summaries", () => {
     max_ms: 2,
   });
   assert.deepEqual(result.summary.physics_work, {
+    fixed_position_passes: 0,
+    fixed_position_bounds_tests: 0,
+    fixed_position_contact_tests: 0,
+    fixed_position_corrections: 0,
+
+    fixed_substeps: 0, fixed_pair_tests: 0, fixed_narrow_tests: 0, fixed_contact_points: 0,
+    fixed_impulse_iterations: 0, fixed_integrated_bodies: 0, fixed_woken_bodies: 0, fixed_swept_contacts: 0,
     sampled_events: 3,
     tail_contacts: 5,
     tail_slices: 7,
@@ -80,17 +92,54 @@ test("session output keeps raw timings and derives stable summaries", () => {
     broad_phase_rotations: 0,
     broad_phase_partial_queries: 0,
     broad_phase_partial_body_updates: 0,
+    response_scratch_index_rebuilds: 0,
     event_response_passes: 0,
     stabilization_passes: 0,
     stabilizations_hitting_limit: 0,
     stabilization_candidate_pairs: 0,
     stabilization_exact_contacts: 0,
     stabilization_active_bodies: 0,
+    ballistic_query_rounds: 0,
+    ballistic_target_bound_checks: 0,
+    ballistic_broad_phase_candidates: 0,
+    ballistic_toi_tests: 0,
+    ballistic_feature_tests: 0,
+    ballistic_motion_samples: 0,
+    ballistic_impacts: 0,
+    ballistic_retired: 0,
+  });
+  assert.deepEqual(result.summary.projectile_lifecycle, {
+    max_live_projectiles: 4,
+    max_active_projectiles: 3,
+    retired_on_contact: 2,
+    retired_out_of_bounds: 1,
+    evicted_by_cap: 0,
   });
   assert.equal(result.raw.frames[0].physics_step_stats.length, 2);
   assert.equal(result.raw.frames[0].body_count, 12);
+  assert.equal(result.raw.frames[0].projectile_count, 4);
+  assert.equal(result.raw.frames[0].active_projectile_count, 3);
   assert.equal(result.summary.rendered_frames, 1);
   assert.equal(JSON.parse(serializePerformanceSession(result)).schema_version, 2);
+});
+
+test("projectile lifecycle totals remain additive across a sandbox reset", () => {
+  const recorder = createPerformanceSessionRecorder();
+  recorder.start();
+  const frame = (retired) => ({
+    frame_interval_ms: 16,
+    callback_ms: 1,
+    render_performed: false,
+    projectile_count: 1,
+    projectiles_retired_on_contact: retired,
+    projectiles_retired_out_of_bounds: 0,
+    projectiles_evicted_by_cap: 0,
+  });
+  recorder.recordFrame(frame(2));
+  recorder.recordFrame(frame(3));
+  recorder.recordFrame(frame(0));
+  recorder.recordFrame(frame(2));
+  assert.equal(recorder.finish().summary.projectile_lifecycle.retired_on_contact, 5);
 });
 
 test("session storage is bounded and reports omitted frames", () => {
@@ -151,4 +200,13 @@ test("invalid timing evidence fails instead of being silently normalized", () =>
     }),
     /frame_interval_ms/,
   );
+});
+test('fixed-step telemetry is retained without inventing legacy event work', () => {
+  const recorder = createPerformanceSessionRecorder({now:()=>0, wallClock:()=>new Date(0)});
+  recorder.start();
+  recorder.recordFrame({frame_interval_ms:16,callback_ms:1,render_performed:false,render_ms:null,physics_steps_ms:[1],physics_step_stats:[{fixed_substeps:8,fixed_impulse_iterations:36,fixed_contact_points:14}],dropped_accumulator_ms:0});
+  const result=recorder.finish();
+  assert.equal(result.summary.physics_work.fixed_substeps,8);
+  assert.equal(result.summary.physics_work.fixed_impulse_iterations,36);
+  assert.equal(result.raw.frames[0].physics_step_stats[0].sampled_events,null);
 });

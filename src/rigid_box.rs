@@ -58,6 +58,51 @@ pub enum ContactMode3d {
     LinearPush { support_direction: Vec3i },
 }
 
+/// Controls whether a resolved collision is retained as a resting/contact constraint after its impact.
+///
+/// This is intentionally independent from [`ContactMode3d`]. A transient body still uses the normal
+/// physical response path—including restitution, linear impulse, angular impulse, and penetration
+/// projection—but contacts involving it are not fed into persistent-contact stabilization. This is useful
+/// for ballistic/projectile bodies that should deliver discrete impacts without becoming part of a resting
+/// manifold. Collision discovery and later re-contact remain enabled.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactPersistence3d {
+    #[default]
+    Persistent,
+    Transient,
+}
+
+/// Controls whether a body participates in rigid contact solving or is present only for explicit overlap
+/// queries. Overlap-only bodies are intentionally omitted before time-of-impact search so they cannot create
+/// zero-time solver churn.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SolverParticipation3d {
+    #[default]
+    Solid,
+    OverlapOnly,
+}
+
+/// Selects who owns a dynamic body's motion.
+///
+/// Physics-owned dynamics receive gravity, impulses, projection, and ordinary sleep behavior. External
+/// motion is kinematic-like: the caller supplies linear/angular velocity, free flight follows that velocity
+/// without gravity, and the body contributes relative contact velocity while receiving no solver mutation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum MotionAuthority3d {
+    #[default]
+    Physics,
+    External,
+}
+
+/// Selects the engine's settling policy for a dynamic body.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SleepMode3d {
+    #[default]
+    Normal,
+    Aggressive,
+    Never,
+}
+
 /// Engine-native rotating cuboid state.
 ///
 /// `RigidBody` remains the canonical translational/material state. This wrapper adds rotational state
@@ -68,7 +113,11 @@ pub struct RigidBox3d {
     pub(crate) angular: AngularState3d,
     pub(crate) rotation_locked: bool,
     pub(crate) contact_mode: ContactMode3d,
+    pub(crate) contact_persistence: ContactPersistence3d,
     pub(crate) collision_layers: CollisionLayers3d,
+    pub(crate) solver_participation: SolverParticipation3d,
+    pub(crate) motion_authority: MotionAuthority3d,
+    pub(crate) sleep_mode: SleepMode3d,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -137,7 +186,11 @@ impl RigidBox3d {
             angular,
             rotation_locked: false,
             contact_mode: ContactMode3d::Physical,
+            contact_persistence: ContactPersistence3d::Persistent,
             collision_layers: CollisionLayers3d::default(),
+            solver_participation: SolverParticipation3d::Solid,
+            motion_authority: MotionAuthority3d::Physics,
+            sleep_mode: SleepMode3d::Normal,
         })
     }
 
@@ -161,10 +214,47 @@ impl RigidBox3d {
         self.with_rotation_locked()
     }
 
+    /// Marks this body as an impact-only participant in persistent-contact stabilization.
+    ///
+    /// Collision discovery and ordinary physical impulse response are unchanged. Only the post-impact
+    /// resting/contact graph excludes pairs involving this body.
+    #[must_use]
+    pub const fn with_transient_contacts(mut self) -> Self {
+        self.contact_persistence = ContactPersistence3d::Transient;
+        self
+    }
+
     /// Assigns collision-layer membership and the symmetric interaction mask used by collision discovery.
     #[must_use]
     pub const fn with_collision_layers(mut self, collision_layers: CollisionLayers3d) -> Self {
         self.collision_layers = collision_layers;
+        self
+    }
+
+    /// Keeps this body available to explicit overlap queries while omitting it from rigid-contact solving.
+    #[must_use]
+    pub const fn with_overlap_only(mut self) -> Self {
+        self.solver_participation = SolverParticipation3d::OverlapOnly;
+        self
+    }
+
+    /// Makes the caller authoritative for this dynamic body's motion.
+    ///
+    /// External motion never participates in engine sleep because a sleeping proxy would hide caller-owned
+    /// movement. The body remains a solid collision target unless separately marked overlap-only.
+    #[must_use]
+    pub const fn with_external_motion(mut self) -> Self {
+        self.motion_authority = MotionAuthority3d::External;
+        self.sleep_mode = SleepMode3d::Never;
+        self
+    }
+
+    /// Uses the shorter engine-owned settling window intended for low-value clutter/debris.
+    #[must_use]
+    pub const fn with_aggressive_sleep(mut self) -> Self {
+        if !matches!(self.sleep_mode, SleepMode3d::Never) {
+            self.sleep_mode = SleepMode3d::Aggressive;
+        }
         self
     }
 
@@ -174,8 +264,34 @@ impl RigidBox3d {
     }
 
     #[must_use]
+    pub const fn contact_persistence(&self) -> ContactPersistence3d {
+        self.contact_persistence
+    }
+
+    #[must_use]
     pub const fn collision_layers(&self) -> CollisionLayers3d {
         self.collision_layers
+    }
+
+    #[must_use]
+    pub const fn solver_participation(&self) -> SolverParticipation3d {
+        self.solver_participation
+    }
+
+    #[must_use]
+    pub const fn motion_authority(&self) -> MotionAuthority3d {
+        self.motion_authority
+    }
+
+    /// Whether contact response may change this body's motion or pose. Shared by all response lanes;
+    /// collision admission and relative contact velocity remain independent of mutation authority.
+    pub(crate) fn receives_physics_response(&self) -> bool {
+        self.body.kind() == BodyKind::Dynamic && self.motion_authority == MotionAuthority3d::Physics
+    }
+
+    #[must_use]
+    pub const fn sleep_mode(&self) -> SleepMode3d {
+        self.sleep_mode
     }
 
     #[must_use]
@@ -212,7 +328,10 @@ impl RigidBox3d {
 mod tests {
     use crate::{AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, Vec3i};
 
-    use super::{CollisionLayers3d, RigidBox3d, RigidBoxError3d};
+    use super::{
+        CollisionLayers3d, ContactPersistence3d, MotionAuthority3d, RigidBox3d, RigidBoxError3d,
+        SleepMode3d, SolverParticipation3d,
+    };
 
     #[test]
     fn constructor_preserves_engine_body_identity_and_geometry() {
@@ -233,6 +352,74 @@ mod tests {
         assert_eq!(rigid_box.oriented_box().half_extents, body.half_extents());
         assert!(!rigid_box.rotation_locked());
         assert_eq!(rigid_box.collision_layers(), CollisionLayers3d::ALL);
+        assert_eq!(
+            rigid_box.contact_persistence(),
+            ContactPersistence3d::Persistent
+        );
+        assert_eq!(
+            rigid_box.solver_participation(),
+            SolverParticipation3d::Solid
+        );
+        assert_eq!(rigid_box.motion_authority(), MotionAuthority3d::Physics);
+        assert_eq!(rigid_box.sleep_mode(), SleepMode3d::Normal);
+    }
+
+    #[test]
+    fn transient_contacts_are_an_explicit_independent_policy() {
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(8),
+                Vec3i::ZERO,
+                Vec3i::new(20, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid rotating box")
+        .with_transient_contacts();
+
+        assert_eq!(
+            rigid_box.contact_persistence(),
+            ContactPersistence3d::Transient
+        );
+        assert_eq!(rigid_box.contact_mode(), super::ContactMode3d::Physical);
+    }
+
+    #[test]
+    fn behavior_capabilities_compose_without_changing_collision_layers() {
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(18),
+                Vec3i::ZERO,
+                Vec3i::new(4, 0, 0),
+                Vec3i::new(1, 1, 1),
+            ),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid rotating box")
+        .with_overlap_only()
+        .with_external_motion()
+        .with_aggressive_sleep();
+
+        assert_eq!(
+            rigid_box.solver_participation(),
+            SolverParticipation3d::OverlapOnly
+        );
+        assert_eq!(rigid_box.motion_authority(), MotionAuthority3d::External);
+        assert_eq!(rigid_box.sleep_mode(), SleepMode3d::Never);
+        assert_eq!(rigid_box.collision_layers(), CollisionLayers3d::ALL);
+    }
+
+    #[test]
+    fn debris_sleep_mode_is_explicit() {
+        let rigid_box = RigidBox3d::new(
+            RigidBody::dynamic(BodyId(19), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(1, 1, 1)),
+            AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+        )
+        .expect("valid rotating box")
+        .with_aggressive_sleep();
+
+        assert_eq!(rigid_box.sleep_mode(), SleepMode3d::Aggressive);
     }
 
     #[test]

@@ -88,10 +88,32 @@ impl IndexedBvh3d {
             return false;
         }
 
+        self.insert(body, rotations)
+    }
+
+    pub(super) fn insert(&mut self, body: BoundedBody3d, rotations: &mut u64) -> bool {
+        if self.has_leaf(body.id) {
+            return false;
+        }
         let leaf = self.alloc_node(ArenaNode3d::leaf(body, None));
         self.leaf_by_id.insert(body.id, leaf);
         self.insert_leaf(leaf, rotations);
         true
+    }
+
+    /// Refresh authority metadata without discarding spatial topology on sleep/wake transitions.
+    /// Bounds are intentionally retained: the caller separately checks their containment.
+    pub(super) fn update_metadata(&mut self, mut body: BoundedBody3d) {
+        let index = self.leaf_by_id[&body.id];
+        body.bounds = self.node(index).bounds;
+        let node = self.node_mut(index);
+        node.kind = ArenaNodeKind3d::Leaf(body);
+        node.has_dynamic = body.kind == BodyKind::Dynamic;
+        let mut parent = node.parent;
+        while let Some(index) = parent {
+            self.refit(index);
+            parent = self.node(index).parent;
+        }
     }
 
     pub(super) fn for_each_candidate_pair(&self, mut visit: impl FnMut(BodyId, BodyId)) {
@@ -116,6 +138,44 @@ impl IndexedBvh3d {
             return;
         };
         self.visit_body_against(body, root, &mut visit);
+    }
+
+    /// Visits retained leaves whose fat bounds overlap `bounds`.
+    ///
+    /// The caller is responsible for exact-bound filtering. Returning the visited-node count makes
+    /// deterministic pruning work observable without turning wall-clock timing into a correctness gate.
+    pub(super) fn for_each_body_overlapping_bounds(
+        &self,
+        bounds: RotationalSweepBounds3d,
+        mut visit: impl FnMut(BodyId),
+    ) -> usize {
+        let Some(root) = self.root else {
+            return 0;
+        };
+        let mut visited_nodes = 0_usize;
+        self.visit_bounds_against(bounds, root, &mut visited_nodes, &mut visit);
+        visited_nodes
+    }
+
+    fn visit_bounds_against(
+        &self,
+        bounds: RotationalSweepBounds3d,
+        index: NodeIndex,
+        visited_nodes: &mut usize,
+        visit: &mut impl FnMut(BodyId),
+    ) {
+        *visited_nodes = visited_nodes.saturating_add(1);
+        let node = *self.node(index);
+        if !bounds_overlap(bounds, node.bounds) {
+            return;
+        }
+        match node.kind {
+            ArenaNodeKind3d::Leaf(body) => visit(body.id),
+            ArenaNodeKind3d::Branch { left, right } => {
+                self.visit_bounds_against(bounds, left, visited_nodes, visit);
+                self.visit_bounds_against(bounds, right, visited_nodes, visit);
+            }
+        }
     }
 
     fn visit_body_against(
@@ -234,7 +294,7 @@ impl IndexedBvh3d {
         })
     }
 
-    fn remove_leaf(&mut self, id: BodyId, rotations: &mut u64) -> bool {
+    pub(super) fn remove_leaf(&mut self, id: BodyId, rotations: &mut u64) -> bool {
         let Some(leaf) = self.leaf_by_id.remove(&id) else {
             return false;
         };
@@ -617,6 +677,8 @@ mod tests {
             id: BodyId(id),
             kind: BodyKind::Dynamic,
             collision_layers: crate::CollisionLayers3d::ALL,
+            solver_participation: crate::SolverParticipation3d::Solid,
+            receives_solver_response: true,
             bounds: RotationalSweepBounds3d {
                 minimum: [coordinate, 0, 0],
                 maximum: [coordinate + 2, 2, 2],

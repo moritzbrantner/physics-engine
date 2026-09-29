@@ -1,0 +1,18 @@
+[package]
+name = "contact-islands-experiment"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Compile the SAME scene/observations against the immutable pre-island engine for paired evidence.
+baseline = []
+
+[dependencies]
+physics-engine = { path = "../.." }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

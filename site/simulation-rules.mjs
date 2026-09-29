@@ -3,12 +3,14 @@ import {
   encodeScenarioRules,
   enabledPairsFromQuery,
   enabledPairsToQuery,
+  projectileImpactPolicyFromQuery,
 } from "./simulation-rules-config.mjs";
 
 const legacyCharacter = document.querySelector("#character-mode");
 const legacyUprightCrates = document.querySelector("#upright-crates");
 const characterResponse = document.querySelector("#character-response");
 const crateMotion = document.querySelector("#crate-motion");
+const projectileImpactPolicy = document.querySelector("#projectile-impact-policy");
 const fixedGeometry = document.querySelector("#fixed-geometry-mode");
 const reset = document.querySelector("#reset");
 const pairControls = new Map(
@@ -29,6 +31,9 @@ crateMotion.value =
       ? "upright"
       : "free"
     : "free");
+projectileImpactPolicy.value = projectileImpactPolicyFromQuery(
+  initial.searchParams.get("projectile-impact"),
+);
 const enabledPairs = enabledPairsFromQuery(initial.searchParams.get("collisions"));
 for (const [key] of COLLISION_PAIRS) {
   const control = pairControls.get(key);
@@ -46,6 +51,7 @@ function encodedRules() {
   return encodeScenarioRules({
     characterResponse: characterResponse.value,
     crateMotion: crateMotion.value,
+    projectileImpactPolicy: projectileImpactPolicy.value,
     enabledPairs: selectedPairs(),
   });
 }
@@ -66,6 +72,7 @@ function syncUrl() {
   const url = new URL(window.location.href);
   url.searchParams.set("response", characterResponse.value);
   url.searchParams.set("crate-motion", crateMotion.value);
+  url.searchParams.set("projectile-impact", projectileImpactPolicy.value);
   url.searchParams.set("collisions", enabledPairsToQuery(selectedPairs()));
   url.searchParams.set("character", characterResponse.value === "physical" ? "physical" : "linear");
   url.searchParams.set("crates", crateMotion.value === "upright" ? "upright" : "free");
@@ -74,7 +81,12 @@ function syncUrl() {
 
 syncUrl();
 
-const scenarioControls = [characterResponse, crateMotion, ...pairControls.values()];
+const scenarioControls = [
+  characterResponse,
+  crateMotion,
+  projectileImpactPolicy,
+  ...pairControls.values(),
+];
 for (const control of scenarioControls) {
   control.addEventListener("keydown", (event) => event.stopPropagation());
   control.addEventListener("change", () => {

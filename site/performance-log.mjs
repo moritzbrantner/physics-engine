@@ -34,8 +34,34 @@ function sumCounter(steps, name) {
   return steps.reduce((sum, step) => sum + (step[name] ?? 0), 0);
 }
 
+function cumulativeCounterTotal(frames, name) {
+  let total = 0;
+  let previous = 0;
+  for (const frame of frames) {
+    const current = frame[name];
+    if (current === null || current === undefined) continue;
+    total += current >= previous ? current - previous : current;
+    previous = current;
+  }
+  return total;
+}
+
 function normalizeStepStats(step) {
   return {
+    fixed_position_passes: optionalCounter(step.fixed_position_passes, "fixed_position_passes"),
+    fixed_position_bounds_tests: optionalCounter(step.fixed_position_bounds_tests, "fixed_position_bounds_tests"),
+    fixed_position_contact_tests: optionalCounter(step.fixed_position_contact_tests, "fixed_position_contact_tests"),
+    fixed_position_corrections: optionalCounter(step.fixed_position_corrections, "fixed_position_corrections"),
+
+    fixed_substeps: optionalCounter(step.fixed_substeps, "fixed_substeps"),
+    fixed_pair_tests: optionalCounter(step.fixed_pair_tests, "fixed_pair_tests"),
+    fixed_narrow_tests: optionalCounter(step.fixed_narrow_tests, "fixed_narrow_tests"),
+    fixed_contact_points: optionalCounter(step.fixed_contact_points, "fixed_contact_points"),
+    fixed_impulse_iterations: optionalCounter(step.fixed_impulse_iterations, "fixed_impulse_iterations"),
+    fixed_integrated_bodies: optionalCounter(step.fixed_integrated_bodies, "fixed_integrated_bodies"),
+    fixed_woken_bodies: optionalCounter(step.fixed_woken_bodies, "fixed_woken_bodies"),
+    fixed_swept_contacts: optionalCounter(step.fixed_swept_contacts, "fixed_swept_contacts"),
+
     sampled_events: optionalCounter(step.sampled_events, "sampled_events"),
     tail_contacts: optionalCounter(step.tail_contacts, "tail_contacts"),
     tail_slices: optionalCounter(step.tail_slices, "tail_slices"),
@@ -61,12 +87,34 @@ function normalizeStepStats(step) {
     broad_phase_rotations: optionalCounter(step.broad_phase_rotations, "broad_phase_rotations"),
     broad_phase_partial_queries: optionalCounter(step.broad_phase_partial_queries, "broad_phase_partial_queries"),
     broad_phase_partial_body_updates: optionalCounter(step.broad_phase_partial_body_updates, "broad_phase_partial_body_updates"),
+    response_scratch_index_rebuilds: optionalCounter(step.response_scratch_index_rebuilds, "response_scratch_index_rebuilds"),
     event_response_passes: optionalCounter(step.event_response_passes, "event_response_passes"),
     stabilization_passes: optionalCounter(step.stabilization_passes, "stabilization_passes"),
     stabilizations_hitting_limit: optionalCounter(step.stabilizations_hitting_limit, "stabilizations_hitting_limit"),
     stabilization_candidate_pairs: optionalCounter(step.stabilization_candidate_pairs, "stabilization_candidate_pairs"),
     stabilization_exact_contacts: optionalCounter(step.stabilization_exact_contacts, "stabilization_exact_contacts"),
     stabilization_active_bodies: optionalCounter(step.stabilization_active_bodies, "stabilization_active_bodies"),
+    ballistic_sphere_count: optionalCounter(step.ballistic_sphere_count, "ballistic_sphere_count"),
+    ballistic_query_rounds: optionalCounter(step.ballistic_query_rounds, "ballistic_query_rounds"),
+    ballistic_target_bound_checks: optionalCounter(
+      step.ballistic_target_bound_checks,
+      "ballistic_target_bound_checks",
+    ),
+    ballistic_broad_phase_candidates: optionalCounter(
+      step.ballistic_broad_phase_candidates,
+      "ballistic_broad_phase_candidates",
+    ),
+    ballistic_toi_tests: optionalCounter(step.ballistic_toi_tests, "ballistic_toi_tests"),
+    ballistic_feature_tests: optionalCounter(
+      step.ballistic_feature_tests,
+      "ballistic_feature_tests",
+    ),
+    ballistic_motion_samples: optionalCounter(
+      step.ballistic_motion_samples,
+      "ballistic_motion_samples",
+    ),
+    ballistic_impacts: optionalCounter(step.ballistic_impacts, "ballistic_impacts"),
+    ballistic_retired: optionalCounter(step.ballistic_retired, "ballistic_retired"),
   };
 }
 
@@ -124,10 +172,25 @@ export function createPerformanceSessionRecorder({
           frame.dropped_accumulator_ms ?? 0,
           "dropped_accumulator_ms",
         ),
-        body_count: Number.isInteger(frame.body_count) ? frame.body_count : null,
-        collision_contacts: Number.isInteger(frame.collision_contacts)
-          ? frame.collision_contacts
-          : null,
+        body_count: optionalCounter(frame.body_count, "body_count"),
+        projectile_count: optionalCounter(frame.projectile_count, "projectile_count"),
+        active_projectile_count: optionalCounter(
+          frame.active_projectile_count,
+          "active_projectile_count",
+        ),
+        projectiles_retired_on_contact: optionalCounter(
+          frame.projectiles_retired_on_contact,
+          "projectiles_retired_on_contact",
+        ),
+        projectiles_retired_out_of_bounds: optionalCounter(
+          frame.projectiles_retired_out_of_bounds,
+          "projectiles_retired_out_of_bounds",
+        ),
+        projectiles_evicted_by_cap: optionalCounter(
+          frame.projectiles_evicted_by_cap,
+          "projectiles_evicted_by_cap",
+        ),
+        collision_contacts: optionalCounter(frame.collision_contacts, "collision_contacts"),
         paused: Boolean(frame.paused),
       };
       if (normalized.physics_step_stats.length !== 0 && normalized.physics_step_stats.length !== normalized.physics_steps_ms.length) {
@@ -158,6 +221,12 @@ export function createPerformanceSessionRecorder({
         .map((frame) => frame.render_ms);
       const physicsSteps = frames.flatMap((frame) => frame.physics_steps_ms);
       const physicsStepStats = frames.flatMap((frame) => frame.physics_step_stats);
+      const liveProjectileCounts = frames
+        .map((frame) => frame.projectile_count)
+        .filter((value) => value !== null);
+      const activeProjectileCounts = frames
+        .map((frame) => frame.active_projectile_count)
+        .filter((value) => value !== null);
       return {
         schema_version: SCHEMA_VERSION,
         kind: "physics-engine-browser-session",
@@ -180,6 +249,20 @@ export function createPerformanceSessionRecorder({
           physics_steps: statistics(physicsSteps),
           physics_step_count: physicsSteps.length,
           physics_work: {
+            fixed_position_passes: sumCounter(physicsStepStats, "fixed_position_passes"),
+            fixed_position_bounds_tests: sumCounter(physicsStepStats, "fixed_position_bounds_tests"),
+            fixed_position_contact_tests: sumCounter(physicsStepStats, "fixed_position_contact_tests"),
+            fixed_position_corrections: sumCounter(physicsStepStats, "fixed_position_corrections"),
+
+            fixed_substeps: sumCounter(physicsStepStats, "fixed_substeps"),
+            fixed_pair_tests: sumCounter(physicsStepStats, "fixed_pair_tests"),
+            fixed_narrow_tests: sumCounter(physicsStepStats, "fixed_narrow_tests"),
+            fixed_contact_points: sumCounter(physicsStepStats, "fixed_contact_points"),
+            fixed_impulse_iterations: sumCounter(physicsStepStats, "fixed_impulse_iterations"),
+            fixed_integrated_bodies: sumCounter(physicsStepStats, "fixed_integrated_bodies"),
+            fixed_woken_bodies: sumCounter(physicsStepStats, "fixed_woken_bodies"),
+            fixed_swept_contacts: sumCounter(physicsStepStats, "fixed_swept_contacts"),
+
             sampled_events: sumCounter(physicsStepStats, "sampled_events"),
             tail_contacts: sumCounter(physicsStepStats, "tail_contacts"),
             tail_slices: sumCounter(physicsStepStats, "tail_slices"),
@@ -196,12 +279,39 @@ export function createPerformanceSessionRecorder({
             broad_phase_rotations: sumCounter(physicsStepStats, "broad_phase_rotations"),
             broad_phase_partial_queries: sumCounter(physicsStepStats, "broad_phase_partial_queries"),
             broad_phase_partial_body_updates: sumCounter(physicsStepStats, "broad_phase_partial_body_updates"),
+            response_scratch_index_rebuilds: sumCounter(physicsStepStats, "response_scratch_index_rebuilds"),
             event_response_passes: sumCounter(physicsStepStats, "event_response_passes"),
             stabilization_passes: sumCounter(physicsStepStats, "stabilization_passes"),
             stabilizations_hitting_limit: sumCounter(physicsStepStats, "stabilizations_hitting_limit"),
             stabilization_candidate_pairs: sumCounter(physicsStepStats, "stabilization_candidate_pairs"),
             stabilization_exact_contacts: sumCounter(physicsStepStats, "stabilization_exact_contacts"),
             stabilization_active_bodies: sumCounter(physicsStepStats, "stabilization_active_bodies"),
+            ballistic_query_rounds: sumCounter(physicsStepStats, "ballistic_query_rounds"),
+            ballistic_target_bound_checks: sumCounter(
+              physicsStepStats,
+              "ballistic_target_bound_checks",
+            ),
+            ballistic_broad_phase_candidates: sumCounter(
+              physicsStepStats,
+              "ballistic_broad_phase_candidates",
+            ),
+            ballistic_toi_tests: sumCounter(physicsStepStats, "ballistic_toi_tests"),
+            ballistic_feature_tests: sumCounter(physicsStepStats, "ballistic_feature_tests"),
+            ballistic_motion_samples: sumCounter(physicsStepStats, "ballistic_motion_samples"),
+            ballistic_impacts: sumCounter(physicsStepStats, "ballistic_impacts"),
+            ballistic_retired: sumCounter(physicsStepStats, "ballistic_retired"),
+          },
+          projectile_lifecycle: {
+            max_live_projectiles:
+              liveProjectileCounts.length === 0 ? null : Math.max(...liveProjectileCounts),
+            max_active_projectiles:
+              activeProjectileCounts.length === 0 ? null : Math.max(...activeProjectileCounts),
+            retired_on_contact: cumulativeCounterTotal(frames, "projectiles_retired_on_contact"),
+            retired_out_of_bounds: cumulativeCounterTotal(
+              frames,
+              "projectiles_retired_out_of_bounds",
+            ),
+            evicted_by_cap: cumulativeCounterTotal(frames, "projectiles_evicted_by_cap"),
           },
           frames_with_dropped_accumulator: frames.filter(
             (frame) => frame.dropped_accumulator_ms > 0,

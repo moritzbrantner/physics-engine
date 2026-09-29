@@ -11,6 +11,11 @@ cleanup() {
 trap cleanup EXIT
 
 export HEAD_SHA="$head_sha"
+if [[ -n "$(git -C "$root" status --porcelain)" ]]; then
+  export SOURCE_DIRTY=true
+else
+  export SOURCE_DIRTY=false
+fi
 export PERFORMANCE_EVIDENCE_DIR="$temporary/evidence"
 mkdir -p "$PERFORMANCE_EVIDENCE_DIR"
 
@@ -37,10 +42,10 @@ node scripts/benchmark-baking.mjs \
   "$PERFORMANCE_EVIDENCE_DIR/head.wasm" \
   "$PERFORMANCE_EVIDENCE_DIR/baking-options.json"
 
-archive="$root/physics-performance-log-${short_sha}.tar.gz"
+archive="$root/physics-performance-evidence-${short_sha}.tar.gz"
 node scripts/package-performance-log.mjs \
   "$PERFORMANCE_EVIDENCE_DIR" \
   "$archive" \
   "$@"
 
-printf 'Portable performance log: %s\n' "$archive"
+printf 'Portable performance evidence bundle: %s\n' "$archive"

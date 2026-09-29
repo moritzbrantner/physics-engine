@@ -6,6 +6,19 @@ license = "MIT"
 rust-version = "1.98"
 description = "Deterministic continuous-collision physics kernel"
 
+[dependencies]
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "0b1919a4b841a57b077869c42c79104031aff418" }
+
+[features]
+default = ["performance-counters"]
+# Diagnostic computational-work counters. Disable with --no-default-features to prove
+# instrumentation-neutral simulation semantics without changing the default evidence path.
+performance-counters = []
+# Diagnostic legacy replay only. Never required by the default or Pages build.
+exact-reference = []
+# Diagnostic correction study only; no optional state/branches in production builds.
+experimental-soft-contact = []
+
 [lib]
 name = "physics_engine"
 path = "src/lib.rs"
@@ -15,3 +28,7 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+
+[[example]]
+name = "contact_correction_quality"
+required-features = ["experimental-soft-contact"]

@@ -3,7 +3,32 @@ name: Performance Evidence
 on:
   pull_request:
     paths:
+      - "src/ballistic_target_index*.rs"
+      - "src/oriented_box_parity_tests.rs"
+      - "src/performance_ratchet.rs"
+      - ".performance/ratchet*/**"
+      - ".performance/ratchet-fixtures.json"
+      - "scripts/performance-ratchet*.mjs"
       - "src/query.rs"
+      - "src/approximate/**"
+      - "experiments/contact-islands/**"
+      - "experiments/solver-budget/**"
+      - "scripts/check-diagnostic-exports.mjs"
+      - "scripts/check-diagnostic-exports.test.mjs"
+      - "scripts/benchmark-correction.mjs"
+      - "examples/contact_correction_quality.rs"
+      - "Cargo.toml"
+      - "tests/fixed_step_approximation.rs"
+      - "scripts/benchmark-fixed-step.mjs"
+      - "scripts/benchmark-convergence.mjs"
+      - "scripts/benchmark-prepared-response.mjs"
+      - "scripts/compare-primitive-kernel.sh"
+      - "src/float_math.rs"
+      - "src/numeric.rs"
+      - "src/contact_wake.rs"
+      - "tests/projectile_wake_admission.rs"
+      - "scripts/benchmark-projectile-wake.mjs"
+      - "src/ballistic_sphere.rs"
       - "src/rigid_box.rs"
       - "src/linear_contact.rs"
       - "src/stabilized_rotating_world.rs"
@@ -15,6 +40,7 @@ on:
       - "src/rotating_broad_phase_tree.rs"
       - "src/rotating_contact_frontier.rs"
       - "src/rotating_contact_search.rs"
+      - "src/rotating_contact_search_ordered.rs"
       - "src/rotating_recontact_search.rs"
       - "src/rotating_recontact_prepared_tests.rs"
       - "src/oriented_box.rs"
@@ -30,15 +56,21 @@ on:
       - "tests/linear_contact_policy.rs"
       - "demo-wasm/**"
       - ".performance/contract.json"
+      - ".performance/sandbox-evidence-profile.json"
       - ".coding-tooling.json"
       - "scripts/run-performance-evidence.sh"
       - "scripts/run-sandbox-performance.sh"
       - "scripts/benchmark-sandbox.mjs"
       - "scripts/validate-performance-contract.mjs"
       - "scripts/benchmark-character-options.mjs"
+      - "scripts/benchmark-projectile-policies.mjs"
       - "scripts/benchmark-baking.mjs"
       - "scripts/collect-performance-log.sh"
+      - "scripts/adapt-performance-evidence.mjs"
+      - "scripts/adapt-performance-evidence.test.mjs"
+      - "scripts/validate-performance-evidence.py"
       - "scripts/package-performance-log.mjs"
+      - "scripts/package-performance-log.test.mjs"
       - "scripts/summarize-cpu-profile.mjs"
       - "site/performance-log.mjs"
       - "site/performance-log.test.mjs"
@@ -83,25 +115,93 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/run-sandbox-performance.sh
 
+      - name: Verify production excludes optional diagnostics
+        run: node scripts/check-diagnostic-exports.mjs performance-evidence/head.wasm production
+      - name: Compare primitive-kernel extraction with base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: TRIALS=7 bash scripts/compare-primitive-kernel.sh
+
+      - name: Compare fixed-step approximation with event solver
+        run: node scripts/benchmark-fixed-step.mjs performance-evidence/head.wasm performance-evidence/fixed-step.json performance-evidence/base.wasm
+      - name: Compare convergence with fixed-pass reference
+        run: TRIALS=2 node scripts/benchmark-convergence.mjs performance-evidence/head.wasm performance-evidence/convergence.json
+
+      - name: Compare independent contact-island convergence
+        run: |
+          cargo test --locked --manifest-path experiments/contact-islands/Cargo.toml
+          cargo build --locked --manifest-path experiments/contact-islands/Cargo.toml --release --target wasm32-unknown-unknown
+          cp experiments/contact-islands/target/wasm32-unknown-unknown/release/contact_islands_experiment.wasm performance-evidence/contact-islands.wasm
+          cp experiments/contact-islands/run.mjs performance-evidence/contact-islands-run.mjs
+          TRIALS=2 TICKS=600 node experiments/contact-islands/run.mjs performance-evidence/contact-islands.wasm performance-evidence/contact-islands.json
+
+      - name: Verify opt-in correction without replacing production evidence
+        run: |
+          cargo test --locked --features experimental-soft-contact --lib approximate::
+          cargo test --locked --manifest-path demo-wasm/Cargo.toml --features experimental-soft-contact --lib approximate::
+          cargo build --locked --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --features experimental-soft-contact
+          cp demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm performance-evidence/correction-experiment.wasm
+          node scripts/check-diagnostic-exports.mjs performance-evidence/correction-experiment.wasm soft
+          TRIALS=2 TICKS=1200 node scripts/benchmark-correction.mjs performance-evidence/correction-experiment.wasm performance-evidence/correction.json
+          cargo run --locked --release --features experimental-soft-contact --example contact_correction_quality -- performance-evidence/correction-quality.json
+
+      - name: Validate budget reporting and bounded diagnostic smoke
+        run: |
+          cargo test --locked --manifest-path experiments/solver-budget/Cargo.toml
+          node --test experiments/solver-budget/*.test.mjs
+          cargo build --locked --manifest-path experiments/solver-budget/Cargo.toml --release --target wasm32-unknown-unknown
+          COUNTS=32 TRIALS=2 TICKS=300 SCENES=0,3 PROFILES=4s-8v-2p,2s-2v-1p node experiments/solver-budget/run.mjs experiments/solver-budget/target/wasm32-unknown-unknown/release/physics_solver_budget.wasm performance-evidence/budget-smoke.json
+          node experiments/solver-budget/check-smoke.mjs performance-evidence/budget-smoke.json
+          cargo test --locked --manifest-path demo-wasm/Cargo.toml --features experimental-soft-contact,solver-budget-experiment --lib approximate::tests::diagnostic_budget
+          cargo build --locked --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --features experimental-soft-contact,solver-budget-experiment
+          node scripts/check-diagnostic-exports.mjs demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm combined
+
       - name: Record independent character gameplay options
         run: |
           cp scripts/benchmark-character-options.mjs performance-evidence/
           node scripts/benchmark-character-options.mjs performance-evidence/head.wasm performance-evidence/character-options.json
+
+      - name: Record dense projectile policy matrix
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          cp scripts/benchmark-projectile-policies.mjs performance-evidence/
+          node scripts/benchmark-projectile-policies.mjs performance-evidence/head.wasm performance-evidence/projectile-policies.json
 
       - name: Compare optional fixed geometry preparation
         run: |
           cp scripts/benchmark-baking.mjs performance-evidence/
           node scripts/benchmark-baking.mjs performance-evidence/head.wasm performance-evidence/baking-options.json
 
-      - name: Package portable performance log
+      - name: Package portable performance evidence
         if: ${{ always() }}
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SOURCE_DIRTY: "false"
         run: |
           node scripts/package-performance-log.mjs \
             performance-evidence \
-            "physics-performance-log-${HEAD_SHA}-${GITHUB_RUN_ID}.tar.gz"
+            "physics-performance-evidence-${HEAD_SHA}-${GITHUB_RUN_ID}.tar.gz"
+
+      - name: Check out canonical Performance Evidence contract
+        if: ${{ success() }}
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          repository: moritzbrantner/performance-evidence
+          ref: 068d880a1b76f41e06548c557af0a7bf8c8057eb
+          path: .performance-evidence-contract
+
+      - name: Install Performance Evidence validator
+        if: ${{ success() }}
+        run: python -m pip install -r .performance-evidence-contract/requirements-dev.txt
+
+      - name: Validate canonical Performance Evidence
+        if: ${{ success() }}
+        run: >-
+          python scripts/validate-performance-evidence.py
+          .performance-evidence-contract
+          performance-evidence
 
       - name: Upload reproducible performance evidence
         if: ${{ always() }}
@@ -110,6 +210,6 @@ jobs:
           name: physics-performance-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_id }}
           path: |
             performance-evidence/
-            physics-performance-log-*.tar.gz
+            physics-performance-evidence-*.tar.gz
           if-no-files-found: warn
           retention-days: 14
