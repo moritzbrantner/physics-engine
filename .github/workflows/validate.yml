@@ -18,8 +18,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Prepare Rust toolchain
-        run: rustc --version && cargo --version
+      - name: Install Nix
+        uses: NixOS/nix-installer-action@62c1943b776c509394b550f3f983adc14e9212d6 # v1.0.0
+        with:
+          installer-version: 2.35.2
+          enable-kvm: false
+
+      - name: Activate Nix CLI environment
+        run: |
+          nix develop --command bash -c 'printf "%s\n" "$PATH" >> "$GITHUB_PATH"'
+
+      - name: Verify Nix Rust toolchain proxies
+        run: |
+          for command in rustc cargo rustup; do
+            executable="$(type -P "$command")"
+            case "$executable" in
+              /nix/store/*) ;;
+              *) echo "Expected Nix $command proxy, got $executable" >&2; exit 1 ;;
+            esac
+          done
+          rustc --version
+          cargo --version
+          node --version
+          python3 --version
 
       - name: Run deterministic fast tier
         uses: moritzbrantner/coding-tooling@20afb614772346991b3e7ac60b5857ecab5472e3
