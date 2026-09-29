@@ -308,6 +308,47 @@ mod tests {
     use physics_engine::{BodyId, MotionAuthority3d};
 
     #[test]
+    fn parkour_replays_complete_mover_routes_without_stopping_or_leaving_bounds() {
+        let replay = || {
+            let mut sandbox =
+                crate::Sandbox::with_parkour_options(false, false).expect("valid parkour sandbox");
+            let mut reversals = [0; MOVING_OBSTACLES.len()];
+            let mut directions = [0; MOVING_OBSTACLES.len()];
+            let mut snapshots = Vec::new();
+            for tick in 0..600 {
+                assert_eq!(
+                    sandbox.step_velocity(0, 0, false),
+                    0,
+                    "parkour tick {tick}, detail {}",
+                    sandbox.error_detail
+                );
+                assert!(!sandbox.is_quiescent(), "movers must keep advancing");
+                for (index, obstacle) in MOVING_OBSTACLES.into_iter().enumerate() {
+                    let body = sandbox.world.box_by_id(obstacle.id).unwrap();
+                    assert_eq!(body.motion_authority(), MotionAuthority3d::External);
+                    let position = obstacle.axis.coordinate(body.body().position());
+                    let velocity = obstacle.axis.coordinate(body.body().velocity());
+                    assert_eq!(velocity.abs(), obstacle.speed);
+                    // Scheduling occurs at tick boundaries; permit at most one tick's overshoot.
+                    let overshoot =
+                        (obstacle.speed + crate::TICKS_PER_SECOND - 1) / crate::TICKS_PER_SECOND;
+                    assert!(position >= obstacle.min - overshoot);
+                    assert!(position <= obstacle.max + overshoot);
+                    let direction = velocity.signum();
+                    if directions[index] != 0 && directions[index] != direction {
+                        reversals[index] += 1;
+                    }
+                    directions[index] = direction;
+                }
+                snapshots.push(sandbox.world.boxes().cloned().collect::<Vec<_>>());
+            }
+            assert!(reversals.into_iter().all(|count| count >= 2));
+            snapshots
+        };
+        assert_eq!(replay(), replay());
+    }
+
+    #[test]
     fn parkour_fixture_is_large_and_keeps_movers_engine_visible() {
         let world = build_world(false, false).expect("valid parkour world");
 
