@@ -19,6 +19,10 @@ Read [the numerical policy and migration boundary](docs/numerics.md). The free-r
 contact-convergence problem remains a separate solver defect; changing number types alone is
 not a claim to have fixed it.
 
+For consumer API selection, current capability status, and integer-tick to persistent-f64 conversion,
+read [the supported world APIs and migration contract](docs/world-api-contract.md). A dependency update
+does not itself migrate a consumer to another world surface.
+
 ## Fixed-step comparison
 
 The optional `approximate::World` uses persistent f64 state, semi-implicit Euler integration,
