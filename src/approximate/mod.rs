@@ -225,22 +225,20 @@ impl Body {
     }
     /// Diagnostic kinetic energy in mass-units * scene-units squared / second squared.
     /// This observation does not feed back into dynamics or the sleep policy.
+    /// Angular motion with unsupported inertia returns NaN rather than invented energy.
     pub fn kinetic_energy(&self) -> Scalar {
         if self.mass == 0.0 {
             return 0.0;
         }
-        let w = self.orientation.inverse_rotate(self.angular_velocity);
-        let inertia = match self.shape {
-            Shape::Sphere(r) => Vector(1.0, 1.0, 1.0) * (0.4 * self.mass * r * r),
-            Shape::Box(h) => {
-                Vector(
-                    h.1 * h.1 + h.2 * h.2,
-                    h.0 * h.0 + h.2 * h.2,
-                    h.0 * h.0 + h.1 * h.1,
-                ) * (self.mass / 3.0)
-            }
+        let linear = 0.5 * self.mass * self.velocity.dot(self.velocity);
+        if self.angular_velocity == Vector::ZERO {
+            return linear;
+        }
+        let Some(inverse) = self.shape.local_inverse_inertia(self.mass) else {
+            return Scalar::NAN;
         };
-        0.5 * (self.mass * self.velocity.dot(self.velocity) + w.dot(w.component_mul(inertia)))
+        let w = self.orientation.inverse_rotate(self.angular_velocity);
+        linear + 0.5 * (w.0 * w.0 / inverse.0 + w.1 * w.1 / inverse.1 + w.2 * w.2 / inverse.2)
     }
     pub fn is_sleeping(&self) -> bool {
         self.sleeping

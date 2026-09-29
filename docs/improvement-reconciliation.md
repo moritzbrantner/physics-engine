@@ -2,12 +2,19 @@
 
 ## Production baseline and retained guarantees
 
-The reconciliation starts at merged #167, `92312a5d36ec1ed9cbafad92e45b2012affa27de`
+The original experiment starts at merged #167, `92312a5d36ec1ed9cbafad92e45b2012affa27de`
 (tree `6e08b8520410756e90b5d5ad89e29f75df21cf41`). This already includes prepared response
 coefficients (#159), active membership/contact adjacency/scratch (#160), contact geometry preparation
 (#161), bounded convergence (#162), the canonical tower runtime (#164), fixed-position preparation
 (#165), and current-response contact islands (#167 / #166). Do not reapply those changes or substitute
 an earlier experimental engine snapshot for this baseline.
+
+The current reconciliation also retains the shared primitive kernels (#188), contact-triggered wake
+ratchet repair (#205), supported-world contract (#204), Nix validation (#186), parkour scenario (#185)
+and optional rotating-world counters (#169). Production parity is checked against current main,
+including these changes, rather than against the original experiment's older baseline. The new
+kinetic-energy observer reuses current capsule inertia and reports unavailable angular wedge inertia
+as NaN; it does not change the supported motion or mass-property contract.
 
 CPU simulation defaults to f64. `exact-reference` stays an explicit diagnostic backend, not an
 implicit fallback. The tower keeps 4 substeps, at most 8 primary velocity iterations and 2 fixed-

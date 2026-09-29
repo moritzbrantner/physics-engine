@@ -286,6 +286,33 @@ fn kinetic_observation_uses_body_frame_inertia_and_does_not_change_state() {
     assert_eq!(b, before);
 }
 #[test]
+fn kinetic_observation_supports_capsules_and_reports_missing_wedge_inertia() {
+    let mut capsule = Body::new(BodyId(1), Shape::capsule(1.0, 1.0), Vector::ZERO, 1.0);
+    capsule.angular_velocity = Vector::X;
+    assert!((capsule.kinetic_energy() - 0.605).abs() < 1e-12);
+    capsule.angular_velocity = Vector::Y;
+    assert!((capsule.kinetic_energy() - 0.23).abs() < 1e-12);
+
+    let mut pill = Body::new(BodyId(2), Shape::capsule(0.0, 2.0), Vector::ZERO, 6.0);
+    pill.velocity = Vector(2.0, 0.0, 0.0);
+    pill.angular_velocity = Vector(3.0, -2.0, 1.0);
+    assert!((pill.kinetic_energy() - 79.2).abs() < 1e-12);
+
+    let mut wedge = Body::new(
+        BodyId(3),
+        Shape::wedge(Vector(1.0, 1.0, 1.0)),
+        Vector::ZERO,
+        2.0,
+    );
+    wedge.rotation_locked = true;
+    wedge.velocity = Vector(3.0, 0.0, 0.0);
+    assert_eq!(wedge.kinetic_energy(), 9.0);
+    wedge.rotation_locked = false;
+    wedge.external = true;
+    wedge.angular_velocity = Vector::X;
+    assert!(wedge.kinetic_energy().is_nan());
+}
+#[test]
 fn positional_correction_cannot_be_hidden_by_relaxed_sleep_velocity() {
     let mut w = World::new(Config {
         gravity: Vector(0.0, -10.0, 0.0),
