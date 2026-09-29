@@ -10,6 +10,7 @@ use physics_engine::{
 mod controller;
 mod parkour;
 mod render_snapshot;
+mod scenario_presets;
 
 use controller::TICKS_PER_SECOND;
 pub use controller::controlled_velocity;
@@ -54,11 +55,13 @@ enum SandboxScenario {
     General,
     Tower,
     Parkour,
+    Focused(scenario_presets::DemoScenario),
 }
 
 struct Sandbox {
     scenario: SandboxScenario,
     world: RotatingWorld3d,
+    query_hit: Option<BodyId>,
     next_projectile_id: u64,
     projectile_ids: Vec<BodyId>,
     projectile_type: Option<ProjectileType>,
@@ -130,6 +133,28 @@ impl Sandbox {
         controller::scenario_rules::reset_default();
         let world = parkour::build_world(linear_push, upright_crates)?;
         Ok(Self::from_world(SandboxScenario::Parkour, world))
+    }
+
+    fn with_focused_options(
+        scenario: scenario_presets::DemoScenario,
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
+        let world = scenario_presets::build_world(scenario, linear_push, upright_crates)?;
+        Ok(Self::from_world(SandboxScenario::Focused(scenario), world))
+    }
+
+    fn aim_query(&mut self, direction: Vec3i) -> i32 {
+        self.query_hit = match self.scenario {
+            SandboxScenario::Focused(scenario) => {
+                scenario_presets::aim_query_hit(&self.world, scenario, direction)
+            }
+            _ => None,
+        };
+        self.query_hit
+            .and_then(|id| i32::try_from(id.0).ok())
+            .unwrap_or(-1)
     }
 
     fn with_crate_layout(
@@ -212,6 +237,7 @@ impl Sandbox {
         Self {
             scenario,
             world,
+            query_hit: None,
             next_projectile_id: PROJECTILE_ID_START,
             projectile_ids: Vec::new(),
             projectile_type: None,
@@ -340,6 +366,9 @@ impl Sandbox {
     }
 
     fn render_role_for(&self, id: BodyId) -> i32 {
+        if self.query_hit == Some(id) {
+            return 6;
+        }
         if id.0 >= PROJECTILE_ID_START {
             return match self.projectile_type {
                 Some(ProjectileType::Arrow) => 4,
@@ -741,6 +770,11 @@ pub extern "C" fn sandbox_projectile_type() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_shoot(velocity_x: i32, velocity_y: i32, velocity_z: i32) -> i32 {
     with_sandbox_mut(|sandbox| sandbox.shoot(velocity_x, velocity_y, velocity_z))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_aim_query(direction_x: i32, direction_y: i32, direction_z: i32) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.aim_query(Vec3i::new(direction_x, direction_y, direction_z)))
 }
 
 #[unsafe(no_mangle)]

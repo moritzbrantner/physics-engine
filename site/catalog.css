@@ -183,3 +183,25 @@ code {
     justify-content: space-between;
   }
 }
+
+.scenario-section + .scenario-section {
+  margin-top: 34px;
+}
+
+.scenario-row + .scenario-row {
+  border-top: 0;
+}
+
+.scenario-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-bottom: 2px;
+}
+
+@media (max-width: 760px) {
+  .scenario-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}

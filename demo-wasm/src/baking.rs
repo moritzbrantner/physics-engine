@@ -140,7 +140,7 @@ fn reset_with_baking_options(
     simulation_rules: i32,
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
-    build_layout: fn(bool, bool) -> Result<Sandbox, RotatingWorldError3d>,
+    build_layout: impl FnOnce(bool, bool) -> Result<Sandbox, RotatingWorldError3d>,
 ) -> i32 {
     let explicit_rules = simulation_rules & EXPLICIT_RULES_BIT != 0;
     let (legacy_upright_crates, pair_policy_settings) = if explicit_rules
@@ -199,6 +199,32 @@ pub extern "C" fn sandbox_reset_with_baking_options(
         upright_crates_or_pair_policies,
         fixed_geometry_mode,
         Sandbox::with_options,
+    )
+}
+
+/// IDs 1 through 6 select focused Rust-owned fixtures; zero retains the General reset contract.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_scenario_with_baking_options(
+    scenario: i32,
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    if scenario == 0 {
+        return sandbox_reset_with_baking_options(
+            simulation_rules,
+            upright_crates_or_pair_policies,
+            fixed_geometry_mode,
+        );
+    }
+    let Some(scenario) = crate::scenario_presets::DemoScenario::from_i32(scenario) else {
+        return -1;
+    };
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        |linear, upright| Sandbox::with_focused_options(scenario, linear, upright),
     )
 }
 

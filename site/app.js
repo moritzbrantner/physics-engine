@@ -44,14 +44,21 @@ const projectileShortcuts = new Map(
   ]),
 );
 const scenarioId = document.body.dataset.scenario ?? "sandbox";
-const scenarioResetExport = new Map([
-  ["sandbox", "sandbox_reset_with_baking_options"],
-  ["tower", "sandbox_reset_tower_with_baking_options"],
-  ["parkour", "sandbox_reset_parkour_with_baking_options"],
-]).get(scenarioId);
+const focusedScenarioIds = new Map([
+  ["ccd-gauntlet", 1], ["rotating-box-lab", 2], ["tower-stability", 3],
+  ["sleeping-world", 4], ["collision-query-lab", 5], ["off-centre-impact", 6],
+]);
+const focusedScenarioId = focusedScenarioIds.get(scenarioId);
+const scenarioResetExport = focusedScenarioId == null
+  ? new Map([
+    ["sandbox", "sandbox_reset_with_baking_options"],
+    ["tower", "sandbox_reset_tower_with_baking_options"],
+    ["parkour", "sandbox_reset_parkour_with_baking_options"],
+  ]).get(scenarioId)
+  : "sandbox_reset_scenario_with_baking_options";
 if (!scenarioResetExport) throw new Error(`Unknown physics scenario: ${scenarioId}`);
 const scenarioDefaults =
-  scenarioId === "tower" || scenarioId === "parkour"
+  scenarioId === "tower" || scenarioId === "parkour" || focusedScenarioId != null
     ? { character: "physical", crates: "free", bake: "load" }
     : { character: "linear", crates: "upright", bake: "load" };
 const characterParameters = new URLSearchParams(window.location.search);
@@ -205,13 +212,11 @@ function selectProjectileType(projectileType) {
 function reset() {
   if (!engine || !renderer) return;
   const resetWithOptions = engine[scenarioResetExport];
+  const resetArgs = [Number(characterModeControl.value), Number(uprightCratesControl.checked), Number(fixedGeometryControl.value)];
+  if (focusedScenarioId != null) resetArgs.unshift(focusedScenarioId);
   if (
     typeof resetWithOptions !== "function" ||
-    resetWithOptions(
-      Number(characterModeControl.value),
-      Number(uprightCratesControl.checked),
-      Number(fixedGeometryControl.value),
-    ) !== 0
+    resetWithOptions(...resetArgs) !== 0
   ) {
     throw new Error(`Unable to initialize the selected ${scenarioId} physics options`);
   }
@@ -249,7 +254,7 @@ function reset() {
       ? `Tower ready · fixed-step f64. WASD moves, Space jumps, F shoots, 1/2/3 selects a projectile. Rendering with ${renderer.backend}.`
       : scenarioId === "parkour"
         ? `Parkour ready · moving platforms and obstacles use engine-owned collision response. WASD moves, Space jumps, and R resets the course. Rendering with ${renderer.backend}.`
-        : `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
+        : `${document.body.dataset.scenarioTitle ?? "General sandbox"} ready. Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
 function movementVelocity() {
@@ -467,7 +472,7 @@ function boxVertices(body) {
 }
 
 function materialFor(body) {
-  if (body.role === 3 || body.role === 4) return 4;
+  if (body.role === 3 || body.role === 4 || body.role === 6) return 4;
   if (body.role === 2) return 3;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
@@ -626,10 +631,21 @@ function ensureCrosshair() {
   viewportShell.append(crosshair);
 }
 
+function refreshScenarioQuery() {
+  if (scenarioId !== "collision-query-lab") return null;
+  const cosPitch = Math.cos(pitch);
+  return engine.sandbox_aim_query(
+    Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED),
+    Math.round(-Math.sin(pitch) * PROJECTILE_SPEED),
+    Math.round(-Math.cos(yaw) * cosPitch * PROJECTILE_SPEED),
+  );
+}
+
 function render() {
   const resized = resizeCanvas();
   if (!renderDirty && !resized) return false;
 
+  const queryHit = refreshScenarioQuery();
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
   if (!player) return false;
@@ -662,7 +678,10 @@ function render() {
       : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
   const physicsTiming =
     averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  const queryDiagnostics = scenarioId === "collision-query-lab"
+    ? queryHit >= 0 ? ` · ray hit body #${queryHit}` : " · ray clear"
+    : "";
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming}${queryDiagnostics} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   if (scenarioId === "tower") {
     // Read-only diagnostic observations; tests never drive or replace simulation state here.
     window.physicsTowerState = Object.freeze({
@@ -894,6 +913,9 @@ try {
         typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"))
   ) {
     throw new Error("WASM sandbox does not expose the selected scenario controls");
+  }
+  if (scenarioId === "collision-query-lab" && typeof engine.sandbox_aim_query !== "function") {
+    throw new Error("WASM sandbox does not expose the selected ray query");
   }
   ensureCrosshair();
   characterModeControl.disabled = false;

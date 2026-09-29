@@ -114,6 +114,15 @@ moving platforms/blockers. The demo owns only their deterministic ping-pong rout
 bodies themselves use the engine's external-motion policy so swept collision detection, relative
 contact velocity, collision response, and authoritative body state stay in Rust.
 
+## Focused physics scenarios
+
+The shared Rust/WASM browser harness also serves CCD Gauntlet, Collision Query Lab,
+Off-Centre Impact, Rotating Box Lab, Compact Stack, and Sleeping World. Each route selects
+one Rust-owned fixture; the query gallery uses the engine's nearest AABB ray query over
+borrowed fixed targets. The General Sandbox, canonical floating-point Tower, and Parkour
+routes remain available. The compact legacy stack is a focused fixture, not the canonical
+tower acceptance or evidence that the larger legacy tower failure is repaired.
+
 ## Interactive acceptance sandbox
 
 GitHub Pages now builds a small first-person acceptance world through `demo-wasm`. The adapter depends on this crate and exposes only the state needed by the browser consumer; it does not reimplement collision detection or response in JavaScript.

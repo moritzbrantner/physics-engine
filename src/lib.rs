@@ -187,7 +187,7 @@ pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResol
 pub use oriented_box::{
     ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, oriented_box_vertices,
 };
-pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use query::{Aabb, QueryError, QueryHit, Ray, ray_cast_first};
 pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,

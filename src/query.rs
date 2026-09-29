@@ -107,10 +107,7 @@ impl World {
 
     /// Returns only the first deterministic ray hit without allocating or sorting the complete hit set.
     pub fn ray_cast_first(&self, ray: Ray, ticks: i32) -> Result<Option<QueryHit>, QueryError> {
-        let query = Aabb::new(ray.origin, Vec3i::ZERO);
-        validate_query(query)?;
-        validate_ticks(ticks)?;
-        Ok(first_snapshot_hit(self, query, ray.direction, ticks))
+        ray_cast_first(self.bodies(), ray, ticks)
     }
 }
 
@@ -125,12 +122,21 @@ fn cast_snapshot(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Vec
     hits
 }
 
-fn first_snapshot_hit(world: &World, query: Aabb, velocity: Vec3i, ticks: i32) -> Option<QueryHit> {
-    let probe = query_body(query, velocity);
-    world
-        .bodies()
+/// Returns the nearest current-state AABB ray hit over borrowed bodies without building a world.
+///
+/// Body velocities are ignored. Equal-time hits use stable `BodyId` ordering regardless of
+/// iterator order. This compatibility query does not account for oriented or curved geometry.
+pub fn ray_cast_first<'a>(
+    bodies: impl IntoIterator<Item = &'a RigidBody>,
+    ray: Ray,
+    ticks: i32,
+) -> Result<Option<QueryHit>, QueryError> {
+    validate_ticks(ticks)?;
+    let probe = query_body(Aabb::new(ray.origin, Vec3i::ZERO), ray.direction);
+    Ok(bodies
+        .into_iter()
         .filter_map(|body| snapshot_hit(&probe, body, ticks))
-        .min_by_key(hit_order_key)
+        .min_by_key(hit_order_key))
 }
 
 fn snapshot_hit(probe: &RigidBody, body: &RigidBody, ticks: i32) -> Option<QueryHit> {
