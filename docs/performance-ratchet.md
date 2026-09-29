@@ -141,3 +141,21 @@ queries. Other absolute ceilings remain unchanged. The append-only history prese
 all increases/decreases explicitly, and enforces the current completed workload thereafter. The runner
 now verifies every exact native test name before collecting release measurements, so a removed/renamed
 fixture fails before the expensive benchmark rather than succeeding with zero tests.
+
+## Proportional sphere mass (epoch 4)
+
+PR150 changes only the explicit analytic-sphere stress lane's mass, from one to
+`2 * PI / 1296`, matching the legacy sandbox's nominal sphere/crate density.
+Twenty of 21 rows retain their exact correctness and work values. The sphere trace
+still completes all 240 steps twice with 18 bodies and identical within-build replay;
+its event total changes from 2029 to 1942. The unchanged pyramid regression requires
+visible contact response, one retirement, bounded excursion and eventual sleep.
+
+This is a behavior correction with a performance tradeoff. In the persistent-sphere
+stress control, real wake admissions increase from 6 to 28, broad-phase queries from
+2839 to 3503, partial queries from 710 to 2124, and stabilization-active bodies from
+3664 to 6462. The three exceeded stress ceilings now equal those measured counts;
+all unrelated ceilings and simulation budgets remain unchanged. Sampled events fall
+from 901 to 458, but that does not make this trace an overall performance improvement.
+Both raw runs include discarded wake-probe work. The earlier evidence remains in the
+append-only history; epoch 4 protects the corrected trace against future regressions.

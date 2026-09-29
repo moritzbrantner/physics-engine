@@ -219,3 +219,49 @@ fn repeated_ballistic_impacts_still_fail_closed_at_the_event_limit() {
         )),
     );
 }
+
+#[test]
+fn fractional_response_mass_matches_closed_form_elastic_impact() {
+    let mut world = world();
+    let elastic = Material::new(MATERIAL_SCALE);
+    let target = RigidBox3d::new(
+        RigidBody::dynamic(BodyId(1), Vec3i::ZERO, Vec3i::ZERO, Vec3i::new(5, 5, 5))
+            .with_mass(2)
+            .with_material(elastic),
+        AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
+    )
+    .expect("dynamic target");
+    world.add_box(target).expect("add target");
+    world
+        .add_ballistic_sphere(
+            BallisticSphere3d::new(
+                BodyId(100),
+                Vec3i::new(-30, 0, 0),
+                Vec3i::new(3000, 0, 0),
+                2,
+                1,
+            )
+            .expect("sphere")
+            .with_response_mass(0.5)
+            .expect("fractional mass")
+            .with_material(elastic),
+            false,
+        )
+        .expect("add sphere");
+    let report = world.step(1, 60).expect("elastic collision");
+    assert_eq!(report.stats.ballistic_impacts, 1);
+    // Independent 1D elastic solution: v1=(m1-m2)/(m1+m2)*u1; v2=2*m1/(m1+m2)*u1.
+    assert_eq!(
+        world
+            .ballistic_sphere_by_id(BodyId(100))
+            .expect("sphere remains")
+            .velocity(),
+        Vec3i::new(-1800, 0, 0)
+    );
+    let target = world.box_by_id(BodyId(1)).expect("target remains");
+    assert_eq!(target.body().velocity(), Vec3i::new(1200, 0, 0));
+    assert_eq!(
+        target.angular().angular_velocity,
+        AngularVelocity3d::default()
+    );
+}

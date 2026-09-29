@@ -3,7 +3,7 @@ use std::{error::Error, fmt};
 use crate::{
     AngularError3d, BodyId, CollisionLayers3d, Material, ORIENTATION_SCALE, Orientation3d,
     OrientedBoxError3d, RigidBox3d, Vec3i,
-    numeric::{ArithmeticError, mul_div_round_i128},
+    numeric::{ArithmeticError, Scalar, mul_div_round_i128},
     oriented_box_vertices,
 };
 
@@ -13,6 +13,11 @@ const BALLISTIC_TIME_SCALE_I128: i128 = 1_i128 << 32;
 #[path = "ballistic_target_index.rs"]
 mod target_index;
 use target_index::BallisticTargetIndex3d;
+
+// Only validated finite positive values enter this type, so equality is reflexive.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ResponseMass(Scalar);
+impl Eq for ResponseMass {}
 
 /// Lightweight projectile state for a rotation-invariant spherical body.
 ///
@@ -26,6 +31,7 @@ pub struct BallisticSphere3d {
     velocity: Vec3i,
     radius: i32,
     mass_units: u32,
+    response_mass: ResponseMass,
     material: Material,
     collision_layers: CollisionLayers3d,
 }
@@ -50,6 +56,7 @@ impl BallisticSphere3d {
             velocity,
             radius,
             mass_units,
+            response_mass: ResponseMass(Scalar::from(mass_units)),
             material: Material::default(),
             collision_layers: CollisionLayers3d::default(),
         })
@@ -75,9 +82,26 @@ impl BallisticSphere3d {
         self.radius
     }
 
+    /// Legacy whole-unit construction mass; collision response uses `response_mass`.
     #[must_use]
     pub const fn mass_units(self) -> u32 {
         self.mass_units
+    }
+
+    /// Inertial mass used by collision response, in the same relative units as rigid bodies.
+    #[must_use]
+    pub const fn response_mass(self) -> Scalar {
+        self.response_mass.0
+    }
+
+    /// Select a finite response mass in [1e-6, 1e12).
+    /// The whole-unit construction value remains available through the legacy `mass_units` getter.
+    pub fn with_response_mass(mut self, mass: Scalar) -> Result<Self, BallisticSphereError3d> {
+        if !mass.is_finite() || !(1e-6..1e12).contains(&mass) {
+            return Err(BallisticSphereError3d::InvalidResponseMass(self.id));
+        }
+        self.response_mass = ResponseMass(mass);
+        Ok(self)
     }
 
     #[must_use]
@@ -184,6 +208,7 @@ pub struct BallisticSphereQueryStats3d {
 pub enum BallisticSphereError3d {
     NonPositiveRadius(BodyId, i32),
     ZeroMass(BodyId),
+    InvalidResponseMass(BodyId),
     NegativeTimestepNumerator(i32),
     NonPositiveTimestepDenominator(i32),
     Geometry(OrientedBoxError3d),
@@ -197,6 +222,11 @@ impl fmt::Display for BallisticSphereError3d {
             Self::NonPositiveRadius(id, radius) => write!(
                 formatter,
                 "ballistic sphere {} requires a positive radius, got {radius}",
+                id.0
+            ),
+            Self::InvalidResponseMass(id) => write!(
+                formatter,
+                "ballistic sphere {} requires finite response mass in [1e-6, 1e12)",
                 id.0
             ),
             Self::ZeroMass(id) => {
@@ -1186,6 +1216,37 @@ mod tests {
             AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::default()),
         )
         .expect("valid fixed target")
+    }
+
+    #[test]
+    fn response_mass_validates_fractional_values_without_restricting_legacy_mass() {
+        let sphere = BallisticSphere3d::new(BodyId(1), Vec3i::ZERO, Vec3i::ZERO, 1, u32::MAX)
+            .expect("legacy mass range remains supported");
+        assert_eq!(sphere.response_mass(), f64::from(u32::MAX));
+        for mass in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            -1.0,
+            0.0,
+            1e-7,
+            1e12,
+        ] {
+            assert_eq!(
+                sphere.with_response_mass(mass),
+                Err(crate::BallisticSphereError3d::InvalidResponseMass(BodyId(
+                    1
+                )))
+            );
+        }
+        for mass in [1e-6, 0.5, 1e11] {
+            let updated = sphere
+                .with_response_mass(mass)
+                .expect("valid response mass");
+            assert_eq!(updated.response_mass(), mass);
+            assert_eq!(updated.mass_units(), u32::MAX);
+            assert_eq!(updated, updated);
+        }
     }
 
     #[test]

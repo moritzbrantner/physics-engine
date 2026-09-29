@@ -6,7 +6,7 @@ use crate::{
     BallisticSphereSweepHit3d, BodyId, MATERIAL_SCALE, ORIENTATION_SCALE, Orientation3d,
     RigidBox3d, RigidBoxFreeFlightConfig3d, RigidBoxFreeFlightError3d, SampledContactTime3d, Vec3i,
     box_inertia,
-    numeric::{ArithmeticError, mul_div_round_i128, mul_div_round_u128},
+    numeric::{ArithmeticError, Scalar, mul_div_round_i128, mul_div_round_u128},
     sample_rigid_box_free_flight,
 };
 
@@ -371,21 +371,9 @@ fn apply_ballistic_target_impulse(
         return Ok([0; 3]);
     }
 
-    let sphere_inverse_mass = i128::try_from(mul_div_round_u128(
-        axis_length_squared,
-        RESPONSE_SCALE as u128,
-        u128::from(projectile.mass_units()),
-    )?)
-    .map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+    let mass = projectile.response_mass();
     let target_inverse_mass =
         body_effective_inverse_mass_scaled(target, target_offset, axis, axis_length_squared)?;
-    let effective_inverse_mass = sphere_inverse_mass
-        .checked_add(target_inverse_mass)
-        .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
-    if effective_inverse_mass <= 0 {
-        return Ok([0; 3]);
-    }
-
     let restitution = projectile
         .material()
         .restitution_milli()
@@ -394,13 +382,43 @@ fn apply_ballistic_target_impulse(
         .checked_neg()
         .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
     let mut impulse = [0_i128; 3];
-    for (output, axis_component) in impulse.iter_mut().zip(axis) {
-        *output = response_impulse_component(
-            closing_speed,
-            restitution,
-            axis_component,
-            effective_inverse_mass,
-        )?;
+    if mass == Scalar::from(projectile.mass_units()) {
+        // Preserve established whole-unit compatibility arithmetic, including diagnostic replay.
+        let sphere_inverse_mass = i128::try_from(mul_div_round_u128(
+            axis_length_squared,
+            RESPONSE_SCALE as u128,
+            u128::from(projectile.mass_units()),
+        )?)
+        .map_err(|_| BallisticTimelineError3d::ArithmeticOverflow)?;
+        let effective_inverse_mass = sphere_inverse_mass
+            .checked_add(target_inverse_mass)
+            .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?;
+        if effective_inverse_mass <= 0 {
+            return Ok(impulse);
+        }
+        for (output, axis_component) in impulse.iter_mut().zip(axis) {
+            *output = response_impulse_component(
+                closing_speed,
+                restitution,
+                axis_component,
+                effective_inverse_mass,
+            )?;
+        }
+    } else {
+        // Fractional inverse mass stays floating point until the legacy impulse boundary.
+        // Q32 normals and a small mass can exceed i128 in the scaled denominator even
+        // when the final physical impulse is small and representable.
+        let effective_inverse_mass = axis_length_squared as Scalar
+            * (RESPONSE_SCALE as Scalar / mass)
+            + target_inverse_mass as Scalar;
+        let restitution_factor = 1.0 + Scalar::from(restitution) / Scalar::from(MATERIAL_SCALE);
+        for (output, axis_component) in impulse.iter_mut().zip(axis) {
+            *output = rounded_response_integer(
+                closing_speed as Scalar * axis_component as Scalar * RESPONSE_SCALE as Scalar
+                    / effective_inverse_mass
+                    * restitution_factor,
+            )?;
+        }
     }
 
     if target.receives_physics_response() {
@@ -445,13 +463,22 @@ fn apply_projectile_impulse(
     projectile: &mut BallisticSphere3d,
     impulse: [i128; 3],
 ) -> Result<(), BallisticTimelineError3d> {
-    let mass = i128::from(projectile.mass_units());
+    let mass = projectile.response_mass();
     let velocity = projectile.velocity();
-    projectile.set_velocity(Vec3i::new(
-        add_impulse_axis(velocity.x, impulse[0], mass)?,
-        add_impulse_axis(velocity.y, impulse[1], mass)?,
-        add_impulse_axis(velocity.z, impulse[2], mass)?,
-    ));
+    let mut next = [0; 3];
+    for (axis, current) in [velocity.x, velocity.y, velocity.z].into_iter().enumerate() {
+        next[axis] = if mass == Scalar::from(projectile.mass_units()) {
+            add_impulse_axis(current, impulse[axis], i128::from(projectile.mass_units()))?
+        } else {
+            let delta = rounded_response_integer(impulse[axis] as Scalar * (1.0 / mass))?;
+            to_i32(
+                i128::from(current)
+                    .checked_add(delta)
+                    .ok_or(BallisticTimelineError3d::ArithmeticOverflow)?,
+            )?
+        };
+    }
+    projectile.set_velocity(Vec3i::new(next[0], next[1], next[2]));
     Ok(())
 }
 
@@ -786,6 +813,16 @@ fn add_impulse_axis(
     )
 }
 
+// The positive i128 endpoint is exclusive because float-to-integer casts otherwise saturate.
+fn rounded_response_integer(value: Scalar) -> Result<i128, BallisticTimelineError3d> {
+    const LIMIT: Scalar = 170_141_183_460_469_231_731_687_303_715_884_105_728.0;
+    let rounded = value.round();
+    if !rounded.is_finite() || !(-LIMIT..LIMIT).contains(&rounded) {
+        return Err(BallisticTimelineError3d::ArithmeticOverflow);
+    }
+    Ok(rounded as i128)
+}
+
 fn add_angular_axis(current: i32, delta: i128) -> Result<i32, BallisticTimelineError3d> {
     to_i32(
         i128::from(current)
@@ -908,6 +945,32 @@ mod timeline_time_tests {
         MATERIAL_SCALE, RESPONSE_SCALE, TIMELINE_TIME_SCALE, ballistic_time_to_sampled,
         checked_add, checked_mul, response_impulse_component,
     };
+
+    #[test]
+    fn floating_response_boundary_rejects_non_finite_and_overflowing_values() {
+        let limit = 170141183460469231731687303715884105728.0;
+        for value in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            limit,
+            -2.0 * limit,
+        ] {
+            assert!(super::rounded_response_integer(value).is_err());
+        }
+        assert_eq!(
+            super::rounded_response_integer(-limit).expect("inclusive minimum"),
+            i128::MIN
+        );
+        assert_eq!(
+            super::rounded_response_integer(1.5).expect("rounded response"),
+            2
+        );
+        assert_eq!(
+            super::rounded_response_integer(-1.5).expect("rounded response"),
+            -2
+        );
+    }
 
     #[test]
     fn zero_q32_hit_rounds_up_to_first_positive_timeline_tick() {

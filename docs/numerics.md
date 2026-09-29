@@ -91,3 +91,16 @@ Neither matrix substitutes for the other.
 
 Wall-clock measurements are advisory, recorded separately from behavioral assertions. Do not
 claim a speedup for an incomplete or failed simulation compared with a completed one.
+
+### Ballistic sphere response mass
+
+`BallisticSphere3d` keeps its integer constructor and `mass_units()` getter for compatibility.
+`response_mass()` supplies the inertial mass used by contact response; `with_response_mass()`
+accepts a finite `Scalar` in `[1e-6, 1e12)`, in the same relative units as rigid bodies.
+Whole-unit defaults preserve the existing response arithmetic. Fractional response masses
+use floating-point inverse mass and checked rounding only at the remaining integer impulse
+and velocity boundaries. Invalid masses and arithmetic overflow return errors.
+
+The legacy sandbox chooses sphere mass from equal nominal density: a radius-three sphere
+relative to a mass-two, side-36 crate has mass `2 * PI / 1296`. This demo choice does not
+change the canonical floating-point tower's independently configured projectile masses.

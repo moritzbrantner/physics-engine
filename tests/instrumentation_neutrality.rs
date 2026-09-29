@@ -82,10 +82,11 @@ fn snapshot(label: &str, world: &RotatingWorld3d) {
 
 #[test]
 fn parked_contact_lifecycle_has_identical_cross_build_snapshots() {
-    for (label, y, retire) in [
-        ("miss", 10, true),
-        ("retire", 0, true),
-        ("bounce", 0, false),
+    for (label, y, retire, mass) in [
+        ("miss", 10, true, 1.0),
+        ("retire", 0, true, 1.0),
+        ("bounce", 0, false, 1.0),
+        ("fractional-bounce", 0, false, 0.5),
     ] {
         let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
             gravity: Vec3i::ZERO,
@@ -113,6 +114,8 @@ fn parked_contact_lifecycle_has_identical_cross_build_snapshots() {
                     1,
                     1,
                 )
+                .unwrap()
+                .with_response_mass(mass)
                 .unwrap()
                 .with_material(Material::new(1_000)),
                 retire,
