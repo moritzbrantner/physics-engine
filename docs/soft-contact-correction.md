@@ -1,0 +1,248 @@
+# Soft-contact and relaxation experiment (#158)
+
+Status: opt-in research comparison, compiled only with `--features experimental-soft-contact`.
+Normal CPU/WASM builds do not contain the optional Config/Constraint/World/Report fields or
+correction exports; even enabled builds retain `soft_contact: None` by default.
+The reconciled primary solve uses the existing island/whole-world/fixed-pass scheduler with a
+shared row formula and final-velocity residual. Relaxation is separately accounted, hardens only
+its temporary solve, and integrates time once before the existing fixed-position stage.
+
+The tables below are historical measurements on the pre-island experiment unless explicitly
+identified as reconciliation evidence. Merging the experiment is NOT promoting it to production.
+All commands in this document require the experimental feature on the relevant Cargo invocation.
+
+Opt-in research comparison. `Config::soft_contact` defaults to `None`, retaining the
+merged Baumgarte solver and its convergence checks. Neither the existing Pages scenarios nor
+the default approximation reset silently select this experiment. Passing selected fixtures is not
+a default-promotion decision: the relaxed method trades cheaper settling in some impacts against
+more work and slower settling in others. A faster or quieter completed trace is not sufficient.
+
+## Numerical method
+
+`Some(SoftContact)` prepares mass-independent spring coefficients once per substep. The
+experiment uses frequency 60 Hz and dimensionless damping ratio 1. With substep duration h,
+frequency is capped at `0.25 / h`. The cap is a conservative experiment policy, not a proof of
+stability at arbitrary scale. Default 60 Hz ticks still have four substeps and an eight-pass
+primary ceiling. The original 0.02-unit slop and 60-unit/s correction-speed cap remain intact.
+
+```
+omega = 2*pi*frequency
+A = 2*damping_ratio + h*omega
+B = h*omega*A
+bias_rate = omega/A
+mass_scale = B/(1+B)
+impulse_scale = 1/(1+B)
+
+bias = min(60, bias_rate * max(0, -separation - slop))
+delta = mass_scale * effective_mass * (bias - normal_velocity)
+        - impulse_scale * accumulated_normal_impulse
+next = max(0, accumulated_normal_impulse + delta)
+apply(next - accumulated_normal_impulse)
+```
+
+This follows the soft-constraint parameterization described by Erin Catto in
+<https://box2d.org/posts/2024/02/solver2d/>. It is a compliant contact constraint, not a change
+to global linear/angular damping. The same pair impulse application and friction kernel are
+used. Fixed supports (mass zero) keep a hard normal constraint while using the selected correction
+bias rate. Compliance applies only to dynamic pairs penetrating strictly beyond the unchanged contact slop. Speculative separated contacts and
+fresh restitutive impacts also retain the hard normal response and their existing speed targets. Collision admission, nearest/equal-hit shielding, rotation locks and numerical
+ownership remain in the same Rust world.
+
+Early stopping uses the **soft** complementarity residual, including the compliance times
+accumulated impulse. It cannot reuse the rigid zero-relative-velocity condition. Friction
+stationarity and final-whole-pass checks remain required; large impulses absorbing a small
+increment cannot establish convergence by themselves. With the feature absent the hard kernel keeps its original arithmetic and data layout.
+Feature-enabled builds share row/residual code for hard and soft constraints; no second island solver is introduced.
+
+## Optional relaxation
+
+`relaxation_iterations = 0` tests softness alone. A value of 2 adds at most two bias-free passes
+per nonempty substep. Thus the maximum total is **40 passes per tick**, not 32 relabeled as 32.
+Primary and relaxation counts, constraint visits, residual visits and skipped passes are
+reported separately. Empty contact sets do not pay for a relaxation pass.
+
+Before relaxation, save the velocities used for movement. Relax the velocities and accumulated
+impulses using the same frozen contact geometry and inertia; then advance each pose **once**
+using the saved movement. The relaxed velocity and impulse cache seed the next substep. This
+ordering is equivalent to integrating the saved motion first and then applying a solve with
+frozen pre-integration geometry. It deliberately avoids applying an old effective mass with a
+new orientation. It is NOT a fresh post-integration contact solve or rotational CCD.
+
+Relaxation removes penetration bias and softness, but preserves the permitted closing speed of
+speculative contacts and the intended restitution speed of genuine bounces. Retirement is
+recorded from the primary admitted impact and cannot be erased by a later impulse decrement.
+Sleep uses both physical and saved movement speeds; bodies cannot sleep merely because a bias
+correction was removed from the stored velocity while still moving their poses appreciably.
+There is no second gravity application, global drag, forced sleep, or dropped requested time.
+
+The default path allocates no correction scratch. Opt-in relaxation retains per-body motion and
+per-row bias buffers. Their payload bytes are separately counted; allocator overhead is not
+included. Experimental builds retain per-row compliance coefficients and a temporary relaxation-phase flag,
+so their constraint scratch payload can differ from production even with `soft_contact: None`.
+The correction-policy comparison reports stat 23 separately and checks all other old work counters.
+Normal, feature-OFF builds retain the production layout and are compared strictly, including stat 23.
+These are different comparisons; experimental metadata is not disguised as a production speedup.
+
+## Observation and acceptance
+
+The dedicated WASM export `approximate_reset_soft_from_sandbox(substeps, iterations, frequency,
+damping_ratio, relaxation_iterations)` imports the same Rust fixture as the default reset. It
+validates inputs before replacing the experiment. Existing reset exports remain unchanged.
+Read-only angular-velocity and kinetic-energy exports support measurement outside timed steps.
+`Body::kinetic_energy` includes local-frame rotational inertia. Units are mass-units times
+scene-units squared per second squared, NOT SI joules without a conversion convention.
+
+Generic stats 0..51 are retained. New stats are:
+
+| Index | Meaning |
+|---|---|
+| 52 | Softened primary contact points |
+| 53 | Actual relaxation passes, also included in total stat 5 |
+| 54 | Relaxation constraint visits |
+| 55 | Relaxation residual constraint visits |
+| 56 | Skipped relaxation passes |
+| 57 | Retained relaxation motion/bias payload bytes |
+| 58 | Overlapping non-bouncing fixed-support points kept hard |
+| 59 | Certified unchanged-system relaxation skips |
+| 60 | Rows checked for that certificate |
+| 61 | Relaxation partition builds |
+| 62 | Relaxation rows indexed |
+| 63 | Relaxation logical island iterations |
+| 64 | Relaxation skipped constraint visits |
+| 65 | Relaxation partition scratch growths |
+
+The tower matrix compares the real merged module, the same-binary Baumgarte policy, softness,
+and soft-plus-relaxation. It enforces unchanged default physics/non-memory work histories; same-policy
+repetition; actual crate response on hits; unchanged sleeping poses on misses; rotation locks;
+finite state; bounded work; full elapsed time; and the existing 0.5-unit floor-penetration bound.
+Cross-policy hashes may differ. Record settling, kinetic energy, jitter, sleep transitions and
+active/sleeping timing separately. A lower mean after contacts/trajectories change does not
+prove equal-work throughput, and post-sleep savings are not active-solver speedups.
+
+## Mixed-mass counterexample and general fixed-support rule
+
+`examples/contact_correction_quality.rs` retains a distinct tilted-stack/mass/friction matrix.
+Four 36-unit crates start at heights `18 + 38*level`, the top is tilted by 0.05 radians, and it
+receives a 50-unit off-center impulse after 240 ticks. All policies run 1,200 ticks total.
+The mixed masses are `[0.5, 4, 1, 2]`. The initial experiment softened fixed as well as dynamic
+contacts: Baumgarte reached ~0.766 floor penetration, soft-only ~1.233, and relaxed ~0.771.
+All exceed the unchanged 0.5-unit bound. Settling to zero energy did not cancel those failures.
+A preliminary 30 Hz tower probe also exceeded that bound; varying constraint damping from
+0.5 through 4 did not repair the mixed-mass failure. Those investigations are rejected evidence,
+not accepted policies or altered thresholds.
+
+The next candidate keeps mass-zero support normals hard, without a scene-specific switch or
+changing the floor thickness. In the local release comparison:
+
+| Tilted fixture | Baumgarte peak floor penetration | Soft, hard supports | Relaxed, hard supports |
+|---|---:|---:|---:|
+| Equal mass | 0.14412 | 0.06395 | 0.03213 |
+| Mixed mass | 0.76567 (fails) | 1.31755 (fails) | 0.28012 |
+| Low friction | 0.10225 | 0.03967 | 0.03458 |
+
+The selected **relaxed** candidate passes the same bound in all three fixtures. Baseline and
+soft-only control failures remain explicit (`all_policies_passed: false`); they are not marked
+as candidate successes. The command gates the chosen relaxed policy, not the historical control,
+and exits nonzero whenever that candidate fails. Every record uses the same 0.5-unit criterion.
+`--report-only` collects identical failed records for investigation without relabeling them.
+This additional gate does not replace or relax any existing structural/physical acceptance.
+
+The two-repeat 20-second post-shot tower comparison passes all 12 configurations with default
+physical and old-work hashes matching the separately built merged binary. Relaxed free-sphere
+and rigid hits settle at about 11.28 and 2.83 seconds versus baseline still active at 20 seconds
+and 19.12 seconds respectively. Free-arrow settling is worse: about 12.02 seconds versus 1.20.
+Relaxation reduces the observed penetration in all six tower-hit configurations. These are
+fixture observations, not universal stability or speedup guarantees. Local long-run timings
+include unrelated host load and are diagnostic; use an isolated repeated run for timing claims.
+**Do not switch the default based only on sphere/rigid settling or zero final energy.**
+
+## Reproduction
+
+```
+cargo test --locked --features experimental-soft-contact --lib approximate::correction
+cargo test --locked --features experimental-soft-contact --lib approximate::convergence
+cargo build --manifest-path demo-wasm/Cargo.toml --release --target wasm32-unknown-unknown --locked --features experimental-soft-contact
+TRIALS=4 TICKS=1200 node scripts/benchmark-correction.mjs candidate.wasm result.json merged.wasm
+cargo run --release --locked --features experimental-soft-contact --example contact_correction_quality -- heldout.json
+```
+
+The last command gates the relaxed candidate and currently exits 0 while retaining failed mixed-mass
+control rows. The standard performance job runs it without report-only, after the existing structural
+and canonical checks, and retains the complete report in the artifact.
+The four-policy benchmark rotates run order over four trials, warms the actual modules, and
+keeps raw physics-call timings separate from setup, assertions and observations. It reports
+missing old-module energy telemetry as null, not a guessed value. Phase durations differ
+between correction policies because their physical trajectories differ.
+
+Known general approximation limits (frozen rotation within sweeps, non-chronological secondary
+substep ricochets, omitted gyroscopic terms, no universal cross-target bit identity, and no
+mid-step transactional rollback) are unchanged. See `fixed-step-approximation.md`.
+
+## Follow-up: correct penetration error, not contacts already within slop
+
+The first candidate softened *every* overlapping dynamic pair, including contacts whose
+penetration correction target was exactly zero. Under load that still subtracts compliance
+from their accumulated support impulse. The next candidate limits softness to penetration
+**strictly beyond the existing `contact_slop`**. Touching/within-slop contacts stay hard;
+there is no new tolerance, altered sleep threshold, or projectile-specific solver branch.
+Correction outside the slop, fixed-support response, restitution, and speculative sweeps
+retain their documented targets. Primary solves with no soft rows use the existing hard kernel.
+This routing intentionally changes the opt-in trajectories; it does not alter the default policy.
+
+There is also a separate bounded-work optimization. The primary solve's accepted, final-whole-pass
+convergence certificate may replace the optional relaxation **only** if every row remains hard
+and every target is bit-identical to its relaxation target. A changed bias, soft row, unchecked
+or capped primary solve requires relaxation as before. No velocities/geometry change between
+certification and this decision. If skipped, movement integrates from current velocity once,
+without allocating/copying saved motion. This reuses the existing numerical tolerances, not a
+wall-clock deadline or an unconditional reduction in solver iterations.
+
+Telemetry 59 counts certified unchanged-target relaxation skips; 60 counts row checks used to
+validate that reuse. Index 56 includes the saved relaxation passes, while 53/54 still report
+actual relaxation passes/visits. Index 58 retains its original fixed-support contact meaning.
+A skip is a tolerance-based decision, not a claim of universal bitwise equivalence between
+correction policies. The default's previous physical and work/memory history remains required
+to match the separately built merged baseline.
+
+The benchmark can compare the prior experimental binary explicitly:
+
+```
+TRIALS=5 TICKS=1200 node scripts/benchmark-correction.mjs \
+  candidate.wasm comparison.json merged.wasm previous-experiment.wasm
+```
+
+It retains all five policies, raw timings, physics/work hashes, energy, penetration and sleep
+traces; rotating policy order balances ordering across five trials. The refined free-arrow
+trace additionally must settle within 1.5 **simulated** seconds, a regression acceptance case
+rather than a machine-speed gate. The older experimental result remains a measured control,
+not a passing candidate for this new condition. The original 0.5-unit quality limit is unchanged.
+
+Early local probes removed the 12-second arrow tail but changed the other trajectories too:
+the rigid trace slept later than in the prior experiment, and sphere/rigid penetration increased
+while remaining within the limit. Therefore the earlier table of universally lower penetration
+must not be attributed to the refined candidate. Retain the measured tradeoffs and compare both
+the prior experiment and merged default before deciding whether to promote it.
+
+## Reconciliation with island convergence and fixed-position correction
+
+The current primary scheduler is retained in every build. Both whole-world and per-island
+checks call the same row update and the same soft-aware final-velocity residual. There is no
+legacy `solve_soft` loop bypassing current contact partitioning. A compliant row cannot be
+certified with the hard-contact residual.
+
+Relaxation temporarily sets `relaxing_normal` and changes its targets; `hard_normal` remains the
+primary row classification. The temporary flag is cleared before returning. Primary convergence
+and island reports are saved/restored while extra relaxation work is separately measured. A
+relaxation pass cannot accidentally certify the next primary solve or overwrite primary row
+savings. Inertia-application totals still include all actual primary and relaxation applications.
+The shared island scratch may be reused, but is rebuilt under the same current-row dependency rules.
+
+Pose advances once from the selected movement velocity. Existing geometric fixed-position
+correction then runs before island sleep. The reconciliation regression combines both scopes,
+zero/two/eight relaxation passes, independent props, corrected floor contacts and mixed soft/hard
+rows through 120 ticks, checking primary/relaxation work accounting, cloned body/cache replay,
+unchanged elapsed time and the existing position-correction bound.
+
+The real tower always resets to the established production config, including in an experimental
+binary. Budget tuning has a separate `solver-budget-experiment` feature and cannot implicitly
+enable compliance. See [the integration ledger](improvement-reconciliation.md).

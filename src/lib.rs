@@ -1,4 +1,8 @@
-//! Reusable deterministic physics simulation primitives.
+//! Reusable physics simulation primitives with floating-point arithmetic by default.
+//!
+//! [`numeric::Scalar`] is f64. Production time composition and shared scaled-arithmetic helpers
+//! do not use multi-limb exact rationals. Existing quantized geometry/state APIs remain compatibility
+//! surfaces during migration; they are not a requirement for new solver work.
 //!
 //! The engine owns deterministic translational rigid-body stepping plus engine-local rotational and
 //! contact geometry foundations: gravity, fixed/dynamic bodies, continuous collision detection,
@@ -19,13 +23,88 @@
 //! eligibility or physical coefficients. Per-body solver participation, motion authority, and sleep mode
 //! provide orthogonal foundations for overlap-only sensors, externally-driven kinematic bodies, and
 //! aggressively sleeping debris without introducing gameplay-specific body kinds. The public
-//! `RotatingWorld3d` defaults to an ECS-backed
-//! entity/component world that runs the performance-oriented parked-sleep physics system; the raw solver
-//! resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! `RotatingWorld3d` wraps the parked-sleep physics kernel with retained fixed-geometry preparation;
+//! it owns no second entity/component body store. `PhysicsWorld3dKernel` exposes the same parked-sleep
+//! kernel without that preparation wrapper for lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
 #![forbid(unsafe_code)]
+
+macro_rules! performance_counter {
+    ($expression:expr) => {{
+        #[cfg(feature = "performance-counters")]
+        {
+            $expression;
+        }
+    }};
+}
+pub(crate) use performance_counter;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PerformanceCounterU64 {
+    #[cfg(feature = "performance-counters")]
+    value: u64,
+}
+
+impl PerformanceCounterU64 {
+    #[must_use]
+    pub(crate) const fn from_value(value: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self { value }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = value;
+            Self {}
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn value(self) -> u64 {
+        #[cfg(feature = "performance-counters")]
+        {
+            self.value
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            0
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn saturating_add(self, rhs: u64) -> Self {
+        #[cfg(feature = "performance-counters")]
+        {
+            Self {
+                value: self.value.saturating_add(rhs),
+            }
+        }
+        #[cfg(not(feature = "performance-counters"))]
+        {
+            let _ = rhs;
+            self
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn saturating_sub(self, rhs: Self) -> u64 {
+        self.value().saturating_sub(rhs.value())
+    }
+}
+
+impl PartialEq<u64> for PerformanceCounterU64 {
+    fn eq(&self, other: &u64) -> bool {
+        self.value() == *other
+    }
+}
+
+impl PartialOrd<u64> for PerformanceCounterU64 {
+    fn partial_cmp(&self, other: &u64) -> Option<std::cmp::Ordering> {
+        self.value().partial_cmp(other)
+    }
+}
 
 mod angular;
 mod ballistic_event;
@@ -33,6 +112,7 @@ mod ballistic_sphere;
 mod body;
 mod collider;
 mod collision;
+mod contact_wake;
 mod current_contact_query;
 mod ecs_world;
 mod fixed_geometry;
@@ -42,6 +122,8 @@ mod math;
 mod obb_friction;
 mod obb_response;
 mod oriented_box;
+#[cfg(test)]
+mod performance_ratchet;
 mod query;
 mod relaxed_rotating_world;
 mod repeated_rotating_events;
@@ -67,7 +149,11 @@ mod strict_stabilized_rotating_world;
 mod stabilized_rotating_world {
     pub(crate) use crate::relaxed_rotating_world::RotatingWorld3d;
 }
+#[cfg(not(feature = "exact-reference"))]
+mod float_math;
+pub mod numeric;
 mod support_query;
+#[cfg(feature = "exact-reference")]
 mod wide_ratio;
 mod world;
 
@@ -101,7 +187,7 @@ pub use obb_response::{ObbContactResponse3d, ObbContactResponseError3d, ObbResol
 pub use oriented_box::{
     ObbAxisFeature3d, ObbContactSeed3d, OrientedBox3d, OrientedBoxError3d, oriented_box_vertices,
 };
-pub use query::{Aabb, QueryError, QueryHit, Ray};
+pub use query::{Aabb, QueryError, QueryHit, Ray, ray_cast_first};
 pub use relaxed_rotating_world::RotatingWorld3d as PhysicsWorld3dKernel;
 pub use repeated_rotating_events::{
     MAX_REPEATED_ROTATING_EVENTS, RepeatedRotatingEventAdvance3d, RepeatedRotatingEventConfig3d,
@@ -140,3 +226,5 @@ pub use rotational_sweep::{
 };
 pub use support_query::body_has_support;
 pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
+
+pub mod approximate;

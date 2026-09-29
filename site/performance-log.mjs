@@ -48,6 +48,20 @@ function cumulativeCounterTotal(frames, name) {
 
 function normalizeStepStats(step) {
   return {
+    fixed_position_passes: optionalCounter(step.fixed_position_passes, "fixed_position_passes"),
+    fixed_position_bounds_tests: optionalCounter(step.fixed_position_bounds_tests, "fixed_position_bounds_tests"),
+    fixed_position_contact_tests: optionalCounter(step.fixed_position_contact_tests, "fixed_position_contact_tests"),
+    fixed_position_corrections: optionalCounter(step.fixed_position_corrections, "fixed_position_corrections"),
+
+    fixed_substeps: optionalCounter(step.fixed_substeps, "fixed_substeps"),
+    fixed_pair_tests: optionalCounter(step.fixed_pair_tests, "fixed_pair_tests"),
+    fixed_narrow_tests: optionalCounter(step.fixed_narrow_tests, "fixed_narrow_tests"),
+    fixed_contact_points: optionalCounter(step.fixed_contact_points, "fixed_contact_points"),
+    fixed_impulse_iterations: optionalCounter(step.fixed_impulse_iterations, "fixed_impulse_iterations"),
+    fixed_integrated_bodies: optionalCounter(step.fixed_integrated_bodies, "fixed_integrated_bodies"),
+    fixed_woken_bodies: optionalCounter(step.fixed_woken_bodies, "fixed_woken_bodies"),
+    fixed_swept_contacts: optionalCounter(step.fixed_swept_contacts, "fixed_swept_contacts"),
+
     sampled_events: optionalCounter(step.sampled_events, "sampled_events"),
     tail_contacts: optionalCounter(step.tail_contacts, "tail_contacts"),
     tail_slices: optionalCounter(step.tail_slices, "tail_slices"),
@@ -235,6 +249,20 @@ export function createPerformanceSessionRecorder({
           physics_steps: statistics(physicsSteps),
           physics_step_count: physicsSteps.length,
           physics_work: {
+            fixed_position_passes: sumCounter(physicsStepStats, "fixed_position_passes"),
+            fixed_position_bounds_tests: sumCounter(physicsStepStats, "fixed_position_bounds_tests"),
+            fixed_position_contact_tests: sumCounter(physicsStepStats, "fixed_position_contact_tests"),
+            fixed_position_corrections: sumCounter(physicsStepStats, "fixed_position_corrections"),
+
+            fixed_substeps: sumCounter(physicsStepStats, "fixed_substeps"),
+            fixed_pair_tests: sumCounter(physicsStepStats, "fixed_pair_tests"),
+            fixed_narrow_tests: sumCounter(physicsStepStats, "fixed_narrow_tests"),
+            fixed_contact_points: sumCounter(physicsStepStats, "fixed_contact_points"),
+            fixed_impulse_iterations: sumCounter(physicsStepStats, "fixed_impulse_iterations"),
+            fixed_integrated_bodies: sumCounter(physicsStepStats, "fixed_integrated_bodies"),
+            fixed_woken_bodies: sumCounter(physicsStepStats, "fixed_woken_bodies"),
+            fixed_swept_contacts: sumCounter(physicsStepStats, "fixed_swept_contacts"),
+
             sampled_events: sumCounter(physicsStepStats, "sampled_events"),
             tail_contacts: sumCounter(physicsStepStats, "tail_contacts"),
             tail_slices: sumCounter(physicsStepStats, "tail_slices"),

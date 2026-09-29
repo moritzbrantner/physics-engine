@@ -1,3 +1,4 @@
+import { createTowerRuntime } from "./tower-runtime.mjs";
 import { physicsFailureMessage } from "./physics-error.js";
 import {
   createPerformanceSessionRecorder,
@@ -17,19 +18,6 @@ const downloadPerformanceLogButton = document.querySelector("#download-performan
 const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
 const projectileHud = document.querySelector("#projectile-hud");
-const scenarioSlug = document.body.dataset.scenario ?? "sandbox";
-const scenarioTitle = document.body.dataset.scenarioTitle ?? "General sandbox";
-const SCENARIO_IDS = new Map([
-  ["sandbox", 0],
-  ["ccd-gauntlet", 1],
-  ["rotating-box-lab", 2],
-  ["tower-stability", 3],
-  ["sleeping-world", 4],
-  ["collision-query-lab", 5],
-  ["off-centre-impact", 6],
-]);
-const scenarioId = SCENARIO_IDS.get(scenarioSlug);
-if (scenarioId == null) throw new Error(`Unknown physics scenario: ${scenarioSlug}`);
 
 const FIXED_STEP_MS = 1000 / 60;
 const MAX_CATCH_UP_STEPS = 8;
@@ -55,10 +43,31 @@ const projectileShortcuts = new Map(
     element,
   ]),
 );
+const scenarioId = document.body.dataset.scenario ?? "sandbox";
+const focusedScenarioIds = new Map([
+  ["ccd-gauntlet", 1], ["rotating-box-lab", 2], ["tower-stability", 3],
+  ["sleeping-world", 4], ["collision-query-lab", 5], ["off-centre-impact", 6],
+]);
+const focusedScenarioId = focusedScenarioIds.get(scenarioId);
+const scenarioResetExport = focusedScenarioId == null
+  ? new Map([
+    ["sandbox", "sandbox_reset_with_baking_options"],
+    ["tower", "sandbox_reset_tower_with_baking_options"],
+    ["parkour", "sandbox_reset_parkour_with_baking_options"],
+  ]).get(scenarioId)
+  : "sandbox_reset_scenario_with_baking_options";
+if (!scenarioResetExport) throw new Error(`Unknown physics scenario: ${scenarioId}`);
+const scenarioDefaults =
+  scenarioId === "tower" || scenarioId === "parkour" || focusedScenarioId != null
+    ? { character: "physical", crates: "free", bake: "load" }
+    : { character: "linear", crates: "upright", bake: "load" };
 const characterParameters = new URLSearchParams(window.location.search);
-characterModeControl.value = characterParameters.get("character") === "physical" ? "0" : "1";
-uprightCratesControl.checked = characterParameters.get("crates") !== "free";
-fixedGeometryControl.value = characterParameters.get("bake") === "runtime" ? "0" : "1";
+const characterResponse = characterParameters.get("character") ?? scenarioDefaults.character;
+const crateMotion = characterParameters.get("crates") ?? scenarioDefaults.crates;
+const fixedGeometry = characterParameters.get("bake") ?? scenarioDefaults.bake;
+characterModeControl.value = characterResponse === "physical" ? "0" : "1";
+uprightCratesControl.checked = crateMotion !== "free";
+fixedGeometryControl.value = fixedGeometry === "runtime" ? "0" : "1";
 function resetInteractionOptions() {
   const url = new URL(window.location.href);
   url.searchParams.set("character", characterModeControl.value === "0" ? "physical" : "linear");
@@ -72,6 +81,7 @@ uprightCratesControl.addEventListener("change", resetInteractionOptions);
 fixedGeometryControl.addEventListener("change", resetInteractionOptions);
 
 let engine = null;
+let simulationError = null;
 let renderer = null;
 let yaw = 0;
 let pitch = 0;
@@ -110,10 +120,12 @@ function performanceEnvironment() {
 function performanceScenario() {
   const query = new URLSearchParams(window.location.search);
   return {
-    fixture: scenarioSlug,
-    character_response: query.get("character") ?? "linear",
-    crate_motion: query.get("crates") ?? "upright",
-    fixed_geometry: query.get("bake") ?? "load",
+    id: scenarioId,
+    solver: engine?.solver ?? "sampled-event-f64",
+    // The hidden legacy controls carry packed rule/policy bits, not these choices.
+    character_response: document.querySelector("#character-response").value,
+    crate_motion: document.querySelector("#crate-motion").value,
+    fixed_geometry: scenarioId === "tower" ? null : fixedGeometryControl.value === "0" ? "runtime" : "load",
     collision_pairs: query.get("collisions") ?? "all",
     projectile_impact: query.get("projectile-impact") ?? "impact-retire",
     projectile_type: query.get("projectile-type") ?? "sphere",
@@ -198,15 +210,15 @@ function selectProjectileType(projectileType) {
 }
 
 function reset() {
+  if (!engine || !renderer) return;
+  const resetWithOptions = engine[scenarioResetExport];
+  const resetArgs = [Number(characterModeControl.value), Number(uprightCratesControl.checked), Number(fixedGeometryControl.value)];
+  if (focusedScenarioId != null) resetArgs.unshift(focusedScenarioId);
   if (
-    engine.sandbox_reset_scenario_with_baking_options(
-      scenarioId,
-      Number(characterModeControl.value),
-      Number(uprightCratesControl.checked),
-      Number(fixedGeometryControl.value),
-    ) !== 0
+    typeof resetWithOptions !== "function" ||
+    resetWithOptions(...resetArgs) !== 0
   ) {
-    throw new Error("Unable to initialize the selected physics comparison options");
+    throw new Error(`Unable to initialize the selected ${scenarioId} physics options`);
   }
   const projectileType = new Map([
     ["sphere", 0],
@@ -222,6 +234,8 @@ function reset() {
   ) {
     throw new Error("Unable to initialize the selected projectile type");
   }
+  simulationError = null;
+  keys.clear();
   yaw = 0;
   pitch = 0;
   paused = false;
@@ -235,7 +249,12 @@ function reset() {
   pauseButton.textContent = "Pause";
   syncProjectileHud();
   performanceRecorder.recordMarker("reset", performanceScenario());
-  status.textContent = `${scenarioTitle}. Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
+  status.textContent =
+    scenarioId === "tower"
+      ? `Tower ready · fixed-step f64. WASD moves, Space jumps, F shoots, 1/2/3 selects a projectile. Rendering with ${renderer.backend}.`
+      : scenarioId === "parkour"
+        ? `Parkour ready · moving platforms and obstacles use engine-owned collision response. WASD moves, Space jumps, and R resets the course. Rendering with ${renderer.backend}.`
+        : `${document.body.dataset.scenarioTitle ?? "General sandbox"} ready. Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
 function movementVelocity() {
@@ -267,6 +286,7 @@ function readPhysicsCounter(name) {
 }
 
 function lastPhysicsStepStats() {
+  if (engine.stepStats) return engine.stepStats();
   return {
     sampled_events: readPhysicsCounter("sandbox_last_sampled_events"),
     tail_contacts: readPhysicsCounter("sandbox_last_tail_contacts"),
@@ -306,6 +326,7 @@ function lastPhysicsStepStats() {
 }
 
 function simulationStep() {
+  if (!engine || simulationError) return;
   const [velocityX, velocityZ] = movementVelocity();
   const started = performance.now();
   const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
@@ -323,7 +344,10 @@ function simulationStep() {
       error === 6 && typeof engine.sandbox_error_detail === "function"
         ? engine.sandbox_error_detail()
         : 0;
-    status.textContent = physicsFailureMessage(error, detail);
+    simulationError = engine.solver === "fixed-step-f64"
+      ? `Fixed-step physics failed (${error}). Reset the fixture to continue.`
+      : physicsFailureMessage(error, detail);
+    status.textContent = simulationError;
     performanceRecorder.recordMarker("physics-error", { error, detail });
     return;
   }
@@ -332,6 +356,7 @@ function simulationStep() {
 }
 
 function shoot() {
+  if (!engine || simulationError) return;
   const cosPitch = Math.cos(pitch);
   const velocityX = Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED);
   const velocityY = Math.round(-Math.sin(pitch) * PROJECTILE_SPEED);
@@ -346,7 +371,7 @@ function shoot() {
 }
 
 function normalizeQuaternion(raw) {
-  const quaternion = raw.map((value) => value / ORIENTATION_SCALE);
+  const quaternion = raw.map((value) => value / (engine.orientationScale ?? ORIENTATION_SCALE));
   const length = Math.hypot(...quaternion);
   if (!Number.isFinite(length) || length === 0) return [0, 0, 0, 1];
   return quaternion.map((value) => value / length);
@@ -363,7 +388,7 @@ function readBodies() {
     throw new Error(`Malformed render snapshot length ${length}`);
   }
 
-  const values = new Int32Array(engine.memory.buffer, pointer, length);
+  const values = new (engine.snapshotArray ?? Int32Array)(engine.memory.buffer, pointer, length);
   const bodies = new Array(length / stride);
   for (let index = 0; index < bodies.length; index += 1) {
     const offset = index * stride;
@@ -607,13 +632,7 @@ function ensureCrosshair() {
 }
 
 function refreshScenarioQuery() {
-  if (
-    scenarioSlug !== "collision-query-lab" ||
-    typeof engine?.sandbox_aim_query !== "function"
-  ) {
-    return null;
-  }
-
+  if (scenarioId !== "collision-query-lab") return null;
   const cosPitch = Math.cos(pitch);
   return engine.sandbox_aim_query(
     Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED),
@@ -638,8 +657,9 @@ function render() {
   const yawDegrees = Math.round((yaw * 180) / Math.PI);
   const pitchDegrees = Math.round((pitch * 180) / Math.PI);
   const sleep = quiescent ? " · asleep" : "";
-  const fixedGeometry =
-    engine.sandbox_fixed_geometry_mode() === 1
+  const fixedGeometry = engine.solver === "fixed-step-f64"
+    ? " · fixed-step f64"
+    : engine.sandbox_fixed_geometry_mode() === 1
       ? ` · fixed prepared ${engine.sandbox_fixed_geometry_prepared_count()} (${engine.sandbox_fixed_geometry_retained_bytes()} B)`
       : " · fixed runtime";
   const tailDiagnostics =
@@ -658,13 +678,27 @@ function render() {
       : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
   const physicsTiming =
     averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
-  const queryDiagnostics =
-    scenarioSlug === "collision-query-lab"
-      ? queryHit != null && queryHit >= 0
-        ? ` · ray hit body #${queryHit}`
-        : " · ray clear"
-      : "";
+  const queryDiagnostics = scenarioId === "collision-query-lab"
+    ? queryHit >= 0 ? ` · ray hit body #${queryHit}` : " · ray clear"
+    : "";
   debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming}${queryDiagnostics} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  if (scenarioId === "tower") {
+    // Read-only diagnostic observations; tests never drive or replace simulation state here.
+    window.physicsTowerState = Object.freeze({
+      solver: engine.solver,
+      ticks: Math.round(engine.elapsed() * 60),
+      awake: bodies.filter((b, i) => b.role === 2 && engine.bodySleeping(i) !== 1).length,
+      bodyCount: bodies.length,
+      projectileCount: engine.sandbox_projectile_count(),
+      retired: engine.sandbox_projectiles_retired_on_contact(),
+      error: simulationError,
+      paused,
+      cratePoses: bodies.filter(b => b.role === 2).map(b => [...b.position, ...b.orientation]),
+      playerPose: [...player.position],
+      roles: bodies.map(b => b.role),
+      stats: engine.stepStats(),
+    });
+  }
   renderDirty = false;
   return true;
 }
@@ -824,7 +858,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyF" && !event.repeat) shoot();
   if (event.code === "KeyR" && !event.repeat) reset();
-  if (event.code === "KeyP" && !event.repeat) {
+  if (event.code === "KeyP" && !event.repeat && !simulationError) {
     paused = !paused;
     pauseButton.textContent = paused ? "Resume" : "Pause";
     renderDirty = true;
@@ -837,6 +871,7 @@ window.addEventListener("blur", () => keys.clear());
 
 resetButton.addEventListener("click", reset);
 pauseButton.addEventListener("click", () => {
+  if (simulationError) return;
   paused = !paused;
   pauseButton.textContent = paused ? "Resume" : "Pause";
   renderDirty = true;
@@ -867,15 +902,20 @@ downloadPerformanceLogButton.addEventListener("click", () => {
 try {
   renderer = await createRenderer();
   [engine, buildProvenance] = await Promise.all([loadEngine(), loadBuildProvenance()]);
+  if (scenarioId === "tower") engine = createTowerRuntime(engine);
   if (typeof engine.sandbox_step_velocity !== "function") {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
   }
   if (
-    typeof engine.sandbox_reset_scenario_with_baking_options !== "function" ||
-    typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
-    typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
+    typeof engine[scenarioResetExport] !== "function" ||
+    (scenarioId !== "tower" &&
+      (typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
+        typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"))
   ) {
-    throw new Error("WASM sandbox does not expose scenario and fixed geometry controls");
+    throw new Error("WASM sandbox does not expose the selected scenario controls");
+  }
+  if (scenarioId === "collision-query-lab" && typeof engine.sandbox_aim_query !== "function") {
+    throw new Error("WASM sandbox does not expose the selected ray query");
   }
   ensureCrosshair();
   characterModeControl.disabled = false;
@@ -888,3 +928,14 @@ try {
   status.textContent = `Unable to load the Rust physics sandbox: ${error.message}`;
   console.error(error);
 }
+window.addEventListener("physics-projectile-type-change", () => {
+  if (!engine || scenarioId !== "tower") return;
+  const kind = { sphere: 0, arrow: 1, rigid: 2 }[projectileTypeControl.value];
+  if (engine.sandbox_set_projectile_type(kind) !== 0) {
+    status.textContent = "The engine rejected this projectile selection.";
+    return;
+  }
+  syncProjectileHud();
+  renderDirty = true;
+  performanceRecorder.recordMarker("projectile-type", { type: projectileTypeControl.value });
+});

@@ -88,10 +88,32 @@ impl IndexedBvh3d {
             return false;
         }
 
+        self.insert(body, rotations)
+    }
+
+    pub(super) fn insert(&mut self, body: BoundedBody3d, rotations: &mut u64) -> bool {
+        if self.has_leaf(body.id) {
+            return false;
+        }
         let leaf = self.alloc_node(ArenaNode3d::leaf(body, None));
         self.leaf_by_id.insert(body.id, leaf);
         self.insert_leaf(leaf, rotations);
         true
+    }
+
+    /// Refresh authority metadata without discarding spatial topology on sleep/wake transitions.
+    /// Bounds are intentionally retained: the caller separately checks their containment.
+    pub(super) fn update_metadata(&mut self, mut body: BoundedBody3d) {
+        let index = self.leaf_by_id[&body.id];
+        body.bounds = self.node(index).bounds;
+        let node = self.node_mut(index);
+        node.kind = ArenaNodeKind3d::Leaf(body);
+        node.has_dynamic = body.kind == BodyKind::Dynamic;
+        let mut parent = node.parent;
+        while let Some(index) = parent {
+            self.refit(index);
+            parent = self.node(index).parent;
+        }
     }
 
     pub(super) fn for_each_candidate_pair(&self, mut visit: impl FnMut(BodyId, BodyId)) {
@@ -272,7 +294,7 @@ impl IndexedBvh3d {
         })
     }
 
-    fn remove_leaf(&mut self, id: BodyId, rotations: &mut u64) -> bool {
+    pub(super) fn remove_leaf(&mut self, id: BodyId, rotations: &mut u64) -> bool {
         let Some(leaf) = self.leaf_by_id.remove(&id) else {
             return false;
         };

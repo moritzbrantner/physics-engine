@@ -3,17 +3,17 @@ use std::cell::RefCell;
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BallisticSphere3d, BallisticSphereError3d,
     BallisticTimelineError3d, BodyId, BodyKind, Material, Orientation3d,
-    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d,
+    RepeatedRotatingEventError3d, RigidBody, RigidBox3d, RotatingWorld3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepStats3d, Vec3i,
 };
 
 mod controller;
+mod parkour;
 mod render_snapshot;
 mod scenario_presets;
 
 use controller::TICKS_PER_SECOND;
 pub use controller::controlled_velocity;
-use scenario_presets::{DemoScenario, aim_query_hit, build_world};
 
 const PLAYER_ID: BodyId = BodyId(1);
 const PROJECTILE_ID_START: u64 = 1_000;
@@ -24,6 +24,12 @@ const PROJECTILE_SPEED_LIMIT: i32 = 120;
 const ROTATING_TICKS_PER_SECOND: i32 = TICKS_PER_SECOND;
 const CRATE_RESTITUTION_MILLI: u16 = 0;
 const CRATE_FRICTION_MILLI: u16 = 1_000;
+const PLAYER_MASS_UNITS: u32 = 4;
+const CRATE_MASS_UNITS: u32 = 2;
+const RIGID_PROJECTILE_MASS_UNITS: u32 = 1;
+// Equal nominal density: a radius-3 sphere has PI/1296 of a 36-unit crate's volume.
+const SPHERE_RESPONSE_MASS: physics_engine::numeric::Scalar =
+    CRATE_MASS_UNITS as physics_engine::numeric::Scalar * std::f64::consts::PI / 1296.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
@@ -44,8 +50,16 @@ impl ProjectileType {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SandboxScenario {
+    General,
+    Tower,
+    Parkour,
+    Focused(scenario_presets::DemoScenario),
+}
+
 struct Sandbox {
-    scenario: DemoScenario,
+    scenario: SandboxScenario,
     world: RotatingWorld3d,
     query_hit: Option<BodyId>,
     next_projectile_id: u64,
@@ -64,7 +78,7 @@ struct Sandbox {
 
 impl Sandbox {
     fn new() -> Result<Self, RotatingWorldError3d> {
-        Self::with_scenario_options(DemoScenario::General, false, false)
+        Self::with_character_mode(false)
     }
 
     fn with_character_mode(linear_push: bool) -> Result<Self, RotatingWorldError3d> {
@@ -72,18 +86,155 @@ impl Sandbox {
     }
 
     fn with_options(linear_push: bool, upright_crates: bool) -> Result<Self, RotatingWorldError3d> {
-        Self::with_scenario_options(DemoScenario::General, linear_push, upright_crates)
+        let crate_positions = [
+            Vec3i::new(-75, 18, 135),
+            Vec3i::new(-75, 54, 135),
+            Vec3i::new(80, 18, 120),
+            Vec3i::new(116, 18, 120),
+            Vec3i::new(98, 54, 120),
+            Vec3i::new(0, 18, -70),
+        ];
+        Self::with_crate_layout(
+            SandboxScenario::General,
+            linear_push,
+            upright_crates,
+            &crate_positions,
+        )
     }
 
-    fn with_scenario_options(
-        scenario: DemoScenario,
+    fn with_tower_options(
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        let mut crate_positions = Vec::with_capacity(32);
+        for level in 0..4 {
+            for depth in 0..2 {
+                for column in 0..4 {
+                    crate_positions.push(Vec3i::new(
+                        -54 + column * 36,
+                        18 + level * 36,
+                        82 + depth * 36,
+                    ));
+                }
+            }
+        }
+        Self::with_crate_layout(
+            SandboxScenario::Tower,
+            linear_push,
+            upright_crates,
+            &crate_positions,
+        )
+    }
+
+    fn with_parkour_options(
         linear_push: bool,
         upright_crates: bool,
     ) -> Result<Self, RotatingWorldError3d> {
         controller::scenario_rules::reset_default();
-        let world = build_world(scenario, linear_push, upright_crates)?;
+        let world = parkour::build_world(linear_push, upright_crates)?;
+        Ok(Self::from_world(SandboxScenario::Parkour, world))
+    }
 
-        Ok(Self {
+    fn with_focused_options(
+        scenario: scenario_presets::DemoScenario,
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
+        let world = scenario_presets::build_world(scenario, linear_push, upright_crates)?;
+        Ok(Self::from_world(SandboxScenario::Focused(scenario), world))
+    }
+
+    fn aim_query(&mut self, direction: Vec3i) -> i32 {
+        self.query_hit = match self.scenario {
+            SandboxScenario::Focused(scenario) => {
+                scenario_presets::aim_query_hit(&self.world, scenario, direction)
+            }
+            _ => None,
+        };
+        self.query_hit
+            .and_then(|id| i32::try_from(id.0).ok())
+            .unwrap_or(-1)
+    }
+
+    fn with_crate_layout(
+        scenario: SandboxScenario,
+        linear_push: bool,
+        upright_crates: bool,
+        crate_positions: &[Vec3i],
+    ) -> Result<Self, RotatingWorldError3d> {
+        controller::scenario_rules::reset_default();
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::new(0, -3_600, 0),
+            sample_count: 32,
+            refinement_steps: 4,
+            solver_passes: 8,
+            max_events: 32,
+        });
+
+        let fixed_bodies = [
+            (10, Vec3i::new(0, -16, 0), Vec3i::new(520, 16, 520)),
+            (11, Vec3i::new(0, 72, -520), Vec3i::new(520, 72, 8)),
+            (12, Vec3i::new(0, 72, 520), Vec3i::new(520, 72, 8)),
+            (13, Vec3i::new(-520, 72, 0), Vec3i::new(8, 72, 520)),
+            (14, Vec3i::new(520, 72, 0), Vec3i::new(8, 72, 520)),
+            // Deliberately thin target for sampled rotating CCD acceptance.
+            (15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3)),
+            (20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70)),
+            (21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45)),
+            (22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45)),
+            (23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45)),
+            (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
+        ];
+        for (id, position, half_extents) in fixed_bodies {
+            world.add_box(rotating_box(RigidBody::fixed(
+                BodyId(id),
+                position,
+                half_extents,
+            )))?;
+        }
+
+        let player = rotating_box(
+            RigidBody::dynamic(
+                PLAYER_ID,
+                Vec3i::new(0, 38, 320),
+                Vec3i::ZERO,
+                Vec3i::new(12, 20, 12),
+            )
+            .with_mass(PLAYER_MASS_UNITS),
+        )
+        .with_rotation_locked();
+        world.add_box(if linear_push {
+            player.with_linear_push(Vec3i::new(0, -1, 0))
+        } else {
+            player
+        })?;
+
+        for (offset, position) in crate_positions.iter().copied().enumerate() {
+            let crate_body = rotating_box(
+                RigidBody::dynamic(
+                    BodyId(100 + offset as u64),
+                    position,
+                    Vec3i::ZERO,
+                    Vec3i::new(18, 18, 18),
+                )
+                .with_mass(CRATE_MASS_UNITS)
+                .with_material(
+                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
+                ),
+            );
+            world.add_box(if upright_crates {
+                crate_body.with_rotation_locked()
+            } else {
+                crate_body
+            })?;
+        }
+
+        Ok(Self::from_world(scenario, world))
+    }
+
+    fn from_world(scenario: SandboxScenario, world: RotatingWorld3d) -> Self {
+        Self {
             scenario,
             world,
             query_hit: None,
@@ -99,17 +250,7 @@ impl Sandbox {
             projectiles_evicted_by_cap: 0,
             error_code: 0,
             error_detail: 0,
-        })
-    }
-
-    fn aim_query(&mut self, direction_x: i32, direction_y: i32, direction_z: i32) -> i32 {
-        self.query_hit = aim_query_hit(
-            &self.world,
-            self.scenario,
-            Vec3i::new(direction_x, direction_y, direction_z),
-        );
-        self.query_hit
-            .map_or(-1, |id| i32::try_from(id.0).unwrap_or(i32::MAX))
+        }
     }
 
     fn grounded(&self) -> Result<bool, RotatingWorldError3d> {
@@ -137,6 +278,13 @@ impl Sandbox {
     fn step_velocity(&mut self, desired_x: i32, desired_z: i32, jump: bool) -> i32 {
         self.error_code = 0;
         self.error_detail = 0;
+        if self.scenario == SandboxScenario::Parkour
+            && let Err(error) = parkour::update_moving_obstacles(&mut self.world)
+        {
+            self.error_code = 6;
+            self.error_detail = world_error_detail(error);
+            return self.error_code;
+        }
         if desired_x == 0 && desired_z == 0 && !jump && self.is_quiescent() {
             self.last_rotating_events = 0;
             self.last_tail_contacts = 0;
@@ -264,6 +412,7 @@ impl Sandbox {
             None => self.world.add_box(
                 rotating_box(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_mass(RIGID_PROJECTILE_MASS_UNITS)
                         .with_material(material),
                 )
                 // Keep the pre-selector WASM behavior stable for historical benchmark callers.
@@ -271,7 +420,9 @@ impl Sandbox {
                 .with_transient_contacts(),
             ),
             Some(ProjectileType::Sphere) => {
-                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1) else {
+                let Ok(projectile) = BallisticSphere3d::new(id, spawn, velocity, 3, 1)
+                    .and_then(|projectile| projectile.with_response_mass(SPHERE_RESPONSE_MASS))
+                else {
                     self.error_code = 5;
                     return -1;
                 };
@@ -285,6 +436,7 @@ impl Sandbox {
             Some(ProjectileType::Arrow) => self.world.add_box(
                 RigidBox3d::new(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(2, 2, 12))
+                        .with_mass(RIGID_PROJECTILE_MASS_UNITS)
                         .with_material(material),
                     AngularState3d::new(
                         projectile_direction_orientation(input_velocity),
@@ -300,6 +452,7 @@ impl Sandbox {
             Some(ProjectileType::Rigid) => self.world.add_box(
                 rotating_box(
                     RigidBody::dynamic(id, spawn, velocity, Vec3i::new(3, 3, 3))
+                        .with_mass(RIGID_PROJECTILE_MASS_UNITS)
                         .with_material(material),
                 )
                 .with_collision_layers(layers),
@@ -551,6 +704,15 @@ fn with_sandbox_mut<R>(callback: impl FnOnce(&mut Sandbox) -> R) -> R {
     SANDBOX.with(|sandbox| callback(&mut sandbox.borrow_mut()))
 }
 
+/// Identify the compiled math backend without inferring it from timings or build flags.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_numeric_backend() -> i32 {
+    match physics_engine::numeric::NUMERICAL_BACKEND {
+        physics_engine::numeric::NumericalBackend::Float64 => 64,
+        physics_engine::numeric::NumericalBackend::ExactReference => 0,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_reset() {
     with_sandbox_mut(|sandbox| {
@@ -611,12 +773,8 @@ pub extern "C" fn sandbox_shoot(velocity_x: i32, velocity_y: i32, velocity_z: i3
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn sandbox_aim_query(
-    direction_x: i32,
-    direction_y: i32,
-    direction_z: i32,
-) -> i32 {
-    with_sandbox_mut(|sandbox| sandbox.aim_query(direction_x, direction_y, direction_z))
+pub extern "C" fn sandbox_aim_query(direction_x: i32, direction_y: i32, direction_z: i32) -> i32 {
+    with_sandbox_mut(|sandbox| sandbox.aim_query(Vec3i::new(direction_x, direction_y, direction_z)))
 }
 
 #[unsafe(no_mangle)]
@@ -949,7 +1107,10 @@ mod tests {
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
+    use super::{
+        CRATE_MASS_UNITS, PLAYER_ID, ProjectileType, SPHERE_RESPONSE_MASS, Sandbox, rotating_box,
+        world_error_detail,
+    };
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
@@ -1056,6 +1217,35 @@ mod tests {
     }
 
     #[test]
+    fn sleeping_player_keeps_ground_support_during_remote_projectile_activity() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        settle_player(&mut sandbox);
+        let before = sandbox
+            .world
+            .box_by_id(PLAYER_ID)
+            .unwrap()
+            .body()
+            .position();
+        assert!(sandbox.shoot(38, 0, -88) >= 0);
+        for tick in 0..40 {
+            assert_eq!(sandbox.step_velocity(0, 0, false), 0);
+            assert_eq!(
+                sandbox
+                    .world
+                    .box_by_id(PLAYER_ID)
+                    .unwrap()
+                    .body()
+                    .position(),
+                before
+            );
+            assert!(
+                sandbox.grounded().unwrap(),
+                "unchanged floor support disappeared at tick {tick}"
+            );
+        }
+    }
+
+    #[test]
     fn grounded_player_can_jump() {
         let mut sandbox = Sandbox::new().expect("valid sandbox");
         settle_player(&mut sandbox);
@@ -1101,7 +1291,7 @@ mod tests {
                     Vec3i::ZERO,
                     Vec3i::new(18, 18, 18),
                 )
-                .with_mass(2),
+                .with_mass(CRATE_MASS_UNITS),
             ))
             .expect("test crate");
         let before = sandbox
@@ -1158,6 +1348,7 @@ mod tests {
             .expect("spawned analytic sphere projectile");
         assert_eq!(projectile.radius(), 3);
         assert_eq!(projectile.mass_units(), 1);
+        assert_eq!(projectile.response_mass(), SPHERE_RESPONSE_MASS);
         assert_eq!(sandbox.active_projectile_count(), 1);
     }
 
@@ -1232,6 +1423,129 @@ mod tests {
                 "settled crate {id:?} must retain its exact resting pose"
             );
         }
+    }
+
+    #[test]
+    fn single_impact_sphere_does_not_launch_the_three_crate_pyramid() {
+        let mut sandbox = Sandbox::new().expect("valid sandbox");
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, false)
+                .expect("impact-retire scenario rules");
+        super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
+            .expect("apply impact-retire rules");
+        settle_player(&mut sandbox);
+
+        let crate_ids = [BodyId(102), BodyId(103), BodyId(104)];
+        let before =
+            crate_ids.map(|id| sandbox.world.box_by_id(id).expect("pyramid crate").clone());
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        assert!(sandbox.shoot(42, 0, -86) >= 0);
+
+        let mut crate_responded = false;
+        let mut max_horizontal_excursion = 0_i64;
+        for tick in 0..180 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "pyramid impact/settling tick {tick}, detail {}",
+                sandbox.error_detail
+            );
+            for (index, id) in crate_ids.into_iter().enumerate() {
+                let current = sandbox
+                    .world
+                    .box_by_id(id)
+                    .expect("pyramid crate after impact");
+                crate_responded |= current.body().position() != before[index].body().position()
+                    || current.angular() != before[index].angular();
+                let current_position = current.body().position();
+                let start_position = before[index].body().position();
+                let delta_x = i64::from(current_position.x) - i64::from(start_position.x);
+                let delta_z = i64::from(current_position.z) - i64::from(start_position.z);
+                max_horizontal_excursion = max_horizontal_excursion
+                    .max(delta_x.abs())
+                    .max(delta_z.abs());
+            }
+            if sandbox.projectiles_retired_on_contact == 1
+                && crate_ids
+                    .into_iter()
+                    .all(|id| sandbox.world.is_sleeping(id))
+            {
+                break;
+            }
+        }
+
+        assert!(
+            crate_responded,
+            "sphere must still transfer a visible impact to the pyramid"
+        );
+        assert_eq!(sandbox.projectiles_retired_on_contact, 1);
+        assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
+        assert!(
+            max_horizontal_excursion <= 108,
+            "single-impact sphere launched a pyramid crate {max_horizontal_excursion} units from its start"
+        );
+        assert!(
+            crate_ids
+                .into_iter()
+                .all(|id| sandbox.world.is_sleeping(id)),
+            "impacted pyramid must settle after the shot"
+        );
+    }
+
+    #[test]
+    fn tower_sphere_impact_does_not_readmit_stabilized_contacts_as_rigid_events() {
+        let mut sandbox = Sandbox::with_tower_options(true, true).expect("valid tower sandbox");
+        let all_pair_bits = (1_i32 << 11) - 2;
+        let impact_retire_rules = (1_i32 << 29) | all_pair_bits | (1_i32 << 14) | (2_i32 << 12);
+        let rules =
+            super::controller::scenario_rules::ScenarioRules::decode(impact_retire_rules, true)
+                .expect("impact-retire tower rules");
+        super::controller::scenario_rules::apply_to_sandbox(&mut sandbox, rules)
+            .expect("apply impact-retire tower rules");
+        settle_player(&mut sandbox);
+        assert!(
+            sandbox.is_quiescent(),
+            "tower fixture must settle before the impact"
+        );
+
+        assert_eq!(
+            sandbox.set_projectile_type(ProjectileType::Sphere as i32),
+            0
+        );
+        assert!(sandbox.shoot(0, 0, -96) >= 0);
+
+        let mut peak_sampled_events = 0_usize;
+        let mut peak_stabilization_limit_hits = 0_u64;
+        for tick in 0..120 {
+            assert_eq!(
+                sandbox.step_velocity(0, 0, false),
+                0,
+                "tower sphere impact tick {tick}, detail {}",
+                sandbox.error_detail
+            );
+            peak_sampled_events = peak_sampled_events.max(sandbox.last_step_stats.sampled_events);
+            peak_stabilization_limit_hits = peak_stabilization_limit_hits
+                .max(sandbox.last_step_stats.stabilizations_hitting_limit);
+            if sandbox.projectiles_retired_on_contact == 1 && sandbox.is_quiescent() {
+                break;
+            }
+        }
+
+        assert_eq!(sandbox.projectiles_retired_on_contact, 1);
+        assert_eq!(sandbox.world.ballistic_sphere_count(), 0);
+        assert!(
+            peak_sampled_events < 8,
+            "one localized sphere impact re-admitted {peak_sampled_events} sampled rigid events"
+        );
+        assert!(
+            peak_stabilization_limit_hits < 8,
+            "one localized sphere impact exhausted stabilization {peak_stabilization_limit_hits} times"
+        );
     }
 
     #[test]
@@ -1440,3 +1754,60 @@ mod tests {
 #[cfg(test)]
 #[path = "character_interaction_tests.rs"]
 mod character_interaction_tests;
+
+#[cfg(test)]
+mod projectile_wake_tests;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_sleeping_body_count() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.world.sleeping_body_count() as u64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_body_sleeping(index: u32) -> i32 {
+    with_sandbox(|sandbox| {
+        sandbox
+            .world
+            .boxes()
+            .nth(index as usize)
+            .map_or(-1, |body| {
+                i32::from(sandbox.world.is_sleeping(body.body().id()))
+            })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_parked_bodies_woken() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.parked_bodies_woken as u64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_parked_wake_retries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.parked_wake_retries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_response_authority_body_count() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.response_authority_body_count as u64)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.wake_probe_broad_phase_queries))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_tail_broad_phase_queries() -> u32 {
+    with_sandbox(|sandbox| {
+        saturating_u32(sandbox.last_step_stats.wake_probe_tail_broad_phase_queries)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_last_wake_probe_response_passes() -> u32 {
+    with_sandbox(|sandbox| saturating_u32(sandbox.last_step_stats.wake_probe_response_passes))
+}
+
+mod approximate;

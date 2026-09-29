@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suite": "physics-engine/sandbox-projectiles-v5",
-  "description": "Representative WASM physics work contract with a deterministic high-projectile stress trace. Correctness/replay remains authoritative; deterministic work counters block architectural regressions while wall-clock timing remains advisory on shared runners.",
+  "description": "Absolute deterministic work ceilings seeded from the corrected architecture/sleeping baseline. The append-only ratchet additionally protects all six replays and native scaling fixtures without requiring a comparison build. Wall-clock timing remains advisory on shared runners. Contact-triggered activation includes discarded wake-probe queries; see docs/performance-ratchet.md for the explicit migration from proximity waking.",
   "scenarios": [
     {
       "id": "settled-idle",
@@ -79,7 +79,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 782
           }
         },
         {
@@ -124,7 +124,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 710
           }
         },
         {
@@ -134,7 +134,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 226
           }
         },
         {
@@ -144,7 +144,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 3064
           }
         },
         {
@@ -178,7 +178,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 2727
           }
         },
         {
@@ -188,7 +188,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 3022
           }
         },
         {
@@ -203,7 +203,7 @@
     {
       "id": "thirty-shots-walking",
       "kind": "stress",
-      "description": "Deterministic high-projectile walking workload reproducing the population-driven stabilization and tail pressure seen in interactive browser sessions.",
+      "description": "Thirty equal-density light spheres under walking input. PR150 intentionally changes contact/wake patterns; epoch 4 records the complete trace and exact observed work ceilings. Other workloads keep their previous limits.",
       "dimensions": {
         "ticks": 240,
         "projectiles": 30,
@@ -224,7 +224,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 3503
           }
         },
         {
@@ -234,7 +234,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 2124
           }
         },
         {
@@ -244,7 +244,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 476
           }
         },
         {
@@ -254,7 +254,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 6462
           }
         },
         {
@@ -264,7 +264,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "relativeRegressionPercent": 10
+            "max": 0
           }
         },
         {

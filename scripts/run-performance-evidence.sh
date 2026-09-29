@@ -12,11 +12,17 @@ ran=0
 output="${PERFORMANCE_EVIDENCE_DIR:-$(pwd)/performance-evidence}"
 mkdir -p "$output/rust"
 
+time_binary="$(type -P time || true)"
+if [[ -z "$time_binary" ]]; then
+  echo "GNU time is required for performance evidence." >&2
+  exit 2
+fi
+
 run_integration() {
   local target="$1"
   [[ -f "tests/${target}.rs" ]] || return 0
   echo "::group::release performance evidence: integration target ${target}"
-  /usr/bin/time -v cargo test --release --locked --test "$target" -- \
+  "$time_binary" -v cargo test --release --locked --test "$target" -- \
     --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${target}.log"
   echo "::endgroup::"
   ran=1
@@ -24,8 +30,9 @@ run_integration() {
 
 run_library_module() {
   local module="$1"
+  local filter="${2:-${module}::tests::}"
   echo "::group::release performance evidence: library module ${module}"
-  /usr/bin/time -v cargo test --release --locked --lib "${module}::tests::" -- \
+  "$time_binary" -v cargo test --release --locked --lib "$filter" -- \
     --ignored --nocapture --test-threads=1 2>&1 | tee "$output/rust/${module}.log"
   echo "::endgroup::"
   ran=1
@@ -35,8 +42,9 @@ if grep -Eq '(^|/)(query\.rs|ray_query_performance\.rs)$' <<<"$changed"; then
   run_integration ray_query_performance
 fi
 
-if grep -Eq '(^|/)(ballistic_sphere\.rs|ballistic_sphere_scaling_performance\.rs)$' <<<"$changed"; then
+if grep -Eq '(^|/)(ballistic_sphere\.rs|ballistic_target_index(_tests)?\.rs|ballistic_sphere_scaling_performance\.rs)$' <<<"$changed"; then
   run_integration ballistic_sphere_scaling_performance
+  run_library_module ballistic_sphere ballistic_sphere::indexed_tests::
 fi
 
 if grep -Eq '(^|/)(repeated_rotating_events\.rs)$' <<<"$changed"; then
@@ -76,12 +84,12 @@ if grep -Eq '(^|/)(stabilized_rotating_world\.rs)$' <<<"$changed"; then
   run_library_module stabilized_rotating_world
 fi
 
-if grep -Eq '(^|/)(wide_ratio\.rs)$' <<<"$changed"; then
-  run_library_module wide_ratio
+if grep -Eq '(^|/)(float_math\.rs|numeric\.rs|wide_ratio\.rs)$' <<<"$changed"; then
+  run_library_module float_math
 fi
 
-if grep -Eq '(^|/)(oriented_box\.rs)$' <<<"$changed"; then
-  run_library_module oriented_box
+if grep -Eq '(^|/)(oriented_box(_parity_tests)?\.rs)$' <<<"$changed"; then
+  run_library_module oriented_box oriented_box::
 fi
 
 if grep -Eq '(^|/)(rotating_broad_phase\.rs|rotating_broad_phase_tree\.rs)$' <<<"$changed"; then

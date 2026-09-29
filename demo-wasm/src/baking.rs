@@ -4,7 +4,7 @@ use physics_engine::{
 };
 
 use crate::{
-    DemoScenario, Sandbox,
+    Sandbox,
     controller::scenario_rules::{EXPLICIT_RULES_BIT, ScenarioRules, apply_to_sandbox},
     role_for, with_sandbox, with_sandbox_mut,
 };
@@ -136,11 +136,11 @@ fn apply_interaction_policy_settings(
 /// explicit rules, old 0/1 callers remain accepted and ignored because crate motion is already encoded in the
 /// first argument; a marked second argument carries the settings-backed pair-policy payload. Fixed geometry
 /// preparation remains a separate performance/storage choice.
-fn reset_with_baking_options_for_scenario(
-    scenario: DemoScenario,
+fn reset_with_baking_options(
     simulation_rules: i32,
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
+    build_layout: impl FnOnce(bool, bool) -> Result<Sandbox, RotatingWorldError3d>,
 ) -> i32 {
     let explicit_rules = simulation_rules & EXPLICIT_RULES_BIT != 0;
     let (legacy_upright_crates, pair_policy_settings) = if explicit_rules
@@ -172,12 +172,7 @@ fn reset_with_baking_options_for_scenario(
     // applied to the replacement. Invalid inputs still return above without touching the current sandbox.
     with_sandbox(|_| ());
 
-    let Ok(mut replacement) =
-        Sandbox::with_scenario_options(
-            scenario,
-            rules.character_linear_push(),
-            rules.upright_crates(),
-        )
+    let Ok(mut replacement) = build_layout(rules.character_linear_push(), rules.upright_crates())
     else {
         return -2;
     };
@@ -199,14 +194,15 @@ pub extern "C" fn sandbox_reset_with_baking_options(
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
 ) -> i32 {
-    reset_with_baking_options_for_scenario(
-        DemoScenario::General,
+    reset_with_baking_options(
         simulation_rules,
         upright_crates_or_pair_policies,
         fixed_geometry_mode,
+        Sandbox::with_options,
     )
 }
 
+/// IDs 1 through 6 select focused Rust-owned fixtures; zero retains the General reset contract.
 #[unsafe(no_mangle)]
 pub extern "C" fn sandbox_reset_scenario_with_baking_options(
     scenario: i32,
@@ -214,14 +210,53 @@ pub extern "C" fn sandbox_reset_scenario_with_baking_options(
     upright_crates_or_pair_policies: i32,
     fixed_geometry_mode: i32,
 ) -> i32 {
-    let Some(scenario) = DemoScenario::from_i32(scenario) else {
+    if scenario == 0 {
+        return sandbox_reset_with_baking_options(
+            simulation_rules,
+            upright_crates_or_pair_policies,
+            fixed_geometry_mode,
+        );
+    }
+    let Some(scenario) = crate::scenario_presets::DemoScenario::from_i32(scenario) else {
         return -1;
     };
-    reset_with_baking_options_for_scenario(
-        scenario,
+    reset_with_baking_options(
         simulation_rules,
         upright_crates_or_pair_policies,
         fixed_geometry_mode,
+        |linear, upright| Sandbox::with_focused_options(scenario, linear, upright),
+    )
+}
+
+/// Reset the shared Rust/WASM sandbox with the large parkour layout.
+/// Moving platforms remain engine colliders with external motion; only their deterministic route is demo-owned.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_parkour_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        Sandbox::with_parkour_options,
+    )
+}
+
+/// Reset the shared Rust/WASM sandbox with the deterministic 32-crate tower layout.
+/// Layout selection stays separate from simulation rules so the browser remains an advisory consumer.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_tower_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        Sandbox::with_tower_options,
     )
 }
 

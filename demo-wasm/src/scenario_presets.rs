@@ -1,16 +1,13 @@
 use physics_engine::{
-    BodyId, Material, Ray, RigidBody, RotatingWorld3d, RotatingWorldConfig3d,
-    RotatingWorldError3d, Vec3i, World, WorldConfig,
+    BodyId, Material, Ray, RigidBody, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    Vec3i, ray_cast_first,
 };
 
-use crate::{
-    CRATE_FRICTION_MILLI, CRATE_RESTITUTION_MILLI, PLAYER_ID, rotating_box,
-};
+use crate::{CRATE_FRICTION_MILLI, CRATE_RESTITUTION_MILLI, PLAYER_ID, rotating_box};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
 pub(crate) enum DemoScenario {
-    General = 0,
     CcdGauntlet = 1,
     RotatingBoxLab = 2,
     TowerStability = 3,
@@ -22,7 +19,6 @@ pub(crate) enum DemoScenario {
 impl DemoScenario {
     pub(crate) const fn from_i32(value: i32) -> Option<Self> {
         match value {
-            0 => Some(Self::General),
             1 => Some(Self::CcdGauntlet),
             2 => Some(Self::RotatingBoxLab),
             3 => Some(Self::TowerStability),
@@ -48,7 +44,6 @@ pub(crate) fn build_world(
     });
 
     match scenario {
-        DemoScenario::General => build_general(&mut world, linear_push, upright_crates)?,
         DemoScenario::CcdGauntlet => build_ccd_gauntlet(&mut world, linear_push)?,
         DemoScenario::RotatingBoxLab => {
             build_rotating_box_lab(&mut world, linear_push, upright_crates)?;
@@ -71,7 +66,11 @@ pub(crate) fn build_world(
 fn add_arena(world: &mut RotatingWorld3d, half_size: i32) -> Result<(), RotatingWorldError3d> {
     let wall_height = 96;
     let fixed = [
-        (10, Vec3i::new(0, -16, 0), Vec3i::new(half_size, 16, half_size)),
+        (
+            10,
+            Vec3i::new(0, -16, 0),
+            Vec3i::new(half_size, 16, half_size),
+        ),
         (
             11,
             Vec3i::new(0, wall_height, -half_size),
@@ -118,13 +117,8 @@ fn add_player(
     linear_push: bool,
 ) -> Result<(), RotatingWorldError3d> {
     let player = rotating_box(
-        RigidBody::dynamic(
-            PLAYER_ID,
-            position,
-            Vec3i::ZERO,
-            Vec3i::new(12, 20, 12),
-        )
-        .with_mass(4),
+        RigidBody::dynamic(PLAYER_ID, position, Vec3i::ZERO, Vec3i::new(12, 20, 12))
+            .with_mass(crate::PLAYER_MASS_UNITS),
     )
     .with_rotation_locked();
 
@@ -158,49 +152,6 @@ fn add_crate(
     })
 }
 
-fn build_general(
-    world: &mut RotatingWorld3d,
-    linear_push: bool,
-    upright_crates: bool,
-) -> Result<(), RotatingWorldError3d> {
-    add_arena(world, 520)?;
-    for (id, position, half_extents) in [
-        (15, Vec3i::new(0, 72, -180), Vec3i::new(120, 72, 3)),
-        (20, Vec3i::new(-190, 24, 40), Vec3i::new(70, 24, 70)),
-        (21, Vec3i::new(185, 8, 75), Vec3i::new(45, 8, 45)),
-        (22, Vec3i::new(185, 16, 20), Vec3i::new(45, 16, 45)),
-        (23, Vec3i::new(185, 24, -35), Vec3i::new(45, 24, 45)),
-        (24, Vec3i::new(185, 32, -90), Vec3i::new(45, 32, 45)),
-    ] {
-        add_fixed(world, id, position, half_extents)?;
-    }
-
-    add_player(world, Vec3i::new(0, 38, 320), linear_push)?;
-
-    for (offset, position) in [
-        Vec3i::new(-75, 18, 135),
-        Vec3i::new(-75, 54, 135),
-        Vec3i::new(80, 18, 120),
-        Vec3i::new(116, 18, 120),
-        Vec3i::new(98, 54, 120),
-        Vec3i::new(0, 18, -70),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        add_crate(
-            world,
-            100 + offset as u64,
-            position,
-            Vec3i::ZERO,
-            Vec3i::new(18, 18, 18),
-            2,
-            upright_crates,
-        )?;
-    }
-    Ok(())
-}
-
 fn build_ccd_gauntlet(
     world: &mut RotatingWorld3d,
     linear_push: bool,
@@ -216,12 +167,7 @@ fn build_ccd_gauntlet(
         (34, 70, -270, 42),
         (35, 0, -390, 82),
     ] {
-        add_fixed(
-            world,
-            id,
-            Vec3i::new(x, 70, z),
-            Vec3i::new(half_x, 70, 2),
-        )?;
+        add_fixed(world, id, Vec3i::new(x, 70, z), Vec3i::new(half_x, 70, 2))?;
     }
     Ok(())
 }
@@ -235,12 +181,7 @@ fn build_rotating_box_lab(
     add_player(world, Vec3i::new(0, 38, 360), linear_push)?;
 
     for (id, x) in [(30, -180), (31, 0), (32, 180)] {
-        add_fixed(
-            world,
-            id,
-            Vec3i::new(x, 8, -30),
-            Vec3i::new(62, 8, 62),
-        )?;
+        add_fixed(world, id, Vec3i::new(x, 8, -30), Vec3i::new(62, 8, 62))?;
     }
 
     for (id, position, velocity, half_extents) in [
@@ -371,30 +312,10 @@ fn build_off_centre_impact(
     add_arena(world, 520)?;
     add_player(world, Vec3i::new(0, 38, 350), linear_push)?;
 
-    add_fixed(
-        world,
-        30,
-        Vec3i::new(0, 8, -90),
-        Vec3i::new(95, 8, 95),
-    )?;
-    add_fixed(
-        world,
-        31,
-        Vec3i::new(0, 80, -260),
-        Vec3i::new(170, 80, 8),
-    )?;
-    add_fixed(
-        world,
-        32,
-        Vec3i::new(-120, 44, -90),
-        Vec3i::new(8, 44, 95),
-    )?;
-    add_fixed(
-        world,
-        33,
-        Vec3i::new(120, 44, -90),
-        Vec3i::new(8, 44, 95),
-    )?;
+    add_fixed(world, 30, Vec3i::new(0, 8, -90), Vec3i::new(95, 8, 95))?;
+    add_fixed(world, 31, Vec3i::new(0, 80, -260), Vec3i::new(170, 80, 8))?;
+    add_fixed(world, 32, Vec3i::new(-120, 44, -90), Vec3i::new(8, 44, 95))?;
+    add_fixed(world, 33, Vec3i::new(120, 44, -90), Vec3i::new(8, 44, 95))?;
     add_crate(
         world,
         100,
@@ -417,31 +338,25 @@ pub(crate) fn aim_query_hit(
     }
 
     let player = world.box_by_id(PLAYER_ID)?;
-    let mut snapshot = World::new(WorldConfig {
-        gravity: Vec3i::ZERO,
-        ..WorldConfig::default()
-    });
-
-    for rigid_box in world.boxes() {
-        let body = rigid_box.body();
-        if !(30..100).contains(&body.id().0) {
-            continue;
-        }
-        snapshot
-            .add_body(RigidBody::fixed(
-                body.id(),
-                body.position(),
-                body.half_extents(),
-            ))
-            .ok()?;
-    }
-
-    let player_position = player.body().position();\n    let origin = Vec3i::new(\n        player_position.x,\n        player_position.y.saturating_add(13),\n        player_position.z,\n    );
-    snapshot
-        .ray_cast_first(Ray::new(origin, direction), 12)
-        .ok()
-        .flatten()
-        .map(|hit| hit.body)
+    let player_position = player.body().position();
+    let origin = Vec3i::new(
+        player_position.x,
+        player_position.y.checked_add(13)?,
+        player_position.z,
+    );
+    // This fixture contains fixed, axis-aligned targets. Borrow their current engine state;
+    // no second world or browser geometry owns query truth.
+    ray_cast_first(
+        world
+            .boxes()
+            .map(|rigid_box| rigid_box.body())
+            .filter(|body| (30..100).contains(&body.id().0)),
+        Ray::new(origin, direction),
+        12,
+    )
+    .ok()
+    .flatten()
+    .map(|hit| hit.body)
 }
 
 #[cfg(test)]
@@ -453,7 +368,6 @@ mod tests {
     #[test]
     fn every_pages_scenario_keeps_the_shared_player_contract() {
         for scenario in [
-            DemoScenario::General,
             DemoScenario::CcdGauntlet,
             DemoScenario::RotatingBoxLab,
             DemoScenario::TowerStability,
@@ -481,5 +395,52 @@ mod tests {
             ),
             Some(BodyId(30))
         );
+    }
+    #[test]
+    fn focused_fixtures_complete_and_replay_in_both_character_modes() {
+        for value in 1..=6 {
+            let scenario = DemoScenario::from_i32(value).expect("focused fixture");
+            for linear in [false, true] {
+                let mut reference = None;
+                for _ in 0..2 {
+                    let mut sandbox =
+                        crate::Sandbox::with_focused_options(scenario, linear, linear)
+                            .expect("valid focused fixture");
+                    let count = sandbox.world.boxes().count();
+                    let mut checkpoints = Vec::new();
+                    for tick in 0..600 {
+                        assert_eq!(
+                            sandbox.step_velocity(0, 0, false),
+                            0,
+                            "{scenario:?} linear={linear} tick={tick}, detail={}",
+                            sandbox.error_detail
+                        );
+                        assert_eq!(sandbox.world.boxes().count(), count);
+                        if tick % 60 == 59 {
+                            checkpoints.push(
+                                sandbox
+                                    .world
+                                    .boxes()
+                                    .map(|body| {
+                                        (body.clone(), sandbox.world.is_sleeping(body.body().id()))
+                                    })
+                                    .collect::<Vec<_>>(),
+                            );
+                        }
+                    }
+                    if scenario == DemoScenario::SleepingWorld {
+                        assert!(
+                            sandbox.is_quiescent(),
+                            "separated idle clusters should settle"
+                        );
+                    }
+                    if let Some(expected) = &reference {
+                        assert_eq!(&checkpoints, expected);
+                    } else {
+                        reference = Some(checkpoints);
+                    }
+                }
+            }
+        }
     }
 }

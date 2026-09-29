@@ -13,6 +13,9 @@ cargo build \
   --release \
   --locked
 
+node scripts/check-diagnostic-exports.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm production
+
 node --input-type=module <<'NODE'
 import { readFile } from "node:fs/promises";
 
@@ -22,10 +25,21 @@ const bytes = await readFile(
 const { instance } = await WebAssembly.instantiate(bytes, {});
 const exports = instance.exports;
 const requiredFunctions = [
+  "approximate_reset_tower",
+  "approximate_position_stat",
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
+  "sandbox_reset_tower_with_baking_options",
+  "sandbox_reset_parkour_with_baking_options",
   "sandbox_reset_scenario_with_baking_options",
   "sandbox_aim_query",
+  "sandbox_step_velocity",
+  "sandbox_body_count",
+  "sandbox_numeric_backend",
+  "sandbox_body_sleeping",
+  "sandbox_last_response_authority_body_count",
+  "sandbox_last_parked_bodies_woken",
+  "sandbox_last_parked_wake_retries",
   "sandbox_fixed_geometry_mode",
   "sandbox_fixed_geometry_prepared_count",
   "sandbox_fixed_geometry_total_preparations",
@@ -41,12 +55,31 @@ for (const name of requiredFunctions) {
     throw new Error(`missing WASM sandbox export: ${name}`);
   }
 }
+if (exports.sandbox_numeric_backend() !== 64) {
+  throw new Error("Pages must use the production f64 numerical backend, not exact-reference");
+}
 if (!(exports.memory instanceof WebAssembly.Memory)) {
   throw new Error("WASM module does not export linear memory for the render snapshot");
 }
 
 if (exports.sandbox_reset_with_baking_options(0, 0, 0) !== 0) {
   throw new Error("runtime fixed-geometry reference mode failed to initialize");
+}
+if (exports.sandbox_reset_tower_with_baking_options(0, 0, 0) !== 0) {
+  throw new Error("tower scenario failed to initialize");
+}
+if (exports.sandbox_body_count() !== 44) {
+  throw new Error(`tower scenario expected 44 bodies, got ${exports.sandbox_body_count()}`);
+}
+
+if (exports.sandbox_reset_parkour_with_baking_options(0, 0, 0) !== 0) {
+  throw new Error("parkour scenario failed to initialize");
+}
+if (exports.sandbox_body_count() !== 48) {
+  throw new Error(`parkour scenario expected 48 bodies, got ${exports.sandbox_body_count()}`);
+}
+if (exports.sandbox_step_velocity(0, 0, 0) !== 0) {
+  throw new Error(`parkour scenario failed its first physics tick, detail ${exports.sandbox_error_detail()}`);
 }
 if (
   exports.sandbox_fixed_geometry_mode() !== 0 ||
@@ -81,14 +114,11 @@ if (exports.sandbox_reset_with_baking_options(explicitRules, 1, 0) !== 0) {
 
 for (let scenario = 0; scenario <= 6; scenario += 1) {
   if (exports.sandbox_reset_scenario_with_baking_options(scenario, 0, 0, 0) !== 0) {
-    throw new Error(`scenario ${scenario} failed to initialize`);
+    throw new Error(`focused scenario ${scenario} failed to initialize`);
   }
 }
-if (exports.sandbox_reset_scenario_with_baking_options(5, 0, 0, 0) !== 0) {
-  throw new Error("collision query lab failed to initialize");
-}
-if (exports.sandbox_aim_query(0, 0, -96) !== 30) {
-  throw new Error("collision query lab did not return the expected engine ray hit");
+if (exports.sandbox_reset_scenario_with_baking_options(5, 0, 0, 0) !== 0 || exports.sandbox_aim_query(0, 0, -96) !== 30) {
+  throw new Error("query lab did not return the expected engine ray hit");
 }
 
 const pointer = exports.sandbox_refresh_render_snapshot();
@@ -105,6 +135,20 @@ if (pointer < 0 || byteEnd > exports.memory.buffer.byteLength) {
 }
 new Int32Array(exports.memory.buffer, pointer, length);
 NODE
+
+node scripts/test-focused-scenarios.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm
+
+# Exercise the real shipped WASM, including sleep/retirement, rather than only counting bodies.
+node scripts/benchmark-projectile-wake.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  demo-wasm/target/pages-projectile-wake.json
+
+# The canonical page is a different consumer from the comparison page: exercise its real adapter.
+TOWER_TICKS=600 node scripts/test-tower-runtime.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  demo-wasm/target/pages-tower-runtime.json
+node --test site/tower-runtime.test.mjs
 
 node --input-type=module --check < site/app.js
 node --input-type=module --check < site/webgpu-renderer.js
@@ -124,7 +168,6 @@ node --test site/physics-error.test.mjs site/interaction-controls.test.mjs site/
 rm -rf pages-dist
 mkdir -p pages-dist/vendor/settings/pkg
 cp -R site/. pages-dist/
-
 node --input-type=module <<'NODE'
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
@@ -132,7 +175,7 @@ const template = await readFile("pages-dist/scenarios/sandbox/index.html", "utf8
 const scenarios = [
   ["ccd-gauntlet", "CCD Gauntlet", "Level 1 · continuous collision detection"],
   ["rotating-box-lab", "Rotating Box Lab", "Level 2 · rotating bodies"],
-  ["tower-stability", "Tower Stability", "Level 3 · stacked contacts"],
+  ["tower-stability", "Compact Stack", "Level 3 · stacked contacts"],
   ["sleeping-world", "Sleeping World", "Level 4 · sleeping and locality"],
   ["collision-query-lab", "Collision Query Lab", "Level 1 · spatial queries"],
   ["off-centre-impact", "Off-Centre Impact", "Level 2 · angular response"],
@@ -182,6 +225,7 @@ const wasm = await readFile("pages-dist/physics_engine_demo.wasm");
 const settingsWasm = await readFile("pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm");
 const provenance = {
   schema_version: 1,
+  numerical_backend: "float64",
   repository: "moritzbrantner/physics-engine",
   revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   wasm_sha256: createHash("sha256").update(wasm).digest("hex"),
@@ -204,6 +248,8 @@ test -s pages-dist/scenarios/tower-stability/index.html
 test -s pages-dist/scenarios/sleeping-world/index.html
 test -s pages-dist/scenarios/collision-query-lab/index.html
 test -s pages-dist/scenarios/off-centre-impact/index.html
+test -s pages-dist/scenarios/tower/index.html
+test -s pages-dist/scenarios/parkour/index.html
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
 test -s pages-dist/physics-settings.mjs
@@ -221,3 +267,6 @@ test -s pages-dist/vendor/settings/settings-browser.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm.js
 test -s pages-dist/vendor/settings/pkg/settings_wasm_bg.wasm
 test -s pages-dist/vendor/settings/SOURCE_SHA
+
+test -s pages-dist/scenarios/fixed-step/index.html
+test -s pages-dist/fixed-step-lab.js

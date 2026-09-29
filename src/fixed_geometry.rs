@@ -150,7 +150,7 @@ pub fn rigid_box_free_flight_sweep_bounds(
         return runtime_rigid_box_free_flight_sweep_bounds(rigid_box, config);
     };
 
-    config.exact_timestep()?;
+    config.timestep()?;
     prepared.bounds.map_err(RigidBoxFreeFlightError3d::Geometry)
 }
 
