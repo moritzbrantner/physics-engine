@@ -495,9 +495,7 @@ fn swept_sphere_target(
     for axis in 0..3 {
         for sign in [-1_i64, 1] {
             crate::performance_counter!({
-                crate::performance_counter!({
-                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
-                });
+                _stats.feature_tests = _stats.feature_tests.saturating_add(1);
             });
             if let Some(time) = face_hit_time(
                 relative_position,
@@ -517,9 +515,7 @@ fn swept_sphere_target(
         for first_sign in [-1_i64, 1] {
             for second_sign in [-1_i64, 1] {
                 crate::performance_counter!({
-                    crate::performance_counter!({
-                        _stats.feature_tests = _stats.feature_tests.saturating_add(1);
-                    });
+                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
                 });
                 if let Some(time) = edge_hit_time(
                     relative_position,
@@ -548,9 +544,7 @@ fn swept_sphere_target(
         for y_sign in [-1_i64, 1] {
             for z_sign in [-1_i64, 1] {
                 crate::performance_counter!({
-                    crate::performance_counter!({
-                        _stats.feature_tests = _stats.feature_tests.saturating_add(1);
-                    });
+                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
                 });
                 let signs = [x_sign, y_sign, z_sign];
                 if let Some(time) = corner_hit_time(
