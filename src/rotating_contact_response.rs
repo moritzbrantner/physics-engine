@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    BodyId, ObbContactResponseError3d, RigidBox3d, RigidBoxFreeFlightError3d,
-    RotatingContactFrontier3d, RotatingContactSearchHit3d, SampledContactTime3d,
-    resolve_obb_contact, sample_rigid_box_free_flight,
+    BodyId, ObbContactResponseError3d, PerformanceCounterU64, RigidBox3d,
+    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactSearchHit3d,
+    SampledContactTime3d, resolve_obb_contact, sample_rigid_box_free_flight,
 };
 
 /// Deterministic metadata produced while resolving one sampled rotating-contact frontier.
@@ -242,8 +242,8 @@ pub struct RotatingContactResponseScratch3d {
     combined: Vec<BodyDelta3d>,
     modified_body_ids: BTreeSet<BodyId>,
     geometry_modified_body_ids: BTreeSet<BodyId>,
-    body_index_rebuilds: u64,
-    response_passes_total: u64,
+    body_index_rebuilds: PerformanceCounterU64,
+    response_passes_total: PerformanceCounterU64,
 }
 
 impl RotatingContactResponseScratch3d {
@@ -271,11 +271,11 @@ impl RotatingContactResponseScratch3d {
 
     #[must_use]
     pub(crate) const fn response_passes_total(&self) -> u64 {
-        self.response_passes_total
+        self.response_passes_total.value()
     }
 
     pub(crate) const fn body_index_rebuilds(&self) -> u64 {
-        self.body_index_rebuilds
+        self.body_index_rebuilds.value()
     }
 
     pub(crate) fn indexed_box<'a>(

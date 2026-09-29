@@ -372,7 +372,7 @@ impl BallisticSphereStep3d<'_> {
         &self,
         sphere: BallisticSphere3d,
         stats: &mut BallisticSphereQueryStats3d,
-        target_bound_checks: &mut u64,
+        _target_bound_checks: &mut u64,
     ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
         if self.timestep_numerator == 0 {
             return Ok(None);
@@ -384,7 +384,7 @@ impl BallisticSphereStep3d<'_> {
         )?;
         let sphere_bounds = swept_sphere_bounds(sphere, sphere_displacement)?;
         let mut earliest = None;
-        let bound_checks = self
+        let _bound_checks = self
             .target_index
             .for_each_overlapping(sphere_bounds, |index| {
                 let target = &self.scene.targets[index];
@@ -396,8 +396,10 @@ impl BallisticSphereStep3d<'_> {
                 {
                     return Ok::<_, BallisticSphereError3d>(());
                 }
-                stats.broad_phase_candidates = stats.broad_phase_candidates.saturating_add(1);
-                stats.toi_tests = stats.toi_tests.saturating_add(1);
+                crate::performance_counter!({
+                    stats.broad_phase_candidates = stats.broad_phase_candidates.saturating_add(1);
+                    stats.toi_tests = stats.toi_tests.saturating_add(1);
+                });
                 let Some(hit) = swept_sphere_target(
                     sphere,
                     sphere_displacement,
@@ -415,7 +417,9 @@ impl BallisticSphereStep3d<'_> {
                 }
                 Ok(())
             })?;
-        *target_bound_checks = target_bound_checks.saturating_add(bound_checks);
+        crate::performance_counter!({
+            *_target_bound_checks = _target_bound_checks.saturating_add(_bound_checks);
+        });
         Ok(earliest)
     }
 }
@@ -456,7 +460,7 @@ fn swept_sphere_target(
     sphere_displacement: [i64; 3],
     target: &PreparedBallisticTarget3d,
     target_displacement: [i64; 3],
-    stats: &mut BallisticSphereQueryStats3d,
+    _stats: &mut BallisticSphereQueryStats3d,
 ) -> Result<Option<BallisticSphereSweepHit3d>, BallisticSphereError3d> {
     let inverse = transpose(target.rotation);
     let relative_position = rotate_vector(
@@ -490,7 +494,9 @@ fn swept_sphere_target(
     let mut best: Option<(u64, [i128; 3])> = None;
     for axis in 0..3 {
         for sign in [-1_i64, 1] {
-            stats.feature_tests = stats.feature_tests.saturating_add(1);
+            crate::performance_counter!({
+                _stats.feature_tests = _stats.feature_tests.saturating_add(1);
+            });
             if let Some(time) = face_hit_time(
                 relative_position,
                 relative_displacement,
@@ -508,7 +514,9 @@ fn swept_sphere_target(
         let side_axes = other_axes(free_axis);
         for first_sign in [-1_i64, 1] {
             for second_sign in [-1_i64, 1] {
-                stats.feature_tests = stats.feature_tests.saturating_add(1);
+                crate::performance_counter!({
+                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
+                });
                 if let Some(time) = edge_hit_time(
                     relative_position,
                     relative_displacement,
@@ -535,7 +543,9 @@ fn swept_sphere_target(
     for x_sign in [-1_i64, 1] {
         for y_sign in [-1_i64, 1] {
             for z_sign in [-1_i64, 1] {
-                stats.feature_tests = stats.feature_tests.saturating_add(1);
+                crate::performance_counter!({
+                    _stats.feature_tests = _stats.feature_tests.saturating_add(1);
+                });
                 let signs = [x_sign, y_sign, z_sign];
                 if let Some(time) = corner_hit_time(
                     relative_position,

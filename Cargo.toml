@@ -10,7 +10,10 @@ description = "Deterministic continuous-collision physics kernel"
 geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "9dd083cdf6ad9e79fb1a9d3183bcf7601442a5d3" }
 
 [features]
-default = []
+default = ["performance-counters"]
+# Diagnostic computational-work counters. Disable with --no-default-features to prove
+# instrumentation-neutral simulation semantics without changing the default evidence path.
+performance-counters = []
 # Diagnostic legacy replay only. Never required by the default or Pages build.
 exact-reference = []
 
