@@ -26,6 +26,11 @@ replacement for an older one.
 
 A dependency update does not move a consumer between these worlds.
 
+`PhysicsWorld3dKernel` exposes the rotating parked-sleep kernel without the public wrapper's retained
+fixed-geometry preparation. It uses the same collision/wake semantics and does not add a new solver or
+stronger recovery guarantee. The historical internal `EcsRotatingWorld3d` name is not an ECS storage
+requirement; the public wrapper owns no mirrored component world.
+
 ## Capability matrix
 
 | Capability | `World` | `RotatingWorld3d` | `approximate::World` |
@@ -85,6 +90,22 @@ and removal, velocity updates, `step(1)`, and post-step position/velocity reads.
 `moritzbrantner/collision-lab/wasm/src/physics_engine.rs` already imports
 `approximate::{Body, Config, Report, Shape, Vector, World}`. It is evidence for the floating-state
 surface, not proof that the API already covers the game consumers above.
+
+### ECS Lab
+
+`moritzbrantner/ecs-lab/crates/physics-3d/src/physics_engine_adapter.rs` imports `RotatingWorld3d`,
+converts ECS rigid-box snapshots through `add_box`, runs rational-duration `step` calls, then converts
+`boxes()` back to ECS state. The current adapter constructs a world per invocation. Retaining it across
+frames is `moritzbrantner/ecs-lab#133`; changing its solver is a separate task under
+`moritzbrantner/ecs-lab#134`. ECS identity, storage and synchronization remain consumer-owned.
+
+### Medieval (query only)
+
+`moritzbrantner/medieval/crates/medieval-core/src/tactical.rs` imports `Collider`, `ColliderShape`,
+`Vec3i` and `collider_contact` for rebased melee/pursuit proximity. It does not instantiate a world or
+step rigid bodies. Its unsigned tactical coordinates are locally rebased before checked integer
+conversion. `moritzbrantner/medieval#76` needs an efficient query boundary; adopting a rigid solver would
+change its tactical authority and is not part of that migration.
 
 ## Integer-tick to floating-state conversion
 

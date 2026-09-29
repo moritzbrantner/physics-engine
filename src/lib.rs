@@ -23,9 +23,9 @@
 //! eligibility or physical coefficients. Per-body solver participation, motion authority, and sleep mode
 //! provide orthogonal foundations for overlap-only sensors, externally-driven kinematic bodies, and
 //! aggressively sleeping debris without introducing gameplay-specific body kinds. The public
-//! `RotatingWorld3d` defaults to an ECS-backed
-//! entity/component world that runs the performance-oriented parked-sleep physics system; the raw solver
-//! resource remains available as `PhysicsWorld3dKernel` for deliberately lower-level integrations.
+//! `RotatingWorld3d` wraps the parked-sleep physics kernel with retained fixed-geometry preparation;
+//! it owns no second entity/component body store. `PhysicsWorld3dKernel` exposes the same parked-sleep
+//! kernel without that preparation wrapper for lower-level integrations.
 //!
 //! Rendering, game loops and non-physics components remain consumer-owned.
 
