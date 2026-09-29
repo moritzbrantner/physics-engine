@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "suite": "architecture-work-v1",
+  "suite": "architecture-work-v2",
   "native": [
     { "test": "ballistic_sphere::indexed_tests::sparse_ballistic_target_benchmark", "scenarios": ["ballistic-index/32", "ballistic-index/256", "ballistic-index/2048"] },
     { "test": "current_contact_query::tests::stationary_subject_reuse_benchmark", "scenarios": ["stationary-cache/32", "stationary-cache/256", "stationary-cache/2048"] },
-    { "test": "relaxed_rotating_world::tests::wake_propagation_queries_each_source_once_in_a_touching_chain", "scenarios": ["wake-chain/8", "wake-chain/32"] },
+    { "test": "relaxed_rotating_world::tests::contact_island_queries_each_source_once_in_a_touching_chain", "scenarios": ["wake-chain/8", "wake-chain/32"] },
     { "test": "relaxed_rotating_world::tests::waking_one_body_keeps_other_sleepers_prepared", "scenarios": ["wake-local/32", "wake-local/128"] },
     { "test": "oriented_box::parity_tests::projection_work_ratchet", "scenarios": ["sat-projection"] },
     { "test": "oriented_box::parity_tests::prepared_contact_benchmark", "scenarios": ["sat-prepared"] },

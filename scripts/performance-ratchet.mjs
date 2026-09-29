@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { arch, cpus, platform, release, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertHistoryPrefix, compareRows, hash, parseNative, sandboxRows, validateHistory } from "./performance-ratchet-lib.mjs";
+import { assertHistoryPrefix, compareRows, hash, parseNative, sandboxRows, validateHistory, validateNativeTests } from "./performance-ratchet-lib.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const historyRoot = join(root, ".performance/ratchet/history");
@@ -137,6 +137,8 @@ try {
     rustc: run("rustc", "rustc", ["-Vv"]).trim(), cargo: run("cargo", "cargo", ["--version"]).trim(),
     profile: "release", nativeTestThreads: 1, rustflags: process.env.RUSTFLAGS ?? "",
   };
+  validateNativeTests(run("native-test-list", "cargo", ["test", "--locked", "--lib", "--", "--list"]),
+    fixture.native.map((native) => native.test));
   const rows = {};
   for (const [index, native] of fixture.native.entries()) {
     const stdout = run(`native-${index + 1}`, "cargo", ["test", "--release", "--locked", "--lib", native.test,
