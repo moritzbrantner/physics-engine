@@ -103,7 +103,7 @@ fn ballistic_sphere_scaling_benchmark() {
         let median = samples[samples.len() / 2];
         let (hits, stats) = evidence.expect("measured evidence");
         println!(
-            "BALLISTIC_SPHERE_SCALING projectiles={projectile_count} targets={} hits={hits} candidate_bounds={} toi_tests={} feature_tests={} median_ns={}",
+            "BALLISTIC_SPHERE_SCALING projectiles={projectile_count} targets={} hits={hits} linear_scan_bounds={} toi_tests={} feature_tests={} median_ns={}",
             scene.target_count(),
             projectile_count * scene.target_count(),
             stats.toi_tests,

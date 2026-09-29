@@ -362,7 +362,6 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
     config: RepeatedRotatingEventConfig3d,
     broad_phase: &mut RotatingBroadPhase3d,
     response_scratch: &mut RotatingContactResponseScratch3d,
-    resolved_ballistic_pairs: &mut BTreeSet<(BodyId, BodyId)>,
     ballistic_work: &mut BallisticStepWork3d,
     wake_guard: Option<&ContactWakeGuard3d<'_>>,
 ) -> Result<RepeatedRotatingEventProgress3d, RepeatedRotatingEventError3d> {
@@ -394,13 +393,8 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
             sampled_rotating_contact_search_with_broad_phase(boxes, search, broad_phase)
                 .map_err(RotatingContactFrontierError3d::from)?
         };
-        let ballistic_frontier = earliest_ballistic_frontier(
-            boxes,
-            projectiles,
-            remaining,
-            resolved_ballistic_pairs,
-            ballistic_work,
-        )?;
+        let ballistic_frontier =
+            earliest_ballistic_frontier(boxes, projectiles, remaining, ballistic_work)?;
 
         let choose_rigid = match (rigid_hit.as_ref(), ballistic_frontier.as_ref()) {
             (None, None) => break,
@@ -482,9 +476,6 @@ pub(crate) fn advance_repeated_rotating_events_with_ballistics(
                 &frontier,
                 ballistic_work,
             )?;
-            for candidate in &frontier.hits {
-                resolved_ballistic_pairs.insert((candidate.projectile, candidate.hit.body));
-            }
             if !modified_targets.is_empty() {
                 stabilize_current_contacts(
                     boxes,
@@ -1226,7 +1217,6 @@ mod tests {
         let retire_on_contact = BTreeSet::from([projectile_id]);
         let mut broad_phase = RotatingBroadPhase3d::default();
         let mut response_scratch = RotatingContactResponseScratch3d::default();
-        let mut resolved_ballistic_pairs = BTreeSet::new();
         let mut ballistic_work = BallisticStepWork3d::default();
 
         let progress = advance_repeated_rotating_events_with_ballistics(
@@ -1236,7 +1226,6 @@ mod tests {
             config(1),
             &mut broad_phase,
             &mut response_scratch,
-            &mut resolved_ballistic_pairs,
             &mut ballistic_work,
             None,
         )

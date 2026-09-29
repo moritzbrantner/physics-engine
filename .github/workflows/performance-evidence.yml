@@ -3,6 +3,12 @@ name: Performance Evidence
 on:
   pull_request:
     paths:
+      - "src/ballistic_target_index*.rs"
+      - "src/oriented_box_parity_tests.rs"
+      - "src/performance_ratchet.rs"
+      - ".performance/ratchet*/**"
+      - ".performance/ratchet-fixtures.json"
+      - "scripts/performance-ratchet*.mjs"
       - "src/query.rs"
       - "src/approximate/**"
       - "experiments/contact-islands/**"
