@@ -13,12 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Config::default()
     })?;
     let id = BodyId(1);
-    let mut body = Body::new(
-        id,
-        Shape::Box(Vector(1.0, 1.0, 1.0)),
-        Vector::ZERO,
-        1.0,
-    );
+    let mut body = Body::new(id, Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 1.0);
     body.velocity = Vector(60.0, 0.0, 0.0);
 
     world.add_body(body)?;
