@@ -139,6 +139,12 @@ floating-state box-contact solver migration and direct-impact tower acceptance.
 
 ## Portable performance logs
 
+The default `performance-counters` Cargo feature controls rotating-world reports and analytic
+projectile work counters. Builds with `--no-default-features` return empty diagnostic reports while
+preserving physical state, events and errors. `node scripts/check-instrumentation-neutrality.mjs`
+compares both builds; the canonical fast tier also runs this comparison. Translational `World`
+and floating-state solver instrumentation remain independently instrumented.
+
 The Pages sandbox can record an opt-in interactive performance session. Start the log, reproduce the
 slowdown or frame spike, then stop it to download a bounded JSON file. The session contains raw frame,
 rendering and physics-step timing arrays, scenario settings, the deployed engine revision and WASM hash,
