@@ -212,7 +212,11 @@ fn bottom(b: &Body) -> f64 {
     let h = b.shape.half_extents();
     let depth = match b.shape {
         Shape::Sphere(r) => r,
-        Shape::Box(_) => {
+        Shape::Capsule {
+            half_segment,
+            radius,
+        } => b.orientation.rotate(V::Y).1.abs() * half_segment + radius,
+        Shape::Box(_) | Shape::Wedge(_) => {
             b.orientation.rotate(V::X).1.abs() * h.0
                 + b.orientation.rotate(V::Y).1.abs() * h.1
                 + b.orientation.rotate(V::Z).1.abs() * h.2

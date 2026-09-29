@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    BodyId, ObbContactResponseError3d, RigidBox3d, RigidBoxFreeFlightError3d,
-    RotatingContactFrontier3d, RotatingContactSearchHit3d, SampledContactTime3d,
-    resolve_obb_contact, sample_rigid_box_free_flight,
+    BodyId, ObbContactResponseError3d, PerformanceCounterU64, RigidBox3d,
+    RigidBoxFreeFlightError3d, RotatingContactFrontier3d, RotatingContactSearchHit3d,
+    SampledContactTime3d, resolve_obb_contact, sample_rigid_box_free_flight,
 };
 
 /// Deterministic metadata produced while resolving one sampled rotating-contact frontier.

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{
     BodyId, BodyKind, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
     RotatingWorldError3d, SolverParticipation3d, Vec3i, obb_contact_seed,
-    rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBroadPhase3d,
+    rotating_broad_phase::{RotatingBoundsIndex3d, RotatingBroadPhase3d},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,7 @@ pub(crate) struct GenerationContactCache3d {
     generation: Option<u64>,
     graph: Option<CurrentContactGraph3d>,
     body_contacts: BTreeMap<BodyId, Vec<BodyCurrentContact3d>>,
+    subject_bounds: Option<RotatingBoundsIndex3d>,
     broad_phase: RotatingBroadPhase3d,
     pending_changed: BTreeSet<BodyId>,
     graph_builds: u64,
@@ -44,6 +45,7 @@ impl GenerationContactCache3d {
         self.generation = Some(generation);
         self.graph = None;
         self.body_contacts.clear();
+        self.subject_bounds = None;
         self.pending_changed.clear();
         self.broad_phase = RotatingBroadPhase3d::default();
     }
@@ -52,6 +54,7 @@ impl GenerationContactCache3d {
         self.generation = Some(generation);
         self.graph = None;
         self.body_contacts.clear();
+        self.subject_bounds = None;
         self.pending_changed.clear();
         self.broad_phase = RotatingBroadPhase3d::default();
     }
@@ -67,7 +70,47 @@ impl GenerationContactCache3d {
         }
         self.generation = Some(generation);
         self.pending_changed.extend(changed);
-        self.body_contacts.clear();
+    }
+
+    fn refresh_pending_subjects(
+        &mut self,
+        boxes: &BTreeMap<BodyId, RigidBox3d>,
+    ) -> Result<(), RotatingWorldError3d> {
+        let Some(index) = &mut self.subject_bounds else {
+            return Ok(());
+        };
+        for id in &self.pending_changed {
+            self.body_contacts.remove(id);
+            if let Some(old_bounds) = index.bounds(*id) {
+                for neighbor in index.overlapping_ids(old_bounds).body_ids {
+                    self.body_contacts.remove(&neighbor);
+                }
+            }
+            let body = boxes
+                .get(id)
+                .ok_or(RotatingWorldError3d::MissingBody(*id))?;
+            index
+                .insert_stationary(body)
+                .map_err(map_broad_phase_error)?;
+            if let Some(new_bounds) = index.bounds(*id) {
+                for neighbor in index.overlapping_ids(new_bounds).body_ids {
+                    self.body_contacts.remove(&neighbor);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh_pending(
+        &mut self,
+        boxes: &BTreeMap<BodyId, RigidBox3d>,
+    ) -> Result<(), RotatingWorldError3d> {
+        self.refresh_pending_subjects(boxes)?;
+        self.refresh_pending_graph(boxes)?;
+        // Both query paths must consume the changes before discarding invalidation evidence.
+        // Retain pending IDs on error so a partially refreshed index cannot serve stale results.
+        self.pending_changed.clear();
+        Ok(())
     }
 
     fn refresh_pending_graph(
@@ -77,7 +120,7 @@ impl GenerationContactCache3d {
         if self.pending_changed.is_empty() || self.graph.is_none() {
             return Ok(());
         }
-        let changed = std::mem::take(&mut self.pending_changed);
+        let changed = self.pending_changed.clone();
         let graph = self.graph.as_mut().expect("checked contact graph");
         let mut touched = changed.clone();
 
@@ -154,28 +197,50 @@ impl GenerationContactCache3d {
     /// Returns exact current contacts for one known body.
     ///
     /// One-off callers keep the precise single-subject path. Repeated callers reuse that subject result,
-    /// while a graph already built by overlap traversal becomes the shared authority for all subjects in
-    /// the same geometry generation.
+    /// through a retained stationary bounds index. Geometry changes invalidate only subjects near the
+    /// old or new bounds, including cached negative results. A graph already built by overlap traversal
+    /// becomes the shared authority for dynamic subjects. Fixed subjects keep the complete indexed path.
     pub(crate) fn body_contacts(
         &mut self,
         boxes: &BTreeMap<BodyId, RigidBox3d>,
         body: BodyId,
         generation: u64,
     ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
+        let subject = boxes
+            .get(&body)
+            .ok_or(RotatingWorldError3d::MissingBody(body))?;
         self.activate_generation(generation);
-        self.refresh_pending_graph(boxes)?;
-        if let Some(graph) = &self.graph {
+        self.refresh_pending(boxes)?;
+        // The graph deliberately omits fixed/fixed pairs; parked proxies still need those contacts
+        // when queried explicitly. Only dynamic subjects have a complete neighborhood in the graph.
+        if let Some(graph) = &self.graph
+            && subject.body().kind() == BodyKind::Dynamic
+        {
             return graph
                 .contacts
                 .get(&body)
                 .cloned()
                 .ok_or(RotatingWorldError3d::MissingBody(body));
         }
+        if self.subject_bounds.is_none() {
+            let mut index = RotatingBoundsIndex3d::default();
+            index
+                .rebuild_stationary(boxes.values())
+                .map_err(map_broad_phase_error)?;
+            self.subject_bounds = Some(index);
+            self.pending_changed.clear();
+        }
         if let Some(contacts) = self.body_contacts.get(&body) {
             return Ok(contacts.clone());
         }
 
-        let contacts = body_current_contacts_for_body(boxes, body)?;
+        let contacts = body_current_contacts_for_body(
+            boxes,
+            body,
+            self.subject_bounds
+                .as_ref()
+                .expect("prepared subject index"),
+        )?;
         self.subject_builds = self.subject_builds.saturating_add(1);
         self.body_contacts.insert(body, contacts.clone());
         Ok(contacts)
@@ -201,9 +266,10 @@ impl GenerationContactCache3d {
 
         self.activate_generation(generation);
         if self.graph.is_none() {
-            let snapshot = boxes.values().cloned().collect::<Vec<_>>();
-            let graph =
-                build_current_contact_graph_with_broad_phase(&snapshot, &mut self.broad_phase)?;
+            let graph = build_current_contact_graph_with_broad_phase(
+                boxes.values(),
+                &mut self.broad_phase,
+            )?;
             self.graph_builds = self.graph_builds.saturating_add(1);
             self.candidate_pairs = self
                 .candidate_pairs
@@ -213,9 +279,10 @@ impl GenerationContactCache3d {
                 .saturating_add(u64::try_from(graph.exact_pair_tests).unwrap_or(u64::MAX));
             self.graph = Some(graph);
             self.body_contacts.clear();
+            self.subject_bounds = None;
             self.pending_changed.clear();
         } else {
-            self.refresh_pending_graph(boxes)?;
+            self.refresh_pending(boxes)?;
         }
 
         let contacts = self
@@ -260,6 +327,7 @@ impl GenerationContactCache3d {
 fn body_current_contacts_for_body(
     boxes: &BTreeMap<BodyId, RigidBox3d>,
     body: BodyId,
+    index: &RotatingBoundsIndex3d,
 ) -> Result<Vec<BodyCurrentContact3d>, RotatingWorldError3d> {
     let subject = boxes
         .get(&body)
@@ -267,12 +335,16 @@ fn body_current_contacts_for_body(
     if subject.solver_participation() == SolverParticipation3d::OverlapOnly {
         return Ok(Vec::new());
     }
-    let zero_time = RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1);
-    let subject_bounds = rigid_box_free_flight_sweep_bounds(subject, zero_time)?;
+    let subject_bounds = index
+        .bounds(body)
+        .ok_or(RotatingWorldError3d::MissingBody(body))?;
     let mut contacts = Vec::new();
 
-    for (other_id, other) in boxes {
-        if *other_id == body
+    for other_id in index.overlapping_ids(subject_bounds).body_ids {
+        let other = boxes
+            .get(&other_id)
+            .ok_or(RotatingWorldError3d::MissingBody(other_id))?;
+        if other_id == body
             || other.solver_participation() == SolverParticipation3d::OverlapOnly
             || !subject
                 .collision_layers()
@@ -280,18 +352,11 @@ fn body_current_contacts_for_body(
         {
             continue;
         }
-        let other_bounds = rigid_box_free_flight_sweep_bounds(other, zero_time)?;
-        if !(0..3).all(|axis| {
-            subject_bounds.minimum[axis] <= other_bounds.maximum[axis]
-                && other_bounds.minimum[axis] <= subject_bounds.maximum[axis]
-        }) {
-            continue;
-        }
         let Some(contact) = obb_contact_seed(subject.oriented_box(), other.oriented_box())? else {
             continue;
         };
         contacts.push(BodyCurrentContact3d {
-            other: *other_id,
+            other: other_id,
             axis: contact.axis,
         });
     }
@@ -304,15 +369,15 @@ fn build_current_contact_graph(
     boxes: &[RigidBox3d],
 ) -> Result<CurrentContactGraph3d, RotatingWorldError3d> {
     let mut broad_phase = RotatingBroadPhase3d::default();
-    build_current_contact_graph_with_broad_phase(boxes, &mut broad_phase)
+    build_current_contact_graph_with_broad_phase(boxes.iter(), &mut broad_phase)
 }
 
-fn build_current_contact_graph_with_broad_phase(
-    boxes: &[RigidBox3d],
+fn build_current_contact_graph_with_broad_phase<'a>(
+    boxes: impl Iterator<Item = &'a RigidBox3d> + Clone,
     broad_phase: &mut RotatingBroadPhase3d,
 ) -> Result<CurrentContactGraph3d, RotatingWorldError3d> {
     let by_id = boxes
-        .iter()
+        .clone()
         .map(|rigid_box| (rigid_box.body().id(), rigid_box))
         .collect::<BTreeMap<_, _>>();
     let candidates = broad_phase
@@ -667,6 +732,264 @@ mod tests {
             2,
             "pose change must recompute the subject contact neighborhood"
         );
+    }
+
+    #[test]
+    fn velocity_only_step_keeps_contact_geometry_cached() {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::new(0, -60, 0),
+            ..RotatingWorldConfig3d::default()
+        });
+        world
+            .add_box(rotating(RigidBody::dynamic(
+                BodyId(1),
+                Vec3i::ZERO,
+                Vec3i::ZERO,
+                Vec3i::new(2, 2, 2),
+            )))
+            .unwrap();
+        let before = world.box_by_id(BodyId(1)).unwrap().oriented_box();
+        let contacts = world.body_contacts(BodyId(1)).unwrap();
+        let builds = world.current_contact_cache_stats().1;
+
+        let report = world.step(1, 60).unwrap();
+
+        assert_eq!(report.changed_body_ids, vec![BodyId(1)]);
+        let body = world.box_by_id(BodyId(1)).unwrap();
+        assert_eq!(body.oriented_box(), before);
+        assert_ne!(body.body().velocity(), Vec3i::ZERO);
+        assert_eq!(world.body_contacts(BodyId(1)).unwrap(), contacts);
+        assert_eq!(
+            world.current_contact_cache_stats().1,
+            builds,
+            "a velocity change without a quantized pose change must preserve contact evidence"
+        );
+    }
+
+    #[test]
+    fn unrelated_motion_preserves_stationary_subject_contacts() {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            ..RotatingWorldConfig3d::default()
+        });
+        for id in 1..=64 {
+            world
+                .add_box(rotating(RigidBody::fixed(
+                    BodyId(id),
+                    Vec3i::new(id as i32 * 4, 0, 0),
+                    Vec3i::new(2, 2, 2),
+                )))
+                .unwrap();
+        }
+        world
+            .add_box(rotating(RigidBody::dynamic(
+                BodyId(100),
+                Vec3i::new(1_000, 0, 0),
+                Vec3i::new(1, 0, 0),
+                Vec3i::new(2, 2, 2),
+            )))
+            .unwrap();
+        let before: Vec<_> = (1..=64)
+            .map(|id| world.body_contacts(BodyId(id)).unwrap())
+            .collect();
+        let builds = world.current_contact_cache_stats().1;
+
+        world.step(1, 1).unwrap();
+
+        let after: Vec<_> = (1..=64)
+            .map(|id| world.body_contacts(BodyId(id)).unwrap())
+            .collect();
+        assert_eq!(after, before);
+        assert_eq!(
+            world.current_contact_cache_stats().1,
+            builds,
+            "motion outside sleeping contact neighborhoods must preserve cached results"
+        );
+    }
+
+    #[test]
+    fn fixed_subject_contacts_do_not_depend_on_graph_query_history() {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d::default());
+        for (id, x) in [(1, 0), (2, 2)] {
+            world
+                .add_box(rotating(RigidBody::fixed(
+                    BodyId(id),
+                    Vec3i::new(x, 0, 0),
+                    Vec3i::new(1, 1, 1),
+                )))
+                .unwrap();
+        }
+        world
+            .add_box(rotating(RigidBody::dynamic(
+                BodyId(3),
+                Vec3i::new(100, 0, 0),
+                Vec3i::ZERO,
+                Vec3i::new(1, 1, 1),
+            )))
+            .unwrap();
+        let before = world.body_contacts(BodyId(1)).unwrap();
+        assert_eq!(before.len(), 1);
+        world
+            .overlap_query(world.box_by_id(BodyId(3)).unwrap().oriented_box())
+            .unwrap();
+        assert_eq!(
+            world.body_contacts(BodyId(1)).unwrap(),
+            before,
+            "a response graph omits fixed/fixed pairs and cannot answer all fixed-subject contacts"
+        );
+    }
+
+    #[test]
+    fn local_invalidation_covers_new_and_lost_contacts() {
+        for warm_graph in [false, true] {
+            let mut world = RotatingWorld3d::new(RotatingWorldConfig3d::default());
+            for (id, center) in [(1, 0), (3, 100)] {
+                world
+                    .add_box(rotating(RigidBody::fixed(
+                        BodyId(id),
+                        Vec3i::new(center, 0, 0),
+                        Vec3i::new(1, 1, 1),
+                    )))
+                    .unwrap();
+            }
+            world
+                .add_box(rotating(RigidBody::dynamic(
+                    BodyId(2),
+                    Vec3i::new(5, 0, 0),
+                    Vec3i::ZERO,
+                    Vec3i::new(1, 4, 1),
+                )))
+                .unwrap();
+            if warm_graph {
+                world
+                    .overlap_query(world.box_by_id(BodyId(2)).unwrap().oriented_box())
+                    .unwrap();
+            }
+            assert!(world.body_contacts(BodyId(1)).unwrap().is_empty());
+            assert!(world.body_contacts(BodyId(3)).unwrap().is_empty());
+
+            world
+                .set_orientations(&[(BodyId(2), Orientation3d::new(0, 0, 1, 1))])
+                .unwrap();
+            if warm_graph {
+                world
+                    .overlap_query(world.box_by_id(BodyId(2)).unwrap().oriented_box())
+                    .unwrap();
+            }
+            let contacts = world.body_contacts(BodyId(1)).unwrap();
+            assert_eq!(
+                contacts
+                    .iter()
+                    .map(|contact| contact.other)
+                    .collect::<Vec<_>>(),
+                vec![BodyId(2)]
+            );
+            assert!(world.body_contacts(BodyId(3)).unwrap().is_empty());
+            assert_eq!(world.current_contact_cache_stats().1, 3);
+
+            world
+                .set_orientations(&[(BodyId(2), Orientation3d::IDENTITY)])
+                .unwrap();
+            assert!(world.body_contacts(BodyId(1)).unwrap().is_empty());
+            assert!(world.body_contacts(BodyId(3)).unwrap().is_empty());
+            assert_eq!(world.current_contact_cache_stats().1, 4);
+        }
+    }
+
+    #[test]
+    fn subject_index_prepares_only_changed_bounds() {
+        for count in [32, 256, 2_048] {
+            let mut boxes: BTreeMap<_, _> = (1..=count)
+                .map(|id| {
+                    (
+                        BodyId(id),
+                        rotating(RigidBody::fixed(
+                            BodyId(id),
+                            Vec3i::new(id as i32 * 16, 0, 0),
+                            Vec3i::new(1, 1, 1),
+                        )),
+                    )
+                })
+                .collect();
+            let mut cache = GenerationContactCache3d::default();
+            for id in 1..=count {
+                assert!(
+                    cache
+                        .body_contacts(&boxes, BodyId(id), 0)
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+            assert_eq!(
+                cache.subject_bounds.as_ref().unwrap().bounds_preparations,
+                count as usize
+            );
+            boxes.get_mut(&BodyId(1)).unwrap().body.position.x -= 1;
+            cache.note_changed_generation(1, [BodyId(1)]);
+            for id in 1..=count {
+                assert!(
+                    cache
+                        .body_contacts(&boxes, BodyId(id), 1)
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+            assert_eq!(
+                cache.subject_bounds.as_ref().unwrap().bounds_preparations,
+                count as usize + 1
+            );
+            assert_eq!(cache.subject_builds, count + 1);
+        }
+    }
+
+    #[test]
+    #[ignore = "release-mode stationary subject cache scaling evidence"]
+    fn stationary_subject_reuse_benchmark() {
+        for count in [32, 256, 2_048] {
+            let mut boxes: BTreeMap<_, _> = (1..=count)
+                .map(|id| {
+                    (
+                        BodyId(id),
+                        rotating(RigidBody::fixed(
+                            BodyId(id),
+                            Vec3i::new(id as i32 * 16, 0, 0),
+                            Vec3i::new(1, 1, 1),
+                        )),
+                    )
+                })
+                .collect();
+            let mut cache = GenerationContactCache3d::default();
+            for id in 1..=count {
+                cache.body_contacts(&boxes, BodyId(id), 0).unwrap();
+            }
+            let start = Instant::now();
+            for generation in 1..=64 {
+                boxes.get_mut(&BodyId(1)).unwrap().body.position.y = (generation % 2) as i32;
+                cache.note_changed_generation(generation, [BodyId(1)]);
+                for id in 1..=count {
+                    black_box(cache.body_contacts(&boxes, BodyId(id), generation).unwrap());
+                }
+            }
+            let elapsed = start.elapsed();
+            let bounds_prepared =
+                cache.subject_bounds.as_ref().unwrap().bounds_preparations - count as usize;
+            let subject_rebuilds = cache.subject_builds - count;
+            assert_eq!(bounds_prepared, 64);
+            assert_eq!(subject_rebuilds, 64);
+            crate::performance_ratchet::record(
+                &format!("stationary-cache/{count}"),
+                &[
+                    ("bounds_prepared", bounds_prepared as u64),
+                    ("subject_rebuilds", subject_rebuilds),
+                ],
+                &[("queries", 64 * count)],
+                &[("elapsed_ms", elapsed.as_secs_f64() * 1_000.0)],
+            );
+            println!(
+                "stationary subject cache: bodies={count}, frames=64, queries={}, bounds_prepared={bounds_prepared}, subject_rebuilds={subject_rebuilds}, elapsed={elapsed:?}",
+                64 * count
+            );
+        }
     }
 
     #[test]

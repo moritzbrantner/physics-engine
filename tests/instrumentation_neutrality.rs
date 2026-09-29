@@ -1,6 +1,10 @@
+#[cfg(not(feature = "performance-counters"))]
+use physics_engine::RotatingWorldStepStats3d;
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, Orientation3d, RigidBody, RigidBox3d,
-    RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldStepStats3d, Vec3i,
+    AngularState3d, AngularVelocity3d, BallisticSphere3d, BodyId, Material, Orientation3d,
+    RepeatedRotatingEventConfig3d, RepeatedRotatingEventError3d, RigidBody, RigidBox3d,
+    RigidBoxFreeFlightConfig3d, RotatingContactSearchConfig3d, RotatingWorld3d,
+    RotatingWorldConfig3d, RotatingWorldError3d, Vec3i, advance_repeated_rotating_events,
 };
 
 fn box3d(body: RigidBody) -> RigidBox3d {
@@ -64,4 +68,148 @@ fn production_world_semantics_do_not_depend_on_performance_counters() {
 
     #[cfg(not(feature = "performance-counters"))]
     assert_eq!(report.stats, RotatingWorldStepStats3d::default());
+}
+
+fn snapshot(label: &str, world: &RotatingWorld3d) {
+    let bodies = world.boxes().cloned().collect::<Vec<_>>();
+    let sleeping = bodies
+        .iter()
+        .map(|body| (body.body().id(), world.is_sleeping(body.body().id())))
+        .collect::<Vec<_>>();
+    let projectiles = world.ballistic_spheres().copied().collect::<Vec<_>>();
+    println!("COUNTER_SNAPSHOT {label}: {bodies:?} {sleeping:?} {projectiles:?}");
+}
+
+#[test]
+fn parked_contact_lifecycle_has_identical_cross_build_snapshots() {
+    for (label, y, retire) in [
+        ("miss", 10, true),
+        ("retire", 0, true),
+        ("bounce", 0, false),
+    ] {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            ..RotatingWorldConfig3d::default()
+        });
+        for (id, position) in [(1, Vec3i::ZERO), (2, Vec3i::new(0, 50, 0))] {
+            world
+                .add_box(box3d(
+                    RigidBody::dynamic(BodyId(id), position, Vec3i::ZERO, Vec3i::new(2, 2, 2))
+                        .with_mass(2)
+                        .with_material(Material::new(1_000)),
+                ))
+                .unwrap();
+        }
+        for _ in 0..60 {
+            world.step(1, 60).unwrap();
+        }
+        assert_eq!(world.sleeping_body_count(), 2);
+        world
+            .add_ballistic_sphere(
+                BallisticSphere3d::new(
+                    BodyId(100),
+                    Vec3i::new(-20, y, 0),
+                    Vec3i::new(60, 0, 0),
+                    1,
+                    1,
+                )
+                .unwrap()
+                .with_material(Material::new(1_000)),
+                retire,
+            )
+            .unwrap();
+        world.step(0, 60).unwrap();
+        assert_eq!(world.sleeping_body_count(), 2);
+        for tick in 0..4 {
+            let report = world.step(1, 1).unwrap();
+            println!(
+                "COUNTER_SNAPSHOT {label}-{tick}-changes: {:?}",
+                report.changed_body_ids
+            );
+            snapshot(label, &world);
+            assert!(world.is_sleeping(BodyId(2)));
+            #[cfg(not(feature = "performance-counters"))]
+            assert_eq!(report.stats, RotatingWorldStepStats3d::default());
+        }
+        assert_eq!(world.is_sleeping(BodyId(1)), y != 0);
+        assert_eq!(
+            world.ballistic_sphere_count(),
+            usize::from(!retire || y != 0)
+        );
+    }
+}
+
+#[test]
+fn collision_events_and_failures_have_identical_cross_build_snapshots() {
+    let world = world();
+    let advance = advance_repeated_rotating_events(
+        &world.boxes().cloned().collect::<Vec<_>>(),
+        RepeatedRotatingEventConfig3d::new(
+            RotatingContactSearchConfig3d::new(
+                RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 1, 60),
+                8,
+                2,
+            ),
+            4,
+            8,
+        ),
+    )
+    .unwrap();
+    assert!(!advance.events.is_empty());
+    println!(
+        "COUNTER_SNAPSHOT events: {:?} {:?} {:?}",
+        advance.events, advance.boxes, advance.remaining
+    );
+
+    for event_limit in [4, 32] {
+        let mut world = RotatingWorld3d::new(RotatingWorldConfig3d {
+            gravity: Vec3i::ZERO,
+            max_events: event_limit,
+            ..RotatingWorldConfig3d::default()
+        });
+        for (id, x) in [(1, -10), (2, 10)] {
+            world
+                .add_box(box3d(
+                    RigidBody::fixed(BodyId(id), Vec3i::new(x, 0, 0), Vec3i::new(1, 10, 10))
+                        .with_material(Material::new(1_000)),
+                ))
+                .unwrap();
+        }
+        world
+            .add_ballistic_sphere(
+                BallisticSphere3d::new(BodyId(100), Vec3i::ZERO, Vec3i::new(100, 0, 0), 1, 1)
+                    .unwrap()
+                    .with_material(Material::new(1_000)),
+                false,
+            )
+            .unwrap();
+        for invalid in [(-1, 60), (1, 0)] {
+            let error = world.step(invalid.0, invalid.1).unwrap_err();
+            println!("COUNTER_SNAPSHOT invalid: {error:?}");
+            snapshot("invalid", &world);
+        }
+        let result = world.step(1, 1);
+        if event_limit == 4 {
+            assert_eq!(
+                result,
+                Err(RotatingWorldError3d::Repeated(
+                    RepeatedRotatingEventError3d::BallisticEventLimit(4)
+                ))
+            );
+        } else {
+            assert!(result.is_ok());
+            assert_eq!(
+                world
+                    .ballistic_sphere_by_id(BodyId(100))
+                    .unwrap()
+                    .velocity(),
+                Vec3i::new(100, 0, 0)
+            );
+        }
+        println!(
+            "COUNTER_SNAPSHOT budget-{event_limit}: {:?}",
+            result.map(|report| report.changed_body_ids)
+        );
+        snapshot("budget", &world);
+    }
 }

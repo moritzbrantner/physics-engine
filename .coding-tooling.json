@@ -35,12 +35,8 @@
         "warnings"
       ],
       "test:instrumentation-neutrality": [
-        "cargo",
-        "test",
-        "--locked",
-        "--no-default-features",
-        "--test",
-        "instrumentation_neutrality"
+        "node",
+        "scripts/check-instrumentation-neutrality.mjs"
       ]
     },
     "demo-wasm": {

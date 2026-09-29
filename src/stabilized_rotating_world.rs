@@ -10,8 +10,9 @@ use crate::{
     RigidBoxFreeFlightConfig3d, RotatingContactResponseError3d, RotatingWorldConfig3d,
     RotatingWorldError3d, RotatingWorldStepReport3d, RotationalSweepBounds3d, SleepMode3d,
     SolverParticipation3d, Vec3i, WakePropagation3d, obb_contact_seed,
-    obb_response::resolve_obb_contact, rigid_box_free_flight_sweep_bounds,
-    rotating_world::RotatingWorld3d as InnerRotatingWorld3d,
+    obb_response::resolve_obb_contact,
+    rigid_box_free_flight_sweep_bounds,
+    rotating_world::{BodyStateChange3d, RotatingWorld3d as InnerRotatingWorld3d},
 };
 
 const MAX_FIXED_POSITION_STABILIZATION_PASSES: u8 = 16;
@@ -216,6 +217,49 @@ impl RotatingWorld3d {
         Some(removed)
     }
 
+    /// A parked proxy changes response eligibility, not scene membership or geometry.
+    pub(crate) fn transition_parked_body(
+        &mut self,
+        id: BodyId,
+        kind: BodyKind,
+    ) -> Result<(), RotatingWorldError3d> {
+        // Parking makes this body an immovable boundary. Preserve the old insertion path's
+        // local stabilization obligations, using retained contacts instead of a scene-wide scan.
+        let affected = if kind == BodyKind::Fixed {
+            self.inner
+                .body_contacts(id)?
+                .into_iter()
+                .filter_map(|contact| {
+                    self.inner
+                        .box_by_id(contact.other)
+                        .filter(|other| {
+                            other.body.kind == BodyKind::Dynamic
+                                && other.receives_physics_response()
+                        })
+                        .map(|_| contact.other)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::SleepProxy(kind))?;
+        self.sleeping.remove(&id);
+        self.sleep_stable_time_q64.remove(&id);
+        // Preserve the facade's existing sleep-timer invalidation on proxy transitions. This
+        // bookkeeping is independent of scene membership and must not discard geometric evidence.
+        self.wake_all_sleepers();
+        if kind == BodyKind::Dynamic {
+            self.sleep_candidates.insert(id);
+            self.pending_fixed_boundary_body_ids.insert(id);
+        } else {
+            self.sleep_candidates.remove(&id);
+            self.pending_fixed_boundary_body_ids.remove(&id);
+            self.pending_fixed_boundary_body_ids.extend(affected);
+        }
+        Ok(())
+    }
+
     pub fn add_ballistic_sphere(
         &mut self,
         projectile: BallisticSphere3d,
@@ -302,6 +346,11 @@ impl RotatingWorld3d {
 
     pub fn body_overlaps(&self, body: BodyId) -> Result<Vec<BodyId>, RotatingWorldError3d> {
         self.inner.body_overlaps(body)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn current_contact_cache_stats(&self) -> (u64, u64, u64, u64) {
+        self.inner.current_contact_cache_stats()
     }
 
     pub fn step(
@@ -470,20 +519,13 @@ impl RotatingWorld3d {
     }
 
     fn set_sleep_proxy(&mut self, id: BodyId, sleeping: bool) -> Result<(), RotatingWorldError3d> {
-        let mut rigid_box = self
-            .inner
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        rigid_box.body.kind = if sleeping {
+        let kind = if sleeping {
             BodyKind::Fixed
         } else {
             BodyKind::Dynamic
         };
-        if sleeping {
-            rigid_box.body.velocity = Vec3i::ZERO;
-            rigid_box.angular.angular_velocity = AngularVelocity3d::default();
-        }
-        self.inner.add_box(rigid_box)
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::SleepProxy(kind))
     }
 
     fn update_sleep_state(
@@ -797,12 +839,8 @@ impl RotatingWorld3d {
             return Ok(true);
         }
 
-        let mut rigid_box = self
-            .inner
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        rigid_box.body.position = candidate.body.position;
-        self.inner.add_box(rigid_box)?;
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::Position(candidate.body.position))?;
         Ok(true)
     }
 
@@ -848,15 +886,8 @@ impl RotatingWorld3d {
     }
 
     fn put_body_to_sleep(&mut self, id: BodyId) -> Result<(), RotatingWorldError3d> {
-        let mut rigid_box = self
-            .inner
-            .remove_box(id)
-            .ok_or(RotatingWorldError3d::MissingBody(id))?;
-        if rigid_box.body.kind == BodyKind::Dynamic {
-            rigid_box.body.velocity = Vec3i::ZERO;
-            rigid_box.angular.angular_velocity = AngularVelocity3d::default();
-        }
-        self.inner.add_box(rigid_box)
+        self.inner
+            .apply_body_change(id, BodyStateChange3d::StopMotion)
     }
 
     fn wake_all_sleepers(&mut self) {
@@ -953,12 +984,8 @@ impl RotatingWorld3d {
                 continue;
             }
 
-            let mut rigid_box = self
-                .inner
-                .remove_box(id)
-                .ok_or(RotatingWorldError3d::MissingBody(id))?;
-            rigid_box.body.position = candidate.body.position;
-            self.inner.add_box(rigid_box)?;
+            self.inner
+                .apply_body_change(id, BodyStateChange3d::Position(candidate.body.position))?;
             changed_body_ids.insert(id);
         }
 

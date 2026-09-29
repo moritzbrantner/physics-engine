@@ -6,6 +6,9 @@ license = "MIT"
 rust-version = "1.98"
 description = "Deterministic continuous-collision physics kernel"
 
+[dependencies]
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "9dd083cdf6ad9e79fb1a9d3183bcf7601442a5d3" }
+
 [features]
 default = ["performance-counters"]
 # Diagnostic computational-work counters. Disable with --no-default-features to prove
