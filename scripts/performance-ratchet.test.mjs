@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertHistoryPrefix, compareRows, hash, parseNative, sandboxRows, validateHistory } from "./performance-ratchet-lib.mjs";
+import { assertHistoryPrefix, compareRows, hash, parseNative, sandboxRows, validateHistory, validateNativeTests } from "./performance-ratchet-lib.mjs";
 
 const rows = () => ({ "native/fixture": {
   work: { preparations: 4, snapshots: 0 }, correctness: { contacts: 8 }, timing: { median_ms: 1 },
@@ -99,4 +99,12 @@ test("base history cannot be deleted or rewritten even if its hash chain is rege
   assert.throws(() => assertHistoryPrefix([first, second], [first]), /removed/);
   const rewritten = entry(null, { reason: "Rewritten old history must be rejected." });
   assert.throws(() => assertHistoryPrefix([first], [rewritten, entry(rewritten)]), /immutable/);
+});
+
+test("native preflight requires exact test names before measurement", () => {
+  const listed = "module::fixture_extra: test\nmodule::fixture: test\nmodule::bench: benchmark\n";
+  assert.doesNotThrow(() => validateNativeTests(listed, ["module::fixture"]));
+  assert.throws(() => validateNativeTests(listed, ["module::missing"]), /missing native fixture test/);
+  assert.throws(() => validateNativeTests("module::fixture_extra: test\n", ["module::fixture"]));
+  assert.throws(() => validateNativeTests(listed, ["module::bench"]));
 });

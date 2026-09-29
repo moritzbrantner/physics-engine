@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "suite": "physics-engine/sandbox-projectiles-v5",
-  "description": "Absolute deterministic work ceilings seeded from the corrected architecture/sleeping baseline. The append-only ratchet additionally protects all six replays and native scaling fixtures without requiring a comparison build. Wall-clock timing remains advisory on shared runners.",
+  "description": "Absolute deterministic work ceilings seeded from the corrected architecture/sleeping baseline. The append-only ratchet additionally protects all six replays and native scaling fixtures without requiring a comparison build. Wall-clock timing remains advisory on shared runners. Contact-triggered activation includes discarded wake-probe queries; see docs/performance-ratchet.md for the explicit migration from proximity waking.",
   "scenarios": [
     {
       "id": "settled-idle",
@@ -79,7 +79,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "max": 776
+            "max": 782
           }
         },
         {
@@ -144,7 +144,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "max": 3052
+            "max": 3064
           }
         },
         {
@@ -178,7 +178,7 @@
           "signal": "operation-count",
           "blocking": true,
           "budget": {
-            "max": 2718
+            "max": 2727
           }
         },
         {
