@@ -88,6 +88,13 @@ impl IndexedBvh3d {
             return false;
         }
 
+        self.insert(body, rotations)
+    }
+
+    pub(super) fn insert(&mut self, body: BoundedBody3d, rotations: &mut u64) -> bool {
+        if self.has_leaf(body.id) {
+            return false;
+        }
         let leaf = self.alloc_node(ArenaNode3d::leaf(body, None));
         self.leaf_by_id.insert(body.id, leaf);
         self.insert_leaf(leaf, rotations);
@@ -287,7 +294,7 @@ impl IndexedBvh3d {
         })
     }
 
-    fn remove_leaf(&mut self, id: BodyId, rotations: &mut u64) -> bool {
+    pub(super) fn remove_leaf(&mut self, id: BodyId, rotations: &mut u64) -> bool {
         let Some(leaf) = self.leaf_by_id.remove(&id) else {
             return false;
         };

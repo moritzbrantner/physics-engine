@@ -24,25 +24,55 @@ jobs:
           installer-version: 2.35.2
           enable-kvm: false
 
-      - name: Run deterministic validation in Nix shell
+      - name: Activate Nix CLI environment
         run: |
-          nix develop --command bash -lc '
-            set -euo pipefail
-            rustc --version
-            cargo --version
-            node --version
-            python --version
-            cargo fmt --all -- --check
-            cargo clippy --all-targets --locked -- -D warnings
-            cargo build --locked
-            cargo test --locked
-            cargo fmt --manifest-path demo-wasm/Cargo.toml --all -- --check
-            cargo clippy --manifest-path demo-wasm/Cargo.toml --all-targets --locked -- -D warnings
-            cargo build --manifest-path demo-wasm/Cargo.toml --locked
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
-            cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
-          '
+          nix develop --command bash -c 'printf "%s\n" "$PATH" >> "$GITHUB_PATH"'
+
+      - name: Verify Nix Rust toolchain proxies
+        run: |
+          for command in rustc cargo rustup; do
+            executable="$(type -P "$command")"
+            case "$executable" in
+              /nix/store/*) ;;
+              *) echo "Expected Nix $command proxy, got $executable" >&2; exit 1 ;;
+            esac
+          done
+          rustc --version
+          cargo --version
+          node --version
+          python3 --version
+
+      - name: Run deterministic fast tier
+        uses: moritzbrantner/coding-tooling@20afb614772346991b3e7ac60b5857ecab5472e3
+        with:
+          tier: fast
+          install-mode: none
+
+      - name: Test Pages sandbox adapter replay
+        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --test pages_adapter_long_run -- --ignored
+
+      - name: Test character landing replay
+        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib character_interaction_tests::landing_at_a_crate_stack_edge_does_not_disturb_the_crates -- --ignored
+
+      - name: Test performance ratchet policy
+        run: node --test scripts/performance-ratchet.test.mjs
+
+      - name: Prepare WASM performance target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Enforce recorded performance ratchet
+        env:
+          RATCHET_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || '' }}
+        run: node scripts/performance-ratchet.mjs check
+
+      - name: Preserve ratchet measurements and diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: physics-ratchet-${{ github.sha }}-${{ github.run_id }}
+          path: performance-evidence/ratchet/
+          if-no-files-found: warn
+          retention-days: 90
 
   build-pages:
     name: Build or reuse validated Pages artifact
