@@ -73,11 +73,11 @@ pub fn fixture(substeps: u8) -> World {
     world.add_body(projectile).unwrap();
     world
 }
-pub use super::obb_geometry::penetration;
+pub use super::box_fixture_oracle::box_overlap_depth;
 
 pub fn run() {
     let mut world = fixture(4);
-    let before = penetration(
+    let before = box_overlap_depth(
         world.body(BodyId(148)).unwrap(),
         world.body(BodyId(156)).unwrap(),
     );
@@ -86,7 +86,7 @@ pub fn run() {
         "reproducer must start with only a shallow contact: {before}"
     );
     let report = world.step(1.0 / 60.0).unwrap();
-    let depth = penetration(
+    let depth = box_overlap_depth(
         world.body(BodyId(148)).unwrap(),
         world.body(BodyId(156)).unwrap(),
     );
@@ -102,7 +102,7 @@ pub fn run() {
     let mut observed = fixture(1);
     for substep in 1..=4 {
         observed.step(1.0 / 240.0).unwrap();
-        let depth = penetration(
+        let depth = box_overlap_depth(
             observed.body(BodyId(148)).unwrap(),
             observed.body(BodyId(156)).unwrap(),
         );

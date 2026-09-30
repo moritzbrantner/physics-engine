@@ -1,7 +1,11 @@
+//! Independent acceptance oracle for finite rotating box bodies in engine fixtures.
+//! Computes overlap depth from observed f64 Body poses, outside production manifolds.
+//! Compiled only through integration tests and diagnostic examples. A reusable kernel
+//! extraction belongs in rust-kernels with its own numerical contract.
 use physics_engine::approximate::{Body, Shape, Vector as V};
 
 // Independent geometric screening, not the engine's clipped response manifold.
-pub fn penetration(a: &Body, b: &Body) -> f64 {
+pub fn box_overlap_depth(a: &Body, b: &Body) -> f64 {
     let Shape::Box(ha) = a.shape else {
         panic!("box fixture")
     };

@@ -35,8 +35,12 @@ Each case requests 600 ticks of `1/60` second:
 
 ## Observations and bounds
 
-The shared independent rotated-box SAT screening helper traverses all face and
-edge-cross axes rather than querying engine response manifolds. It measures
+The shared `tests/support/box_fixture_oracle.rs` acceptance observer traverses
+face and non-degenerate edge-cross SAT axes rather than querying engine response
+manifolds. It accepts only finite box bodies from these fixtures and is compiled
+through integration tests and diagnostic examples. Reusable production geometry
+continues to belong in `rust-kernels`; this observer measures physics acceptance
+independently of that production geometry path. It measures
 post-integration overlap against each remaining fixed collider. The existing
 fixed-support penetration limit remains 0.5. Position, orientation, velocities
 and kinetic energy must stay finite; no body may retire.

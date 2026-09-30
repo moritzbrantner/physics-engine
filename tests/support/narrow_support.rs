@@ -1,5 +1,5 @@
 //! Public physical controls; all geometry is observed independently of engine manifolds.
-use super::obb_geometry;
+use super::box_fixture_oracle;
 
 use physics_engine::{
     BodyId,
@@ -93,7 +93,7 @@ fn observe(world: &World, case: Case, tail: bool, metrics: &mut Metrics) {
     for fixed in world.bodies().filter(|b| b.mass == 0.0) {
         metrics.peak_penetration = metrics
             .peak_penetration
-            .max(obb_geometry::penetration(body, fixed));
+            .max(box_fixture_oracle::box_overlap_depth(body, fixed));
     }
     metrics.support_departure |= body.position.1 < -36.0;
     if case == Case::Balanced {

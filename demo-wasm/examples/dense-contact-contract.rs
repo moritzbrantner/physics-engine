@@ -1,12 +1,12 @@
 //! Dedicated native/WASM regression; absent from the production Pages module.
+#[path = "../../tests/support/box_fixture_oracle.rs"]
+mod box_fixture_oracle;
 #[path = "../../tests/support/dense_contact.rs"]
 mod dense;
 #[path = "../../tests/support/contact_materials.rs"]
 mod materials;
 #[path = "../../tests/support/narrow_support.rs"]
 mod narrow_support;
-#[path = "../../tests/support/obb_geometry.rs"]
-mod obb_geometry;
 thread_local! {
     // Read-only acceptance measurements; this example is absent from production Pages.
     static NARROW_RESULTS: std::cell::RefCell<Option<[narrow_support::Measurements; 3]>> = const {
