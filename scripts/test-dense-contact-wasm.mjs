@@ -6,4 +6,4 @@ const { instance } = await WebAssembly.instantiate(await readFile(path), {});
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
 }
-console.log("Dense contact WASM: three replays passed, including every physical substep.");
+console.log("Dense contact WASM: three replays passed, including physical substeps and the material contract.");
