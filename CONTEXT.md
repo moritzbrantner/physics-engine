@@ -25,3 +25,5 @@ path with explicit fixed-contact position correction and passes its recorded rep
 (see `docs/legacy-contact-continuation.md`). General dense dynamic contact quality remains limited. Passing the canonical fixture does not prove universal contact quality or make
 the floating-state world a drop-in game replacement; see `docs/world-api-contract.md` and issues #193,
 #194 and #198.
+
+The public `approximate::Shape::mass_properties` surface provides checked uniform volume, local COM and full COM inertia for all four existing primitives. Geometric integrals remain upstream; physical mass scaling belongs here. Wedge products do not enable solver rotation or alter origin-based poses. See `docs/shape-mass-properties.md`.

@@ -36,3 +36,8 @@ test = true
 name = "rotating-interval-contract"
 crate-type = ["cdylib"]
 test = true
+
+[[example]]
+name = "mass-properties-contract"
+crate-type = ["cdylib"]
+test = true

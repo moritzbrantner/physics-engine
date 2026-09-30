@@ -56,6 +56,7 @@ The existing compatibility foundation includes:
 - snapshot overlap, swept-AABB and ray queries ordered by TOI and body ID;
 - physics-native AABB and sphere compatibility collider geometry with exact integer contact evidence;
 - f64 fixed-step capsule geometry with analytic support/distance, capsule inertia and translation CCD;
+- checked [uniform mass products](docs/shape-mass-properties.md) for existing sphere/box/capsule/wedge shapes, including local COM and full inertia tensors;
 - read-only f64 primitive overlaps and translation-only shape casts with filters, stable hit ordering, contact witnesses and explicit failure work; see [query limits](docs/floating-shape-queries.md);
 - f64 oriented triangular-prism wedge geometry with six-vertex support, fixed-axis SAT and translation CCD;
 - deterministic fixed-point quaternion orientation and angular-velocity integration;

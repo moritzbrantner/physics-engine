@@ -27,6 +27,10 @@ cargo build --manifest-path demo-wasm/Cargo.toml --example rotating-interval-con
   --target wasm32-unknown-unknown --release --locked
 node scripts/test-rotating-interval-wasm.mjs \
   demo-wasm/target/wasm32-unknown-unknown/release/examples/rotating_interval_contract.wasm
+cargo build --manifest-path demo-wasm/Cargo.toml --example mass-properties-contract \
+  --target wasm32-unknown-unknown --release --locked
+node scripts/test-mass-properties-wasm.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/examples/mass_properties_contract.wasm
 cargo build \
   --manifest-path demo-wasm/Cargo.toml \
   --target wasm32-unknown-unknown \
