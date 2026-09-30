@@ -225,6 +225,8 @@ pub use rotational_sweep::{
     RotationalSweepBounds3d, RotationalSweepError3d, rotational_sweep_bounds,
 };
 pub use support_query::body_has_support;
-pub use world::{CollisionEvent, PhysicsError, StepReport, StepStats, World, WorldConfig};
+pub use world::{
+    CollisionEvent, PhysicsError, StepReport, StepStats, TranslationalStepWork, World, WorldConfig,
+};
 
 pub mod approximate;
