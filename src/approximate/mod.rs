@@ -37,6 +37,10 @@ use response::PreparedResponse;
 use std::collections::BTreeMap;
 mod transaction;
 pub use transaction::{FailedStepWork, TransactionStats};
+mod checkpoint;
+pub use checkpoint::{
+    Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, CheckpointStats,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
