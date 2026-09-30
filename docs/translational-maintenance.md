@@ -49,3 +49,53 @@ Local median whole-call totals (120 ticks):
 All seven physical/event traces match the previous production implementation in all three trials. The crowded case still reaches its configured eight stabilization passes; it is not relabeled a contact-quality repair. These are engine-call measurements, not full-zone performance claims. Actual MMORPG dependency adoption and equivalent zone/canonical/recovery validation remain required by #190/#46.
 
 Resolved conventions sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
+
+## Retained body-staging capacity
+
+The focused #226 follow-up retains the `BodyState` vector across necessary active
+steps. The authoritative body map remains unchanged as an ownership boundary:
+each active call restages current bodies in BodyId order, applies the same solver,
+validates every final position and commits the same physical deltas. Staged values
+are cleared on every success or returned error; only empty vector capacity survives.
+Panics are outside the returned-error contract. No world snapshot or previous staged
+physical state is reused for continuation.
+
+`TranslationalStepWork::staged_state_capacity_growths` reports actual staging capacity
+increases on successful calls. A warmed active call within the retained capacity
+reports zero. Population growth can reserve more capacity; shrink/removal retains
+the high-water mark. The existing `staged_state_capacity_bytes` field still measures
+active staging payload, so cached stationary calls continue to report zero work and
+zero active payload. `World::retained_step_scratch_bytes()` separately reports the
+retained staging payload even after a cached call or returned failure. This excludes
+allocator overhead, authoritative bodies, event output and broad-phase vectors.
+Returned errors still have no success work report; the capacity getter does not
+claim to count discarded solver work.
+
+`World::release_step_scratch()` releases that disposable capacity without changing
+physical bodies or stationary evidence. An unchanged quiet call still does no work
+after release; a later active call allocates again. There is no automatic shrink
+policy on ordinary ticks, and no second persistent physics authority.
+
+Native exhaustive/rebuilding controls retain exact body, event and error parity
+through mutation, support, dense and failure sequences. A narrower storage test
+checks allocation identity and empty logical contents across warmed active calls
+and repeated late failures. Shared public native/WASM controls cover growth/shrink,
+same-ID replacement, release, early gravity overflow, event exhaustion, late
+quantization failure and recovery against a fresh authoritative-state control.
+The ordinary fast tier and existing Pages build execute those controls; no workflow
+or diagnostic production export is added.
+
+```sh
+cargo test --locked --lib world::maintenance_tests
+cargo test --locked --test translational_staging
+cargo test --manifest-path demo-wasm/Cargo.toml --locked --example translational-maintenance-contract
+cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \
+  --target wasm32-unknown-unknown --example translational-maintenance-contract
+node scripts/test-translational-maintenance-wasm.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/examples/translational_maintenance_contract.wasm
+```
+
+This removes repeated staging capacity acquisition, not all-N body staging/cloning,
+quantization, broad-phase reconstruction or sorting. Broad-phase capacity and
+dependency-valid fixed-bound reuse are separate #227/#228 slices. Further consumer
+adoption and delta/neighborhood maintenance remain #190 requirements.
