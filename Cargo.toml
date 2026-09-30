@@ -7,7 +7,7 @@ rust-version = "1.98"
 description = "Deterministic continuous-collision physics kernel"
 
 [dependencies]
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "3fb4337861d7f98cd97bf2120dcd161a7cbc8504" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "1c5f29109cdb9872b5f718ace4802abbbf34cb7f" }
 sha2 = { version = "0.10.9", default-features = false }
 
 [features]
