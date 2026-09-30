@@ -160,6 +160,62 @@ fn contact_wake_prepares_real_mass_before_response_and_retirement() {
 }
 
 #[test]
+fn slow_current_contact_keeps_sleeping_anchor_response_like_fixed_anchor() {
+    for ids in [[10, 20], [20, 10]] {
+        let fixture = |sleeping_anchor| {
+            let mut w = World::new(Config {
+                gravity: Vector::ZERO,
+                substeps: 1,
+                fixed_position_iterations: 0,
+                convergence: None,
+                ..Config::default()
+            })
+            .unwrap();
+            let mut anchor = Body::new(
+                BodyId(ids[0]),
+                Shape::Sphere(18.0),
+                Vector::ZERO,
+                if sleeping_anchor { 2.0 } else { 0.0 },
+            );
+            anchor.sleeping = sleeping_anchor;
+            w.add_body(anchor).unwrap();
+            let mut moving = Body::new(
+                BodyId(ids[1]),
+                Shape::Sphere(18.0),
+                Vector(0.0, 35.99, 0.0),
+                2.0,
+            );
+            moving.velocity = Vector(0.25, -0.25, 0.0);
+            moving.sleep_allowed = false;
+            w.add_body(moving).unwrap();
+            w
+        };
+        let mut sleeping = fixture(true);
+        let mut fixed = fixture(false);
+        for w in [&mut sleeping, &mut fixed] {
+            let report = w.step(1.0 / 240.0).unwrap();
+            assert_eq!(report.woken_bodies, 0);
+            assert_eq!(report.swept_contacts, 0);
+            assert_eq!(report.contact_points, 1);
+        }
+        assert!(sleeping.body(BodyId(ids[0])).unwrap().sleeping);
+        assert_eq!(
+            sleeping.body(BodyId(ids[1])),
+            fixed.body(BodyId(ids[1])),
+            "an anchor with inactive mass/inertia must retain the original witness"
+        );
+        assert!(
+            sleeping
+                .body(BodyId(ids[1]))
+                .unwrap()
+                .angular_velocity
+                .length()
+                > 0.0
+        );
+    }
+}
+
+#[test]
 fn lifecycle_rebuilds_response_indices_and_shape_mass_lock_state() {
     let mut w = World::new(Config {
         gravity: Vector::ZERO,

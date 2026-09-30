@@ -24,13 +24,18 @@ response decision; collision geometry, admission and shared kernel ownership do
 not change. The midpoint uses relative coordinates rather than adding large
 absolute world points.
 
-Fixed, external, linear-support and nonreciprocal response keep their existing
+Fixed, external, sleeping-anchor, linear-support and nonreciprocal response keep their existing
 authority. Swept contacts keep their existing temporal witness semantics. This
 repair does not promise angular-momentum conservation for an externally constrained
 system or stronger rotational CCD. No solver pass, simulation time, damping,
 material rule or sleep threshold is added or changed. The extra work is bounded
 vector arithmetic per applicable current contact; trajectory-dependent later work
 can change. No performance improvement is claimed.
+
+A slow-current-contact regression compares the awake body's full state against
+the same contact with a fixed anchor, in both `BodyId` orders. The anchor remains
+asleep with zero wake events; its inactive mass/inertia cannot opt into reciprocal
+response just because it has positive nominal mass.
 
 Continuation semantics change, so checkpoints use algorithm 3 with unchanged wire
 format 2 and reject algorithm 2. The empty-world wire digest changes with the

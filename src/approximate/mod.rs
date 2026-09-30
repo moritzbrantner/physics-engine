@@ -939,7 +939,13 @@ impl World {
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
                 for point in &m.points {
                     let mut point = *point;
-                    if !m.swept && !linear && a.movable() && b.movable() && response == [true, true]
+                    if !m.swept
+                        && !linear
+                        && a.movable()
+                        && b.movable()
+                        && !a.sleeping
+                        && !b.sleeping
+                        && response == [true, true]
                     {
                         // Opposite impulses at separate witnesses create an internal
                         // friction couple. Reciprocal dynamic current contacts share

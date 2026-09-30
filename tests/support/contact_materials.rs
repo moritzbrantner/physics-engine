@@ -387,6 +387,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
     let cube = Shape::Box(V(18.0, 18.0, 18.0));
     let ball = Shape::Sphere(18.0);
     let mut measurements = [0.0_f64; 4];
+    let mut cases = 0_u32;
     for mass in [1e-6, 1.0, 2.0, 1e6] {
         for ratio in [1.0, 3.0] {
             for shapes in [[cube, cube], [ball, ball], [cube, ball], [ball, cube]] {
@@ -418,6 +419,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
                             for current in [&mut w, &mut replay] {
                                 let report = current.step(1.0 / 240.0).unwrap();
                                 assert_eq!(report.substeps, 1);
+                                assert_eq!(report.swept_contacts, 0);
                                 assert!(report.contact_points > 0 && report.contact_points <= 4);
                                 assert!(report.impulse_iterations <= 8);
                                 assert_eq!(report.position.passes, 0);
@@ -455,13 +457,14 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
                             measurements[0] = measurements[0].max(linear_error);
                             measurements[1] = measurements[1].max(angular_error);
                             measurements[2] = measurements[2].max(energy_ratio);
-                            measurements[3] += 1.0;
+                            cases += 1;
                         }
                     }
                 }
             }
         }
     }
+    measurements[3] = f64::from(cases);
     println!("CONTACT_MOMENTUM {{\"values\":{measurements:?}}}");
     measurements
 }
