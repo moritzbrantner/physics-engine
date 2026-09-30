@@ -1,5 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+fn restore_membership(set: &mut BTreeSet<BodyId>, id: BodyId, present: bool) {
+    if present {
+        set.insert(id);
+    } else {
+        set.remove(&id);
+    }
+}
+
 #[cfg(test)]
 use crate::rotating_broad_phase::{RotatingBroadPhase3d, RotatingBroadPhaseError3d};
 
@@ -60,11 +68,20 @@ const SLEEP_LINEAR_SPEED_LIMIT: u32 = 120;
 /// the complete world merely to provide frame-level rollback around later stabilization or sleep bookkeeping:
 /// if those later phases fail after the authoritative inner step committed, the successfully advanced
 /// physical state is retained and the error is reported. Whole-frame rollback is not part of the production
-/// command contract. A zero timestep keeps the inner world's exact no-op contract and deliberately skips
+/// command contract. The opt-in `advance_interval` command instead journals touched physical and sleep
+/// state across all substeps and restores it on returned errors. A zero timestep keeps the inner world's exact no-op contract and deliberately skips
 /// stabilization and sleep bookkeeping.
 ///
 /// Multiple fixed boundaries can still constrain one body, so the position-only pass is independently
 /// bounded and fails closed if those fixed constraints cannot reach an idempotent state.
+#[derive(Clone, Copy, Debug)]
+struct SleepBeforeImage3d {
+    sleeping: bool,
+    candidate: bool,
+    stable_time: Option<u128>,
+    pending_boundary: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     inner: InnerRotatingWorld3d,
@@ -73,6 +90,7 @@ pub struct RotatingWorld3d {
     sleep_stable_time_q64: BTreeMap<BodyId, u128>,
     pending_fixed_boundary_body_ids: BTreeSet<BodyId>,
     interaction_policies: InteractionPolicies3d,
+    interval_sleep: Option<BTreeMap<BodyId, SleepBeforeImage3d>>,
 }
 
 impl RotatingWorld3d {
@@ -85,7 +103,57 @@ impl RotatingWorld3d {
             sleep_stable_time_q64: BTreeMap::new(),
             pending_fixed_boundary_body_ids: BTreeSet::new(),
             interaction_policies: InteractionPolicies3d::default(),
+            interval_sleep: None,
         }
+    }
+
+    pub(crate) fn begin_interval(&mut self) {
+        debug_assert!(self.interval_sleep.is_none());
+        self.interval_sleep = Some(BTreeMap::new());
+        self.inner.begin_interval();
+    }
+
+    fn record_interval_sleep(&mut self, id: BodyId) {
+        let Some(journal) = &mut self.interval_sleep else {
+            return;
+        };
+        journal.entry(id).or_insert_with(|| SleepBeforeImage3d {
+            sleeping: self.sleeping.contains(&id),
+            candidate: self.sleep_candidates.contains(&id),
+            stable_time: self.sleep_stable_time_q64.get(&id).copied(),
+            pending_boundary: self.pending_fixed_boundary_body_ids.contains(&id),
+        });
+    }
+
+    pub(crate) fn finish_interval(&mut self, rollback: bool) -> (usize, usize) {
+        let journal = self.interval_sleep.take().expect("interval was begun");
+        let sleep_count = journal.len();
+        if rollback {
+            self.restore_sleeping_bodies()
+                .expect("sleep proxies retain valid body membership");
+        }
+        let motion_count = self.inner.finish_interval(rollback);
+        if rollback {
+            for (id, state) in journal {
+                restore_membership(&mut self.sleeping, id, state.sleeping);
+                restore_membership(&mut self.sleep_candidates, id, state.candidate);
+                restore_membership(
+                    &mut self.pending_fixed_boundary_body_ids,
+                    id,
+                    state.pending_boundary,
+                );
+                if let Some(time) = state.stable_time {
+                    self.sleep_stable_time_q64.insert(id, time);
+                } else {
+                    self.sleep_stable_time_q64.remove(&id);
+                }
+            }
+        }
+        (motion_count, sleep_count)
+    }
+
+    pub(crate) fn damp_interval_angular_velocity(&mut self, milli: u16) -> (usize, Vec<BodyId>) {
+        self.inner.damp_interval_angular_velocity(milli)
     }
 
     #[must_use]
@@ -242,6 +310,11 @@ impl RotatingWorld3d {
         } else {
             Vec::new()
         };
+        self.inner.record_interval_motion(id);
+        self.record_interval_sleep(id);
+        for affected_id in &affected {
+            self.record_interval_sleep(*affected_id);
+        }
         self.inner
             .apply_body_change(id, BodyStateChange3d::SleepProxy(kind))?;
         self.sleeping.remove(&id);
@@ -402,6 +475,16 @@ impl RotatingWorld3d {
         match self.stabilize_fixed_boundaries(&fixed_boundary_subjects) {
             Ok(stabilized) => {
                 changed_body_ids.extend(stabilized);
+                if self.interval_sleep.is_some() {
+                    for id in self
+                        .pending_fixed_boundary_body_ids
+                        .iter()
+                        .copied()
+                        .collect::<Vec<_>>()
+                    {
+                        self.record_interval_sleep(id);
+                    }
+                }
                 self.pending_fixed_boundary_body_ids.clear();
             }
             Err(error) => {
@@ -485,6 +568,7 @@ impl RotatingWorld3d {
             }
 
             for id in newly_awake {
+                self.record_interval_sleep(id);
                 self.sleeping.remove(&id);
                 self.sleep_candidates.insert(id);
                 self.sleep_stable_time_q64.remove(&id);
@@ -538,6 +622,7 @@ impl RotatingWorld3d {
         let mut changed_body_ids = BTreeSet::new();
 
         for id in subjects.iter().copied() {
+            self.record_interval_sleep(id);
             if self.sleeping.contains(&id) {
                 self.sleep_candidates.remove(&id);
                 continue;
@@ -891,6 +976,17 @@ impl RotatingWorld3d {
     }
 
     fn wake_all_sleepers(&mut self) {
+        if self.interval_sleep.is_some() {
+            let ids = self
+                .sleeping
+                .iter()
+                .chain(self.sleep_stable_time_q64.keys())
+                .copied()
+                .collect::<BTreeSet<_>>();
+            for id in ids {
+                self.record_interval_sleep(id);
+            }
+        }
         self.sleep_candidates.extend(self.sleeping.iter().copied());
         self.sleeping.clear();
         self.sleep_stable_time_q64.clear();

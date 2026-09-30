@@ -31,3 +31,8 @@ test = true
 name = "dense-contact-contract"
 crate-type = ["cdylib"]
 test = true
+
+[[example]]
+name = "rotating-interval-contract"
+crate-type = ["cdylib"]
+test = true
