@@ -1,7 +1,8 @@
 # Floating snapshot overlaps and shape casts
 
 `approximate::World::overlap_shape` and `cast_shape` query current authoritative
-sphere, box, capsule and wedge poses. They are the first query slice of
+sphere, box, capsule and wedge poses. Together with
+[finite rays](floating-ray-queries.md), they are the current query slices of
 [issue 194](https://github.com/moritzbrantner/physics-engine/issues/194). Shared
 shape/contact/sweep math stays in `rust-kernels`; this engine owns world traversal,
 filters, result ordering, admission and physical velocity evidence.
@@ -118,7 +119,9 @@ them to zero. Both paths still visit 512 bodies. Median pruned durations are
 depending on shape/workload. Timings are advisory and compare query mechanics only;
 no gameplay, world-step or large-N dynamic-contact benefit is asserted.
 
-Rays, feature IDs, richer response manifolds, collide-and-slide/corner/crease
+Finite rays with local geometric feature identity are supplied by
+[floating ray queries](floating-ray-queries.md). Shape-cast feature IDs,
+richer response manifolds, collide-and-slide/corner/crease
 handling, slope/step policy, moving supports and a real game adoption remain open
 in #194. The existing translational/rotating query contracts are unchanged.
 Convention sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.

@@ -40,7 +40,7 @@ requirement; the public wrapper owns no mirrored component world.
 | Motion authority | Fixed or dynamic | **Supported:** physics-owned or externally driven bodies | **Limited / experimental:** zero-mass fixed, dynamic and external bodies |
 | Units / timestep | Integer scene units; velocity per engine tick; `step(i32 ticks)` | Integer/fixed-point compatibility state; rational timestep numerator/denominator | `f64` scene units and seconds; `step(dt)` accepts finite `0..=0.1` seconds |
 | Filters / sensors | **Missing:** no layers or sensor body contract | **Supported:** collision layers, interaction categories/policies, overlap-only participation | **Limited / experimental:** collision layers plus sensor/external flags |
-| Queries | **Supported:** AABB overlap, AABB cast, ray cast and first ray hit over the current snapshot | **Supported:** oriented-box overlap, per-body current contacts and per-body overlaps | **Limited / experimental:** read-only primitive overlaps and translation-only shape casts with filters/ordered contact witnesses; ray queries and feature IDs remain missing |
+| Queries | **Supported:** AABB overlap, AABB cast, ray cast and first ray hit over the current snapshot | **Supported:** oriented-box overlap, per-body current contacts and per-body overlaps | **Limited / experimental:** read-only primitive overlaps, translation-only shape casts and finite rays with filters/ordered witnesses; rays include local geometric feature identity, shape-cast feature IDs remain missing |
 | Contact/event ordering | **Supported:** stable `BodyId` traversal; collision report order follows deterministic earliest-event processing | **Supported within the documented sampled pipeline:** stable body identities and deterministic ordered reports | **Limited / experimental:** stable body ordering and bounded sequential-impulse work; not promised to match event-solver event streams |
 | CCD | **Supported:** swept translational AABB CCD | **Limited:** sampled rotating-box search; ballistic spheres have a dedicated continuous feature sweep. This is not analytic general rotational CCD | **Limited:** translational sweeps per substep with orientation held fixed; not analytic rotational CCD |
 | Failure behavior | **Supported:** staged positions validate before physical field deltas commit | **Supported only to the bounds documented by the rotating solver;** configured limits fail visibly | **Supported for returned step errors:** touched motion/history, sleep and retirement roll back; time and prior successful report are retained. Panics are excluded |
@@ -172,8 +172,10 @@ Do not normalize different query surfaces in game code by inventing missing data
   shared primitive kernels. They return stable body identities, ordered contact witnesses, outward
   target normals and current support velocity; filters and explicit failure/discarded-work semantics
   are documented in [floating shape queries](floating-shape-queries.md). Translation-only casts hold
-  both orientations and target positions fixed. Rays, stable feature IDs and reusable character
-  response remain #194 work. `has_support` remains a distinct solver-facing predicate.
+  both orientations and target positions fixed. `cast_ray` queries a complete finite segment
+  against current poses with local geometric feature identity; see
+  [floating ray queries](floating-ray-queries.md). Shape-cast feature identities and reusable
+  character response remain #194 work. `has_support` remains a distinct solver-facing predicate.
 
 The executable compatibility test in `tests/world_migration_contract.rs` uses `U = 1` and
 `T = 60` and proves the no-contact, one-substep integration boundary against the compatibility

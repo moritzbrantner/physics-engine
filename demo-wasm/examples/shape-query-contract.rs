@@ -2,13 +2,14 @@
 use physics_engine::{
     BodyId,
     approximate::{
-        Body, CheckpointContext, Config, QueryFailureReason, QueryFilter, QueryPose, Shape,
-        ShapeCast, SweepFailure, Vector as V, World,
+        Body, CheckpointContext, Config, QueryFailureReason, QueryFilter, QueryPose, RayCast,
+        RayFeature, Shape, ShapeCast, SweepFailure, Vector as V, World,
     },
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn run() -> Result<()> {
+    ray_contract()?;
     let mut world = World::new(Config {
         gravity: V::ZERO,
         ..Default::default()
@@ -106,6 +107,73 @@ fn run() -> Result<()> {
         QueryFailureReason::InvalidInput
     );
     assert!(hits.is_empty());
+    Ok(())
+}
+
+fn ray_contract() -> Result<()> {
+    for shape in [
+        Shape::Sphere(0.5),
+        Shape::Box(V(0.5, 0.5, 0.5)),
+        Shape::capsule(1.0, 0.5),
+        Shape::wedge(V(0.5, 0.5, 0.5)),
+    ] {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            ..Default::default()
+        })?;
+        let mut body = Body::new(BodyId(19), shape, V::ZERO, 1.0);
+        body.rotation_locked = true;
+        body.velocity = V::Y;
+        world.add_body(body)?;
+        world.add_force(BodyId(19), V::X)?;
+        let context = CheckpointContext {
+            build: [19; 32],
+            content: [94; 32],
+        };
+        let before = world.checkpoint(context)?.to_bytes();
+        let mut hits = Vec::new();
+        let cast = RayCast::new(V(-10.0, 0.0, 0.0), V(20.0, 0.0, 0.0));
+        world.cast_ray(cast, QueryFilter::default(), &mut hits)?;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].body, BodyId(19));
+        assert!((hits[0].fraction - 0.475).abs() < 1e-14);
+        assert!((hits[0].point + V(0.5, 0.0, 0.0)).length() < 1e-12);
+        assert_eq!(hits[0].normal, -V::X);
+        assert_eq!(hits[0].support_velocity, V::Y);
+        let expected = hits.clone();
+        for _ in 0..32 {
+            let work = world.cast_ray(cast, QueryFilter::default(), &mut hits)?;
+            assert_eq!(hits, expected);
+            assert_eq!(work.output_capacity_growths, 0);
+            assert_eq!(work.ray_queries, 1);
+            assert!(work.ray_planes_tested <= 6);
+            assert!(work.ray_quadratic_tests <= 3);
+        }
+        world.cast_ray(
+            RayCast::new(V(-0.25, -0.25, 0.0), V::X),
+            QueryFilter::default(),
+            &mut hits,
+        )?;
+        assert!(hits[0].starts_overlapping);
+        assert_eq!(hits[0].feature, RayFeature::Interior);
+        world.cast_ray(
+            RayCast::new(V(-0.5, 0.0, 0.0), -V::X),
+            QueryFilter::default(),
+            &mut hits,
+        )?;
+        assert_eq!(hits[0].fraction, 0.0);
+        assert!(!hits[0].starts_overlapping);
+        let failure = world
+            .cast_ray(
+                RayCast::new(V::ZERO, V::ZERO),
+                QueryFilter::default(),
+                &mut hits,
+            )
+            .unwrap_err();
+        assert_eq!(failure.reason, QueryFailureReason::InvalidInput);
+        assert!(hits.is_empty());
+        assert_eq!(world.checkpoint(context)?.to_bytes(), before);
+    }
     Ok(())
 }
 
