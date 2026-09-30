@@ -183,6 +183,7 @@ pub enum RotatingWorldError3d {
     DuplicateBody(BodyId),
     MissingBody(BodyId),
     FixedBodyVelocity(BodyId),
+    FixedBodyAngularVelocity(BodyId),
     FixedBodyOrientation(BodyId),
     NegativeTimestepNumerator(i32),
     NonPositiveTimestepDenominator(i32),
@@ -209,6 +210,11 @@ impl fmt::Display for RotatingWorldError3d {
             Self::FixedBodyOrientation(id) => write!(
                 formatter,
                 "fixed rotating body {} cannot receive a runtime orientation update",
+                id.0
+            ),
+            Self::FixedBodyAngularVelocity(id) => write!(
+                formatter,
+                "fixed rotating body {} cannot receive angular velocity",
                 id.0
             ),
             Self::NegativeTimestepNumerator(value) => write!(
@@ -406,6 +412,30 @@ impl RotatingWorld3d {
             self.mark_contact_membership_changed();
         }
         removed
+    }
+
+    /// Updates one existing descriptor in place; callers validate geometry and wake dependencies first.
+    pub(crate) fn replace_box(&mut self, replacement: RigidBox3d) {
+        let id = replacement.body().id();
+        let slot = self.boxes.get_mut(&id).expect("replacement was validated");
+        self.solver_partitions.remove(id);
+        self.solver_partitions.insert(&replacement);
+        *slot = replacement;
+        self.mark_contact_geometry_changed_for(&BTreeSet::from([id]));
+    }
+
+    pub(crate) fn set_motion(
+        &mut self,
+        id: BodyId,
+        velocity: Vec3i,
+        angular_velocity: crate::AngularVelocity3d,
+    ) {
+        let body = self
+            .boxes
+            .get_mut(&id)
+            .expect("motion command was validated");
+        body.body.velocity = velocity;
+        body.angular.angular_velocity = angular_velocity;
     }
 
     pub(crate) fn begin_interval(&mut self) {

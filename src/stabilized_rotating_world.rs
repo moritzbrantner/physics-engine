@@ -285,6 +285,39 @@ impl RotatingWorld3d {
         Some(removed)
     }
 
+    pub(crate) fn replace_box(&mut self, replacement: RigidBox3d, affected: &[BodyId]) {
+        let id = replacement.body().id();
+        let dynamic = replacement.body().kind() == BodyKind::Dynamic;
+        self.inner.replace_box(replacement);
+        self.sleeping.remove(&id);
+        self.sleep_candidates.remove(&id);
+        self.sleep_stable_time_q64.remove(&id);
+        self.pending_fixed_boundary_body_ids.remove(&id);
+        if dynamic {
+            self.sleep_candidates.insert(id);
+            self.pending_fixed_boundary_body_ids.insert(id);
+        }
+        for affected_id in affected {
+            self.sleeping.remove(affected_id);
+            self.sleep_candidates.insert(*affected_id);
+            self.sleep_stable_time_q64.remove(affected_id);
+            self.pending_fixed_boundary_body_ids.insert(*affected_id);
+        }
+    }
+
+    pub(crate) fn set_motion(
+        &mut self,
+        id: BodyId,
+        velocity: Vec3i,
+        angular_velocity: AngularVelocity3d,
+    ) {
+        self.inner.set_motion(id, velocity, angular_velocity);
+        self.sleeping.remove(&id);
+        self.sleep_candidates.insert(id);
+        self.sleep_stable_time_q64.remove(&id);
+        self.pending_fixed_boundary_body_ids.insert(id);
+    }
+
     /// A parked proxy changes response eligibility, not scene membership or geometry.
     pub(crate) fn transition_parked_body(
         &mut self,
