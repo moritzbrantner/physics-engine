@@ -31,6 +31,10 @@ cargo build --manifest-path demo-wasm/Cargo.toml --example mass-properties-contr
   --target wasm32-unknown-unknown --release --locked
 node scripts/test-mass-properties-wasm.mjs \
   demo-wasm/target/wasm32-unknown-unknown/release/examples/mass_properties_contract.wasm
+cargo build --manifest-path demo-wasm/Cargo.toml --example translational-maintenance-contract \
+  --target wasm32-unknown-unknown --release --locked
+node scripts/test-translational-maintenance-wasm.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/examples/translational_maintenance_contract.wasm
 cargo build \
   --manifest-path demo-wasm/Cargo.toml \
   --target wasm32-unknown-unknown \

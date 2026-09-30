@@ -31,6 +31,9 @@ pub struct TranslationalStepWork {
     pub dynamic_bodies: usize,
     pub initially_moving_bodies: usize,
     pub staged_bodies: usize,
+    /// Staging-vector capacity increases during this call; warmed active calls reuse capacity.
+    pub staged_state_capacity_growths: usize,
+    /// Active staging payload capacity, excluding allocator overhead. No-op calls use zero.
     pub staged_state_capacity_bytes: usize,
     pub quantized_bodies: usize,
     pub body_map_rebuilds: usize,
@@ -136,6 +139,8 @@ pub struct World {
     bodies: BTreeMap<BodyId, RigidBody>,
     dynamic_body_count: usize,
     stationary_step_is_no_op: bool,
+    // Empty at every returned step boundary; the body map is the physical authority.
+    staged_states: Vec<BodyState>,
 }
 
 impl Default for World {
@@ -152,6 +157,7 @@ impl World {
             bodies: BTreeMap::new(),
             dynamic_body_count: 0,
             stationary_step_is_no_op: false,
+            staged_states: Vec::new(),
         }
     }
 
@@ -275,25 +281,48 @@ impl World {
             report.stats.work.cached_stationary_step = true;
             return Ok(report);
         }
-        let mut states = self
-            .bodies
-            .values()
-            .cloned()
-            .map(BodyState::new)
-            .collect::<Vec<_>>();
+        let mut states = std::mem::take(&mut self.staged_states);
+        let result = self.step_staged(ticks, &mut states, report);
+        states.clear();
+        self.staged_states = states;
+        result
+    }
+
+    /// Retained step-scratch payload only, excluding authoritative bodies and allocator overhead.
+    /// Capacity survives successful and returned-error steps, including stationary no-op calls.
+    #[must_use]
+    pub fn retained_step_scratch_bytes(&self) -> usize {
+        self.staged_states.capacity() * std::mem::size_of::<BodyState>()
+    }
+
+    /// Releases disposable step capacity without changing bodies, stationary evidence or replay.
+    /// A later active step may allocate again; no query or simulation history is discarded.
+    pub fn release_step_scratch(&mut self) {
+        self.staged_states = Vec::new();
+    }
+
+    fn step_staged(
+        &mut self,
+        ticks: i32,
+        states: &mut Vec<BodyState>,
+        mut report: StepReport,
+    ) -> Result<StepReport, PhysicsError> {
+        debug_assert!(states.is_empty());
+        let previous_capacity = states.capacity();
+        states.reserve_exact(self.bodies.len());
+        states.extend(self.bodies.values().cloned().map(BodyState::new));
+        report.stats.work.staged_state_capacity_growths =
+            usize::from(states.capacity() > previous_capacity);
         report.stats.work.staged_bodies = states.len();
         report.stats.work.staged_state_capacity_bytes =
             states.capacity() * std::mem::size_of::<BodyState>();
-        for state in &mut states {
+        for state in &mut *states {
             state.apply_gravity(self.config.gravity, ticks)?;
             report.stats.work.initially_moving_bodies +=
                 usize::from(state.body.velocity != Vec3i::ZERO);
         }
-        let mut contacts_converged = stabilize_contacts(
-            &mut states,
-            self.config.stabilization_passes,
-            &mut report.stats,
-        )?;
+        let mut contacts_converged =
+            stabilize_contacts(states, self.config.stabilization_passes, &mut report.stats)?;
         // Gravity has already been applied for the complete interval. With zero
         // post-contact velocities, every remaining swept position is unchanged.
         let has_motion = states
@@ -305,9 +334,9 @@ impl World {
         let mut event_count = 0_usize;
 
         while has_motion && remaining_subticks > 0 {
-            let hits = find_earliest_hits(&states, remaining_subticks, &mut report.stats);
+            let hits = find_earliest_hits(states, remaining_subticks, &mut report.stats);
             if hits.is_empty() {
-                advance_all(&mut states, remaining_subticks)?;
+                advance_all(states, remaining_subticks)?;
                 break;
             }
 
@@ -316,16 +345,16 @@ impl World {
             }
 
             let advance_subticks = hits[0].hit.time.ceil().max(1).min(remaining_subticks);
-            advance_all(&mut states, advance_subticks)?;
+            advance_all(states, advance_subticks)?;
             remaining_subticks -= advance_subticks;
             elapsed_subticks += advance_subticks;
 
             for hit in &hits {
-                project_to_contact(&mut states, hit.left, hit.right, hit.hit.normal)?;
+                project_to_contact(states, hit.left, hit.right, hit.hit.normal)?;
             }
             for hit in hits {
                 let (left_id, right_id) = (states[hit.left].body.id, states[hit.right].body.id);
-                if resolve_contact_velocity(&mut states, hit.left, hit.right, hit.hit.normal)? {
+                if resolve_contact_velocity(states, hit.left, hit.right, hit.hit.normal)? {
                     report.stats.contact_resolutions += 1;
                 }
                 let event_time = u64::try_from(elapsed_subticks)
@@ -340,18 +369,15 @@ impl World {
                 event_count += 1;
             }
 
-            contacts_converged = stabilize_contacts(
-                &mut states,
-                self.config.stabilization_passes,
-                &mut report.stats,
-            )?;
+            contacts_converged =
+                stabilize_contacts(states, self.config.stabilization_passes, &mut report.stats)?;
         }
 
         // Validate every fallible conversion before publishing any delta.
         // The state layout retains BodyId order and membership throughout stepping.
         let mut stationary = (self.config.gravity == Vec3i::ZERO || self.dynamic_body_count == 0)
             && contacts_converged;
-        for state in &mut states {
+        for state in &mut *states {
             state.quantize_position()?;
             report.stats.work.quantized_bodies += 1;
             stationary &= state.body.velocity == Vec3i::ZERO
@@ -362,7 +388,7 @@ impl World {
                         i128::from(state.body.position.z) * SUBTICK_SCALE,
                     ];
         }
-        for (state, body) in states.into_iter().zip(self.bodies.values_mut()) {
+        for (state, body) in states.iter().zip(self.bodies.values_mut()) {
             debug_assert_eq!(state.body.id, body.id);
             if state.body.position != body.position {
                 body.position = state.body.position;
@@ -906,6 +932,7 @@ mod maintenance_tests {
     fn step_matches(candidate: &mut World, oracle: &mut reference::World, ticks: i32) {
         let before = candidate.bodies().cloned().collect::<Vec<_>>();
         let actual = candidate.step(ticks);
+        assert!(candidate.staged_states.is_empty());
         let expected = oracle.step(ticks);
         match (actual, expected) {
             (Ok(actual), Ok(expected)) => {
@@ -959,6 +986,89 @@ mod maintenance_tests {
                 .bodies()
                 .filter(|b| b.kind() == BodyKind::Dynamic)
                 .count()
+        );
+    }
+
+    #[test]
+    fn retained_staging_growth_and_shrink_match_the_exhaustive_rebuilding_oracle() {
+        let body = |id| {
+            RigidBody::dynamic(
+                BodyId(id),
+                Vec3i::new(id as i32 * 100 - 10_000, 20, -30),
+                if id == 1 {
+                    Vec3i::new(1, 0, 0)
+                } else {
+                    Vec3i::ZERO
+                },
+                Vec3i::new(10, 20, 10),
+            )
+        };
+        let (mut candidate, mut oracle) = worlds(
+            WorldConfig {
+                gravity: Vec3i::ZERO,
+                ..Default::default()
+            },
+            (0..16).map(body).collect(),
+        );
+        step_matches(&mut candidate, &mut oracle, 1);
+        let small_capacity = candidate.retained_step_scratch_bytes();
+        for id in 16..129 {
+            candidate.add_body(body(id)).unwrap();
+            oracle.add_body(body(id)).unwrap();
+        }
+        step_matches(&mut candidate, &mut oracle, 1);
+        let high_water = candidate.retained_step_scratch_bytes();
+        assert!(high_water > small_capacity);
+        for id in 16..129 {
+            assert_eq!(
+                candidate.remove_body(BodyId(id)),
+                oracle.remove_body(BodyId(id))
+            );
+        }
+        step_matches(&mut candidate, &mut oracle, 1);
+        assert_eq!(candidate.retained_step_scratch_bytes(), high_water);
+        candidate.release_step_scratch();
+        step_matches(&mut candidate, &mut oracle, 1);
+    }
+
+    #[test]
+    fn staging_allocation_is_reused_and_logically_empty_at_step_boundaries() {
+        let mut world = stationary_world(128);
+        world.set_velocity(BodyId(9), Vec3i::new(1, 0, 0)).unwrap();
+        let first = world.step(1).unwrap();
+        assert_eq!(first.stats.work.staged_state_capacity_growths, 1);
+        let allocation = world.staged_states.as_ptr();
+        let payload = world.retained_step_scratch_bytes();
+        for _ in 0..32 {
+            let report = world.step(1).unwrap();
+            assert_eq!(report.stats.work.staged_state_capacity_growths, 0);
+            assert_eq!(report.stats.work.staged_bodies, 128);
+            assert_eq!(world.staged_states.as_ptr(), allocation);
+            assert!(world.staged_states.is_empty());
+            assert_eq!(world.retained_step_scratch_bytes(), payload);
+        }
+        world
+            .set_position(BodyId(9), Vec3i::new(i32::MAX, 20, -3200))
+            .unwrap();
+        let before = world.bodies().cloned().collect::<Vec<_>>();
+        for _ in 0..2 {
+            assert_eq!(
+                world.step(1),
+                Err(PhysicsError::ArithmeticOverflow(BodyId(9)))
+            );
+            assert_eq!(world.staged_states.as_ptr(), allocation);
+            assert!(world.staged_states.is_empty());
+            assert_eq!(world.bodies().cloned().collect::<Vec<_>>(), before);
+        }
+        world.set_velocity(BodyId(9), Vec3i::new(-1, 0, 0)).unwrap();
+        assert_eq!(
+            world
+                .step(1)
+                .unwrap()
+                .stats
+                .work
+                .staged_state_capacity_growths,
+            0
         );
     }
 

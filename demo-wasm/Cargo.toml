@@ -44,3 +44,8 @@ test = true
 name = "mass-properties-contract"
 crate-type = ["cdylib"]
 test = true
+
+[[example]]
+name = "translational-maintenance-contract"
+crate-type = ["cdylib"]
+test = true
