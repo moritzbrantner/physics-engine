@@ -1,3 +1,5 @@
+#[path = "support/box_fixture_oracle.rs"]
+mod box_fixture_oracle;
 #[path = "support/dense_contact.rs"]
 mod dense;
 #[test]
