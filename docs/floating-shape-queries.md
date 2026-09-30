@@ -83,7 +83,7 @@ The output vector retains caller-owned capacity. Shared primitive kernels use
 bounded inline scratch; ordinary query calls retain no engine storage or world
 snapshot. Counters report visits/filtering, bound tests, exact candidates, explicit
 contact and total primitive queries, frame adapters, axes/support/vertex work,
-sweep iterations and actual output capacity growth. Output capacity bytes exclude
+sweep iterations, entered segment-distance problems, segment endpoint/slab/partition feature visits and actual output capacity growth. Output capacity bytes exclude
 allocator overhead and error-diagnostic storage; no RSS claim is made.
 
 Public controls cover thin obstacles across complete displacements, all four query
@@ -102,8 +102,7 @@ orders at 1e-4, 1 and 1e6 dimensional scales. Independent support-plane formulas
 certify clearance after moving by the reported depth, and checkpoint bytes protect
 pending forces and physical history. They fail on the prior kernel pin. Upstream
 coverage additionally includes 1024 seeded intersections and near-parallel/short
-skeleton controls. This repair does not complete #173's full contact-row reference
-and internal segment-distance work acceptance.
+skeleton controls. The subsequent [capsule row acceptance](capsule-row-acceptance.md) supplies the complete sphere/box/capsule row reference and work contract, with public native/WASM query and physical-step propagation.
 
 A 512-body sparse fixture ratchets N bound visits but one exact query and zero warmed
 output growth. Native and WASM run the same public contract driver, separately from
@@ -112,6 +111,7 @@ the shipped demo. Reproduce:
 ```sh
 cargo test --locked --test floating_shape_queries
 cargo test --locked --test capsule_contact_normals
+cargo test --locked --test capsule_row_work
 cargo test --locked --lib approximate::query
 cargo test --manifest-path demo-wasm/Cargo.toml --locked --example shape-query-contract
 cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \

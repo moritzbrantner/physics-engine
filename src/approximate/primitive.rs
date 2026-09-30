@@ -215,6 +215,8 @@ fn accumulate_work(work: &mut GeometryStats, kernel: PrimitiveWork3) {
     work.primitive_axes_tested += kernel.axes_tested;
     work.primitive_vertex_tests += kernel.vertex_tests;
     work.primitive_sweep_iterations += kernel.sweep_iterations;
+    work.primitive_segment_distance_evaluations += kernel.segment_distance_evaluations;
+    work.primitive_segment_feature_tests += kernel.segment_feature_tests;
 }
 
 #[cfg(test)]
