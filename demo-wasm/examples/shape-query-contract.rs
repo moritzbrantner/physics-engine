@@ -7,9 +7,15 @@ use physics_engine::{
     },
 };
 
+#[path = "../../tests/capsule_contact_normals.rs"]
+mod capsule_contract;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn run() -> Result<()> {
     ray_contract()?;
+    capsule_contract::sphere_on_capsule_skeleton_has_a_certified_public_clearance();
+    capsule_contract::crossing_capsules_have_a_certified_public_clearance();
+    capsule_contract::collapsed_capsules_retain_the_sphere_clearance_contract();
     let mut world = World::new(Config {
         gravity: V::ZERO,
         ..Default::default()

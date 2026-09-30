@@ -59,7 +59,7 @@ dependencies = [
 [[package]]
 name = "geometry-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=3fb4337861d7f98cd97bf2120dcd161a7cbc8504#3fb4337861d7f98cd97bf2120dcd161a7cbc8504"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=1c5f29109cdb9872b5f718ace4802abbbf34cb7f#1c5f29109cdb9872b5f718ace4802abbbf34cb7f"
 dependencies = [
  "spatial-kernels",
 ]
@@ -99,7 +99,7 @@ dependencies = [
 [[package]]
 name = "spatial-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=3fb4337861d7f98cd97bf2120dcd161a7cbc8504#3fb4337861d7f98cd97bf2120dcd161a7cbc8504"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=1c5f29109cdb9872b5f718ace4802abbbf34cb7f#1c5f29109cdb9872b5f718ace4802abbbf34cb7f"
 
 [[package]]
 name = "typenum"

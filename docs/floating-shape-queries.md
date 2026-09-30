@@ -45,6 +45,14 @@ are support witnesses on the selected SAT axis, not a clipped contact manifold o
 necessarily a unique pair of nearest points. There are no stable face/edge/vertex
 IDs yet; gameplay must not invent them from these witnesses.
 
+For sphere/capsule and capsule/capsule skeleton intersections, the shared kernel
+chooses a deterministic direction perpendicular to every nonzero skeleton.
+The signed depth and witnesses use that selected direction; translating the query
+along the outward normal by the penetration clears these solids, within the
+scale-aware roundoff budget. Two collapsed skeletons retain sphere-distance
+semantics. Ordinary resolved deltas, including nonnegative separation, retain the
+closest-point normal. This does not supply a unique minimum-translation manifold.
+
 Layer admission uses the same symmetric membership/mask rule as physical bodies.
 Sensors are excluded by default; `include_sensors` admits them explicitly. `exclude`
 skips one current body ID. Sleeping, fixed, dynamic and externally driven targets
@@ -88,12 +96,22 @@ walk through the same current geometry. This is an independent **candidate** ora
 not a second primitive geometry implementation. Primitive analytic/invariant
 controls and the upstream geometry suite cover that separate layer.
 
+Three shared native/WASM capsule regression fixtures cover a sphere on the
+skeleton, rotated crossing capsules and a collapsed capsule, in both query/target
+orders at 1e-4, 1 and 1e6 dimensional scales. Independent support-plane formulas
+certify clearance after moving by the reported depth, and checkpoint bytes protect
+pending forces and physical history. They fail on the prior kernel pin. Upstream
+coverage additionally includes 1024 seeded intersections and near-parallel/short
+skeleton controls. This repair does not complete #173's full contact-row reference
+and internal segment-distance work acceptance.
+
 A 512-body sparse fixture ratchets N bound visits but one exact query and zero warmed
 output growth. Native and WASM run the same public contract driver, separately from
 the shipped demo. Reproduce:
 
 ```sh
 cargo test --locked --test floating_shape_queries
+cargo test --locked --test capsule_contact_normals
 cargo test --locked --lib approximate::query
 cargo test --manifest-path demo-wasm/Cargo.toml --locked --example shape-query-contract
 cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \
