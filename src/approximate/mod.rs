@@ -14,7 +14,8 @@ mod primitive;
 mod query;
 pub use position::PositionReport;
 pub use query::{
-    QueryFailure, QueryFailureReason, QueryFilter, QueryHit, QueryPose, QueryStats, ShapeCast,
+    QueryFailure, QueryFailureReason, QueryFilter, QueryHit, QueryPose, QueryStats, RayCast,
+    RayFeature, RayHit, ShapeCast,
 };
 mod convergence;
 #[cfg(feature = "experimental-soft-contact")]

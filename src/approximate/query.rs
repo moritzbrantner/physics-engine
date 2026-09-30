@@ -6,6 +6,9 @@ use crate::CollisionLayers3d;
 use geometry_kernels::primitive3::PrimitiveWork3;
 use std::{error::Error, fmt, mem::size_of};
 
+mod ray;
+pub use ray::{RayCast, RayFeature, RayHit};
+
 /// A query shape in world units. Orientation must already be a unit quaternion.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QueryPose {
@@ -114,6 +117,9 @@ pub struct QueryStats {
     pub axes_tested: u64,
     pub support_evaluations: u64,
     pub vertex_tests: u64,
+    pub ray_queries: u64,
+    pub ray_planes_tested: u64,
+    pub ray_quadratic_tests: u64,
     /// Includes admitted hits subsequently discarded on error.
     pub hits_admitted: u64,
     pub output_capacity_growths: u64,
@@ -134,7 +140,7 @@ pub struct QueryFailure {
 }
 impl fmt::Display for QueryFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "floating shape query failed: {:?}", self.reason)
+        write!(f, "floating geometry query failed: {:?}", self.reason)
     }
 }
 impl Error for QueryFailure {}

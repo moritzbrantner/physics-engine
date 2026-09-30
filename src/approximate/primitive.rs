@@ -100,6 +100,25 @@ fn sweep_failure(error: PrimitiveSweepError3) -> SweepFailure {
     }
 }
 
+pub(super) fn snapshot_ray(
+    target: &Body,
+    origin: V,
+    displacement: V,
+    work: &mut geometry_kernels::primitive3::PrimitiveRayWork3,
+) -> Result<Option<geometry_kernels::primitive3::PrimitiveRayHit3>, SweepFailure> {
+    use geometry_kernels::primitive3::{PrimitiveRayError3, try_ray_cast};
+    try_ray_cast(
+        kernel_body(target),
+        to_array(origin),
+        to_array(displacement),
+        work,
+    )
+    .map_err(|error| match error {
+        PrimitiveRayError3::InvalidInput => SweepFailure::InvalidGeometryInput,
+        PrimitiveRayError3::NonFiniteComputation => SweepFailure::NonFiniteComputation,
+    })
+}
+
 /// Snapshot queries ignore target motion; physical velocities remain available to the caller.
 pub(super) fn snapshot_query(a: &Body, b: &Body, work: &mut PrimitiveWork3) -> PrimitiveContact {
     from_contact(kernel_query(kernel_body(a), kernel_body(b), work))
