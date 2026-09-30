@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "suite": "architecture-work-v3",
+  "suite": "architecture-work-v4",
   "native": [
     { "test": "ballistic_sphere::indexed_tests::sparse_ballistic_target_benchmark", "scenarios": ["ballistic-index/32", "ballistic-index/256", "ballistic-index/2048"] },
     { "test": "current_contact_query::tests::stationary_subject_reuse_benchmark", "scenarios": ["stationary-cache/32", "stationary-cache/256", "stationary-cache/2048"] },
@@ -9,7 +9,8 @@
     { "test": "oriented_box::parity_tests::projection_work_ratchet", "scenarios": ["sat-projection"] },
     { "test": "oriented_box::parity_tests::prepared_contact_benchmark", "scenarios": ["sat-prepared"] },
     { "test": "relaxed_rotating_world::tests::sleep_transition_contact_reuse_benchmark", "scenarios": ["sleep-transition/32", "sleep-transition/128", "sleep-transition/512"] },
-    { "test": "world::maintenance_tests::translational_necessary_work_ratchet", "scenarios": ["translational/quiet/128", "translational/quiet/512", "translational/quiet/2048", "translational/local/512", "translational/supported/512"] }
+    { "test": "world::maintenance_tests::translational_necessary_work_ratchet", "scenarios": ["translational/quiet/128", "translational/quiet/512", "translational/quiet/2048", "translational/local/512", "translational/supported/512"] },
+    { "test": "approximate::transaction::tests::transaction_work_ratchet", "scenarios": ["floating-transaction/quiet/128", "floating-transaction/quiet/512", "floating-transaction/local/128", "floating-transaction/local/512", "floating-transaction/rollback"] }
   ],
   "sandbox": {
     "workload": "sandbox-projectiles-v5",

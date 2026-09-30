@@ -64,7 +64,8 @@ zero interpenetration or energy conservation. The reference fixture's crate widt
 - Floating state is repeatable in tested runs on one build/target. Cross-compiler and cross-target
   bit identity is not asserted. Hash differences between solver modes are expected.
 - Finite input/range validation does not make arbitrary extreme-scale scenes supported. Mid-step
-  numerical errors are reported; the experimental World does not promise transactional rollback.
+  numerical errors roll back touched physical state, pending inputs and contact history before returning.
+  See [the returned-error boundary and measured transaction cost](floating-step-transactions.md).
 - Passing a four-second impact trace is not proof of long-run settling. Free-rotation sphere and
   rigid-box cases can remain active at that boundary. Inspect that result separately from frame
   completion and bounded work.

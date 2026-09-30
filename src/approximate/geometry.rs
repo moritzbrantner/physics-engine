@@ -101,6 +101,11 @@ pub(super) struct GeometryCache {
     retained_bytes: usize,
 }
 impl GeometryCache {
+    pub fn invalidate(&mut self) {
+        self.frames.clear();
+        self.pairs.clear();
+        self.retained_bytes = self.measure_retained_bytes();
+    }
     pub fn begin(&mut self, bodies: usize) {
         if self.frames.len() != bodies {
             self.frames.clear();
