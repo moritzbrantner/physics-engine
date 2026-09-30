@@ -34,9 +34,9 @@ function sumCounter(steps, name) {
   return steps.reduce((sum, step) => sum + (step[name] ?? 0), 0);
 }
 
-function cumulativeCounterTotal(frames, name) {
+function cumulativeCounterTotal(frames, name, baseline = null) {
   let total = 0;
-  let previous = 0;
+  let previous = baseline?.[name] ?? 0;
   for (const frame of frames) {
     const current = frame[name];
     if (current === null || current === undefined) continue;
@@ -125,15 +125,21 @@ export function createPerformanceSessionRecorder({
   wallClock = () => new Date().toISOString(),
   maxFrames = DEFAULT_MAX_FRAMES,
   maxMarkers = DEFAULT_MAX_MARKERS,
+  retention = "first",
 } = {}) {
   if (!Number.isInteger(maxFrames) || maxFrames < 1) throw new Error("maxFrames must be a positive integer");
   if (!Number.isInteger(maxMarkers) || maxMarkers < 1) throw new Error("maxMarkers must be a positive integer");
 
+  if (!["first", "latest"].includes(retention)) throw new Error("unknown retention mode");
+
   let active = false;
   let startedAt = null;
   let startedAtMonotonic = null;
-  let frames = [];
-  let markers = [];
+  let frameBuffer = [];
+  let markerBuffer = [];
+  let frameCursor = 0;
+  let markerCursor = 0;
+  let frameBaseline = null;
   let omittedFrames = 0;
   let omittedMarkers = 0;
   let recordedEnvironment = {};
@@ -144,13 +150,16 @@ export function createPerformanceSessionRecorder({
       return active;
     },
 
-    start() {
-      if (active) throw new Error("performance session is already recording");
+    start({ restart = false } = {}) {
+      if (active && !restart) throw new Error("performance session is already recording");
       active = true;
       startedAt = wallClock();
       startedAtMonotonic = now();
-      frames = [];
-      markers = [];
+      frameBuffer = [];
+      markerBuffer = [];
+      frameCursor = 0;
+      markerCursor = 0;
+      frameBaseline = null;
       omittedFrames = 0;
       omittedMarkers = 0;
       recordedEnvironment = snapshot(environment);
@@ -160,6 +169,7 @@ export function createPerformanceSessionRecorder({
     recordFrame(frame) {
       if (!active) return;
       const normalized = {
+        offset_ms: now() - startedAtMonotonic,
         frame_interval_ms: finiteNumber(frame.frame_interval_ms, "frame_interval_ms"),
         callback_ms: finiteNumber(frame.callback_ms, "callback_ms"),
         render_performed: Boolean(frame.render_performed),
@@ -196,24 +206,47 @@ export function createPerformanceSessionRecorder({
       if (normalized.physics_step_stats.length !== 0 && normalized.physics_step_stats.length !== normalized.physics_steps_ms.length) {
         throw new Error("physics_step_stats must align one-to-one with physics_steps_ms");
       }
-      if (frames.length < maxFrames) frames.push(normalized);
-      else omittedFrames += 1;
+      if (frameBuffer.length < maxFrames) frameBuffer.push(normalized);
+      else {
+        omittedFrames += 1;
+        if (retention === "latest") {
+          frameBaseline ??= {};
+          const evicted = frameBuffer[frameCursor];
+          for (const name of ["projectiles_retired_on_contact", "projectiles_retired_out_of_bounds", "projectiles_evicted_by_cap"]) {
+            if (evicted[name] !== null) frameBaseline[name] = evicted[name];
+          }
+          frameBuffer[frameCursor] = normalized;
+          frameCursor = (frameCursor + 1) % maxFrames;
+        }
+      }
     },
 
     recordMarker(name, detail = {}) {
       if (!active) return;
-      if (markers.length < maxMarkers) {
-        markers.push({ offset_ms: now() - startedAtMonotonic, name, detail: snapshot(detail) });
-      } else {
+      const marker = { offset_ms: now() - startedAtMonotonic, name, detail: snapshot(detail) };
+      if (markerBuffer.length < maxMarkers) markerBuffer.push(marker);
+      else {
         omittedMarkers += 1;
+        if (retention === "latest") {
+          markerBuffer[markerCursor] = marker;
+          markerCursor = (markerCursor + 1) % maxMarkers;
+        }
       }
     },
 
-    finish() {
+    refreshContext() {
+      if (!active) return;
+      recordedEnvironment = snapshot(environment);
+      recordedScenario = snapshot(scenario);
+    },
+
+    capture() {
       if (!active) throw new Error("performance session is not recording");
+      const ordered = (buffer, cursor) => [...buffer.slice(cursor), ...buffer.slice(0, cursor)];
+      const frames = ordered(frameBuffer, frameCursor);
+      const markers = ordered(markerBuffer, markerCursor);
       const endedAt = wallClock();
       const durationMs = now() - startedAtMonotonic;
-      active = false;
       const frameIntervals = frames.map((frame) => frame.frame_interval_ms);
       const callbacks = frames.map((frame) => frame.callback_ms);
       const renders = frames
@@ -237,6 +270,7 @@ export function createPerformanceSessionRecorder({
         duration_ms: durationMs,
         environment: recordedEnvironment,
         scenario: recordedScenario,
+        retention: { mode: retention, summary_scope: "retained-frames", max_frames: maxFrames, max_markers: maxMarkers },
         summary: {
           recorded_frames: frames.length,
           omitted_frames: omittedFrames,
@@ -306,12 +340,13 @@ export function createPerformanceSessionRecorder({
               liveProjectileCounts.length === 0 ? null : Math.max(...liveProjectileCounts),
             max_active_projectiles:
               activeProjectileCounts.length === 0 ? null : Math.max(...activeProjectileCounts),
-            retired_on_contact: cumulativeCounterTotal(frames, "projectiles_retired_on_contact"),
+            retired_on_contact: cumulativeCounterTotal(frames, "projectiles_retired_on_contact", frameBaseline),
             retired_out_of_bounds: cumulativeCounterTotal(
               frames,
               "projectiles_retired_out_of_bounds",
+              frameBaseline,
             ),
-            evicted_by_cap: cumulativeCounterTotal(frames, "projectiles_evicted_by_cap"),
+            evicted_by_cap: cumulativeCounterTotal(frames, "projectiles_evicted_by_cap", frameBaseline),
           },
           frames_with_dropped_accumulator: frames.filter(
             (frame) => frame.dropped_accumulator_ms > 0,
@@ -323,6 +358,12 @@ export function createPerformanceSessionRecorder({
         },
         raw: { frames, markers },
       };
+    },
+
+    finish() {
+      const result = this.capture();
+      active = false;
+      return result;
     },
   };
 }

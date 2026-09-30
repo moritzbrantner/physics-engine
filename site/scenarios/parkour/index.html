@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <base href="../../" />
+    <link rel="stylesheet" href="scenario-log.css" />
     <title>physics-engine · parkour world scenario</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -240,15 +241,14 @@
         <section class="settings-section" aria-labelledby="performance-title">
           <h2 id="performance-title">Performance evidence</h2>
           <p>
-            Capture a bounded local browser session with frame/render/physics timings, scenario settings,
+            Automatically retain recent frame/render/physics timings, scenario settings,
             engine revision, and environment details. Nothing is uploaded automatically.
           </p>
           <div class="actions performance-log-actions">
-            <button id="start-performance-log" type="button" disabled>Start performance log</button>
-            <button id="download-performance-log" type="button" disabled>Stop and download JSON</button>
+            <button id="download-performance-log" type="button" disabled>Download current log (JSON)</button>
           </div>
           <p id="performance-log-status" class="status" aria-live="polite">
-            Start a log before reproducing a slowdown or frame spike.
+            Recording starts automatically with the scenario. A crash exports the log automatically.
           </p>
           <p class="setting-note">
             The export contains browser and hardware metadata for comparison. Review it before sharing.

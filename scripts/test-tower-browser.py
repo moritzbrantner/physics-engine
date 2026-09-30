@@ -100,7 +100,10 @@ def main():
         click('#open-settings')
         assert page.locator('#fixed-geometry-setting').is_disabled()
         assert all(x.is_disabled() for x in page.locator('[data-stabilization-pair]').all())
-        click('#start-performance-log')
+        assert page.evaluate("""async () => {
+            const {scenarioLog} = await import('../../scenario-log.mjs');
+            return scenarioLog.recorder.active && !scenarioLog.failed;
+        }"""), 'scenario recording starts automatically'
         click('#close-settings'); page.keyboard.press('f'); page.wait_for_timeout(500)
         click('#open-settings')
         with page.expect_download() as download:
@@ -111,6 +114,7 @@ def main():
         assert session['scenario']['character_response'] == 'physical'
         assert session['scenario']['crate_motion'] == 'free'
         assert session['summary']['physics_work']['fixed_substeps'] > 0
+        assert page.evaluate("""async () => (await import('../../scenario-log.mjs')).scenarioLog.recorder.active"""), 'export keeps automatic recording active'
         click('#close-settings')
         # Presentation uses the same real animation clock as input actionability.
         page.set_viewport_size({'width': 390, 'height': 844})

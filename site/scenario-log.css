@@ -1,0 +1,19 @@
+.crash-report {
+  position: fixed;
+  z-index: 40;
+  bottom: 20px;
+  left: 20px;
+  max-width: min(480px, calc(100vw - 40px));
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 30%);
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+.crash-report p {
+  margin: 0 0 8px;
+}
