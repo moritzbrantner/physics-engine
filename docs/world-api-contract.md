@@ -172,8 +172,10 @@ Do not normalize different query surfaces in game code by inventing missing data
   shared primitive kernels. They return stable body identities, ordered contact witnesses, outward
   target normals and current support velocity; filters and explicit failure/discarded-work semantics
   are documented in [floating shape queries](floating-shape-queries.md). Translation-only casts hold
-  both orientations and target positions fixed. Rays, stable feature IDs and reusable character
-  response remain #194 work. `has_support` remains a distinct solver-facing predicate.
+  both orientations and target positions fixed. `cast_ray` queries a complete finite segment
+  against current poses with local geometric feature identity; see
+  [floating ray queries](floating-ray-queries.md). Shape-cast feature identities and reusable
+  character response remain #194 work. `has_support` remains a distinct solver-facing predicate.
 
 The executable compatibility test in `tests/world_migration_contract.rs` uses `U = 1` and
 `T = 60` and proves the no-contact, one-substep integration boundary against the compatibility

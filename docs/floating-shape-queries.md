@@ -119,7 +119,9 @@ them to zero. Both paths still visit 512 bodies. Median pruned durations are
 depending on shape/workload. Timings are advisory and compare query mechanics only;
 no gameplay, world-step or large-N dynamic-contact benefit is asserted.
 
-Rays, feature IDs, richer response manifolds, collide-and-slide/corner/crease
+Finite rays with local geometric feature identity are supplied by
+[floating ray queries](floating-ray-queries.md). Shape-cast feature IDs,
+richer response manifolds, collide-and-slide/corner/crease
 handling, slope/step policy, moving supports and a real game adoption remain open
 in #194. The existing translational/rotating query contracts are unchanged.
 Convention sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
