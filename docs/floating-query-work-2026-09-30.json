@@ -1,0 +1,302 @@
+{
+  "date": "2026-09-30",
+  "compiler": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "target": "x86_64-unknown-linux-gnu",
+  "sourceRevision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "kernel_revision": "51aea601221bc01a740c5377e51b81c7cc95130c",
+  "trials": 3,
+  "queries_per_trial": 256,
+  "bodies": 512,
+  "result_parity": "exact pruned/exhaustive equality before and after every trial",
+  "counters": "visited/exact/primitive_queries/iterations/axes/output_bytes are per call; ms is total for 256 calls",
+  "controls": [
+    {
+      "case": "sparse-overlap",
+      "shape": "sphere",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 12.82929
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 1,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.232531
+      }
+    },
+    {
+      "case": "sparse-overlap",
+      "shape": "box",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 896,
+        "output_bytes": 544,
+        "median_ms": 35.046142
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 1,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.194309
+      }
+    },
+    {
+      "case": "sparse-overlap",
+      "shape": "capsule",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 46.103226
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 1,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.276703
+      }
+    },
+    {
+      "case": "sparse-overlap",
+      "shape": "wedge",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 1024,
+        "output_bytes": 544,
+        "median_ms": 80.608189
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 1,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.202043
+      }
+    },
+    {
+      "case": "sparse-cast",
+      "shape": "sphere",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 1027,
+        "iterations": 514,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 27.647995
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 5,
+        "iterations": 3,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.307281
+      }
+    },
+    {
+      "case": "sparse-cast",
+      "shape": "box",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 770,
+        "iterations": 513,
+        "axes": 1152,
+        "output_bytes": 544,
+        "median_ms": 59.432647
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 4,
+        "iterations": 2,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.277585
+      }
+    },
+    {
+      "case": "sparse-cast",
+      "shape": "capsule",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 1026,
+        "iterations": 513,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 94.669378
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 4,
+        "iterations": 2,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.313723
+      }
+    },
+    {
+      "case": "sparse-cast",
+      "shape": "wedge",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 771,
+        "iterations": 514,
+        "axes": 1280,
+        "output_bytes": 544,
+        "median_ms": 145.565787
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 1,
+        "primitive_queries": 5,
+        "iterations": 3,
+        "axes": 0,
+        "output_bytes": 544,
+        "median_ms": 1.405215
+      }
+    },
+    {
+      "case": "miss",
+      "shape": "sphere",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 0,
+        "median_ms": 12.385725
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 0,
+        "primitive_queries": 0,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 0,
+        "median_ms": 1.228864
+      }
+    },
+    {
+      "case": "miss",
+      "shape": "box",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 896,
+        "output_bytes": 0,
+        "median_ms": 35.689082
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 0,
+        "primitive_queries": 0,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 0,
+        "median_ms": 1.187315
+      }
+    },
+    {
+      "case": "miss",
+      "shape": "capsule",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 0,
+        "median_ms": 46.02585
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 0,
+        "primitive_queries": 0,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 0,
+        "median_ms": 1.260513
+      }
+    },
+    {
+      "case": "miss",
+      "shape": "wedge",
+      "exhaustive": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 512,
+        "primitive_queries": 512,
+        "iterations": 0,
+        "axes": 1024,
+        "output_bytes": 0,
+        "median_ms": 79.48247
+      },
+      "pruned": {
+        "queries": 256,
+        "visited": 512,
+        "exact": 0,
+        "primitive_queries": 0,
+        "iterations": 0,
+        "axes": 0,
+        "output_bytes": 0,
+        "median_ms": 1.183788
+      }
+    }
+  ]
+}

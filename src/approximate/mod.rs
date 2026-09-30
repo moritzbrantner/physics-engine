@@ -11,7 +11,11 @@ mod bookkeeping;
 mod contact;
 mod position;
 mod primitive;
+mod query;
 pub use position::PositionReport;
+pub use query::{
+    QueryFailure, QueryFailureReason, QueryFilter, QueryHit, QueryPose, QueryStats, ShapeCast,
+};
 mod convergence;
 #[cfg(feature = "experimental-soft-contact")]
 mod correction;

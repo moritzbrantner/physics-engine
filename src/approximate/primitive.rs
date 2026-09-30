@@ -13,7 +13,6 @@ use geometry_kernels::primitive3::{
 #[cfg(test)]
 pub(super) use geometry_kernels::primitive3::PrimitiveKind3 as PrimitiveKind;
 pub(super) use geometry_kernels::primitive3::PrimitivePair3 as PrimitivePair;
-#[cfg(test)]
 use geometry_kernels::primitive3::query as kernel_query;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,11 +89,34 @@ pub(super) fn swept_time(
     );
     accumulate_work(work, kernel_work);
     work.primitive_sweep_failures += u64::from(result.is_err());
-    result.map_err(|error| match error {
+    result.map_err(sweep_failure)
+}
+
+fn sweep_failure(error: PrimitiveSweepError3) -> SweepFailure {
+    match error {
         PrimitiveSweepError3::InvalidInput => SweepFailure::InvalidGeometryInput,
         PrimitiveSweepError3::NonFiniteComputation => SweepFailure::NonFiniteComputation,
         PrimitiveSweepError3::IterationLimit => SweepFailure::IterationLimit,
-    })
+    }
+}
+
+/// Snapshot queries ignore target motion; physical velocities remain available to the caller.
+pub(super) fn snapshot_query(a: &Body, b: &Body, work: &mut PrimitiveWork3) -> PrimitiveContact {
+    from_contact(kernel_query(kernel_body(a), kernel_body(b), work))
+}
+
+pub(super) fn snapshot_sweep(
+    query: &Body,
+    target: &Body,
+    displacement: V,
+    max_iterations: u32,
+    work: &mut PrimitiveWork3,
+) -> Result<Option<f64>, SweepFailure> {
+    let mut a = kernel_body(query);
+    let mut b = kernel_body(target);
+    a.velocity = to_array(displacement);
+    b.velocity = [0.0; 3];
+    kernel_swept_time(a, b, 1.0, 0.0, max_iterations, work).map_err(sweep_failure)
 }
 
 fn shape(shape: Shape) -> PrimitiveShape3 {
