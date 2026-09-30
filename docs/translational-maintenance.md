@@ -99,3 +99,22 @@ This removes repeated staging capacity acquisition, not all-N body staging/cloni
 quantization, broad-phase reconstruction or sorting. Broad-phase capacity and
 dependency-valid fixed-bound reuse are separate #227/#228 slices. Further consumer
 adoption and delta/neighborhood maintenance remain #190 requirements.
+
+[Recorded staging evidence](translational-staging-work-2026-09-30.json) compares
+baseline `d3902d7` with clean code producer `830e7b5` on rustc 1.98.0,
+`x86_64-unknown-linux-gnu`. All seven workload body/event checksums and semantic
+counts match for three initial trials and nine alternating-order trials per version,
+with 120 complete ticks each. Raw times and the initially adverse block are retained.
+Both binaries were prebuilt before the controlled alternating runs.
+
+Warmed active steps acquire no staging capacity. The 512-body sparse workload
+retains 57,344 bytes of staging payload; supported gravity with 513 bodies retains
+57,456 bytes. Stationary no-op calls still report zero active staging payload while
+retaining bootstrap capacity until explicit release. Those values are vector payload,
+not RSS or complete process/world memory.
+
+Controlled median totals for 120 ticks are 10.84 → 10.70 ms for one moving body,
+10.85 → 10.83 ms for eight, 13.96 → 13.84 ms for supported gravity, and
+5.13 → 5.14 ms for crowded spawn. Changes are small and timings remain advisory;
+the deterministic result is capacity reuse with unchanged physics, not a broad
+speedup. Quiet 2048-body calls remain approximately 0.48 ms in both versions.
