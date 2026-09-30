@@ -385,3 +385,43 @@ pub fn interval_damping_preserves_externally_owned_angular_velocity() {
     assert_eq!(work.damping_body_visits, 2);
     assert_eq!(work.damping_changes, 1);
 }
+
+#[cfg_attr(test, test)]
+pub fn damping_rounds_nearest_and_reports_a_motion_only_delta() {
+    let mut world = world();
+    world
+        .add_box(
+            RigidBox3d::new(
+                RigidBody::dynamic(
+                    BodyId(1),
+                    Vec3i::ZERO,
+                    Vec3i::ZERO,
+                    Vec3i::new(100, 100, 100),
+                ),
+                AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::new(1, -1, 3)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut reports = Vec::new();
+    let work = world
+        .advance_interval(
+            RotatingIntervalConfig3d {
+                angular_damping_milli: 500,
+                timestep_denominator: 1_000_000_000,
+                ..interval()
+            },
+            &mut reports,
+        )
+        .unwrap();
+    assert_eq!(
+        world
+            .box_by_id(BodyId(1))
+            .unwrap()
+            .angular()
+            .angular_velocity,
+        AngularVelocity3d::new(1, -1, 2)
+    );
+    assert_eq!(reports.last().unwrap().changed_body_ids, vec![BodyId(1)]);
+    assert_eq!(work.damping_changes, 1);
+}

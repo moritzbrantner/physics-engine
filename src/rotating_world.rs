@@ -468,7 +468,13 @@ impl RotatingWorld3d {
             }
             let old = self.boxes[id].angular.angular_velocity;
             let damp = |value: i32| {
-                i32::try_from(i64::from(value) * i64::from(milli) / 1000)
+                let numerator = i64::from(value) * i64::from(milli);
+                let rounded = if numerator >= 0 {
+                    numerator + 500
+                } else {
+                    numerator - 500
+                };
+                i32::try_from(rounded / 1000)
                     .expect("validated damping cannot increase integer magnitude")
             };
             let new = crate::AngularVelocity3d::new(damp(old.x), damp(old.y), damp(old.z));

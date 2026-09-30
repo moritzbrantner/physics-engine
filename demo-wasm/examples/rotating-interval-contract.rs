@@ -14,5 +14,6 @@ pub extern "C" fn rotating_interval_contract() -> i32 {
     contract::ballistic_membership_is_rejected_before_interval_work();
     contract::fixed_preparation_remains_equivalent_after_rollback_and_id_reuse();
     contract::interval_damping_preserves_externally_owned_angular_velocity();
+    contract::damping_rounds_nearest_and_reports_a_motion_only_delta();
     0
 }
