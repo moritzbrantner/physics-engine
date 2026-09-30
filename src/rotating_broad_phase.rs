@@ -110,6 +110,13 @@ pub(crate) struct RotatingBroadPhase3d {
 }
 
 impl RotatingBroadPhase3d {
+    /// Discard derived geometry after interval rollback, preserving cumulative work counters.
+    pub(crate) fn invalidate_geometry(&mut self) {
+        self.tree = IndexedBvh3d::default();
+        self.exact.clear();
+        self.fixed_bounds.clear();
+    }
+
     pub fn candidate_pairs<'a>(
         &mut self,
         boxes: impl IntoIterator<Item = &'a RigidBox3d>,

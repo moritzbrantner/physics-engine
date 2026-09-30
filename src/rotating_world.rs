@@ -337,6 +337,14 @@ impl SolverPartitions3d {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MotionBeforeImage3d {
+    kind: BodyKind,
+    position: Vec3i,
+    velocity: Vec3i,
+    angular: crate::AngularState3d,
+}
+
 #[derive(Clone, Debug)]
 pub struct RotatingWorld3d {
     config: RotatingWorldConfig3d,
@@ -349,6 +357,7 @@ pub struct RotatingWorld3d {
     broad_phase: RotatingBroadPhase3d,
     tail_broad_phase: RotatingBroadPhase3d,
     response_scratch: RotatingContactResponseScratch3d,
+    interval_motion: Option<BTreeMap<BodyId, MotionBeforeImage3d>>,
 }
 
 impl RotatingWorld3d {
@@ -365,6 +374,7 @@ impl RotatingWorld3d {
             broad_phase: RotatingBroadPhase3d::default(),
             tail_broad_phase: RotatingBroadPhase3d::default(),
             response_scratch: RotatingContactResponseScratch3d::default(),
+            interval_motion: None,
         }
     }
 
@@ -398,11 +408,106 @@ impl RotatingWorld3d {
         removed
     }
 
+    pub(crate) fn begin_interval(&mut self) {
+        debug_assert!(self.interval_motion.is_none());
+        self.interval_motion = Some(BTreeMap::new());
+    }
+
+    pub(crate) fn record_interval_motion(&mut self, id: BodyId) {
+        let Some(journal) = &mut self.interval_motion else {
+            return;
+        };
+        if let Some(body) = self.boxes.get(&id) {
+            journal.entry(id).or_insert_with(|| MotionBeforeImage3d {
+                kind: body.body.kind,
+                position: body.body.position,
+                velocity: body.body.velocity,
+                angular: body.angular,
+            });
+        }
+    }
+
+    pub(crate) fn finish_interval(&mut self, rollback: bool) -> usize {
+        let journal = self.interval_motion.take().expect("interval was begun");
+        let count = journal.len();
+        if rollback {
+            for (id, state) in journal {
+                let body = self
+                    .boxes
+                    .get_mut(&id)
+                    .expect("interval cannot change membership");
+                body.body.kind = state.kind;
+                body.body.position = state.position;
+                body.body.velocity = state.velocity;
+                body.angular = state.angular;
+                self.solver_partitions.remove(id);
+                self.solver_partitions.insert(body);
+            }
+            // Search state is derived; failed intervals discard it rather than snapshotting it.
+            self.broad_phase.invalidate_geometry();
+            self.tail_broad_phase.invalidate_geometry();
+            self.mark_contact_membership_changed();
+        }
+        count
+    }
+
+    pub(crate) fn damp_interval_angular_velocity(&mut self, milli: u16) -> (usize, Vec<BodyId>) {
+        if milli == 1000 {
+            return (0, Vec::new());
+        }
+        let ids = self
+            .solver_partitions
+            .dynamic_body_ids
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let mut changes = Vec::new();
+        for id in &ids {
+            if self.boxes[id].motion_authority() == crate::MotionAuthority3d::External {
+                continue;
+            }
+            let old = self.boxes[id].angular.angular_velocity;
+            let damp = |value: i32| {
+                let numerator = i64::from(value) * i64::from(milli);
+                let rounded = if numerator >= 0 {
+                    numerator + 500
+                } else {
+                    numerator - 500
+                };
+                i32::try_from(rounded / 1000)
+                    .expect("validated damping cannot increase integer magnitude")
+            };
+            let new = crate::AngularVelocity3d::new(damp(old.x), damp(old.y), damp(old.z));
+            if new != old {
+                self.record_interval_motion(*id);
+                self.boxes
+                    .get_mut(id)
+                    .expect("dynamic partition contains existing bodies")
+                    .angular
+                    .angular_velocity = new;
+                changes.push(*id);
+            }
+        }
+        (ids.len(), changes)
+    }
+
     pub(crate) fn apply_body_change(
         &mut self,
         id: BodyId,
         change: BodyStateChange3d,
     ) -> Result<(), RotatingWorldError3d> {
+        let changes_motion = self.boxes.get(&id).is_some_and(|body| match change {
+            BodyStateChange3d::Position(position) => body.body.position != position,
+            BodyStateChange3d::StopMotion => {
+                body.body.kind == BodyKind::Dynamic
+                    && (body.body.velocity != Vec3i::ZERO
+                        || !body.angular.angular_velocity.is_zero())
+            }
+            BodyStateChange3d::SleepProxy(_) => false,
+        });
+        if changes_motion {
+            self.record_interval_motion(id);
+        }
         let body = self
             .boxes
             .get_mut(&id)
@@ -873,6 +978,7 @@ impl RotatingWorld3d {
             {
                 geometry_changed_ids.insert(id);
             }
+            self.record_interval_motion(id);
             self.boxes.insert(id, rigid_box);
             changed_body_ids.insert(id);
         }

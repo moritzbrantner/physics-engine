@@ -36,6 +36,7 @@ pub struct RotatingWorld3d {
     parked: BTreeMap<BodyId, RigidBox3d>,
     parked_wake_index: RotatingBoundsIndex3d,
     active_dynamic_count: usize,
+    interval_parked: Option<BTreeMap<BodyId, Option<RigidBox3d>>>,
     #[cfg(test)]
     dependency_queries: std::cell::Cell<usize>,
 }
@@ -48,6 +49,7 @@ impl RotatingWorld3d {
             parked: BTreeMap::new(),
             parked_wake_index: RotatingBoundsIndex3d::default(),
             active_dynamic_count: 0,
+            interval_parked: None,
             #[cfg(test)]
             dependency_queries: std::cell::Cell::new(0),
         }
@@ -261,6 +263,103 @@ impl RotatingWorld3d {
         self.active.body_overlaps(body)
     }
 
+    /// Advances a box-only interval atomically. Reports are cleared on any returned error.
+    /// Only touched motion/sleep/parking state is journaled; scene membership cannot change here.
+    pub fn advance_interval(
+        &mut self,
+        config: crate::RotatingIntervalConfig3d,
+        reports: &mut Vec<RotatingWorldStepReport3d>,
+    ) -> Result<crate::RotatingIntervalWork3d, Box<crate::RotatingIntervalFailure3d>> {
+        use crate::{RotatingIntervalError3d, RotatingIntervalFailure3d, RotatingIntervalWork3d};
+        reports.clear();
+        let invalid = |error| {
+            Box::new(RotatingIntervalFailure3d {
+                error,
+                work: RotatingIntervalWork3d::default(),
+            })
+        };
+        let denominator = config.substep_denominator().map_err(invalid)?;
+        if self.active.ballistic_sphere_count() != 0 {
+            return Err(invalid(RotatingIntervalError3d::BallisticBodiesUnsupported));
+        }
+        let active_count_before = self.active_dynamic_count;
+        let counters_before = self.active.contact_work_counters();
+        self.interval_parked = Some(BTreeMap::new());
+        self.active.begin_interval();
+        let mut work = RotatingIntervalWork3d::default();
+        let mut error = None;
+        for _ in 0..config.substeps {
+            match self.step(config.timestep_numerator, denominator) {
+                Ok(report) => {
+                    reports.push(report);
+                    work.completed_substeps += 1;
+                }
+                Err(cause) => {
+                    error = Some(cause);
+                    break;
+                }
+            }
+        }
+        if error.is_none() {
+            let (visits, changed) = self
+                .active
+                .damp_interval_angular_velocity(config.angular_damping_milli);
+            work.damping_body_visits = visits;
+            work.damping_changes = changed.len();
+            if !changed.is_empty()
+                && let Some(report) = reports.last_mut()
+            {
+                let mut ids = report
+                    .changed_body_ids
+                    .iter()
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                ids.extend(changed);
+                report.changed_body_ids = ids.into_iter().collect();
+            }
+        }
+        let counters_after = self.active.contact_work_counters();
+        work.contact_work = std::array::from_fn(|index| {
+            counters_after[index].saturating_sub(counters_before[index])
+        });
+        let rollback = error.is_some();
+        (work.motion_before_images, work.sleep_before_images) =
+            self.active.finish_interval(rollback);
+        let parked = self.interval_parked.take().expect("interval was begun");
+        work.parked_before_images = parked.len();
+        if rollback {
+            for (id, original) in parked {
+                self.parked_wake_index.remove(id);
+                if let Some(body) = original {
+                    self.parked_wake_index
+                        .insert_stationary(&body)
+                        .expect("original parked bounds were validated");
+                    self.parked.insert(id, body);
+                } else {
+                    self.parked.remove(&id);
+                }
+            }
+            self.active_dynamic_count = active_count_before;
+            reports.clear();
+        }
+        if let Some(error) = error {
+            Err(Box::new(RotatingIntervalFailure3d {
+                error: RotatingIntervalError3d::World(error),
+                work,
+            }))
+        } else {
+            Ok(work)
+        }
+    }
+
+    fn record_interval_parked(&mut self, id: BodyId) {
+        if let Some(journal) = &mut self.interval_parked {
+            journal
+                .entry(id)
+                .or_insert_with(|| self.parked.get(&id).cloned());
+        }
+    }
+
     pub fn step(
         &mut self,
         timestep_numerator: i32,
@@ -373,6 +472,7 @@ impl RotatingWorld3d {
                 .box_by_id(id)
                 .cloned()
                 .ok_or(RotatingWorldError3d::MissingBody(id))?;
+            self.record_interval_parked(id);
             self.active.transition_parked_body(id, BodyKind::Fixed)?;
             self.active_dynamic_count = self.active_dynamic_count.saturating_sub(1);
             self.parked.insert(id, rigid_box);
@@ -392,6 +492,7 @@ impl RotatingWorld3d {
         if !self.parked.contains_key(&id) {
             return Ok(false);
         }
+        self.record_interval_parked(id);
         self.active.transition_parked_body(id, BodyKind::Dynamic)?;
         self.parked.remove(&id);
         self.parked_wake_index.remove(id);

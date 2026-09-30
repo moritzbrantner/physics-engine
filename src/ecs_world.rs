@@ -260,6 +260,18 @@ impl EcsRotatingWorld3d {
         })
     }
 
+    /// Advances a uniformly partitioned rigid-box interval with complete returned-error rollback.
+    /// Physical state, sleep deadlines, and parked membership are restored after a failed substep.
+    /// Ballistic worlds are rejected before mutation. Derived search caches may be discarded on error.
+    pub fn advance_interval(
+        &mut self,
+        config: crate::RotatingIntervalConfig3d,
+        reports: &mut Vec<RotatingWorldStepReport3d>,
+    ) -> Result<crate::RotatingIntervalWork3d, Box<crate::RotatingIntervalFailure3d>> {
+        let prepared = self.fixed_geometry.clone();
+        with_fixed_geometry_context(&prepared, || self.physics.advance_interval(config, reports))
+    }
+
     pub(crate) fn with_prepared_fixed_geometry<R>(&self, callback: impl FnOnce() -> R) -> R {
         with_fixed_geometry_context(&self.fixed_geometry, callback)
     }

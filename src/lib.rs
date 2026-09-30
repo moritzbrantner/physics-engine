@@ -137,6 +137,7 @@ mod rotating_contact_search;
 #[allow(dead_code)]
 #[path = "rotating_contact_search.rs"]
 mod rotating_contact_search_reference;
+mod rotating_interval;
 #[path = "rotating_recontact_search_ordered.rs"]
 mod rotating_recontact_search;
 #[cfg(test)]
@@ -230,3 +231,8 @@ pub use world::{
 };
 
 pub mod approximate;
+
+pub use rotating_interval::{
+    RotatingIntervalConfig3d, RotatingIntervalError3d, RotatingIntervalFailure3d,
+    RotatingIntervalWork3d,
+};

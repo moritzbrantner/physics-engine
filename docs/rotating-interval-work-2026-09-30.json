@@ -1,0 +1,310 @@
+{
+  "sourceRevision": "4442c768473feae041bc569eb49881b854011b42",
+  "conventionsSourceRevision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "target": "x86_64-unknown-linux-gnu",
+  "command": "cargo run --release --locked --example rotating_interval_work",
+  "protocol": {
+    "trials": 3,
+    "warmup_calls": 64,
+    "timed_calls": 256,
+    "substeps": 4,
+    "angular_damping_milli": 1000,
+    "order": "alternating paired control and atomic trials",
+    "control": "same build, four ordinary step(1,240) calls, collecting the same reports",
+    "candidate": "same build, one advance_interval(1/60,4) call",
+    "timing_boundary": "complete public engine call(s), including returned reports and transaction preparation/commit; excludes scene construction, explicit test-world clone, parity checks and ECS conversion/writeback",
+    "parity": "final full rigid body state, per-body sleeping state and complete final substep reports, checked outside timing",
+    "memory_scope": "journal entry counts only; excludes tree/allocator overhead, fixed-geometry cache, solver scratch and RSS",
+    "sampling_limits": "three advisory native trials; sub-microsecond parked timings and low-single-digit changes are not claims of a consumer speedup"
+  },
+  "summaries": [
+    {
+      "scene": "quiet-128",
+      "control_median_microseconds_per_call": 0.55358203125,
+      "atomic_median_microseconds_per_call": 0.523328125,
+      "change_percent": -5.465117099571682
+    },
+    {
+      "scene": "active-4",
+      "control_median_microseconds_per_call": 23.18234375,
+      "atomic_median_microseconds_per_call": 24.56279296875,
+      "change_percent": 5.954743979456345
+    },
+    {
+      "scene": "sparse-512",
+      "control_median_microseconds_per_call": 1526.58756640625,
+      "atomic_median_microseconds_per_call": 1521.15112109375,
+      "change_percent": -0.35611748923765063
+    },
+    {
+      "scene": "active-512",
+      "control_median_microseconds_per_call": 5475.47674609375,
+      "atomic_median_microseconds_per_call": 5567.440890625,
+      "change_percent": 1.6795641511373027
+    },
+    {
+      "scene": "contacts-32",
+      "control_median_microseconds_per_call": 2250.36179296875,
+      "atomic_median_microseconds_per_call": 2256.1101484375,
+      "change_percent": 0.2554413911003417
+    }
+  ],
+  "trials": [
+    {
+      "scene": "quiet-128",
+      "trial": 0,
+      "calls": 256,
+      "control_ns": 141717,
+      "atomic_ns": 136046,
+      "motion_entries": 0,
+      "sleep_entries": 0,
+      "parked_entries": 0,
+      "contact_work": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "quiet-128",
+      "trial": 1,
+      "calls": 256,
+      "control_ns": 140144,
+      "atomic_ns": 133972,
+      "motion_entries": 0,
+      "sleep_entries": 0,
+      "parked_entries": 0,
+      "contact_work": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "quiet-128",
+      "trial": 2,
+      "calls": 256,
+      "control_ns": 172094,
+      "atomic_ns": 130375,
+      "motion_entries": 0,
+      "sleep_entries": 0,
+      "parked_entries": 0,
+      "contact_work": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "active-4",
+      "trial": 0,
+      "calls": 256,
+      "control_ns": 6192355,
+      "atomic_ns": 8265156,
+      "motion_entries": 4,
+      "sleep_entries": 4,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "active-4",
+      "trial": 1,
+      "calls": 256,
+      "control_ns": 5934680,
+      "atomic_ns": 6234083,
+      "motion_entries": 4,
+      "sleep_entries": 4,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "active-4",
+      "trial": 2,
+      "calls": 256,
+      "control_ns": 5897560,
+      "atomic_ns": 6288075,
+      "motion_entries": 4,
+      "sleep_entries": 4,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "sparse-512",
+      "trial": 0,
+      "calls": 256,
+      "control_ns": 399751683,
+      "atomic_ns": 398871557,
+      "motion_entries": 4,
+      "sleep_entries": 4,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "sparse-512",
+      "trial": 1,
+      "calls": 256,
+      "control_ns": 383972505,
+      "atomic_ns": 384641574,
+      "motion_entries": 4,
+      "sleep_entries": 4,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "sparse-512",
+      "trial": 2,
+      "calls": 256,
+      "control_ns": 390806417,
+      "atomic_ns": 389414687,
+      "motion_entries": 4,
+      "sleep_entries": 4,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "active-512",
+      "trial": 0,
+      "calls": 256,
+      "control_ns": 1386664668,
+      "atomic_ns": 1417793376,
+      "motion_entries": 512,
+      "sleep_entries": 512,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "active-512",
+      "trial": 1,
+      "calls": 256,
+      "control_ns": 1401722047,
+      "atomic_ns": 1425264868,
+      "motion_entries": 512,
+      "sleep_entries": 512,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "active-512",
+      "trial": 2,
+      "calls": 256,
+      "control_ns": 1404838634,
+      "atomic_ns": 1426507948,
+      "motion_entries": 512,
+      "sleep_entries": 512,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "contacts-32",
+      "trial": 0,
+      "calls": 256,
+      "control_ns": 577116075,
+      "atomic_ns": 580443798,
+      "motion_entries": 32,
+      "sleep_entries": 32,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "contacts-32",
+      "trial": 1,
+      "calls": 256,
+      "control_ns": 576092619,
+      "atomic_ns": 577564198,
+      "motion_entries": 32,
+      "sleep_entries": 32,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    },
+    {
+      "scene": "contacts-32",
+      "trial": 2,
+      "calls": 256,
+      "control_ns": 575550358,
+      "atomic_ns": 577094645,
+      "motion_entries": 32,
+      "sleep_entries": 32,
+      "parked_entries": 0,
+      "contact_work": [
+        4,
+        8,
+        0,
+        0
+      ],
+      "parity": true
+    }
+  ]
+}

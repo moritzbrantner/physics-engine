@@ -23,6 +23,10 @@ cargo build --manifest-path demo-wasm/Cargo.toml --example shape-query-contract 
   --target wasm32-unknown-unknown --release --locked
 node scripts/test-shape-query-wasm.mjs \
   demo-wasm/target/wasm32-unknown-unknown/release/examples/shape_query_contract.wasm
+cargo build --manifest-path demo-wasm/Cargo.toml --example rotating-interval-contract \
+  --target wasm32-unknown-unknown --release --locked
+node scripts/test-rotating-interval-wasm.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/examples/rotating_interval_contract.wasm
 cargo build \
   --manifest-path demo-wasm/Cargo.toml \
   --target wasm32-unknown-unknown \
