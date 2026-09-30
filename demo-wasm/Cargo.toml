@@ -21,3 +21,8 @@ physics-engine = { path = ".." }
 name = "checkpoint-continuation"
 crate-type = ["cdylib"]
 test = true
+
+[[example]]
+name = "shape-query-contract"
+crate-type = ["cdylib"]
+test = true
