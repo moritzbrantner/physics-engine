@@ -1,5 +1,5 @@
 use physics_engine::{
-    AngularState3d, AngularVelocity3d, BodyId, FixedGeometryPreparationMode3d,
+    AngularState3d, AngularVelocity3d, BodyId, CollisionLayers3d, FixedGeometryPreparationMode3d,
     InteractionCategory3d, Material, MotionAuthority3d, Orientation3d, RigidBody, RigidBox3d,
     RotatingIntervalConfig3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, Vec3i,
 };
@@ -368,4 +368,35 @@ pub fn overlap_only_edits_preserve_sleep_and_refresh_contact_eligibility() {
         .unwrap();
     assert!(world.body_contacts(BodyId(1)).unwrap().is_empty());
     assert_eq!(world.body_overlaps(BodyId(1)).unwrap(), vec![BodyId(2)]);
+}
+
+#[cfg_attr(test, test)]
+pub fn newly_eligible_layers_wake_a_dependency_beyond_the_replacement_bounds() {
+    let mut world = world();
+    let eligible = CollisionLayers3d::new(2, 2);
+    world
+        .add_box(body(1, Vec3i::new(4, 0, 0)).with_collision_layers(eligible))
+        .unwrap();
+    world.step(1, 1).unwrap();
+    assert!(world.is_sleeping(BodyId(1)));
+    world
+        .add_box(
+            body(2, Vec3i::new(2, 0, 0))
+                .with_collision_layers(eligible)
+                .with_external_motion(),
+        )
+        .unwrap();
+    world
+        .add_box(body(3, Vec3i::ZERO).with_collision_layers(CollisionLayers3d::new(1, 1)))
+        .unwrap();
+    assert!(
+        world
+            .replace_box(body(3, Vec3i::ZERO).with_collision_layers(eligible))
+            .unwrap()
+    );
+    assert!(
+        !world.is_sleeping(BodyId(1)),
+        "newly eligible contact with the awake intermediary admits its parked dependency"
+    );
+    assert_eq!(world.body_contacts(BodyId(3)).unwrap()[0].other, BodyId(2));
 }

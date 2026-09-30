@@ -200,7 +200,15 @@ impl RotatingWorld3d {
         };
         let mut affected = BTreeSet::new();
         if replacement.solver_participation() == SolverParticipation3d::Solid {
-            let mut candidates = self.active.overlap_query(replacement.oriented_box())?;
+            // A same-pose replacement can change layers or participation. The known-body
+            // overlap shortcut would reuse the old descriptor's eligibility, losing new contacts.
+            // Borrow active dynamic membership and admit each candidate using the replacement.
+            let mut candidates = self
+                .active
+                .boxes()
+                .filter(|body| body.body().kind() == BodyKind::Dynamic)
+                .map(|body| body.body().id())
+                .collect::<Vec<_>>();
             candidates.extend(self.parked_wake_index.overlapping_ids(bounds).body_ids);
             candidates.sort_unstable();
             candidates.dedup();
