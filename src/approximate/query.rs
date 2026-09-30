@@ -117,6 +117,10 @@ pub struct QueryStats {
     pub axes_tested: u64,
     pub support_evaluations: u64,
     pub vertex_tests: u64,
+    /// Entered closest-segment problems, including work discarded on query failure.
+    pub segment_distance_evaluations: u64,
+    /// Segment endpoint regions, box slabs/breakpoints and distance candidates visited.
+    pub segment_feature_tests: u64,
     pub ray_queries: u64,
     pub ray_planes_tested: u64,
     pub ray_quadratic_tests: u64,
@@ -341,6 +345,8 @@ fn accumulate(stats: &mut QueryStats, work: PrimitiveWork3) {
     stats.axes_tested += work.axes_tested;
     stats.support_evaluations += work.support_evaluations;
     stats.vertex_tests += work.vertex_tests;
+    stats.segment_distance_evaluations += work.segment_distance_evaluations;
+    stats.segment_feature_tests += work.segment_feature_tests;
 }
 
 #[cfg(test)]

@@ -9,10 +9,16 @@ use physics_engine::{
 
 #[path = "../../tests/capsule_contact_normals.rs"]
 mod capsule_contract;
+#[path = "../../tests/capsule_row_work.rs"]
+mod capsule_row_work;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn run() -> Result<()> {
     ray_contract()?;
+    capsule_row_work::capsule_row_public_queries_report_actual_distance_and_feature_work();
+    capsule_row_work::failed_capsule_search_retains_discarded_distance_work();
+    capsule_row_work::capsule_contacts_report_distance_work_through_physical_steps();
+    capsule_row_work::failed_capsule_step_retains_discarded_distance_work();
     capsule_contract::sphere_on_capsule_skeleton_has_a_certified_public_clearance();
     capsule_contract::crossing_capsules_have_a_certified_public_clearance();
     capsule_contract::collapsed_capsules_retain_the_sphere_clearance_contract();

@@ -42,6 +42,12 @@ pub struct GeometryStats {
     pub primitive_sweep_iterations: u64,
     /// Failed shared-kernel searches, included in discarded work on a returned step error.
     pub primitive_sweep_failures: u64,
+    /// Entered closest segment/point, segment/segment and segment/box problems.
+    /// Includes discarded search work; no scalar instruction-count claim is made.
+    pub primitive_segment_distance_evaluations: u64,
+    /// Segment endpoint regions, box slabs/breakpoints and distance candidates visited.
+    /// Excludes triangle-only features, normal construction and numerical validation.
+    pub primitive_segment_feature_tests: u64,
     pub pair_invalidations: u64,
     pub cached_pairs_peak: u64,
     /// Retained payload capacity, excluding BTreeMap node/allocator overhead.
