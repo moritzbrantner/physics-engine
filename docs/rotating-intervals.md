@@ -58,3 +58,31 @@ the same fixtures three times on WASM and is not shipped in the demo module.
 This slice does not implement the persistent ECS adapter, ECS lifecycle deltas,
 its playground/tower routing, consumer parity or consumer performance acceptance.
 Those remain requirements of ecs-lab#133.
+
+## Complete engine-call comparison
+
+[Recorded native paired trials](rotating-interval-work-2026-09-30.json) use clean
+producer `4442c768473feae041bc569eb49881b854011b42`, Rust 1.98 and resolved
+conventions `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`. Three alternating trials
+per scene warm 64 intervals and time 256 intervals, each containing four solver
+substeps. The same-build control collects the same reports from four ordinary
+`step(1, 240)` commands. Body state, sleep state and final full reports match in
+all 15 pairs, checked outside timing. Construction and ECS conversion/writeback
+are outside this engine-call boundary.
+
+| Scene | Ordinary commands, median µs/interval | Atomic command, median µs/interval | Change |
+| --- | ---: | ---: | ---: |
+| quiet-128 | 0.554 | 0.523 | -5.5% |
+| active-4 | 23.182 | 24.563 | +6.0% |
+| sparse-512 | 1526.588 | 1521.151 | -0.4% |
+| active-512 | 5475.477 | 5567.441 | +1.7% |
+| contacts-32 | 2250.362 | 2256.110 | +0.3% |
+
+The parked case records no journal entries or contact queries. Sparse 512-body
+work records four motion and four sleep images; active 512-body work records 512
+of each. The 32 independent elastic contact corridors record 32 of each.
+These three-trial results are advisory. Sub-microsecond parked timings and small
+percentage changes do not establish an application speedup. The existing legacy
+solver still owns its ordinary scene/working buffers; this transaction introduces
+no full-world rollback snapshot. Consumer construction, metadata, mutation,
+conversion, retained memory and writeback acceptance remain in ecs-lab#133.
