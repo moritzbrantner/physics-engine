@@ -7,6 +7,8 @@ use physics_engine::{
 const DT: f64 = 0.01;
 
 fn close(actual: f64, expected: f64) {
+    // Velocity controls are O(1) scene units/s; impulse/energy controls below are
+    // normalized by their own physical scales before crossing this comparison seam.
     let tolerance = 1e-11 * (1.0 + expected.abs());
     assert!(
         (actual - expected).abs() <= tolerance,
@@ -37,7 +39,8 @@ fn sphere(id: u64, position: V, mass: f64, velocity: V) -> Body {
 fn step(world: &mut World) {
     let before = world.elapsed_seconds();
     let report = world.step(DT).unwrap();
-    close(world.elapsed_seconds() - before, DT);
+    let time_budget = 16.0 * f64::EPSILON * (before.abs() + DT);
+    assert!((world.elapsed_seconds() - before - DT).abs() <= time_budget);
     assert_eq!(report.substeps, 1);
     assert!(report.contact_points > 0);
     assert!(report.impulse_iterations <= 8);
@@ -70,14 +73,17 @@ pub fn restitution_combination_threshold_and_mass_scaling() {
                     let impulse = (1.0 + e) * speed / (1.0 / ma + 1.0 / mb);
                     close(a.velocity.0, speed - impulse / ma);
                     close(b.velocity.0, impulse / mb);
-                    close((a.velocity * ma + b.velocity * mb).0, ma * speed);
+                    close(
+                        (a.velocity * ma + b.velocity * mb).0 / mass_scale,
+                        ma / mass_scale * speed,
+                    );
                     close(b.velocity.0 - a.velocity.0, e * speed);
                     let reduced_mass = ma * mb / (ma + mb);
                     let energy_before = 0.5 * ma * speed * speed;
                     let expected_loss = 0.5 * reduced_mass * (1.0 - e * e) * speed * speed;
                     close(
-                        a.kinetic_energy() + b.kinetic_energy(),
-                        energy_before - expected_loss,
+                        (a.kinetic_energy() + b.kinetic_energy()) / energy_before,
+                        1.0 - expected_loss / energy_before,
                     );
                     assert_eq!(a.angular_velocity, V::ZERO);
                     assert_eq!(b.angular_velocity, V::ZERO);
@@ -190,10 +196,7 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
                 close(body.velocity.1, 0.0);
                 close(body.velocity.2, speed * 0.8);
                 // The vector impulse lies on the disk, not a per-axis square clamp.
-                close(
-                    (initial - body.velocity).length() * mass,
-                    mu * mass * 10.0 * DT,
-                );
+                close((initial - body.velocity).length() / (10.0 * DT), mu);
                 assert!(body.kinetic_energy() <= 0.5 * mass * initial.dot(initial));
             }
             let initial = V::X * 0.02;
@@ -209,8 +212,8 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
                 0.0,
             );
             close(
-                body.kinetic_energy(),
-                0.5 * mass * initial.dot(initial) * 5.0 / 7.0,
+                body.kinetic_energy() / (0.5 * mass * initial.dot(initial)),
+                5.0 / 7.0,
             );
             let linear = sliding_sphere(mass, [0.8, 0.8], V::X * 3.0, true, true, ids);
             close(
@@ -266,6 +269,7 @@ pub fn run() {
     persistent_contact_gates_restitution_even_without_warm_start();
     friction_combination_disk_mass_scaling_and_rotation();
     invalid_materials_and_mass_leave_checkpoint_unchanged();
+    linear_support_direction_and_spin_with_dynamic_endpoints();
     penetration_bias_and_same_target_replay();
 }
 
@@ -286,8 +290,9 @@ pub fn penetration_bias_and_same_target_replay() {
         close(b.velocity.0 - a.velocity.0, separating_speed);
         close(a.velocity.0 + 3.0 * b.velocity.0, 0.0);
         close(
-            a.kinetic_energy() + b.kinetic_energy(),
-            0.5 * 0.75 * separating_speed * separating_speed,
+            (a.kinetic_energy() + b.kinetic_energy())
+                / (0.5 * 0.75 * separating_speed * separating_speed),
+            1.0,
         );
         let mut history = vec![w.checkpoint(context).unwrap().to_bytes()];
         for _ in 0..16 {
@@ -297,4 +302,62 @@ pub fn penetration_bias_and_same_target_replay() {
         history
     }
     assert_eq!(trace(), trace());
+}
+
+pub fn linear_support_direction_and_spin_with_dynamic_endpoints() {
+    for ids in [[1, 2], [2, 1]] {
+        for direction in [V::X, -V::X] {
+            for support_on_left in [false, true] {
+                let mut w = world(V::ZERO, true);
+                let mut left = sphere(ids[0], -V::X, 1.0, V(2.0, 3.0, 0.0));
+                let mut right = sphere(ids[1], V::X, 1.0, -V::X * 2.0);
+                for body in [&mut left, &mut right] {
+                    body.rotation_locked = false;
+                    body.friction = 1.0;
+                }
+                if support_on_left {
+                    left.linear_support = Some(direction);
+                } else {
+                    right.linear_support = Some(direction);
+                }
+                w.add_body(left).unwrap();
+                w.add_body(right).unwrap();
+                step(&mut w);
+                let left = w.body(BodyId(ids[0])).unwrap();
+                let right = w.body(BodyId(ids[1])).unwrap();
+                // A support pointing through the pair makes only that endpoint respond.
+                let expected = if support_on_left && direction == V::X {
+                    [-2.0, -2.0]
+                } else if !support_on_left && direction == -V::X {
+                    [2.0, 2.0]
+                } else {
+                    [0.0, 0.0]
+                };
+                close(left.velocity.0, expected[0]);
+                close(right.velocity.0, expected[1]);
+                close(left.velocity.1, 3.0);
+                close(right.velocity.1, 0.0);
+                assert_eq!(left.angular_velocity, V::ZERO);
+                assert_eq!(right.angular_velocity, V::ZERO);
+            }
+        }
+    }
+    // Reciprocal control: the same tangential slip produces spin without linear support.
+    let mut w = world(V::ZERO, true);
+    let mut left = sphere(1, -V::X, 1.0, V(2.0, 3.0, 0.0));
+    let mut right = sphere(2, V::X, 1.0, -V::X * 2.0);
+    for body in [&mut left, &mut right] {
+        body.rotation_locked = false;
+        body.friction = 1.0;
+    }
+    w.add_body(left).unwrap();
+    w.add_body(right).unwrap();
+    step(&mut w);
+    let left = w.body(BodyId(1)).unwrap();
+    let right = w.body(BodyId(2)).unwrap();
+    // Both inverse masses plus two r^2/I contributions give contact effective mass 1/7.
+    close(left.velocity.1, 3.0 - 3.0 / 7.0);
+    close(right.velocity.1, 3.0 / 7.0);
+    close(left.angular_velocity.2, -7.5 / 7.0);
+    close(right.angular_velocity.2, -7.5 / 7.0);
 }

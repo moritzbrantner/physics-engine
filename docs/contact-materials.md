@@ -82,7 +82,11 @@ unequal masses, fixed supports, speculative arrival, persistent history with/wit
 warm starting, clear/recontact, same-ID replacement, maximum friction, diagonal
 Coulomb limiting, sticking, spin, rotation lock, linear support and invalid admission.
 The mass scales are `1e-6`, `1` and `1e6`; formulas use explicit absolute/relative
-roundoff tolerances. A 17-boundary penetration trace also compares complete physical
+roundoff tolerances. Momentum, impulse and energy checks normalize by their physical
+reference scales, retaining the same strict relative accuracy at small masses.
+Unlocked dynamic endpoint controls distinguish both linear-support directions and
+spin suppression from rotation locking, including the reciprocal friction control.
+A 17-boundary penetration trace also compares complete physical
 checkpoints exactly across repeated runs on each build/target.
 
 Each contact control uses one substep, at most eight velocity passes, no convergence
