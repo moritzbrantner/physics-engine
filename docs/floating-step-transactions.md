@@ -52,3 +52,7 @@ Fingerprint: Rust 1.98.0, `x86_64-unknown-linux-gnu`, release profile, empty RUS
 ## Remaining migration boundary
 
 This completes the returned-error transaction slice for this selected floating world. The separate [physical checkpoint slice](floating-checkpoints.md) now preserves continuation history. General public character/query support, analytic rotational CCD and multiplayer solver adoption remain pending. Those acceptance criteria remain under #198, #194 and #3. MMORPG still uses the translational World adopted in PR #47; changing that authority requires its separate canonical/recovery/gameplay acceptance.
+
+Shared capsule/wedge search failures also return through this rollback boundary.
+See [checked primitive searches](checked-primitive-sweeps.md) for ordered pair/reason
+errors, unchanged budgets and discarded-work counters.

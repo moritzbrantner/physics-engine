@@ -3,7 +3,7 @@
 //! Reuse complete current-contact results only for bit-identical poses/shapes/margins. Translations
 //! still run SAT and clipping, but unchanged orientations reuse frames and support projections.
 //! Velocity, timestep and response state are not geometric keys: CCD always runs fresh after a miss.
-use super::{Body, BodyId, Quaternion, Scalar, Shape, Vector, contact};
+use super::{Body, BodyId, Quaternion, Scalar, Shape, SweepFailure, Vector, contact};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -40,6 +40,8 @@ pub struct GeometryStats {
     pub primitive_vertex_tests: u64,
     /// Conservative-advance or swept-SAT iterations for new primitive CCD.
     pub primitive_sweep_iterations: u64,
+    /// Failed shared-kernel searches, included in discarded work on a returned step error.
+    pub primitive_sweep_failures: u64,
     pub pair_invalidations: u64,
     pub cached_pairs_peak: u64,
     /// Retained payload capacity, excluding BTreeMap node/allocator overhead.
@@ -181,14 +183,22 @@ impl GeometryCache {
         dt: Scalar,
         margin: Scalar,
         work: &mut GeometryStats,
-    ) -> Option<contact::Manifold> {
+    ) -> Result<Option<contact::Manifold>, SweepFailure> {
         let [a, b] = bodies;
         if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
             let frames = [
                 self.frame(indices[0], a, work),
                 self.frame(indices[1], b, work),
             ];
-            contact::box_swept_with_frames(a, b, dt, margin, frames, work, &mut self.clipping)
+            Ok(contact::box_swept_with_frames(
+                a,
+                b,
+                dt,
+                margin,
+                frames,
+                work,
+                &mut self.clipping,
+            ))
         } else {
             contact::swept(a, b, dt, margin, work)
         }
