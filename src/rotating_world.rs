@@ -463,6 +463,9 @@ impl RotatingWorld3d {
             .collect::<Vec<_>>();
         let mut changes = Vec::new();
         for id in &ids {
+            if self.boxes[id].motion_authority() == crate::MotionAuthority3d::External {
+                continue;
+            }
             let old = self.boxes[id].angular.angular_velocity;
             let damp = |value: i32| {
                 i32::try_from(i64::from(value) * i64::from(milli) / 1000)

@@ -15,8 +15,9 @@ no-op physical and sleep-history contract.
 On success, the caller's reusable report vector contains every completed substep
 in order. Angular damping is applied once, after the complete interval, using the
 existing integer milli scale and truncation toward zero. The last report includes
-any damping changes in its sorted `changed_body_ids`. Damping visits the retained
-active dynamic partition; it does not visit fixed geometry or parked dynamics.
+any damping changes in its sorted `changed_body_ids`. Caller-owned angular velocity on externally driven bodies is preserved. Damping
+visits the retained active dynamic partition, counting externally driven entries
+that it skips; it does not visit fixed geometry or parked dynamics.
 
 On any returned solver error, the vector is cleared and all interval changes to
 body motion, sleep deadlines/candidate membership, boundary obligations and parked
@@ -50,7 +51,7 @@ first step, restoring a newly parked body and its deadline, restoring an admitte
 wake and subsequent impacts, successful partition equivalence, once-per-interval
 damping, invalid/zero intervals, ballistic rejection, and a fully parked 128-body
 zero-journal/zero-contact-work interval, and fixed-preparation parity after rollback,
-support removal and ID reuse. The separate Pages acceptance driver runs
+support removal, ID reuse and external motion authority. The separate Pages acceptance driver runs
 the same fixtures three times on WASM and is not shipped in the demo module.
 
 This slice does not implement the persistent ECS adapter, ECS lifecycle deltas,

@@ -332,3 +332,56 @@ pub fn fixed_preparation_remains_equivalent_after_rollback_and_id_reuse() {
         worlds[1].body_contacts(BodyId(3)).unwrap()
     );
 }
+
+#[cfg_attr(test, test)]
+pub fn interval_damping_preserves_externally_owned_angular_velocity() {
+    let mut world = world();
+    let angular = AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::new(1200, 0, 0));
+    for (id, external) in [(1, false), (2, true)] {
+        let body = RigidBox3d::new(
+            RigidBody::dynamic(
+                BodyId(id),
+                Vec3i::new(i32::try_from(id).unwrap() * 1000, 0, 0),
+                Vec3i::ZERO,
+                Vec3i::new(100, 100, 100),
+            ),
+            angular,
+        )
+        .unwrap();
+        world
+            .add_box(if external {
+                body.with_external_motion()
+            } else {
+                body
+            })
+            .unwrap();
+    }
+    let mut reports = Vec::new();
+    let work = world
+        .advance_interval(
+            RotatingIntervalConfig3d {
+                angular_damping_milli: 750,
+                ..interval()
+            },
+            &mut reports,
+        )
+        .unwrap();
+    assert_eq!(
+        world
+            .box_by_id(BodyId(2))
+            .unwrap()
+            .angular()
+            .angular_velocity,
+        angular.angular_velocity
+    );
+    assert_eq!(
+        world
+            .box_by_id(BodyId(1))
+            .unwrap()
+            .angular()
+            .angular_velocity,
+        AngularVelocity3d::new(900, 0, 0)
+    );
+    assert_eq!(work.damping_body_visits, 2);
+    assert_eq!(work.damping_changes, 1);
+}

@@ -13,5 +13,6 @@ pub extern "C" fn rotating_interval_contract() -> i32 {
     contract::fully_parked_intervals_do_not_copy_stationary_scene_state();
     contract::ballistic_membership_is_rejected_before_interval_work();
     contract::fixed_preparation_remains_equivalent_after_rollback_and_id_reuse();
+    contract::interval_damping_preserves_externally_owned_angular_velocity();
     0
 }
