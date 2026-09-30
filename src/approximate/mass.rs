@@ -1,0 +1,115 @@
+//! Physical scaling of reusable uniform-solid geometric products.
+
+use super::{Shape, Vector, primitive};
+use crate::numeric::Scalar;
+
+/// Uniform-solid products in the shape's local frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MassProperties {
+    pub mass: Scalar,
+    pub volume: Scalar,
+    /// Offset from the existing shape origin, in scene length units.
+    pub local_center_of_mass: Vector,
+    /// Inertia about the center of mass, in mass * scene length squared units.
+    /// Rows and columns follow local X/Y/Z; off-diagonal products are included.
+    pub local_inertia: [[Scalar; 3]; 3],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MassPropertiesError {
+    InvalidDimensions,
+    InvalidMass,
+    Unrepresentable,
+}
+
+impl Shape {
+    /// Compute uniform volume, center of mass and the full local inertia tensor.
+    ///
+    /// Uses the same dimension and positive dynamic mass ranges as floating bodies:
+    /// positive dimensions and mass in `[1e-6, 1e12)`, capsule half-segment in
+    /// `[0, 1e12)`. Zero mass is an immovable-body policy, not a uniform-solid mass.
+    /// Wedge products describe its geometric COM; they do not change the existing
+    /// origin-based body pose or enable rotation for solver-owned dynamic wedges.
+    pub fn mass_properties(self, mass: Scalar) -> Result<MassProperties, MassPropertiesError> {
+        if !self.valid_dimensions() {
+            return Err(MassPropertiesError::InvalidDimensions);
+        }
+        if !mass.is_finite() || !(1e-6..1e12).contains(&mass) {
+            return Err(MassPropertiesError::InvalidMass);
+        }
+        let geometry =
+            primitive::volume_properties(self).map_err(|_| MassPropertiesError::Unrepresentable)?;
+        let moment = geometry.normalized_second_moment;
+        // Sum the other diagonals directly to avoid trace-minus-diagonal cancellation.
+        let local_inertia = [
+            [
+                mass * (moment[1][1] + moment[2][2]),
+                -mass * moment[0][1],
+                -mass * moment[0][2],
+            ],
+            [
+                -mass * moment[1][0],
+                mass * (moment[0][0] + moment[2][2]),
+                -mass * moment[1][2],
+            ],
+            [
+                -mass * moment[2][0],
+                -mass * moment[2][1],
+                mass * (moment[0][0] + moment[1][1]),
+            ],
+        ];
+        if local_inertia
+            .iter()
+            .flatten()
+            .any(|value| !value.is_finite())
+            || (0..3).any(|axis| local_inertia[axis][axis] <= 0.0)
+        {
+            return Err(MassPropertiesError::Unrepresentable);
+        }
+        Ok(MassProperties {
+            mass,
+            volume: geometry.volume,
+            local_center_of_mass: Vector(
+                geometry.centroid[0],
+                geometry.centroid[1],
+                geometry.centroid[2],
+            ),
+            local_inertia,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_inertia_agrees_with_existing_solver_coefficients() {
+        for scale in [1e-6, 1.0, 1e6, 1e11] {
+            for shape in [
+                Shape::Sphere(scale),
+                Shape::Box(Vector(scale, 2.0 * scale, 3.0 * scale)),
+                Shape::capsule(0.0, scale),
+                Shape::capsule(0.01 * scale, scale),
+                Shape::capsule(3.0 * scale, scale),
+            ] {
+                for mass in [1e-6, 1.0, 1e11] {
+                    let properties = shape.mass_properties(mass).unwrap();
+                    let inverse = shape.local_inverse_inertia(mass).unwrap();
+                    for (axis, inverse) in [inverse.0, inverse.1, inverse.2].into_iter().enumerate()
+                    {
+                        let actual = properties.local_inertia[axis][axis] * inverse;
+                        assert!(
+                            (actual - 1.0).abs() <= 2e-14,
+                            "{shape:?} mass {mass}: {actual}"
+                        );
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            Shape::wedge(Vector(1.0, 2.0, 3.0)).local_inverse_inertia(1.0),
+            None
+        );
+    }
+}

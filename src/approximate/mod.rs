@@ -9,8 +9,10 @@
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
 mod bookkeeping;
 mod contact;
+mod mass;
 mod position;
 mod primitive;
+pub use mass::{MassProperties, MassPropertiesError};
 mod query;
 pub use position::PositionReport;
 pub use query::{
