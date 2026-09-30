@@ -1,0 +1,3501 @@
+{
+  "schema": "physics-dense-contact-quality/v1",
+  "code_revision": {
+    "revision": "9a0c00846b1f8a20896c8c09371bf4775fe4cd3a",
+    "tree": "9bfaa8f52650521d9e526fb79a281dfb2f242e8d",
+    "dirty": false
+  },
+  "conventions_source_revision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "thresholds": {
+    "floor": 0.5,
+    "boxOverlap": 1.8,
+    "unforcedDisplacement": 1.8
+  },
+  "environment": {
+    "node": "v24.16.0",
+    "platform": "linux",
+    "arch": "x64",
+    "cpu": "AMD Ryzen 7 5700X 8-Core Processor",
+    "logical_cpus": 16
+  },
+  "policy": {
+    "convergence_scope": "contact-islands",
+    "position_correction": "admitted-contacts",
+    "soft_contact": false
+  },
+  "wasm_sha256": "6eeac24817b1be16d41480b4eaef6fb9dc885be86b29bf3ce6179d19bf15e68a",
+  "native_method": "24 release-native traces: 300/1200 ticks \u00d7 32/64/128 boxes \u00d7 unforced/mixed \u00d7 two repeats. Tick QA uses the fixture independent OBB SAT. State hashes are same-build DefaultHasher observations, not portable hashes. Native and WASM differ; both must independently repeat/pass.",
+  "memory_scope": "WASM reports bookkeeping+geometry+island+transaction vector payload; bookkeeping already includes position scratch. Excludes authoritative bodies/contact history, response/constraint storage, tree/allocator overhead and RSS. Native log reports bookkeeping+geometry subset only.",
+  "timing_scope": "One real WASM f64 world step, including scheduled projectile insertion/lifecycle. Excludes all observations, independent geometric QA, hashing, rendering and JS loop.",
+  "baseline_source": {
+    "revision": "8e50e995d5b8829d116a4646eab3b56fe1926405",
+    "tree": "d9e471368e8be7c3570510734c0c9bf4ef7778eb",
+    "dirty": false
+  },
+  "baseline_wasm_sha256": "db2d441a617b8950921475dcb7d44283b559370311ae487c01d39a39e6654619",
+  "baseline_failed_runs_are_not_performance_denominators": true,
+  "baseline_300_tick_controls": [
+    {
+      "scene": "sustained-stack",
+      "boxes": 32,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.06515497779588486,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 160.23666666666668,
+        "peak_displacement": 0.16171478103811116,
+        "peak_surface_speed": 7.244352206078053,
+        "peak_energy": 116.18600729573932,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.216661649999994,
+          "p95_ms": 3.4021450000000186,
+          "max_ms": 3.7457410000000095,
+          "total_ms": 192.99969899999965
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 3.2554701625000013,
+          "p95_ms": 3.2948330000000396,
+          "max_ms": 3.733127999999965,
+          "total_ms": 781.3128390000003
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 1360,
+        "contact_points": 691900,
+        "pair_tests": 403029,
+        "narrow_tests": 228895,
+        "integrated_bodies": 38400,
+        "constraint_visits": 5535200,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 10880,
+        "position_corrections": 709,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "0213a2ad2c91228faec16fbeb175d670abe87652e33ad475ac6366073d07bfbb",
+      "repeatable": true
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 32,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.38512296399282064,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 76.44,
+        "peak_displacement": 16.385836139051484,
+        "peak_surface_speed": 575.4544793167297,
+        "peak_energy": 328330.49769809074,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.2200999833333372,
+          "p95_ms": 3.577494999999999,
+          "max_ms": 3.6884430000000066,
+          "total_ms": 193.20599900000025
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 1.2257003583333272,
+          "p95_ms": 1.6120240000000194,
+          "max_ms": 3.329287999999906,
+          "total_ms": 294.16808599999854
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2314,
+        "contact_points": 326734,
+        "pair_tests": 343652,
+        "narrow_tests": 167081,
+        "integrated_bodies": 38421,
+        "constraint_visits": 2613872,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 17844,
+        "position_corrections": 8568,
+        "swept_contacts": 5
+      },
+      "replay_sha256": "3a62353190b2a7641146051613813e542f56651af47b9b3643bacb8272881698",
+      "repeatable": true
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 64,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.1371987590933088,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 449,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 291.0966666666667,
+        "peak_displacement": 0.6899275591829764,
+        "peak_surface_speed": 21.041130471343124,
+        "peak_energy": 649.2823567862523,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 8.285797783333344,
+          "p95_ms": 8.793844000000036,
+          "max_ms": 9.037321999999904,
+          "total_ms": 497.1478670000006
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 5.444979712499986,
+          "p95_ms": 7.143657999999959,
+          "max_ms": 7.702209000000039,
+          "total_ms": 1306.7951309999967
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2320,
+        "contact_points": 1238077,
+        "pair_tests": 1428972,
+        "narrow_tests": 506357,
+        "integrated_bodies": 76800,
+        "constraint_visits": 9904616,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 36964,
+        "position_corrections": 9629,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "8677a602eb79a5cc94890fa20d93113e9e2ff6c4da85fa6f260681c9fdcc5715",
+      "repeatable": true
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 64,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.7559622445274385,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 449,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 248.38333333333333,
+        "peak_displacement": 3.1363704790920925,
+        "peak_surface_speed": 113.39533567308781,
+        "peak_energy": 52029.90450452037,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 8.398273383333322,
+          "p95_ms": 8.934959999999592,
+          "max_ms": 9.142699999999877,
+          "total_ms": 503.8964029999993
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 4.216168874999982,
+          "p95_ms": 5.896199999999226,
+          "max_ms": 7.570913000000019,
+          "total_ms": 1011.8805299999958
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2357,
+        "contact_points": 1012243,
+        "pair_tests": 1356503,
+        "narrow_tests": 458577,
+        "integrated_bodies": 76821,
+        "constraint_visits": 8097944,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 37488,
+        "position_corrections": 8105,
+        "swept_contacts": 4
+      },
+      "replay_sha256": "eaeddfee7b82a35b494e1e99b37a6522783a04a5e9ec2cb4a75db66962b1b05c",
+      "repeatable": true
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 128,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.11243868790596423,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1011,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 806.0866666666667,
+        "peak_displacement": 0.4175131927345681,
+        "peak_surface_speed": 14.302182817578343,
+        "peak_energy": 368.38292303258027,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 18.04491328333332,
+          "p95_ms": 18.622245999999905,
+          "max_ms": 20.23618399999941,
+          "total_ms": 1082.6947969999992
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 16.16721820000002,
+          "p95_ms": 17.49692700000014,
+          "max_ms": 19.740139999999883,
+          "total_ms": 3880.132368000004
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2399,
+        "contact_points": 3370806,
+        "pair_tests": 3380085,
+        "narrow_tests": 1245390,
+        "integrated_bodies": 153600,
+        "constraint_visits": 26966448,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 76638,
+        "position_corrections": 18042,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "de4f6dbe1ec870eeb5abaf5811185fb36ffaae85d1123855a7deeb73b89a58a1",
+      "repeatable": true
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 128,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": false,
+        "reasons": [
+          "box-box-penetration"
+        ],
+        "first_failure": {
+          "tick": 122,
+          "seconds": 2.033333333333331,
+          "reasons": [
+            "box-box-penetration"
+          ],
+          "metrics": [
+            1,
+            0.020000000000003126,
+            4.752737337377873,
+            128,
+            530,
+            128,
+            3.9388047753402553,
+            279.8013715623247,
+            144684.83643056283,
+            128,
+            4,
+            4
+          ]
+        },
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 4.752737337377873,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1011,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 582.2866666666666,
+        "peak_displacement": 3.9388047753402553,
+        "peak_surface_speed": 279.8013715623247,
+        "peak_energy": 144684.83643056283,
+        "shots": 6,
+        "retired": 6,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 18.08203435000017,
+          "p95_ms": 18.671196999999665,
+          "max_ms": 20.25697299999956,
+          "total_ms": 1084.9220610000102
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 10.413224412499995,
+          "p95_ms": 13.395967000000383,
+          "max_ms": 17.781011999999464,
+          "total_ms": 2499.1738589999986
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2399,
+        "contact_points": 2385038,
+        "pair_tests": 3216915,
+        "narrow_tests": 1042788,
+        "integrated_bodies": 153642,
+        "constraint_visits": 19080304,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 76404,
+        "position_corrections": 17011,
+        "swept_contacts": 12
+      },
+      "replay_sha256": "761b5748aa6eab21c626dd12fa1dda58dc8f4b85d8eae9b9b43f086660f5999a",
+      "repeatable": true
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 64,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.1371987590933088,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 449,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 291.0966666666667,
+        "peak_displacement": 0.6899275591829764,
+        "peak_surface_speed": 21.041130471343124,
+        "peak_energy": 649.2823567862523,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 8.251215999999962,
+          "p95_ms": 8.789676000000327,
+          "max_ms": 8.997416999998677,
+          "total_ms": 495.0729599999977
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 5.40789764999992,
+          "p95_ms": 7.063337000001411,
+          "max_ms": 7.66436799999974,
+          "total_ms": 1297.8954359999807
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2320,
+        "contact_points": 1238077,
+        "pair_tests": 1428972,
+        "narrow_tests": 506357,
+        "integrated_bodies": 76800,
+        "constraint_visits": 9904616,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 36964,
+        "position_corrections": 9629,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "8677a602eb79a5cc94890fa20d93113e9e2ff6c4da85fa6f260681c9fdcc5715",
+      "repeatable": true
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 32,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.38512296399282064,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 76.44,
+        "peak_displacement": 16.385836139051484,
+        "peak_surface_speed": 575.4544793167297,
+        "peak_energy": 328330.49769809074,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.1767131666666804,
+          "p95_ms": 3.356909000000087,
+          "max_ms": 3.734889999999723,
+          "total_ms": 190.60279000000082
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 1.2181649874999343,
+          "p95_ms": 1.6055729999989126,
+          "max_ms": 3.2121969999989233,
+          "total_ms": 292.3595969999842
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2314,
+        "contact_points": 326734,
+        "pair_tests": 343652,
+        "narrow_tests": 167081,
+        "integrated_bodies": 38421,
+        "constraint_visits": 2613872,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 17844,
+        "position_corrections": 8568,
+        "swept_contacts": 5
+      },
+      "replay_sha256": "3a62353190b2a7641146051613813e542f56651af47b9b3643bacb8272881698",
+      "repeatable": true
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 32,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.06515497779588486,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 160.23666666666668,
+        "peak_displacement": 0.16171478103811116,
+        "peak_surface_speed": 7.244352206078053,
+        "peak_energy": 116.18600729573932,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.173283733333301,
+          "p95_ms": 3.3264410000010685,
+          "max_ms": 3.6513130000003002,
+          "total_ms": 190.39702399999805
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 3.21766621666665,
+          "p95_ms": 3.248814999999013,
+          "max_ms": 3.470202000000427,
+          "total_ms": 772.239891999996
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 1360,
+        "contact_points": 691900,
+        "pair_tests": 403029,
+        "narrow_tests": 228895,
+        "integrated_bodies": 38400,
+        "constraint_visits": 5535200,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 10880,
+        "position_corrections": 709,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "0213a2ad2c91228faec16fbeb175d670abe87652e33ad475ac6366073d07bfbb",
+      "repeatable": true
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 128,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": false,
+        "reasons": [
+          "box-box-penetration"
+        ],
+        "first_failure": {
+          "tick": 122,
+          "seconds": 2.033333333333331,
+          "reasons": [
+            "box-box-penetration"
+          ],
+          "metrics": [
+            1,
+            0.020000000000003126,
+            4.752737337377873,
+            128,
+            530,
+            128,
+            3.9388047753402553,
+            279.8013715623247,
+            144684.83643056283,
+            128,
+            4,
+            4
+          ]
+        },
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 4.752737337377873,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1011,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 582.2866666666666,
+        "peak_displacement": 3.9388047753402553,
+        "peak_surface_speed": 279.8013715623247,
+        "peak_energy": 144684.83643056283,
+        "shots": 6,
+        "retired": 6,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 17.973895733333485,
+          "p95_ms": 18.54238500000065,
+          "max_ms": 20.183694999999716,
+          "total_ms": 1078.433744000009
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 10.384749754166645,
+          "p95_ms": 13.3212769999991,
+          "max_ms": 17.62281400000211,
+          "total_ms": 2492.3399409999947
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2399,
+        "contact_points": 2385038,
+        "pair_tests": 3216915,
+        "narrow_tests": 1042788,
+        "integrated_bodies": 153642,
+        "constraint_visits": 19080304,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 76404,
+        "position_corrections": 17011,
+        "swept_contacts": 12
+      },
+      "replay_sha256": "761b5748aa6eab21c626dd12fa1dda58dc8f4b85d8eae9b9b43f086660f5999a",
+      "repeatable": true
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 128,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.11243868790596423,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1011,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 806.0866666666667,
+        "peak_displacement": 0.4175131927345681,
+        "peak_surface_speed": 14.302182817578343,
+        "peak_energy": 368.38292303258027,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 17.991714333333462,
+          "p95_ms": 18.532936999999947,
+          "max_ms": 20.173156000000745,
+          "total_ms": 1079.5028600000078
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 16.082250758333323,
+          "p95_ms": 17.356002000000444,
+          "max_ms": 17.725828999999067,
+          "total_ms": 3859.7401819999977
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2399,
+        "contact_points": 3370806,
+        "pair_tests": 3380085,
+        "narrow_tests": 1245390,
+        "integrated_bodies": 153600,
+        "constraint_visits": 26966448,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 76638,
+        "position_corrections": 18042,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "de4f6dbe1ec870eeb5abaf5811185fb36ffaae85d1123855a7deeb73b89a58a1",
+      "repeatable": true
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 64,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 300,
+      "elapsed_seconds": 4.999999999999988,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.7559622445274385,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 449,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 248.38333333333333,
+        "peak_displacement": 3.1363704790920925,
+        "peak_surface_speed": 113.39533567308781,
+        "peak_energy": 52029.90450452037,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 8.261778650000087,
+          "p95_ms": 8.798563000000286,
+          "max_ms": 9.084351000001334,
+          "total_ms": 495.70671900000525
+        },
+        "active": {
+          "count": 240,
+          "mean_ms": 4.138030816666454,
+          "p95_ms": 5.795280000002094,
+          "max_ms": 7.430707999999868,
+          "total_ms": 993.1273959999489
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 1200,
+        "velocity_passes": 9600,
+        "position_passes": 2357,
+        "contact_points": 1012243,
+        "pair_tests": 1356503,
+        "narrow_tests": 458577,
+        "integrated_bodies": 76821,
+        "constraint_visits": 8097944,
+        "capped_substeps": 1200,
+        "converged_substeps": 0,
+        "position_contact_tests": 37488,
+        "position_corrections": 8105,
+        "swept_contacts": 4
+      },
+      "replay_sha256": "eaeddfee7b82a35b494e1e99b37a6522783a04a5e9ec2cb4a75db66962b1b05c",
+      "repeatable": true
+    }
+  ],
+  "wasm_1200_tick_controls": [
+    {
+      "scene": "sustained-stack",
+      "boxes": 32,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.06520739498620998,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 145.21916666666667,
+        "peak_displacement": 0.13878698526578706,
+        "peak_surface_speed": 7.875953650042313,
+        "peak_energy": 138.35926196176285,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.3406364999999925,
+          "p95_ms": 3.7554890000000114,
+          "max_ms": 4.013204000000002,
+          "total_ms": 200.43818999999954
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 1.8135751149122805,
+          "p95_ms": 2.016746000000012,
+          "max_ms": 3.3055719999999837,
+          "total_ms": 2067.475631
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 11964,
+        "position_passes": 5110,
+        "contact_points": 2453060,
+        "pair_tests": 1584343,
+        "narrow_tests": 897633,
+        "integrated_bodies": 153600,
+        "constraint_visits": 6142120,
+        "capped_substeps": 393,
+        "converged_substeps": 4407,
+        "position_contact_tests": 691251,
+        "position_corrections": 6085,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "f4a57e1d17ceb017dd6b6873d0863764660dc25c73682489cb847dd4d1aa3e6a",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 743181,
+        "dynamic_contact_tests": 650371,
+        "dynamic_corrections": 4853,
+        "dynamic_sat_axes": 6295154
+      },
+      "peak_reported_scratch_payload_bytes": 332089
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 32,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.3513355477100717,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 31.9975,
+        "mean_touching_pairs": 75.00833333333334,
+        "peak_displacement": 13.31409030581097,
+        "peak_surface_speed": 308.2102789785363,
+        "peak_energy": 159228.38193293192,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.3365980166666684,
+          "p95_ms": 3.662844999999834,
+          "max_ms": 3.985993000000235,
+          "total_ms": 200.1958810000001
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 1.2013320061403416,
+          "p95_ms": 2.01854000000003,
+          "max_ms": 3.4088369999999486,
+          "total_ms": 1369.5184869999894
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 23668,
+        "position_passes": 6871,
+        "contact_points": 1198126,
+        "pair_tests": 1243768,
+        "narrow_tests": 557414,
+        "integrated_bodies": 153621,
+        "constraint_visits": 5960936,
+        "capped_substeps": 2344,
+        "converged_substeps": 2456,
+        "position_contact_tests": 549220,
+        "position_corrections": 97968,
+        "swept_contacts": 5
+      },
+      "replay_sha256": "3a67d4e81affc0d409cc975abce81a3b62d31c30fa4b9e861c90d1404f9cc1f3",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 515998,
+        "dynamic_contact_tests": 495176,
+        "dynamic_corrections": 77576,
+        "dynamic_sat_axes": 6122562
+      },
+      "peak_reported_scratch_payload_bytes": 332089
+    },
+    {
+      "scene": "sleeping-control",
+      "boxes": 32,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.06520739498620998,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 145.21916666666667,
+        "peak_displacement": 0.13878698526578706,
+        "peak_surface_speed": 7.875953650042313,
+        "peak_energy": 138.35926196176285,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.2946493000000223,
+          "p95_ms": 3.719452000000274,
+          "max_ms": 9.137689999999566,
+          "total_ms": 197.67895800000133
+        },
+        "active": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        },
+        "sleeping": {
+          "count": 1140,
+          "mean_ms": 0.0003306578947422965,
+          "p95_ms": 0.00038099999983387534,
+          "max_ms": 0.0017540000008011702,
+          "total_ms": 0.37695000000621803
+        }
+      },
+      "work": {
+        "substeps": 232,
+        "velocity_passes": 1848,
+        "position_passes": 462,
+        "contact_points": 122870,
+        "pair_tests": 76903,
+        "narrow_tests": 43230,
+        "integrated_bodies": 7392,
+        "constraint_visits": 982960,
+        "capped_substeps": 231,
+        "converged_substeps": 0,
+        "position_contact_tests": 63636,
+        "position_corrections": 5715,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "2be9f4c8b9f8658067f3b6afe1855196cdc6c2abfcb49236a4c05f211b483973",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 69076,
+        "dynamic_contact_tests": 59948,
+        "dynamic_corrections": 4483,
+        "dynamic_sat_axes": 554239
+      },
+      "peak_reported_scratch_payload_bytes": 332089
+    },
+    {
+      "scene": "shallow-contact",
+      "boxes": 32,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.0001781187947393903,
+        "peak_box_overlap": 9.090102271613887e-05,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 94,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 94,
+        "peak_displacement": 0.00012769784653464484,
+        "peak_surface_speed": 0.003809814783377378,
+        "peak_energy": 2.973298598391458e-05,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 2.273688149999953,
+          "p95_ms": 2.8417789999994056,
+          "max_ms": 2.930014999999912,
+          "total_ms": 136.42128899999716
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 1.6225847210526265,
+          "p95_ms": 1.6626600000008693,
+          "max_ms": 2.080255999999281,
+          "total_ms": 1849.7465819999943
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 10374,
+        "position_passes": 4800,
+        "contact_points": 2347214,
+        "pair_tests": 921600,
+        "narrow_tests": 604800,
+        "integrated_bodies": 153600,
+        "constraint_visits": 5072998,
+        "capped_substeps": 129,
+        "converged_substeps": 4671,
+        "position_contact_tests": 604780,
+        "position_corrections": 0,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "bd868caf90774f07f75a5d0d946bedd2a872a611608eb88fd2e9dc2ff2d89fd4",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 451200,
+        "dynamic_contact_tests": 451200,
+        "dynamic_corrections": 0,
+        "dynamic_sat_axes": 5287906
+      },
+      "peak_reported_scratch_payload_bytes": 223737
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 64,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05469228849464969,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 446,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 417.0325,
+        "peak_displacement": 0.1544648957041753,
+        "peak_surface_speed": 7.526903719161913,
+        "peak_energy": 126.04019793222697,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 9.24747433333338,
+          "p95_ms": 9.594730999999229,
+          "max_ms": 12.116347000000133,
+          "total_ms": 554.8484600000029
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 5.59775147543861,
+          "p95_ms": 5.798294000000169,
+          "max_ms": 8.837255000000368,
+          "total_ms": 6381.436682000015
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 12952,
+        "position_passes": 4973,
+        "contact_points": 7083872,
+        "pair_tests": 6296841,
+        "narrow_tests": 2290110,
+        "integrated_bodies": 307200,
+        "constraint_visits": 19109728,
+        "capped_substeps": 265,
+        "converged_substeps": 4535,
+        "position_contact_tests": 1982749,
+        "position_corrections": 12488,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "75a7558081f3ff9fbfaf75a53865c17939e180d3e4e1cb8ff5f64605abd3bdb2",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 2074244,
+        "dynamic_contact_tests": 1903181,
+        "dynamic_corrections": 9375,
+        "dynamic_sat_axes": 18463282
+      },
+      "peak_reported_scratch_payload_bytes": 783833
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 64,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.691558741518655,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 446,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 216.07,
+        "peak_displacement": 9.137488649408771,
+        "peak_surface_speed": 781.1899114328024,
+        "peak_energy": 327161.29583819647,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 9.152201483333252,
+          "p95_ms": 9.491405999999188,
+          "max_ms": 9.639725000000908,
+          "total_ms": 549.1320889999952
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 4.7364867728069635,
+          "p95_ms": 6.7336450000002515,
+          "max_ms": 8.829540000000634,
+          "total_ms": 5399.594920999938
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 38382,
+        "position_passes": 9463,
+        "contact_points": 3497332,
+        "pair_tests": 4928448,
+        "narrow_tests": 1683993,
+        "integrated_bodies": 307221,
+        "constraint_visits": 27958028,
+        "capped_substeps": 4797,
+        "converged_substeps": 3,
+        "position_contact_tests": 2095011,
+        "position_corrections": 295684,
+        "swept_contacts": 5
+      },
+      "replay_sha256": "16fae64d9c4aa3882af76776f1b569279603a61980d2edfbe4aeec9e876e0ca9",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 2024374,
+        "dynamic_contact_tests": 1943742,
+        "dynamic_corrections": 240052,
+        "dynamic_sat_axes": 22491722
+      },
+      "peak_reported_scratch_payload_bytes": 797938
+    },
+    {
+      "scene": "sleeping-control",
+      "boxes": 64,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05469228849464969,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 446,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 417.0325,
+        "peak_displacement": 0.1544648957041753,
+        "peak_surface_speed": 7.526903719161913,
+        "peak_energy": 126.04019793222697,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 9.23777524999993,
+          "p95_ms": 9.768497999997635,
+          "max_ms": 10.036843000001682,
+          "total_ms": 554.2665149999957
+        },
+        "active": {
+          "count": 2,
+          "mean_ms": 8.817863000000216,
+          "p95_ms": 8.830241999999998,
+          "max_ms": 8.830241999999998,
+          "total_ms": 17.63572600000043
+        },
+        "sleeping": {
+          "count": 1138,
+          "mean_ms": 0.008084408611607303,
+          "p95_ms": 0.0003909999977622647,
+          "max_ms": 8.840961999998399,
+          "total_ms": 9.20005700000911
+        }
+      },
+      "work": {
+        "substeps": 252,
+        "velocity_passes": 2016,
+        "position_passes": 425,
+        "contact_points": 371024,
+        "pair_tests": 329865,
+        "narrow_tests": 120714,
+        "integrated_bodies": 16128,
+        "constraint_visits": 2968192,
+        "capped_substeps": 252,
+        "converged_substeps": 0,
+        "position_contact_tests": 163549,
+        "position_corrections": 12488,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "95520ca2c86604b441bfdd716dfe1f5460188c2cea05d5b966c7c3d16ef7dc1d",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 177728,
+        "dynamic_contact_tests": 156749,
+        "dynamic_corrections": 9375,
+        "dynamic_sat_axes": 1471954
+      },
+      "peak_reported_scratch_payload_bytes": 783833
+    },
+    {
+      "scene": "shallow-contact",
+      "boxes": 64,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 9.706691308153381e-05,
+        "peak_box_overlap": 4.908493103528144e-05,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 210,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 210,
+        "peak_displacement": 6.373487909245218e-05,
+        "peak_surface_speed": 0.0033640839251868077,
+        "peak_energy": 3.593929609299761e-05,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 6.09800098333338,
+          "p95_ms": 6.164874000001873,
+          "max_ms": 6.243442999999388,
+          "total_ms": 365.8800590000028
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 3.6681632149122856,
+          "p95_ms": 3.7121379999989585,
+          "max_ms": 6.489465000002383,
+          "total_ms": 4181.706065000006
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 11738,
+        "position_passes": 4800,
+        "contact_points": 5046276,
+        "pair_tests": 3532800,
+        "narrow_tests": 1315200,
+        "integrated_bodies": 307200,
+        "constraint_visits": 12348446,
+        "capped_substeps": 356,
+        "converged_substeps": 4444,
+        "position_contact_tests": 1296287,
+        "position_corrections": 0,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "9bd4a05bcfd6730f95939f03b6aa7c1e889c33df045b7d2cee387e7b7f2c22dc",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 1008000,
+        "dynamic_contact_tests": 989137,
+        "dynamic_corrections": 0,
+        "dynamic_sat_axes": 11384452
+      },
+      "peak_reported_scratch_payload_bytes": 545433
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 128,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05170740026863285,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1010,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 926.5641666666667,
+        "peak_displacement": 0.14291247845091745,
+        "peak_surface_speed": 8.413537746930244,
+        "peak_energy": 350.82372287666215,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 20.992681750000095,
+          "p95_ms": 21.65356900000188,
+          "max_ms": 22.561768999999913,
+          "total_ms": 1259.5609050000057
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 18.39148215877193,
+          "p95_ms": 21.29009500000393,
+          "max_ms": 26.409672000001592,
+          "total_ms": 20966.289661
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 28526,
+        "position_passes": 9184,
+        "contact_points": 15852269,
+        "pair_tests": 13814063,
+        "narrow_tests": 5112201,
+        "integrated_bodies": 614400,
+        "constraint_visits": 94174708,
+        "capped_substeps": 2826,
+        "converged_substeps": 1974,
+        "position_contact_tests": 7937467,
+        "position_corrections": 71518,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "c5b2f94a8c39595bc3590c60aaef8c717c808873798d450bdf138ef555253436",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 8509973,
+        "dynamic_contact_tests": 7643579,
+        "dynamic_corrections": 51576,
+        "dynamic_sat_axes": 77862177
+      },
+      "peak_reported_scratch_payload_bytes": 1964385
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 128,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.8525520328465035,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1010,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 622.6408333333334,
+        "peak_displacement": 2.85768911514957,
+        "peak_surface_speed": 113.9020587732283,
+        "peak_energy": 56430.58722662366,
+        "shots": 6,
+        "retired": 6,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 20.840192383333246,
+          "p95_ms": 21.47698600000149,
+          "max_ms": 21.678185000004305,
+          "total_ms": 1250.4115429999947
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 11.783624441228064,
+          "p95_ms": 17.129163000005065,
+          "max_ms": 20.914357000001473,
+          "total_ms": 13433.331862999992
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 25798,
+        "position_passes": 9119,
+        "contact_points": 10036900,
+        "pair_tests": 12776111,
+        "narrow_tests": 4469002,
+        "integrated_bodies": 614442,
+        "constraint_visits": 55242424,
+        "capped_substeps": 1934,
+        "converged_substeps": 2866,
+        "position_contact_tests": 5691965,
+        "position_corrections": 153349,
+        "swept_contacts": 13
+      },
+      "replay_sha256": "99da67bc8a6d73bf83c9dffdd696b2de7f716b5858270a42f6f7893704de7f5d",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 5693022,
+        "dynamic_contact_tests": 5400175,
+        "dynamic_corrections": 123951,
+        "dynamic_sat_axes": 61992746
+      },
+      "peak_reported_scratch_payload_bytes": 2002850
+    },
+    {
+      "scene": "sleeping-control",
+      "boxes": 128,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05170740026863285,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1010,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 926.5641666666667,
+        "peak_displacement": 0.14291247845091745,
+        "peak_surface_speed": 8.413537746930244,
+        "peak_energy": 350.82372287666215,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 20.825408000000365,
+          "p95_ms": 21.50290600000153,
+          "max_ms": 21.520378000001074,
+          "total_ms": 1249.5244800000219
+        },
+        "active": {
+          "count": 19,
+          "mean_ms": 21.088851315790777,
+          "p95_ms": 21.362631000003603,
+          "max_ms": 21.362631000003603,
+          "total_ms": 400.6881750000248
+        },
+        "sleeping": {
+          "count": 1121,
+          "mean_ms": 0.01895834968785328,
+          "p95_ms": 0.0003910000014002435,
+          "max_ms": 20.872188000001188,
+          "total_ms": 21.252310000083526
+        }
+      },
+      "work": {
+        "substeps": 320,
+        "velocity_passes": 2560,
+        "position_passes": 639,
+        "contact_points": 1041389,
+        "pair_tests": 920623,
+        "narrow_tests": 341001,
+        "integrated_bodies": 40960,
+        "constraint_visits": 8331112,
+        "capped_substeps": 320,
+        "converged_substeps": 0,
+        "position_contact_tests": 537497,
+        "position_corrections": 36030,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "bf6bf7ef6902247c89b12fc65e4388790c89d082c9b910480b2fc2b7dd79a9b5",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 588758,
+        "dynamic_contact_tests": 517049,
+        "dynamic_corrections": 27103,
+        "dynamic_sat_axes": 5057660
+      },
+      "peak_reported_scratch_payload_bytes": 1964385
+    },
+    {
+      "scene": "shallow-contact",
+      "boxes": 128,
+      "trial": 0,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.00020097881813541107,
+        "peak_box_overlap": 8.698835701181906e-05,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 442,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 442,
+        "peak_displacement": 0.000103155693945016,
+        "peak_surface_speed": 0.003986674746329896,
+        "peak_energy": 5.517568215693332e-05,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 12.696117166666347,
+          "p95_ms": 12.845068000002357,
+          "max_ms": 13.045885999999882,
+          "total_ms": 761.7670299999809
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 9.150081499122992,
+          "p95_ms": 12.747153999996954,
+          "max_ms": 16.19585599999118,
+          "total_ms": 10431.09290900021
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 19492,
+        "position_passes": 4800,
+        "contact_points": 10449898,
+        "pair_tests": 7372800,
+        "narrow_tests": 2736000,
+        "integrated_bodies": 614400,
+        "constraint_visits": 42436468,
+        "capped_substeps": 1648,
+        "converged_substeps": 3152,
+        "position_contact_tests": 2686419,
+        "position_corrections": 0,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "b98aea4a741d14ab66bc30fc782ecee6b6f3a24d97a215bbca405021059ac871",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 2121600,
+        "dynamic_contact_tests": 2072066,
+        "dynamic_corrections": 0,
+        "dynamic_sat_axes": 21668990
+      },
+      "peak_reported_scratch_payload_bytes": 1114545
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 64,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.691558741518655,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 446,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 216.07,
+        "peak_displacement": 9.137488649408771,
+        "peak_surface_speed": 781.1899114328024,
+        "peak_energy": 327161.29583819647,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 9.117995199999859,
+          "p95_ms": 9.511593999995966,
+          "max_ms": 9.632901999997557,
+          "total_ms": 547.0797119999916
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 4.699901100877188,
+          "p95_ms": 6.721642000004067,
+          "max_ms": 8.746763999995892,
+          "total_ms": 5357.887254999994
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 38382,
+        "position_passes": 9463,
+        "contact_points": 3497332,
+        "pair_tests": 4928448,
+        "narrow_tests": 1683993,
+        "integrated_bodies": 307221,
+        "constraint_visits": 27958028,
+        "capped_substeps": 4797,
+        "converged_substeps": 3,
+        "position_contact_tests": 2095011,
+        "position_corrections": 295684,
+        "swept_contacts": 5
+      },
+      "replay_sha256": "16fae64d9c4aa3882af76776f1b569279603a61980d2edfbe4aeec9e876e0ca9",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 2024374,
+        "dynamic_contact_tests": 1943742,
+        "dynamic_corrections": 240052,
+        "dynamic_sat_axes": 22491722
+      },
+      "peak_reported_scratch_payload_bytes": 797938
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 64,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05469228849464969,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 446,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 417.0325,
+        "peak_displacement": 0.1544648957041753,
+        "peak_surface_speed": 7.526903719161913,
+        "peak_energy": 126.04019793222697,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 9.13119155000022,
+          "p95_ms": 9.493861000009929,
+          "max_ms": 9.534055999989505,
+          "total_ms": 547.8714930000133
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 5.568703149122915,
+          "p95_ms": 5.718735000002198,
+          "max_ms": 8.732217000011588,
+          "total_ms": 6348.321590000123
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 12952,
+        "position_passes": 4973,
+        "contact_points": 7083872,
+        "pair_tests": 6296841,
+        "narrow_tests": 2290110,
+        "integrated_bodies": 307200,
+        "constraint_visits": 19109728,
+        "capped_substeps": 265,
+        "converged_substeps": 4535,
+        "position_contact_tests": 1982749,
+        "position_corrections": 12488,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "75a7558081f3ff9fbfaf75a53865c17939e180d3e4e1cb8ff5f64605abd3bdb2",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 2074244,
+        "dynamic_contact_tests": 1903181,
+        "dynamic_corrections": 9375,
+        "dynamic_sat_axes": 18463282
+      },
+      "peak_reported_scratch_payload_bytes": 783833
+    },
+    {
+      "scene": "shallow-contact",
+      "boxes": 32,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.0001781187947393903,
+        "peak_box_overlap": 9.090102271613887e-05,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 94,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 94,
+        "peak_displacement": 0.00012769784653464484,
+        "peak_surface_speed": 0.003809814783377378,
+        "peak_energy": 2.973298598391458e-05,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 2.2357684666671656,
+          "p95_ms": 2.7856140000076266,
+          "max_ms": 2.8732580000068992,
+          "total_ms": 134.14610800002993
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 1.6146178070174324,
+          "p95_ms": 1.6281350000062957,
+          "max_ms": 1.737330000003567,
+          "total_ms": 1840.664299999873
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 10374,
+        "position_passes": 4800,
+        "contact_points": 2347214,
+        "pair_tests": 921600,
+        "narrow_tests": 604800,
+        "integrated_bodies": 153600,
+        "constraint_visits": 5072998,
+        "capped_substeps": 129,
+        "converged_substeps": 4671,
+        "position_contact_tests": 604780,
+        "position_corrections": 0,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "bd868caf90774f07f75a5d0d946bedd2a872a611608eb88fd2e9dc2ff2d89fd4",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 451200,
+        "dynamic_contact_tests": 451200,
+        "dynamic_corrections": 0,
+        "dynamic_sat_axes": 5287906
+      },
+      "peak_reported_scratch_payload_bytes": 223737
+    },
+    {
+      "scene": "sleeping-control",
+      "boxes": 32,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.06520739498620998,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 145.21916666666667,
+        "peak_displacement": 0.13878698526578706,
+        "peak_surface_speed": 7.875953650042313,
+        "peak_energy": 138.35926196176285,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.157627533332561,
+          "p95_ms": 3.599845999997342,
+          "max_ms": 3.9721469999931287,
+          "total_ms": 189.45765199995367
+        },
+        "active": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        },
+        "sleeping": {
+          "count": 1140,
+          "mean_ms": 0.0002457885966195088,
+          "p95_ms": 0.0002610000083222985,
+          "max_ms": 0.0006919999868841842,
+          "total_ms": 0.28019900014624
+        }
+      },
+      "work": {
+        "substeps": 232,
+        "velocity_passes": 1848,
+        "position_passes": 462,
+        "contact_points": 122870,
+        "pair_tests": 76903,
+        "narrow_tests": 43230,
+        "integrated_bodies": 7392,
+        "constraint_visits": 982960,
+        "capped_substeps": 231,
+        "converged_substeps": 0,
+        "position_contact_tests": 63636,
+        "position_corrections": 5715,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "2be9f4c8b9f8658067f3b6afe1855196cdc6c2abfcb49236a4c05f211b483973",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 69076,
+        "dynamic_contact_tests": 59948,
+        "dynamic_corrections": 4483,
+        "dynamic_sat_axes": 554239
+      },
+      "peak_reported_scratch_payload_bytes": 332089
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 32,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.3513355477100717,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 31.9975,
+        "mean_touching_pairs": 75.00833333333334,
+        "peak_displacement": 13.31409030581097,
+        "peak_surface_speed": 308.2102789785363,
+        "peak_energy": 159228.38193293192,
+        "shots": 3,
+        "retired": 3,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.272442983332197,
+          "p95_ms": 3.608302000007825,
+          "max_ms": 3.955295000007027,
+          "total_ms": 196.3465789999318
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 1.1866842771929218,
+          "p95_ms": 1.9792250000027707,
+          "max_ms": 3.1084810000029393,
+          "total_ms": 1352.8200759999309
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 23668,
+        "position_passes": 6871,
+        "contact_points": 1198126,
+        "pair_tests": 1243768,
+        "narrow_tests": 557414,
+        "integrated_bodies": 153621,
+        "constraint_visits": 5960936,
+        "capped_substeps": 2344,
+        "converged_substeps": 2456,
+        "position_contact_tests": 549220,
+        "position_corrections": 97968,
+        "swept_contacts": 5
+      },
+      "replay_sha256": "3a67d4e81affc0d409cc975abce81a3b62d31c30fa4b9e861c90d1404f9cc1f3",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 515998,
+        "dynamic_contact_tests": 495176,
+        "dynamic_corrections": 77576,
+        "dynamic_sat_axes": 6122562
+      },
+      "peak_reported_scratch_payload_bytes": 332089
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 32,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.06520739498620998,
+        "peak_awake_boxes": 32,
+        "peak_touching_pairs": 184,
+        "peak_touching_boxes": 32,
+        "mean_touching_boxes": 32,
+        "mean_touching_pairs": 145.21916666666667,
+        "peak_displacement": 0.13878698526578706,
+        "peak_surface_speed": 7.875953650042313,
+        "peak_energy": 138.35926196176285,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 3.275029733334668,
+          "p95_ms": 3.609033000000636,
+          "max_ms": 3.9368500000127824,
+          "total_ms": 196.50178400008008
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 1.7906485666664116,
+          "p95_ms": 1.7971320000069682,
+          "max_ms": 3.142244999995455,
+          "total_ms": 2041.3393659997091
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 11964,
+        "position_passes": 5110,
+        "contact_points": 2453060,
+        "pair_tests": 1584343,
+        "narrow_tests": 897633,
+        "integrated_bodies": 153600,
+        "constraint_visits": 6142120,
+        "capped_substeps": 393,
+        "converged_substeps": 4407,
+        "position_contact_tests": 691251,
+        "position_corrections": 6085,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "f4a57e1d17ceb017dd6b6873d0863764660dc25c73682489cb847dd4d1aa3e6a",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 743181,
+        "dynamic_contact_tests": 650371,
+        "dynamic_corrections": 4853,
+        "dynamic_sat_axes": 6295154
+      },
+      "peak_reported_scratch_payload_bytes": 332089
+    },
+    {
+      "scene": "shallow-contact",
+      "boxes": 128,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.00020097881813541107,
+        "peak_box_overlap": 8.698835701181906e-05,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 442,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 442,
+        "peak_displacement": 0.000103155693945016,
+        "peak_surface_speed": 0.003986674746329896,
+        "peak_energy": 5.517568215693332e-05,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 12.757309733333386,
+          "p95_ms": 12.936350000003586,
+          "max_ms": 12.980843999990611,
+          "total_ms": 765.4385840000032
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 9.149517100877214,
+          "p95_ms": 12.759256999997888,
+          "max_ms": 13.21146900000167,
+          "total_ms": 10430.449495000023
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 19492,
+        "position_passes": 4800,
+        "contact_points": 10449898,
+        "pair_tests": 7372800,
+        "narrow_tests": 2736000,
+        "integrated_bodies": 614400,
+        "constraint_visits": 42436468,
+        "capped_substeps": 1648,
+        "converged_substeps": 3152,
+        "position_contact_tests": 2686419,
+        "position_corrections": 0,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "b98aea4a741d14ab66bc30fc782ecee6b6f3a24d97a215bbca405021059ac871",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 2121600,
+        "dynamic_contact_tests": 2072066,
+        "dynamic_corrections": 0,
+        "dynamic_sat_axes": 21668990
+      },
+      "peak_reported_scratch_payload_bytes": 1114545
+    },
+    {
+      "scene": "sleeping-control",
+      "boxes": 128,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05170740026863285,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1010,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 926.5641666666667,
+        "peak_displacement": 0.14291247845091745,
+        "peak_surface_speed": 8.413537746930244,
+        "peak_energy": 350.82372287666215,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 20.752825700001026,
+          "p95_ms": 21.35961600000155,
+          "max_ms": 21.462048000001232,
+          "total_ms": 1245.1695420000615
+        },
+        "active": {
+          "count": 19,
+          "mean_ms": 20.927493789473758,
+          "p95_ms": 21.14033300000301,
+          "max_ms": 21.14033300000301,
+          "total_ms": 397.6223820000014
+        },
+        "sleeping": {
+          "count": 1121,
+          "mean_ms": 0.019133487956962496,
+          "p95_ms": 0.0003909999941242859,
+          "max_ms": 21.080199999996694,
+          "total_ms": 21.44863999975496
+        }
+      },
+      "work": {
+        "substeps": 320,
+        "velocity_passes": 2560,
+        "position_passes": 639,
+        "contact_points": 1041389,
+        "pair_tests": 920623,
+        "narrow_tests": 341001,
+        "integrated_bodies": 40960,
+        "constraint_visits": 8331112,
+        "capped_substeps": 320,
+        "converged_substeps": 0,
+        "position_contact_tests": 537497,
+        "position_corrections": 36030,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "bf6bf7ef6902247c89b12fc65e4388790c89d082c9b910480b2fc2b7dd79a9b5",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 588758,
+        "dynamic_contact_tests": 517049,
+        "dynamic_corrections": 27103,
+        "dynamic_sat_axes": 5057660
+      },
+      "peak_reported_scratch_payload_bytes": 1964385
+    },
+    {
+      "scene": "mixed-impacts",
+      "boxes": 128,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.8525520328465035,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1010,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 622.6408333333334,
+        "peak_displacement": 2.85768911514957,
+        "peak_surface_speed": 113.9020587732283,
+        "peak_energy": 56430.58722662366,
+        "shots": 6,
+        "retired": 6,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 20.819250216667083,
+          "p95_ms": 21.39183700000285,
+          "max_ms": 21.640534999998636,
+          "total_ms": 1249.155013000025
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 11.801923681579183,
+          "p95_ms": 17.23623399999633,
+          "max_ms": 21.03893199999584,
+          "total_ms": 13454.192997000267
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 25798,
+        "position_passes": 9119,
+        "contact_points": 10036900,
+        "pair_tests": 12776111,
+        "narrow_tests": 4469002,
+        "integrated_bodies": 614442,
+        "constraint_visits": 55242424,
+        "capped_substeps": 1934,
+        "converged_substeps": 2866,
+        "position_contact_tests": 5691965,
+        "position_corrections": 153349,
+        "swept_contacts": 13
+      },
+      "replay_sha256": "99da67bc8a6d73bf83c9dffdd696b2de7f716b5858270a42f6f7893704de7f5d",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 5693022,
+        "dynamic_contact_tests": 5400175,
+        "dynamic_corrections": 123951,
+        "dynamic_sat_axes": 61992746
+      },
+      "peak_reported_scratch_payload_bytes": 2002850
+    },
+    {
+      "scene": "sustained-stack",
+      "boxes": 128,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05170740026863285,
+        "peak_awake_boxes": 128,
+        "peak_touching_pairs": 1010,
+        "peak_touching_boxes": 128,
+        "mean_touching_boxes": 128,
+        "mean_touching_pairs": 926.5641666666667,
+        "peak_displacement": 0.14291247845091745,
+        "peak_surface_speed": 8.413537746930244,
+        "peak_energy": 350.82372287666215,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 20.72118006666642,
+          "p95_ms": 21.30759899999248,
+          "max_ms": 21.43861699999252,
+          "total_ms": 1243.2708039999852
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 18.276310171929723,
+          "p95_ms": 21.20933499999228,
+          "max_ms": 26.64735099999234,
+          "total_ms": 20834.993595999884
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 28526,
+        "position_passes": 9184,
+        "contact_points": 15852269,
+        "pair_tests": 13814063,
+        "narrow_tests": 5112201,
+        "integrated_bodies": 614400,
+        "constraint_visits": 94174708,
+        "capped_substeps": 2826,
+        "converged_substeps": 1974,
+        "position_contact_tests": 7937467,
+        "position_corrections": 71518,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "c5b2f94a8c39595bc3590c60aaef8c717c808873798d450bdf138ef555253436",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 8509973,
+        "dynamic_contact_tests": 7643579,
+        "dynamic_corrections": 51576,
+        "dynamic_sat_axes": 77862177
+      },
+      "peak_reported_scratch_payload_bytes": 1964385
+    },
+    {
+      "scene": "shallow-contact",
+      "boxes": 64,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 9.706691308153381e-05,
+        "peak_box_overlap": 4.908493103528144e-05,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 210,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 210,
+        "peak_displacement": 6.373487909245218e-05,
+        "peak_surface_speed": 0.0033640839251868077,
+        "peak_energy": 3.593929609299761e-05,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 6.0866719999942385,
+          "p95_ms": 6.152400999999372,
+          "max_ms": 6.269310999981826,
+          "total_ms": 365.2003199996543
+        },
+        "active": {
+          "count": 1140,
+          "mean_ms": 3.685464180701641,
+          "p95_ms": 3.7090019999886863,
+          "max_ms": 6.082248999999138,
+          "total_ms": 4201.429165999871
+        },
+        "sleeping": {
+          "count": 0,
+          "mean_ms": null,
+          "p95_ms": null,
+          "max_ms": null,
+          "total_ms": 0
+        }
+      },
+      "work": {
+        "substeps": 4800,
+        "velocity_passes": 11738,
+        "position_passes": 4800,
+        "contact_points": 5046276,
+        "pair_tests": 3532800,
+        "narrow_tests": 1315200,
+        "integrated_bodies": 307200,
+        "constraint_visits": 12348446,
+        "capped_substeps": 356,
+        "converged_substeps": 4444,
+        "position_contact_tests": 1296287,
+        "position_corrections": 0,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "9bd4a05bcfd6730f95939f03b6aa7c1e889c33df045b7d2cee387e7b7f2c22dc",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 1008000,
+        "dynamic_contact_tests": 989137,
+        "dynamic_corrections": 0,
+        "dynamic_sat_axes": 11384452
+      },
+      "peak_reported_scratch_payload_bytes": 545433
+    },
+    {
+      "scene": "sleeping-control",
+      "boxes": 64,
+      "trial": 1,
+      "completed": true,
+      "completed_ticks": 1200,
+      "elapsed_seconds": 20.000000000000146,
+      "quality": {
+        "passed": true,
+        "reasons": [],
+        "first_failure": null,
+        "peak_floor": 0.020000000000003126,
+        "peak_box_overlap": 0.05469228849464969,
+        "peak_awake_boxes": 64,
+        "peak_touching_pairs": 446,
+        "peak_touching_boxes": 64,
+        "mean_touching_boxes": 64,
+        "mean_touching_pairs": 417.0325,
+        "peak_displacement": 0.1544648957041753,
+        "peak_surface_speed": 7.526903719161913,
+        "peak_energy": 126.04019793222697,
+        "shots": 0,
+        "retired": 0,
+        "sample_every_ticks": 1
+      },
+      "timing": {
+        "startup": {
+          "count": 60,
+          "mean_ms": 9.184878033330703,
+          "p95_ms": 9.53421799998614,
+          "max_ms": 9.576617999991868,
+          "total_ms": 551.0926819998422
+        },
+        "active": {
+          "count": 2,
+          "mean_ms": 8.829811499992502,
+          "p95_ms": 8.833377999981167,
+          "max_ms": 8.833377999981167,
+          "total_ms": 17.659622999985004
+        },
+        "sleeping": {
+          "count": 1138,
+          "mean_ms": 0.008034429701018763,
+          "p95_ms": 0.0003110000106971711,
+          "max_ms": 8.8264349999954,
+          "total_ms": 9.143180999759352
+        }
+      },
+      "work": {
+        "substeps": 252,
+        "velocity_passes": 2016,
+        "position_passes": 425,
+        "contact_points": 371024,
+        "pair_tests": 329865,
+        "narrow_tests": 120714,
+        "integrated_bodies": 16128,
+        "constraint_visits": 2968192,
+        "capped_substeps": 252,
+        "converged_substeps": 0,
+        "position_contact_tests": 163549,
+        "position_corrections": 12488,
+        "swept_contacts": 0
+      },
+      "replay_sha256": "95520ca2c86604b441bfdd716dfe1f5460188c2cea05d5b966c7c3d16ef7dc1d",
+      "repeatable": true,
+      "position_work": {
+        "admitted_pair_visits": 177728,
+        "dynamic_contact_tests": 156749,
+        "dynamic_corrections": 9375,
+        "dynamic_sat_axes": 1471954
+      },
+      "peak_reported_scratch_payload_bytes": 783833
+    }
+  ],
+  "native_controls": [
+    {
+      "ticks": 300,
+      "boxes": 32,
+      "scene": 0,
+      "replay": 0,
+      "peak_overlap": 0.06520739501762307,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        214646,
+        190717,
+        3941
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 268457,
+      "same_build_state_hash": "a7e0f93f43810864"
+    },
+    {
+      "ticks": 300,
+      "boxes": 32,
+      "scene": 0,
+      "replay": 1,
+      "peak_overlap": 0.06520739501762307,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        214646,
+        190717,
+        3941
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 268457,
+      "same_build_state_hash": "a7e0f93f43810864"
+    },
+    {
+      "ticks": 300,
+      "boxes": 32,
+      "scene": 1,
+      "replay": 0,
+      "peak_overlap": 0.24368976288527477,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        188454,
+        176055,
+        48270
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 278034,
+      "same_build_state_hash": "513313b335089697"
+    },
+    {
+      "ticks": 300,
+      "boxes": 32,
+      "scene": 1,
+      "replay": 1,
+      "peak_overlap": 0.24368976288527477,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        188454,
+        176055,
+        48270
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 278034,
+      "same_build_state_hash": "513313b335089697"
+    },
+    {
+      "ticks": 300,
+      "boxes": 64,
+      "scene": 0,
+      "replay": 0,
+      "peak_overlap": 0.06029687082779134,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        1005390,
+        892755,
+        17727
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 633993,
+      "same_build_state_hash": "8b3ddfa90e7b84e8"
+    },
+    {
+      "ticks": 300,
+      "boxes": 64,
+      "scene": 0,
+      "replay": 1,
+      "peak_overlap": 0.06029687082779134,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        1005390,
+        892755,
+        17727
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 633993,
+      "same_build_state_hash": "8b3ddfa90e7b84e8"
+    },
+    {
+      "ticks": 300,
+      "boxes": 64,
+      "scene": 1,
+      "replay": 0,
+      "peak_overlap": 0.4251283601928648,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        666080,
+        583682,
+        41521
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 652818,
+      "same_build_state_hash": "91604c6f5a1aeb22"
+    },
+    {
+      "ticks": 300,
+      "boxes": 64,
+      "scene": 1,
+      "replay": 1,
+      "peak_overlap": 0.4251283601928648,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        666080,
+        583682,
+        41521
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 652818,
+      "same_build_state_hash": "91604c6f5a1aeb22"
+    },
+    {
+      "ticks": 300,
+      "boxes": 128,
+      "scene": 0,
+      "replay": 0,
+      "peak_overlap": 0.07154026276193548,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        2131220,
+        1824805,
+        39210
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1652937,
+      "same_build_state_hash": "01672519b4894c6e"
+    },
+    {
+      "ticks": 300,
+      "boxes": 128,
+      "scene": 0,
+      "replay": 1,
+      "peak_overlap": 0.07154026276193548,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        2131220,
+        1824805,
+        39210
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1652937,
+      "same_build_state_hash": "01672519b4894c6e"
+    },
+    {
+      "ticks": 300,
+      "boxes": 128,
+      "scene": 1,
+      "replay": 0,
+      "peak_overlap": 1.4828488824422834,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        1621420,
+        1466240,
+        131703
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1690258,
+      "same_build_state_hash": "93777803b644b7b5"
+    },
+    {
+      "ticks": 300,
+      "boxes": 128,
+      "scene": 1,
+      "replay": 1,
+      "peak_overlap": 1.4828488824422834,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        1621420,
+        1466240,
+        131703
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1690258,
+      "same_build_state_hash": "93777803b644b7b5"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 32,
+      "scene": 0,
+      "replay": 0,
+      "peak_overlap": 0.06520739501762307,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        790646,
+        705517,
+        3941
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 268457,
+      "same_build_state_hash": "16110da3f9b7959e"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 32,
+      "scene": 0,
+      "replay": 1,
+      "peak_overlap": 0.06520739501762307,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        790646,
+        705517,
+        3941
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 268457,
+      "same_build_state_hash": "16110da3f9b7959e"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 32,
+      "scene": 1,
+      "replay": 0,
+      "peak_overlap": 0.24368976288527477,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        573324,
+        557302,
+        86342
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 279826,
+      "same_build_state_hash": "f048e4da7b09df0f"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 32,
+      "scene": 1,
+      "replay": 1,
+      "peak_overlap": 0.24368976288527477,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        573324,
+        557302,
+        86342
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 279826,
+      "same_build_state_hash": "f048e4da7b09df0f"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 64,
+      "scene": 0,
+      "replay": 0,
+      "peak_overlap": 0.06029687082779134,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        3153798,
+        2808081,
+        21479
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 633993,
+      "same_build_state_hash": "d86034f4ae3a5e16"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 64,
+      "scene": 0,
+      "replay": 1,
+      "peak_overlap": 0.06029687082779134,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        3153798,
+        2808081,
+        21479
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 633993,
+      "same_build_state_hash": "d86034f4ae3a5e16"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 64,
+      "scene": 1,
+      "replay": 0,
+      "peak_overlap": 0.4251283601928648,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        2289312,
+        2096408,
+        199984
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 652818,
+      "same_build_state_hash": "92848fcca4ec2399"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 64,
+      "scene": 1,
+      "replay": 1,
+      "peak_overlap": 0.4251283601928648,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        2289312,
+        2096408,
+        199984
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 652818,
+      "same_build_state_hash": "92848fcca4ec2399"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 128,
+      "scene": 0,
+      "replay": 0,
+      "peak_overlap": 0.07154026276193548,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        7240340,
+        6213925,
+        48265
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1652937,
+      "same_build_state_hash": "b30b9898b62a8ab3"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 128,
+      "scene": 0,
+      "replay": 1,
+      "peak_overlap": 0.07154026276193548,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        7240340,
+        6213925,
+        48265
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1652937,
+      "same_build_state_hash": "b30b9898b62a8ab3"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 128,
+      "scene": 1,
+      "replay": 0,
+      "peak_overlap": 1.4828488824422834,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        3692138,
+        3423288,
+        147876
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1690258,
+      "same_build_state_hash": "2b5a38a625bd5e2c"
+    },
+    {
+      "ticks": 1200,
+      "boxes": 128,
+      "scene": 1,
+      "replay": 1,
+      "peak_overlap": 1.4828488824422834,
+      "peak_floor": 0.020000000000003126,
+      "dynamic_work": [
+        3692138,
+        3423288,
+        147876
+      ],
+      "bookkeeping_plus_geometry_payload_bytes": 1690258,
+      "same_build_state_hash": "2b5a38a625bd5e2c"
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "candidate": "footprint",
+      "source": {
+        "revision": "f7e572d7966d53ca192171eb15902d56d8dac642",
+        "tree": "d9e471368e8be7c3570510734c0c9bf4ef7778eb",
+        "dirty": true
+      },
+      "wasm_sha256": "6fe6868cf77fcacebc8b79fec824d82e4a93d919da869b9c7635019a417f78dd",
+      "failures": [
+        {
+          "boxes": 32,
+          "scene": "sustained-stack",
+          "trial": 0,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration",
+              "unforced-stack-displacement"
+            ],
+            "first_failure": {
+              "tick": 98,
+              "seconds": 1.6333333333333324,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.019999999999999574,
+                1.9591571778879242,
+                32,
+                128,
+                32,
+                1.458889456472599,
+                40.36677894906726,
+                363.5473385603732,
+                32,
+                0,
+                0
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 20.502599326338416,
+            "peak_awake_boxes": 32,
+            "peak_touching_pairs": 184,
+            "peak_touching_boxes": 32,
+            "mean_touching_boxes": 31.406666666666666,
+            "mean_touching_pairs": 129.05,
+            "peak_displacement": 154.97311085333786,
+            "peak_surface_speed": 861.1440935574606,
+            "peak_energy": 605454.5262323635,
+            "shots": 0,
+            "retired": 0,
+            "sample_every_ticks": 1
+          }
+        },
+        {
+          "boxes": 32,
+          "scene": "sustained-stack",
+          "trial": 1,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration",
+              "unforced-stack-displacement"
+            ],
+            "first_failure": {
+              "tick": 98,
+              "seconds": 1.6333333333333324,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.019999999999999574,
+                1.9591571778879242,
+                32,
+                128,
+                32,
+                1.458889456472599,
+                40.36677894906726,
+                363.5473385603732,
+                32,
+                0,
+                0
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 20.502599326338416,
+            "peak_awake_boxes": 32,
+            "peak_touching_pairs": 184,
+            "peak_touching_boxes": 32,
+            "mean_touching_boxes": 31.406666666666666,
+            "mean_touching_pairs": 129.05,
+            "peak_displacement": 154.97311085333786,
+            "peak_surface_speed": 861.1440935574606,
+            "peak_energy": 605454.5262323635,
+            "shots": 0,
+            "retired": 0,
+            "sample_every_ticks": 1
+          }
+        }
+      ]
+    },
+    {
+      "candidate": "spread",
+      "source": {
+        "revision": "f7e572d7966d53ca192171eb15902d56d8dac642",
+        "tree": "d9e471368e8be7c3570510734c0c9bf4ef7778eb",
+        "dirty": true
+      },
+      "wasm_sha256": "f6c5ebad65791e5b99b04d1de03ffef5ad79374907536b64fe9599810acd615d",
+      "failures": [
+        {
+          "boxes": 64,
+          "scene": "mixed-impacts",
+          "trial": 0,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 182,
+              "seconds": 3.0333333333333274,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                1.9950519667985276,
+                64,
+                108,
+                64,
+                4.550454329288964,
+                180.3244051791135,
+                54236.81398038623,
+                64,
+                3,
+                3
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 1.9950519667985276,
+            "peak_awake_boxes": 64,
+            "peak_touching_pairs": 457,
+            "peak_touching_boxes": 64,
+            "mean_touching_boxes": 64,
+            "mean_touching_pairs": 227.67666666666668,
+            "peak_displacement": 7.069020672846163,
+            "peak_surface_speed": 180.3244051791135,
+            "peak_energy": 93131.96091476918,
+            "shots": 3,
+            "retired": 3,
+            "sample_every_ticks": 1
+          }
+        },
+        {
+          "boxes": 128,
+          "scene": "mixed-impacts",
+          "trial": 0,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 122,
+              "seconds": 2.033333333333331,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                1.9242598814907055,
+                128,
+                597,
+                128,
+                2.824242689700793,
+                152.92192979328274,
+                110885.19527365502,
+                128,
+                4,
+                4
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 1.9242598814907055,
+            "peak_awake_boxes": 128,
+            "peak_touching_pairs": 997,
+            "peak_touching_boxes": 128,
+            "mean_touching_boxes": 127.99,
+            "mean_touching_pairs": 696.43,
+            "peak_displacement": 8.073452702674926,
+            "peak_surface_speed": 190.6628959271487,
+            "peak_energy": 110885.19527365502,
+            "shots": 6,
+            "retired": 6,
+            "sample_every_ticks": 1
+          }
+        },
+        {
+          "boxes": 128,
+          "scene": "mixed-impacts",
+          "trial": 1,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 122,
+              "seconds": 2.033333333333331,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                1.9242598814907055,
+                128,
+                597,
+                128,
+                2.824242689700793,
+                152.92192979328274,
+                110885.19527365502,
+                128,
+                4,
+                4
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 1.9242598814907055,
+            "peak_awake_boxes": 128,
+            "peak_touching_pairs": 997,
+            "peak_touching_boxes": 128,
+            "mean_touching_boxes": 127.99,
+            "mean_touching_pairs": 696.43,
+            "peak_displacement": 8.073452702674926,
+            "peak_surface_speed": 190.6628959271487,
+            "peak_energy": 110885.19527365502,
+            "shots": 6,
+            "retired": 6,
+            "sample_every_ticks": 1
+          }
+        },
+        {
+          "boxes": 64,
+          "scene": "mixed-impacts",
+          "trial": 1,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 182,
+              "seconds": 3.0333333333333274,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                1.9950519667985276,
+                64,
+                108,
+                64,
+                4.550454329288964,
+                180.3244051791135,
+                54236.81398038623,
+                64,
+                3,
+                3
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 1.9950519667985276,
+            "peak_awake_boxes": 64,
+            "peak_touching_pairs": 457,
+            "peak_touching_boxes": 64,
+            "mean_touching_boxes": 64,
+            "mean_touching_pairs": 227.67666666666668,
+            "peak_displacement": 7.069020672846163,
+            "peak_surface_speed": 180.3244051791135,
+            "peak_energy": 93131.96091476918,
+            "shots": 3,
+            "retired": 3,
+            "sample_every_ticks": 1
+          }
+        }
+      ]
+    },
+    {
+      "candidate": "selective",
+      "source": {
+        "revision": "f7e572d7966d53ca192171eb15902d56d8dac642",
+        "tree": "d9e471368e8be7c3570510734c0c9bf4ef7778eb",
+        "dirty": true
+      },
+      "wasm_sha256": "801d9db490337a48a34c1582e8dc3f0c1a2b6cc653c7e09d63446307d8e3d0c9",
+      "failures": [
+        {
+          "boxes": 32,
+          "scene": "mixed-impacts",
+          "trial": 0,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 122,
+              "seconds": 2.033333333333331,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                4.397485024041281,
+                32,
+                52,
+                32,
+                6.101297410940683,
+                408.61541504236914,
+                274569.62360826076,
+                32,
+                2,
+                2
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 4.397485024041281,
+            "peak_awake_boxes": 32,
+            "peak_touching_pairs": 184,
+            "peak_touching_boxes": 32,
+            "mean_touching_boxes": 32,
+            "mean_touching_pairs": 82.65,
+            "peak_displacement": 8.600106906135915,
+            "peak_surface_speed": 408.61541504236914,
+            "peak_energy": 274569.62360826076,
+            "shots": 3,
+            "retired": 3,
+            "sample_every_ticks": 1
+          }
+        },
+        {
+          "boxes": 32,
+          "scene": "mixed-impacts",
+          "trial": 1,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 122,
+              "seconds": 2.033333333333331,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                4.397485024041281,
+                32,
+                52,
+                32,
+                6.101297410940683,
+                408.61541504236914,
+                274569.62360826076,
+                32,
+                2,
+                2
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 4.397485024041281,
+            "peak_awake_boxes": 32,
+            "peak_touching_pairs": 184,
+            "peak_touching_boxes": 32,
+            "mean_touching_boxes": 32,
+            "mean_touching_pairs": 82.65,
+            "peak_displacement": 8.600106906135915,
+            "peak_surface_speed": 408.61541504236914,
+            "peak_energy": 274569.62360826076,
+            "shots": 3,
+            "retired": 3,
+            "sample_every_ticks": 1
+          }
+        }
+      ]
+    },
+    {
+      "candidate": "eight",
+      "source": {
+        "revision": "f7e572d7966d53ca192171eb15902d56d8dac642",
+        "tree": "d9e471368e8be7c3570510734c0c9bf4ef7778eb",
+        "dirty": true
+      },
+      "wasm_sha256": "5fbd4767f9ac426ea46410c6e4c4e7da0d55f3469637800716cb204689824bcb",
+      "failures": [
+        {
+          "boxes": 128,
+          "scene": "mixed-impacts",
+          "trial": 0,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 122,
+              "seconds": 2.033333333333331,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                4.727114037436472,
+                128,
+                586,
+                128,
+                4.261847606690702,
+                129.02173975232444,
+                73125.6040781815,
+                128,
+                4,
+                4
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 4.727114037436472,
+            "peak_awake_boxes": 128,
+            "peak_touching_pairs": 1004,
+            "peak_touching_boxes": 128,
+            "mean_touching_boxes": 128,
+            "mean_touching_pairs": 700.03,
+            "peak_displacement": 4.871655776824925,
+            "peak_surface_speed": 129.02173975232444,
+            "peak_energy": 73125.6040781815,
+            "shots": 6,
+            "retired": 6,
+            "sample_every_ticks": 1
+          }
+        },
+        {
+          "boxes": 128,
+          "scene": "mixed-impacts",
+          "trial": 1,
+          "quality": {
+            "passed": false,
+            "reasons": [
+              "box-box-penetration"
+            ],
+            "first_failure": {
+              "tick": 122,
+              "seconds": 2.033333333333331,
+              "reasons": [
+                "box-box-penetration"
+              ],
+              "metrics": [
+                1,
+                0.020000000000003126,
+                4.727114037436472,
+                128,
+                586,
+                128,
+                4.261847606690702,
+                129.02173975232444,
+                73125.6040781815,
+                128,
+                4,
+                4
+              ]
+            },
+            "peak_floor": 0.020000000000003126,
+            "peak_box_overlap": 4.727114037436472,
+            "peak_awake_boxes": 128,
+            "peak_touching_pairs": 1004,
+            "peak_touching_boxes": 128,
+            "mean_touching_boxes": 128,
+            "mean_touching_pairs": 700.03,
+            "peak_displacement": 4.871655776824925,
+            "peak_surface_speed": 129.02173975232444,
+            "peak_energy": 73125.6040781815,
+            "shots": 6,
+            "retired": 6,
+            "sample_every_ticks": 1
+          }
+        }
+      ]
+    }
+  ],
+  "raw_evidence_files": "193-{current-budget,wasm-long-final}.json; 193-native-long-final.log; full raw timestep timings are retained locally rather than copied into this summary.",
+  "profiles": [
+    {
+      "id": "4s-8v-2p",
+      "substeps": 4,
+      "velocity": 8,
+      "position": 2
+    }
+  ],
+  "trials": 2,
+  "wasm_ticks": 1200,
+  "dt": 0.016666666666666666
+}

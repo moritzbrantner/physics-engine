@@ -1,3 +1,8 @@
+> Current runs select `PositionCorrection::AdmittedContacts` with the unchanged configured
+> position-pass budget. `solver_policy.position_correction` records this choice. Historical
+> reports used fixed-only correction; they remain adverse controls rather than new-policy
+> measurements. See [the dense-contact repair](../../docs/dense-contact-correction.md).
+
 > Reconciled with the island-aware engine. Runs use this checkout's default convergence scope,
 > recorded in `solver_policy`, not a duplicate implementation. The earlier 815-replay report
 > measured revision `3074f49c` before contact-island convergence. Its timing and quality values
@@ -7,8 +12,7 @@
 # Solver budget vs contact capacity
 
 A parameter experiment using the **actual `physics_engine::approximate::World` f64
-implementation**, compiled to release WebAssembly. The production library and
-Tower Stability defaults are not modified. This is a separate diagnostic crate,
+implementation**, compiled to release WebAssembly. It uses the selected production library policy and Tower Stability pass budget. This is a separate diagnostic crate,
 not another solver or a JavaScript simulation.
 
 ## Questions and controls
@@ -89,8 +93,7 @@ For 300 ticks, this is five simulated seconds: one startup, four measured active
 
 Every tick also records contact-point work (summed across substeps), solver
 constraint visits, actual passes, narrow/broad-phase work, integrated bodies,
-and projectile sweeps. A diagnostic scratch-payload accessor is available but
-the current sweep does not record it; no memory-capacity conclusion is made. Independently observed touching
+and projectile sweeps. The runner records peak reported bookkeeping, geometry, island and transaction vector payload bytes. Bookkeeping already includes position storage. This subset excludes authoritative bodies/contact history, response/constraint buffers, allocator/tree overhead and RSS; no total memory-capacity conclusion is made. Independently observed touching
 box pairs and touching body counts are reported separately: these geometric
 pairs within 0.02 units are not the same as solver-admitted constraint rows.
 

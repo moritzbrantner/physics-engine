@@ -2,7 +2,7 @@
 //! No production defaults, collision admission or engine tolerances are changed here.
 use physics_engine::{
     BodyId,
-    approximate::{Body, Config, Error, Shape, Vector as V, World},
+    approximate::{Body, Config, Error, PositionCorrection, Shape, Vector as V, World},
 };
 use std::cell::RefCell;
 
@@ -35,6 +35,23 @@ impl Fixture {
         velocity: u8,
         position: u8,
     ) -> Result<Self, Error> {
+        Self::new_with_policy(
+            count,
+            scene,
+            substeps,
+            velocity,
+            position,
+            PositionCorrection::AdmittedContacts,
+        )
+    }
+    pub fn new_with_policy(
+        count: usize,
+        scene: u32,
+        substeps: u8,
+        velocity: u8,
+        position: u8,
+        policy: PositionCorrection,
+    ) -> Result<Self, Error> {
         if !(8..=2048).contains(&count) || !count.is_power_of_two() || scene > 3 {
             return Err(Error::InvalidInput);
         }
@@ -42,6 +59,7 @@ impl Fixture {
             substeps,
             velocity_iterations: velocity,
             fixed_position_iterations: position,
+            position_correction: policy,
             ..Config::default()
         })?;
         let levels = if scene == 3 { 1 } else { 4 };
@@ -256,6 +274,13 @@ impl Fixture {
             12 => r.swept_contacts as f64,
             13 => r.bookkeeping.scratch_retained_bytes as f64,
             14 => self.world.elapsed_seconds(),
+            15 => r.position.dynamic_pair_visits as f64,
+            16 => r.position.dynamic_contact_tests as f64,
+            17 => r.position.dynamic_corrections as f64,
+            18 => r.position.geometry.sat_axes_tested as f64,
+            19 => r.geometry.retained_bytes as f64,
+            20 => r.islands.scratch_retained_bytes as f64,
+            21 => self.world.last_step_transaction().vector_capacity_bytes as f64,
             _ => f64::NAN,
         }
     }
@@ -326,6 +351,22 @@ pub extern "C" fn budget_reset(
     velocity: u32,
     position: u32,
 ) -> i32 {
+    budget_reset_with_position_policy(count, scene, substeps, velocity, position, 1)
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn budget_reset_with_position_policy(
+    count: u32,
+    scene: u32,
+    substeps: u32,
+    velocity: u32,
+    position: u32,
+    policy: u32,
+) -> i32 {
+    let policy = match policy {
+        0 => PositionCorrection::FixedColliders,
+        1 => PositionCorrection::AdmittedContacts,
+        _ => return -1,
+    };
     let Ok(s) = u8::try_from(substeps) else {
         return -1;
     };
@@ -335,7 +376,7 @@ pub extern "C" fn budget_reset(
     let Ok(p) = u8::try_from(position) else {
         return -1;
     };
-    match Fixture::new(count as usize, scene, s, v, p) {
+    match Fixture::new_with_policy(count as usize, scene, s, v, p, policy) {
         Ok(f) => {
             FIXTURE.with(|w| *w.borrow_mut() = Some(f));
             0
@@ -398,10 +439,80 @@ pub extern "C" fn budget_convergence_scope() -> u32 {
     }
 }
 
+/// Actual position policy used by reset, independently reported by the runner.
+#[unsafe(no_mangle)]
+pub extern "C" fn budget_position_correction() -> u32 {
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use physics_engine::approximate::Quaternion;
+    #[test]
+    #[ignore = "full original and 20-second quality matrix; run explicitly in release"]
+    fn dense_contact_original_and_long_trace_quality() {
+        use std::hash::{Hash, Hasher};
+        for ticks in [300, 1200] {
+            for count in [32, 64, 128] {
+                for scene in [0, 1] {
+                    let mut expected = None;
+                    for replay in 0..2 {
+                        let mut f = Fixture::new(count, scene, 4, 8, 2).unwrap();
+                        let mut digest = std::collections::hash_map::DefaultHasher::new();
+                        let mut peak = [0.0_f64; 12];
+                        let mut dynamic_work = [0u64; 3];
+                        let mut retained = 0;
+                        for tick in 1..=ticks {
+                            f.step().unwrap();
+                            f.observe();
+                            assert_eq!(f.metrics[0], 1.0);
+                            assert!(
+                                f.metrics[1] <= 0.5,
+                                "floor {count}/{scene}/{tick}: {}",
+                                f.metrics[1]
+                            );
+                            assert!(
+                                f.metrics[2] <= 1.8,
+                                "pair {count}/{scene}/{tick}: {}",
+                                f.metrics[2]
+                            );
+                            assert_eq!(f.metrics[3], count as f64);
+                            if scene == 0 {
+                                assert!(f.metrics[6] <= 1.8);
+                            }
+                            assert!((f.world.elapsed_seconds() - tick as f64 / 60.0).abs() < 1e-8);
+                            assert!(f.stat(0) <= 4.0 && f.stat(1) <= 32.0 && f.stat(2) <= 8.0);
+                            for value in &f.snapshot {
+                                value.to_bits().hash(&mut digest);
+                            }
+                            for (p, value) in peak.iter_mut().zip(f.metrics) {
+                                *p = p.max(value);
+                            }
+                            let r = &f.world.last_report;
+                            dynamic_work[0] += r.position.dynamic_pair_visits;
+                            dynamic_work[1] += r.position.dynamic_contact_tests;
+                            dynamic_work[2] += r.position.dynamic_corrections;
+                            retained = retained.max(
+                                r.bookkeeping.scratch_retained_bytes + r.geometry.retained_bytes,
+                            );
+                        }
+                        let hash = digest.finish();
+                        if let Some(expected) = expected {
+                            assert_eq!(hash, expected);
+                        } else {
+                            expected = Some(hash);
+                        }
+                        eprintln!(
+                            "dense-quality ticks={ticks} count={count} scene={scene} replay={replay} peak_overlap={} peak_floor={} dynamic_work={dynamic_work:?} retained_payload={retained} state_hash={hash:016x}",
+                            peak[2], peak[1]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn independent_sat_covers_separation_touch_overlap_and_rotation() {
         let a = Body::new(BodyId(1), Shape::Box(V(1.0, 1.0, 1.0)), V::ZERO, 1.0);

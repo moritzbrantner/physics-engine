@@ -131,8 +131,8 @@ fn correct_pair(a: &mut World, b: &mut World) -> PositionReport {
     let mut ar = PositionReport::default();
     let mut br = PositionReport::default();
     assert_eq!(
-        a.correct_fixed_positions(1.0 / 240.0, &mut ar),
-        b.correct_fixed_positions(1.0 / 240.0, &mut br)
+        a.correct_positions(1.0 / 240.0, &mut ar),
+        b.correct_positions(1.0 / 240.0, &mut br)
     );
     same(a, b, &ar, &br);
     ar
@@ -359,12 +359,12 @@ fn warmed_position_work_ignores_sleeping_bodies_and_reuses_fixed_frames() {
         ))
         .unwrap();
         let mut r = PositionReport::default();
-        w.correct_fixed_positions(1.0 / 240.0, &mut r).unwrap();
+        w.correct_positions(1.0 / 240.0, &mut r).unwrap();
         assert_eq!(r.fixed_index_rebuilds, 1);
         assert_eq!(r.index_body_scans, count + 2);
         let before = w.bodies.clone();
         r = PositionReport::default();
-        w.correct_fixed_positions(1.0 / 240.0, &mut r).unwrap();
+        w.correct_positions(1.0 / 240.0, &mut r).unwrap();
         assert_eq!(w.bodies, before);
         assert_eq!((r.body_visits, r.bounds_tests, r.contact_tests), (1, 1, 1));
         assert_eq!(
@@ -451,8 +451,7 @@ fn position_preparation_scaling_benchmark() {
                 let start = Instant::now();
                 for _ in 0..200 {
                     let mut r = PositionReport::default();
-                    w.correct_fixed_positions(black_box(1.0 / 240.0), &mut r)
-                        .unwrap();
+                    w.correct_positions(black_box(1.0 / 240.0), &mut r).unwrap();
                     black_box(r);
                 }
                 println!(

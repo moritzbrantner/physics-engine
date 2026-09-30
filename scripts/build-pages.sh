@@ -13,7 +13,12 @@ cargo build --manifest-path demo-wasm/Cargo.toml --example checkpoint-continuati
   --target wasm32-unknown-unknown --release --locked
 node scripts/test-checkpoint-wasm.mjs \
   demo-wasm/target/wasm32-unknown-unknown/release/examples/checkpoint_continuation.wasm
-# Execute the read-only floating query seam without test exports in the shipped demo.
+# Execute the minimized dynamic-contact regression on the actual WASM target.
+cargo build --manifest-path demo-wasm/Cargo.toml --example dense-contact-contract \
+  --release --target wasm32-unknown-unknown --locked
+node scripts/test-dense-contact-wasm.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
+
 cargo build --manifest-path demo-wasm/Cargo.toml --example shape-query-contract \
   --target wasm32-unknown-unknown --release --locked
 node scripts/test-shape-query-wasm.mjs \

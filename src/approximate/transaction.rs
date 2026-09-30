@@ -33,6 +33,7 @@ pub struct FailedStepWork {
     pub retirement_attempts: usize,
     pub constraint_visits: u64,
     pub position_contact_tests: u64,
+    pub position_geometry: GeometryStats,
     pub bookkeeping: BookkeepingStats,
     pub geometry: GeometryStats,
 }
@@ -48,6 +49,7 @@ impl FailedStepWork {
             retirement_attempts: report.retired.len(),
             constraint_visits: report.convergence.constraint_visits,
             position_contact_tests: report.position.contact_tests,
+            position_geometry: report.position.geometry.clone(),
             bookkeeping,
             geometry: report.geometry.clone(),
             ..Self::default()

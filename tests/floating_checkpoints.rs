@@ -2,7 +2,7 @@ use physics_engine::{
     BodyId, CollisionLayers3d,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, Config,
-        ConvergenceScope, Quaternion, Report, Shape, Vector as V, World,
+        ConvergenceScope, PositionCorrection, Quaternion, Report, Shape, Vector as V, World,
     },
 };
 use sha2::{Digest, Sha256};
@@ -107,6 +107,7 @@ fn config() -> Config {
         gravity: V(0.0, -10.0, 0.0),
         substeps: 2,
         fixed_position_iterations: 2,
+        position_correction: PositionCorrection::AdmittedContacts,
         sleep_speed: 0.1,
         sleep_seconds: 0.08,
         ..Config::default()
@@ -382,12 +383,14 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
             "bit flip {index}"
         );
     }
-    for (offset, error) in [
-        (8, CheckpointError::UnsupportedFormat(2)),
-        (12, CheckpointError::UnsupportedAlgorithm(2)),
+    for (offset, value, error) in [
+        (8, 3u32, CheckpointError::UnsupportedFormat(3)),
+        (12, 3u32, CheckpointError::UnsupportedAlgorithm(3)),
+        (8, 1u32, CheckpointError::UnsupportedFormat(1)),
+        (12, 1u32, CheckpointError::UnsupportedAlgorithm(1)),
     ] {
         let mut altered = saved.clone();
-        altered[offset..offset + 4].copy_from_slice(&2u32.to_le_bytes());
+        altered[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
         rehash(&mut altered);
         assert_eq!(
             Checkpoint::from_bytes(&altered, CONTEXT, CheckpointLimits::default()).unwrap_err(),
@@ -581,7 +584,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn version_one_empty_world_wire_fixture_is_stable() {
+fn version_two_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         ..Config::default()
@@ -590,7 +593,7 @@ fn version_one_empty_world_wire_fixture_is_stable() {
     let encoded = bytes(&world);
     assert_eq!(
         format!("{:x}", Sha256::digest(&encoded)),
-        "8f9e59e5cf60490c44d92d51b26f9de018c842d8997802168553776e646aafa7"
+        "7471a09043305fb2c2307c585ad5c6e8156e7ef8489dd2cc88e49b99e4611608"
     );
 }
 

@@ -32,7 +32,7 @@ Single settled-shot tests were insufficient for a first-person interactive tower
 mixed volleys exposed residual fixed-world penetration. Merely increasing substeps or
 velocity iterations was more expensive and did not consistently resolve it.
 
-The canonical tower explicitly selects **two maximum fixed-position passes per substep**.
+The canonical tower explicitly selects **two maximum shared position passes per substep**. `PositionCorrection::AdmittedContacts` also corrects residual overlap between already-admitted awake dynamic pairs; see [the dense-contact repair](dense-contact-correction.md).
 This optional `Config::fixed_position_iterations` remains **zero** for core/comparison
 callers, preserving their established default. After normal pose integration, each pass
 checks awake dynamic bodies against collision-enabled, non-sensor mass-zero colliders.

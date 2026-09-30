@@ -1,9 +1,12 @@
-//! Optional bounded nonlinear *position* correction against immovable geometry.
+//! Optional bounded nonlinear *position* correction.
 //!
 //! This is not a sweep and cannot replace CCD. It removes residual overlap after pose
 //! integration, without adding correction velocity/kinetic energy or integrating time again.
-//! Movable pairs stay in the impulse solver; fixed bodies are never modified.
-use super::{Body, Error, Shape, Vector, World, contact, geometry::GeometryStats};
+//! Admitted awake dynamic pairs may share the same pass budget when explicitly selected.
+//! Fixed, external and still-sleeping bodies are never modified.
+use super::{
+    Body, Error, PositionCorrection, Scalar, Shape, Vector, World, contact, geometry::GeometryStats,
+};
 
 #[derive(Clone, Debug, Default)]
 pub struct PositionReport {
@@ -11,7 +14,13 @@ pub struct PositionReport {
     pub bounds_tests: u64,
     pub contact_tests: u64,
     pub corrections: u64,
-    pub max_distance: f64,
+    /// Unique admitted dynamic pairs visited, including bounds misses.
+    pub dynamic_pair_visits: u64,
+    pub dynamic_contact_tests: u64,
+    pub dynamic_corrections: u64,
+    pub geometry: GeometryStats,
+    /// Largest corrected pair separation (or fixed-to-dynamic displacement).
+    pub max_distance: Scalar,
     /// Eligible dynamic bodies visited, once per position pass.
     pub body_visits: u64,
     pub fixed_index_rebuilds: u64,
@@ -73,9 +82,9 @@ impl Scratch {
 }
 
 impl World {
-    pub(super) fn correct_fixed_positions(
+    pub(super) fn correct_positions(
         &mut self,
-        h: f64,
+        h: Scalar,
         report: &mut PositionReport,
     ) -> Result<(), Error> {
         #[cfg(test)]
@@ -92,6 +101,100 @@ impl World {
         for _ in 0..self.config.fixed_position_iterations {
             report.passes += 1;
             let mut changed = false;
+            if self.config.position_correction == PositionCorrection::AdmittedContacts {
+                let mut previous = None;
+                for row in &self.constraints {
+                    let (i, j) = (row.a, row.b);
+                    if previous == Some((i, j)) {
+                        continue;
+                    }
+                    previous = Some((i, j));
+                    if !self.bodies[i].movable()
+                        || !self.bodies[j].movable()
+                        || self.bodies[i].sleeping
+                        || self.bodies[j].sleeping
+                        || self.bodies[i].sensor
+                        || self.bodies[j].sensor
+                        || !self.bodies[i].layers.collides_with(self.bodies[j].layers)
+                    {
+                        continue;
+                    }
+                    report.dynamic_pair_visits += 1;
+                    report.bounds_tests += 1;
+                    let (lo, hi) = self.bodies[i].cached_bounds;
+                    let (bl, bh) = self.bodies[j].cached_bounds;
+                    if lo.0 > bh.0
+                        || hi.0 < bl.0
+                        || lo.1 > bh.1
+                        || hi.1 < bl.1
+                        || lo.2 > bh.2
+                        || hi.2 < bl.2
+                    {
+                        continue;
+                    }
+                    report.contact_tests += 1;
+                    report.dynamic_contact_tests += 1;
+                    let [a, b] = [&self.bodies[i], &self.bodies[j]];
+                    let manifold = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                        report.moving_frame_preparations += 2;
+                        report.geometry.current_queries += 1;
+                        report.geometry.manifold_refreshes += 1;
+                        contact::box_current_with_frames(
+                            a,
+                            b,
+                            0.0,
+                            [a.orientation.axes(), b.orientation.axes()],
+                            &mut report.geometry,
+                            &mut s.position.clipping,
+                        )
+                    } else {
+                        contact::current_counted(a, b, 0.0, &mut report.geometry)
+                    };
+                    let Some(m) = manifold else {
+                        continue;
+                    };
+                    let depth = (&m.points)
+                        .into_iter()
+                        .map(|p| -p.separation)
+                        .fold(0.0, Scalar::max);
+                    let distance = (depth - self.config.contact_slop).max(0.0);
+                    if distance <= 0.0 {
+                        continue;
+                    }
+                    let inv_a = if row.response[0] {
+                        self.bodies[i].inverse_mass()
+                    } else {
+                        0.0
+                    };
+                    let inv_b = if row.response[1] {
+                        self.bodies[j].inverse_mass()
+                    } else {
+                        0.0
+                    };
+                    let total = inv_a + inv_b;
+                    if total == 0.0 {
+                        continue;
+                    }
+                    for (index, weight, direction) in
+                        [(i, inv_a / total, -m.normal), (j, inv_b / total, m.normal)]
+                    {
+                        let moved = distance * weight;
+                        let body = &mut self.bodies[index];
+                        body.position += direction * moved;
+                        if !body.valid() {
+                            return Err(Error::NonFiniteState(body.id));
+                        }
+                        body.cached_bounds = contact::bounds(body);
+                        if moved > self.config.sleep_speed * h {
+                            body.quiet_time = 0.0;
+                        }
+                    }
+                    report.corrections += 1;
+                    report.dynamic_corrections += 1;
+                    report.max_distance = report.max_distance.max(distance);
+                    changed = true;
+                }
+            }
             // Both views preserve BodyId order. A correction can move into a later collider;
             // never prefilter an entire pass from the body's old bounds.
             for &i in &s.activity.indices {
@@ -213,7 +316,7 @@ mod tests {
         w.add_body(b.clone()).unwrap();
         let fixed = w.bodies[0].clone();
         let mut report = PositionReport::default();
-        w.correct_fixed_positions(1.0 / 240.0, &mut report).unwrap();
+        w.correct_positions(1.0 / 240.0, &mut report).unwrap();
         assert!((w.bodies[1].position.1 - 0.98).abs() < 1e-12);
         assert_eq!(w.bodies[1].velocity, b.velocity);
         assert_eq!(w.bodies[1].angular_velocity, b.angular_velocity);
@@ -247,7 +350,7 @@ mod tests {
         b.orientation = q;
         w.add_body(b).unwrap();
         let old = w.bodies[1].position;
-        w.correct_fixed_positions(1.0 / 240.0, &mut PositionReport::default())
+        w.correct_positions(1.0 / 240.0, &mut PositionReport::default())
             .unwrap();
         let d = w.bodies[1].position - old;
         assert!(d.dot(n) > 0.45);
@@ -281,7 +384,7 @@ mod tests {
             w.add_body(b).unwrap();
             let before = w.bodies.clone();
             let mut report = PositionReport::default();
-            w.correct_fixed_positions(1.0 / 240.0, &mut report).unwrap();
+            w.correct_positions(1.0 / 240.0, &mut report).unwrap();
             assert_eq!(w.bodies, before);
             assert_eq!(report.corrections, 0);
         }
@@ -298,12 +401,12 @@ mod tests {
         .unwrap();
         let before = w.bodies.clone();
         let mut report = PositionReport::default();
-        w.correct_fixed_positions(1.0 / 240.0, &mut report).unwrap();
+        w.correct_positions(1.0 / 240.0, &mut report).unwrap();
         assert_eq!(w.bodies, before);
         assert_eq!(report.contact_tests, 0);
         w.config.fixed_position_iterations = 0;
         report = PositionReport::default();
-        w.correct_fixed_positions(1.0 / 240.0, &mut report).unwrap();
+        w.correct_positions(1.0 / 240.0, &mut report).unwrap();
         assert_eq!(report.passes, 0);
         assert_eq!(report.bounds_tests, 0);
         assert!(
@@ -315,12 +418,62 @@ mod tests {
         );
     }
     #[test]
+    fn admitted_dynamic_correction_preserves_mass_center_motion_and_time() {
+        let mut world = World::new(Config {
+            gravity: Vector::ZERO,
+            substeps: 1,
+            fixed_position_iterations: 2,
+            position_correction: PositionCorrection::AdmittedContacts,
+            ..Config::default()
+        })
+        .unwrap();
+        for (id, x, mass) in [(1, 0.0, 1.0), (2, 2.0, 3.0)] {
+            world
+                .add_body(Body::new(
+                    BodyId(id),
+                    Shape::Sphere(1.0),
+                    Vector(x, 0.0, 0.0),
+                    mass,
+                ))
+                .unwrap();
+        }
+        world.step(1.0 / 240.0).unwrap(); // Admit the actual touching pair.
+        world.bodies[1].position.0 = 1.5;
+        for body in &mut world.bodies {
+            body.cached_bounds = contact::bounds(body);
+            body.quiet_time = 1.0;
+            body.velocity = Vector(1.0, -2.0, 3.0);
+            body.angular_velocity = Vector(0.1, 0.2, 0.3);
+        }
+        let before = world.bodies.clone();
+        let elapsed = world.elapsed;
+        let center = before[0].position * before[0].mass + before[1].position * before[1].mass;
+        let mut report = PositionReport::default();
+        world.correct_positions(1.0 / 240.0, &mut report).unwrap();
+        assert!((world.bodies[0].position.0 + 0.36).abs() < 1e-12);
+        assert!((world.bodies[1].position.0 - 1.62).abs() < 1e-12);
+        let after_center =
+            world.bodies[0].position * before[0].mass + world.bodies[1].position * before[1].mass;
+        assert!((after_center - center).length() < 1e-12);
+        for (after, before) in world.bodies.iter().zip(before) {
+            assert_eq!(after.velocity, before.velocity);
+            assert_eq!(after.angular_velocity, before.angular_velocity);
+            assert_eq!(after.orientation, before.orientation);
+            assert_eq!(after.quiet_time, 0.0);
+        }
+        assert_eq!(world.elapsed, elapsed);
+        assert!(report.dynamic_corrections >= 1 && report.dynamic_corrections <= 2);
+        assert!(report.passes <= 2);
+        assert!(report.dynamic_contact_tests > 0);
+    }
+
+    #[test]
     fn material_position_correction_resets_quiet_time_before_island_sleep() {
         let mut w = fixture();
         let mut b = Body::new(BodyId(2), Shape::Sphere(1.0), Vector(0.0, 0.5, 0.0), 1.0);
         b.quiet_time = 1.0;
         w.add_body(b).unwrap();
-        w.correct_fixed_positions(1.0 / 240.0, &mut PositionReport::default())
+        w.correct_positions(1.0 / 240.0, &mut PositionReport::default())
             .unwrap();
         assert_eq!(w.bodies[1].quiet_time, 0.0);
         assert!(!w.bodies[1].sleeping);

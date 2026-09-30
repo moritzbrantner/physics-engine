@@ -297,14 +297,26 @@ impl Body {
             && self.velocity.abs().max_component() < 1e12
     }
 }
+/// Eligible pairs in the bounded post-integration position stage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PositionCorrection {
+    /// Preserve the original fixed-collider-only comparison policy.
+    #[default]
+    FixedColliders,
+    /// Also correct residual overlap between awake dynamic pairs admitted by CCD/contact
+    /// generation in this substep. This does not discover contacts or replace swept admission.
+    AdmittedContacts,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub gravity: Vector,
     pub substeps: u8,
     pub velocity_iterations: u8,
-    /// Optional bounded position-only correction against fixed colliders, after integration.
-    /// Zero preserves the comparison kernel; the interactive tower explicitly selects two.
+    /// Shared post-integration position-pass budget (historical field name).
+    /// Zero disables correction; fixed and admitted dynamic pairs share each selected pass.
     pub fixed_position_iterations: u8,
+    pub position_correction: PositionCorrection,
     /// Scene-space length, default 0.02. Chosen explicitly for the legacy 36-unit crates.
     pub contact_slop: Scalar,
     pub sleep_speed: Scalar,
@@ -326,6 +338,7 @@ impl Default for Config {
             substeps: 4,
             velocity_iterations: 8,
             fixed_position_iterations: 0,
+            position_correction: PositionCorrection::FixedColliders,
             contact_slop: 0.02,
             sleep_speed: 1.0,
             sleep_seconds: 0.5,
@@ -1275,7 +1288,7 @@ impl World {
                 b.cached_bounds = contact::bounds(b);
             }
             self.constraints = constraints;
-            if let Err(error) = self.correct_fixed_positions(h, &mut report.position) {
+            if let Err(error) = self.correct_positions(h, &mut report.position) {
                 self.failed_work = Some(FailedStepWork::capture(
                     &report,
                     BookkeepingStats {

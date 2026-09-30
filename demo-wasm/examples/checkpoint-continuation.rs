@@ -19,6 +19,7 @@ fn fixture() -> Result<World> {
         gravity: V(0.0, -10.0, 0.0),
         substeps: 2,
         fixed_position_iterations: 2,
+        position_correction: physics_engine::approximate::PositionCorrection::AdmittedContacts,
         sleep_speed: 0.1,
         sleep_seconds: 0.08,
         ..Config::default()
