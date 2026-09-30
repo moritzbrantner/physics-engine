@@ -257,56 +257,66 @@ fn prepared_axes_match_uncached_geometry_through_tumbling_sliding_and_edge_trans
 
 #[test]
 fn cached_and_uncached_worlds_preserve_complete_motion_and_contact_impulses() {
-    for locked in [false, true] {
-        let mut candidate = World::new(Config::default()).unwrap();
-        candidate
-            .add_body(Body::new(
-                BodyId(1),
-                Shape::Box(Vector(50.0, 1.0, 50.0)),
-                Vector(0.0, -1.0, 0.0),
-                0.0,
-            ))
+    for policy in [
+        super::super::PositionCorrection::FixedColliders,
+        super::super::PositionCorrection::AdmittedContacts,
+    ] {
+        for locked in [false, true] {
+            let mut candidate = World::new(Config {
+                fixed_position_iterations: 2,
+                position_correction: policy,
+                ..Config::default()
+            })
             .unwrap();
-        for i in 0..4 {
-            let mut b = Body::new(
-                BodyId(10 + i),
-                Shape::Box(Vector(2.0, 2.0, 2.0)),
-                Vector(0.0, 2.0 + 4.0 * i as f64, 0.0),
-                2.0 + i as f64,
-            );
-            b.rotation_locked = locked;
-            candidate.add_body(b).unwrap();
-        }
-        let mut reference = candidate.clone();
-        for tick in 0..400 {
-            if tick == 200 {
-                for w in [&mut candidate, &mut reference] {
-                    w.set_velocity(BodyId(12), Vector(10.0, 0.0, 0.0)).unwrap();
+            candidate
+                .add_body(Body::new(
+                    BodyId(1),
+                    Shape::Box(Vector(50.0, 1.0, 50.0)),
+                    Vector(0.0, -1.0, 0.0),
+                    0.0,
+                ))
+                .unwrap();
+            for i in 0..4 {
+                let mut b = Body::new(
+                    BodyId(10 + i),
+                    Shape::Box(Vector(2.0, 2.0, 2.0)),
+                    Vector(0.0, 2.0 + 4.0 * i as f64, 0.0),
+                    2.0 + i as f64,
+                );
+                b.rotation_locked = locked;
+                candidate.add_body(b).unwrap();
+            }
+            let mut reference = candidate.clone();
+            for tick in 0..400 {
+                if tick == 200 {
+                    for w in [&mut candidate, &mut reference] {
+                        w.set_velocity(BodyId(12), Vector(10.0, 0.0, 0.0)).unwrap();
+                    }
                 }
+                if tick == 300 {
+                    candidate.remove_body(BodyId(10));
+                    reference.remove_body(BodyId(10));
+                }
+                let mut actual = candidate
+                    .step_with_geometry::<true, true>(1.0 / 60.0)
+                    .unwrap();
+                let mut expected = reference
+                    .step_with_geometry::<true, false>(1.0 / 60.0)
+                    .unwrap();
+                assert_eq!(candidate.bodies, reference.bodies, "body state tick {tick}");
+                assert_eq!(
+                    format!("{:?}", candidate.cache),
+                    format!("{:?}", reference.cache),
+                    "warm-start impulses tick {tick}"
+                );
+                actual.geometry = GeometryStats::default();
+                expected.geometry = GeometryStats::default();
+                assert_eq!(
+                    format!("{actual:?}"),
+                    format!("{expected:?}"),
+                    "old work counters tick {tick}"
+                );
             }
-            if tick == 300 {
-                candidate.remove_body(BodyId(10));
-                reference.remove_body(BodyId(10));
-            }
-            let mut actual = candidate
-                .step_with_geometry::<true, true>(1.0 / 60.0)
-                .unwrap();
-            let mut expected = reference
-                .step_with_geometry::<true, false>(1.0 / 60.0)
-                .unwrap();
-            assert_eq!(candidate.bodies, reference.bodies, "body state tick {tick}");
-            assert_eq!(
-                format!("{:?}", candidate.cache),
-                format!("{:?}", reference.cache),
-                "warm-start impulses tick {tick}"
-            );
-            actual.geometry = GeometryStats::default();
-            expected.geometry = GeometryStats::default();
-            assert_eq!(
-                format!("{actual:?}"),
-                format!("{expected:?}"),
-                "old work counters tick {tick}"
-            );
         }
     }
 }

@@ -26,3 +26,8 @@ test = true
 name = "shape-query-contract"
 crate-type = ["cdylib"]
 test = true
+
+[[example]]
+name = "dense-contact-contract"
+crate-type = ["cdylib"]
+test = true

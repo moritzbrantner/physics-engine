@@ -5,13 +5,13 @@ use sha2::{Digest, Sha256};
 
 use super::{
     Body, BodyId, CachedPoint, CollisionLayers3d, Config, Convergence, ConvergenceScope,
-    Quaternion, Scalar, Shape, Vector, World, contact,
+    PositionCorrection, Quaternion, Scalar, Shape, Vector, World, contact,
 };
 
 const MAGIC: &[u8; 8] = b"PEFLOAT\0";
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 // Bump when continuation semantics change, even if the byte layout does not.
-const ALGORITHM: u32 = 1;
+const ALGORITHM: u32 = 2;
 const DIGEST_BYTES: usize = 32;
 const MIN_BODY_BYTES: usize = 260;
 const POINT_BYTES: usize = 104;
@@ -385,11 +385,13 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
         ConvergenceScope::WholeWorld => 0,
         ConvergenceScope::ContactIslands => 1,
     });
+    let position =
+        u8::from(config.position_correction == PositionCorrection::AdmittedContacts) << 1;
     #[cfg(not(feature = "experimental-soft-contact"))]
-    out.push(0);
+    out.push(position);
     #[cfg(feature = "experimental-soft-contact")]
     {
-        out.push(u8::from(config.soft_contact.is_some()));
+        out.push(position | u8::from(config.soft_contact.is_some()));
         if let Some(c) = config.soft_contact {
             scalar(out, c.frequency_hz);
             scalar(out, c.damping_ratio);
@@ -517,11 +519,12 @@ impl<'a> Reader<'a> {
         Ok(count)
     }
     fn config(&mut self) -> Result<Config, CheckpointError> {
-        let config = Config {
+        let mut config = Config {
             gravity: self.vector()?,
             substeps: self.u8()?,
             velocity_iterations: self.u8()?,
             fixed_position_iterations: self.u8()?,
+            position_correction: PositionCorrection::FixedColliders,
             contact_slop: self.scalar()?,
             sleep_speed: self.scalar()?,
             sleep_seconds: self.scalar()?,
@@ -543,13 +546,18 @@ impl<'a> Reader<'a> {
             #[cfg(feature = "experimental-soft-contact")]
             soft_contact: None,
         };
-        let soft = self.boolean()?;
+        let policies = self.u8()?;
+        if policies & !3 != 0 {
+            return Err(CheckpointError::InvalidData);
+        }
+        if policies & 2 != 0 {
+            config.position_correction = PositionCorrection::AdmittedContacts;
+        }
+        let soft = policies & 1 != 0;
         #[cfg(not(feature = "experimental-soft-contact"))]
         if soft {
             return Err(CheckpointError::UnsupportedPolicy);
         }
-        #[cfg(feature = "experimental-soft-contact")]
-        let mut config = config;
         #[cfg(feature = "experimental-soft-contact")]
         if soft {
             config.soft_contact = Some(super::SoftContact {

@@ -4,7 +4,7 @@ use super::{PLAYER_ID, PROJECTILE_ID_START, ProjectileType, controller};
 use physics_engine::approximate::SoftContact;
 use physics_engine::{
     BodyId,
-    approximate::{Body, Config, Quaternion, Shape, Vector, World},
+    approximate::{Body, Config, PositionCorrection, Quaternion, Shape, Vector, World},
 };
 use std::{cell::RefCell, collections::BTreeMap};
 
@@ -90,6 +90,7 @@ fn reset_with_convergence(
         substeps,
         velocity_iterations,
         fixed_position_iterations,
+        position_correction: PositionCorrection::AdmittedContacts,
         convergence: early.then(Default::default),
         ..Config::default()
     })
@@ -132,7 +133,7 @@ pub extern "C" fn approximate_reset_tower(simulation_rules: i32) -> i32 {
         return result;
     }
     // Retain the four-substep impulse solver. A bounded geometric correction handles residual
-    // fixed-world overlap under repeated volleys without adding velocity or chronological events.
+    // admitted-contact overlap under repeated volleys without adding velocity or chronological events.
     reset_with_convergence(4, 8, true, 2)
 }
 

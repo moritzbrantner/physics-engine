@@ -3,7 +3,7 @@
 Issue #166. This extends the bounded f64 solver after `3074f49ca2219b89cd093af6b6f8099bb387b887`.
 It does not reduce the default four substeps, eight velocity iterations, contact slop,
 convergence tolerances, CCD coverage, materials or sleeping policy. The canonical tower
-continues to select two fixed-position correction passes. The optional soft-contact experiment is compile-time gated and uses this same scheduler when explicitly enabled; see `docs/soft-contact-correction.md`. It remains absent from production builds.
+selects two shared position-correction passes, including admitted awake dynamic pairs; see [the dense-contact repair](dense-contact-correction.md). The fixed-only comparison policy remains available. The optional soft-contact experiment is compile-time gated and uses this same scheduler when explicitly enabled; see `docs/soft-contact-correction.md`. It remains absent from production builds.
 
 ## Policy and authority
 

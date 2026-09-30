@@ -21,7 +21,9 @@ const workNames=['substeps','velocity_passes','position_passes','contact_points'
 const diagnostic=(await WebAssembly.instantiate(module,{})).exports;
 assert.equal(typeof diagnostic.budget_convergence_scope,'function','unidentified convergence policy');
 const scope=diagnostic.budget_convergence_scope();assert(scope===0||scope===1);
-const solverPolicy={convergence_scope:scope===1?'contact-islands':'whole-world',soft_contact:false};
+const position=typeof diagnostic.budget_position_correction==='function'?diagnostic.budget_position_correction():0;
+assert(position===0||position===1);
+const solverPolicy={convergence_scope:scope===1?'contact-islands':'whole-world',position_correction:position===1?'admitted-contacts':'fixed-colliders',soft_contact:false};
 const started=new Date().toISOString();mkdirSync(dirname(output),{recursive:true});
 writeFileSync(output+'.ndjson','');
 async function replay(count,scene,p,trial,warm=false) {
@@ -31,6 +33,8 @@ async function replay(count,scene,p,trial,warm=false) {
   const peak=Array(12).fill(0), totals=Array(workNames.length).fill(0),phaseWork={startup:Array(workNames.length).fill(0),active:Array(workNames.length).fill(0),sleeping:Array(workNames.length).fill(0)};
   let failedStep=null,elapsed=0,firstQualityFailure=null,completedTicks=0,peakLive=0,contactBodySum=0,contactPairSum=0,qualitySamples=0;
   const failures=new Set();
+  let peakReportedRetained=0;
+  const positionWork=Array(4).fill(0);
   for(let t=0;t<(warm?40:ticks);t++) {
     const start=performance.now(),code=e.budget_step(),ms=performance.now()-start;
     if(code!==0){failedStep={tick:t,code};break;}
@@ -39,6 +43,12 @@ async function replay(count,scene,p,trial,warm=false) {
     const ptr=e.budget_observe(),n=e.budget_snapshot_len(),state=new Float64Array(e.memory.buffer,ptr,n);
     const m=Array.from({length:12},(_,i)=>e.budget_metric(i));
     const work=workNames.map((_,i)=>e.budget_stat(i));elapsed=e.budget_stat(14);
+    const retained=e.budget_stat(13)+e.budget_stat(19)+e.budget_stat(20)+e.budget_stat(21);
+    if(Number.isFinite(retained))peakReportedRetained=Math.max(peakReportedRetained,retained);
+    for(let i=0;i<positionWork.length;i++) {
+      const value=e.budget_stat(15+i);
+      if(Number.isFinite(value))positionWork[i]+=value;
+    }
     const phase=t<60?'startup':m[3]>0?'active':'sleeping';
     times[phase].push(ms);raw.push(ms);
     hash.update(new Uint8Array(state.buffer,ptr,n*8));hash.update(JSON.stringify([m,work]));
@@ -58,6 +68,8 @@ async function replay(count,scene,p,trial,warm=false) {
   return {scene:SCENES[scene],boxes:count,fixed_bodies:1,peak_total_bodies:peakLive,profile:p,trial,completed:completedTicks===ticks,
     completed_ticks:completedTicks,elapsed_seconds:elapsed,step_error:failedStep,
     quality:{passed:!failures.size,reasons:[...failures],first_failure:firstQualityFailure,peak_floor:peak[1],peak_box_overlap:peak[2],peak_awake_boxes:peak[3],peak_touching_pairs:peak[4],peak_touching_boxes:peak[5],mean_touching_boxes:contactBodySum/qualitySamples,mean_touching_pairs:contactPairSum/qualitySamples,peak_displacement:peak[6],peak_surface_speed:peak[7],peak_energy:peak[8],shots:peak[10],retired:peak[11],sample_every_ticks:1},
+    position_work:Object.fromEntries(['admitted_pair_visits','dynamic_contact_tests','dynamic_corrections','dynamic_sat_axes'].map((key,i)=>[key,positionWork[i]])),
+    peak_reported_scratch_payload_bytes:position===1?peakReportedRetained:null,
     timing:Object.fromEntries(Object.entries(times).map(([k,v])=>[k,summary(v)])),raw_step_ms:raw,
     work:Object.fromEntries(workNames.map((k,i)=>[k,totals[i]])),phase_work:Object.fromEntries(Object.entries(phaseWork).map(([phase,v])=>[phase,Object.fromEntries(workNames.map((k,i)=>[k,v[i]]))])),
     replay_sha256:hash.digest('hex')};

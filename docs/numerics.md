@@ -40,7 +40,7 @@ establish that claim.
 The arithmetic migration did **not** replace the box-contact solver or cure the legacy rotating-event
 tower failure. Later work moved the canonical Tower Stability runtime to `approximate::World` with
 bounded fixed-contact position correction; its recorded volley matrix passes. This remains a specific
-acceptance result, not a general dense-contact repair. The separate legacy frame-38 event-limit
+acceptance result. [Admitted-contact position correction](dense-contact-correction.md) now repairs one reproduced dense impact class under an explicit shared pass budget; the broader contact-quality suite remains incomplete. The separate legacy frame-38 event-limit
 regression is now repaired by [contact continuation](legacy-contact-continuation.md), with its original
 240-frame finite-floor acceptance and 64-event cap. See [the tower runtime](tower-stability.md).
 

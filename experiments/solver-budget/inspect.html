@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dense contact fixture</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui;background:#111820;color:#e8edf2}body{max-width:1100px;margin:24px auto;padding:0 16px}h1{font-size:24px}p{color:#bac8d5;max-width:80ch}fieldset{border:1px solid #405060;display:flex;gap:16px;flex-wrap:wrap;align-items:center}label{display:grid;gap:5px}button,select{font:inherit;padding:7px 10px}nav{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap}canvas{display:block;width:100%;background:#192530;border:1px solid #405060}output{display:block;white-space:pre-wrap;line-height:1.6;margin:16px 0;font-variant-numeric:tabular-nums}.failed{color:#ff9c8c}.passed{color:#9de0b5}
+</style>
+<h1>Dense contact fixture</h1>
+<p>Inspect the same Rust fixture used by the contact-quality tests. Crates remain awake. Mixed impacts fire sphere, arrow and rigid projectile waves at ticks 60, 120 and 180. Each tick advances 1/60 second with four substeps, eight velocity passes and two shared position passes.</p>
+<fieldset><legend>Fixture</legend>
+<label>Crates<select id="count"><option>32</option><option>64</option><option selected>128</option></select></label>
+<label>Scene<select id="scene"><option value="1">Mixed impacts</option><option value="0">Unforced stack</option></select></label>
+<label>Position correction<select id="policy"><option value="1">Admitted contacts</option><option value="0">Fixed colliders (comparison)</option></select></label>
+<button id="reset" disabled>Reset</button>
+</fieldset>
+<nav><button id="step" disabled>Step</button><button id="advance" disabled>Advance 300 ticks</button><button id="run" disabled>Run</button><button id="pause" disabled>Pause</button></nav>
+<output id="status" aria-live="polite">Loading Rust WebAssembly…</output>
+<canvas id="view" width="1100" height="520" aria-label="Crates and projectiles in the dense contact fixture"></canvas>
+<p>The picture reads Rust body snapshots. Independent Rust OBB checks report peak overlap; the unchanged screening limits are 1.8 for crate overlap and 0.5 for floor penetration. Simulation time can run slower than wall time. This viewer does not measure solver capacity.</p>
+<script type="module">
+const ui=Object.fromEntries(['count','scene','policy','reset','step','advance','run','pause','status','view'].map(id=>[id,document.getElementById(id)]));
+let engine,tick=0,peakOverlap=0,peakFloor=0,firstFailure=null,running=false,batching=false;
+const ctx=ui.view.getContext('2d');
+function controls(){for(const id of ['count','scene','policy','reset','step','advance','run'])ui[id].disabled=!engine||batching||running;ui.pause.disabled=!running;}
+function rotate([x,y,z],[a,b,c,w]){const tx=2*(b*z-c*y),ty=2*(c*x-a*z),tz=2*(a*y-b*x);return [x+w*tx+b*tz-c*ty,y+w*ty+c*tx-a*tz,z+w*tz+a*ty-b*tx];}
+function draw(state){ctx.clearRect(0,0,1100,520);const project=([x,y,z])=>[550+1.5*x+0.6*z,450-1.7*y+0.35*z];
+for(const row of state.sort((a,b)=>b[3]-a[3])){if(row[0]<100)continue;const center=row.slice(1,4),half=row.slice(4,7),q=row.slice(7,11),vertices=[];
+for(let i=0;i<8;i++){const offset=rotate(half.map((h,j)=>i&(1<<j)?h:-h),q);vertices.push(project(center.map((v,j)=>v+offset[j])));}
+ctx.strokeStyle=row[0]>=100000?'#ffc273':'#89bfda';ctx.lineWidth=row[0]>=100000?2:1;
+for(let i=0;i<8;i++)for(let axis=0;axis<3;axis++){const j=i^(1<<axis);if(j>i){ctx.beginPath();ctx.moveTo(...vertices[i]);ctx.lineTo(...vertices[j]);ctx.stroke();}}}}
+function observe(){const ptr=engine.budget_observe(),len=engine.budget_snapshot_len(),snapshot=new Float64Array(engine.memory.buffer,ptr,len);
+const rows=Array.from({length:len/21},(_,i)=>Array.from(snapshot.subarray(i*21,i*21+21)));
+peakOverlap=Math.max(peakOverlap,engine.budget_metric(2));peakFloor=Math.max(peakFloor,engine.budget_metric(1));
+const awake=engine.budget_metric(3),time=engine.budget_stat(14);
+if(firstFailure===null&&(peakOverlap>1.8||peakFloor>0.5||engine.budget_metric(0)!==1||awake!==Number(ui.count.value)||Math.abs(time-tick/60)>1e-8))firstFailure=tick;
+ui.status.className=firstFailure===null?'passed':'failed';
+ui.status.textContent=`Tick ${tick} · simulated time ${time.toFixed(3)} s · awake crates ${awake}\nPeak crate overlap ${peakOverlap.toFixed(6)} / 1.8 · peak floor penetration ${peakFloor.toFixed(6)} / 0.5\n${firstFailure===null?'Quality checks passing so far':`Quality failure first observed at tick ${firstFailure}`}`;
+ui.status.dataset.tick=String(tick);ui.status.dataset.failure=firstFailure===null?'':String(firstFailure);draw(rows);}
+function step(){if(engine.budget_step()!==0)throw Error('Rust step failed');tick++;observe();}
+function reset(){if(engine.budget_reset_with_position_policy(Number(ui.count.value),Number(ui.scene.value),4,8,2,Number(ui.policy.value))!==0)throw Error('Rust reset failed');tick=0;peakOverlap=0;peakFloor=0;firstFailure=null;observe();controls();}
+function fail(error){running=false;batching=false;ui.status.className='failed';ui.status.textContent=String(error);controls();console.error(error);}
+ui.reset.onclick=()=>{try{reset();}catch(e){fail(e);}};
+for(const id of ['count','scene','policy'])ui[id].onchange=ui.reset.onclick;
+ui.step.onclick=()=>{try{step();}catch(e){fail(e);}};
+ui.advance.onclick=async()=>{batching=true;controls();try{for(let batch=0;batch<60;batch++){for(let i=0;i<5;i++)step();await new Promise(requestAnimationFrame);}}catch(e){fail(e);}finally{batching=false;controls();}};
+ui.run.onclick=()=>{running=true;controls();};ui.pause.onclick=()=>{running=false;controls();};
+function frame(){if(running){try{step();}catch(e){fail(e);}}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+try{const path=new URLSearchParams(location.search).get('wasm')??'./target/wasm32-unknown-unknown/release/physics_solver_budget.wasm';const response=await fetch(path);if(!response.ok)throw Error(`WASM download failed (${response.status}). Build the diagnostic crate first.`);const result=await WebAssembly.instantiate(await response.arrayBuffer(),{});engine=result.instance.exports;reset();}catch(e){fail(e);}
+</script>
+</html>

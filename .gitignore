@@ -5,3 +5,5 @@
 /physics-performance-log-*.tar.gz
 
 /experiments/contact-islands/target
+
+/experiments/solver-budget/target
