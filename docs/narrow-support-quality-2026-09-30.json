@@ -1,0 +1,483 @@
+{
+  "producer": "a0f9732edcafa784bf8c3ee89526dc470b722945",
+  "baseline": "96c3900f51aabb15becde6b4ad503d456d95638c",
+  "sourceRevision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "rustc": "1.98.0",
+  "targets": [
+    "x86_64-unknown-linux-gnu",
+    "wasm32-unknown-unknown"
+  ],
+  "wasm_runtime": "Node.js v24.16.0",
+  "requested_seconds_per_world": 10,
+  "full_ticks_per_world": 600,
+  "physical_slots_per_observer": 2400,
+  "replay_policy": "Each case creates two independent four-substep worlds and one one-substep observer. Every tick compares complete physical bodies with the observer and exact checkpoint bytes between the two same-target worlds. Native records one invocation; WASM records three complete invocations. Cross-target bit identity is not required. Active-substep counters can be below requested slots because quiescent calls still consume all requested time.",
+  "native_command": "cargo test --release --locked --test narrow_support -- --nocapture",
+  "wasm_commands": [
+    "cargo build --manifest-path demo-wasm/Cargo.toml --example dense-contact-contract --target wasm32-unknown-unknown --release --locked",
+    "node scripts/test-dense-contact-wasm.mjs demo-wasm/target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm"
+  ],
+  "native": [
+    {
+      "case": "Balanced",
+      "ticks": {
+        "peak_penetration": 5.706605183064539e-05,
+        "peak_speed": 0.017843453646455683,
+        "peak_angular_speed": 0.0009660746780322564,
+        "peak_energy": 0.0005199816992768002,
+        "tail_speed": 0.0,
+        "tail_angular_speed": 0.0,
+        "support_departure": 0.0,
+        "sleep_transitions": 1.0,
+        "wake_transitions": 0.0,
+        "sleeping": 1.0,
+        "last_sleep_seconds": 0.5166666666666666,
+        "contact_points": 484.0,
+        "constraint_visits": 1688.0,
+        "position_tests": 121.0,
+        "active_substeps": 124.0
+      },
+      "physical_substeps": {
+        "peak_penetration": 6.100546596599088e-05,
+        "peak_speed": 0.022045516149004293,
+        "peak_angular_speed": 0.001185601944626108,
+        "peak_energy": 0.0007896256080338704,
+        "tail_speed": 0.0,
+        "tail_angular_speed": 0.0,
+        "support_departure": 0.0,
+        "sleep_transitions": 1.0,
+        "wake_transitions": 0.0,
+        "sleeping": 1.0,
+        "last_sleep_seconds": 0.5041666666666661,
+        "contact_points": 484.0,
+        "constraint_visits": 1688.0,
+        "position_tests": 121.0,
+        "active_substeps": 121.0
+      }
+    },
+    {
+      "case": "OffCenter",
+      "ticks": {
+        "peak_penetration": 0.01999999999999602,
+        "peak_speed": 757.1434834586818,
+        "peak_angular_speed": 9.871937742930825,
+        "peak_energy": 594316.5679808124,
+        "tail_speed": 0.0,
+        "tail_angular_speed": 0.0,
+        "support_departure": 1.0,
+        "sleep_transitions": 1.0,
+        "wake_transitions": 0.0,
+        "sleeping": 1.0,
+        "last_sleep_seconds": 1.0500000000000012,
+        "contact_points": 679.0,
+        "constraint_visits": 2704.0,
+        "position_tests": 206.0,
+        "active_substeps": 252.0
+      },
+      "physical_substeps": {
+        "peak_penetration": 0.01999999999999602,
+        "peak_speed": 786.8572732550132,
+        "peak_angular_speed": 10.470774175321148,
+        "peak_energy": 640194.6819111797,
+        "tail_speed": 0.0,
+        "tail_angular_speed": 0.0,
+        "support_departure": 1.0,
+        "sleep_transitions": 1.0,
+        "wake_transitions": 0.0,
+        "sleeping": 1.0,
+        "last_sleep_seconds": 1.0374999999999976,
+        "contact_points": 679.0,
+        "constraint_visits": 2704.0,
+        "position_tests": 206.0,
+        "active_substeps": 249.0
+      }
+    },
+    {
+      "case": "Removal",
+      "ticks": {
+        "peak_penetration": 0.0016808885350343417,
+        "peak_speed": 840.0,
+        "peak_angular_speed": 0.0009660746780322564,
+        "peak_energy": 705600.0,
+        "tail_speed": 0.0,
+        "tail_angular_speed": 0.0,
+        "support_departure": 1.0,
+        "sleep_transitions": 2.0,
+        "wake_transitions": 1.0,
+        "sleeping": 1.0,
+        "last_sleep_seconds": 2.749999999999995,
+        "contact_points": 972.0,
+        "constraint_visits": 2832.0,
+        "position_tests": 243.0,
+        "active_substeps": 304.0
+      },
+      "physical_substeps": {
+        "peak_penetration": 0.002353653658104804,
+        "peak_speed": 840.0,
+        "peak_angular_speed": 0.024995181316378248,
+        "peak_energy": 705600.0,
+        "tail_speed": 0.0,
+        "tail_angular_speed": 0.0,
+        "support_departure": 1.0,
+        "sleep_transitions": 2.0,
+        "wake_transitions": 1.0,
+        "sleeping": 1.0,
+        "last_sleep_seconds": 2.741666666666698,
+        "contact_points": 972.0,
+        "constraint_visits": 2832.0,
+        "position_tests": 243.0,
+        "active_substeps": 299.0
+      }
+    }
+  ],
+  "wasm": [
+    {
+      "replay": 0,
+      "rows": [
+        {
+          "case": "Balanced",
+          "ticks": {
+            "peak_penetration": 5.706605183064539e-05,
+            "peak_speed": 0.017843453646455683,
+            "peak_angular_speed": 0.0009660746780322564,
+            "peak_energy": 0.0005199816992768002,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 0,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 0.5166666666666666,
+            "contact_points": 484,
+            "constraint_visits": 1688,
+            "position_tests": 121,
+            "active_substeps": 124
+          },
+          "physical_substeps": {
+            "peak_penetration": 6.100546596599088e-05,
+            "peak_speed": 0.022045516149004293,
+            "peak_angular_speed": 0.001185601944626108,
+            "peak_energy": 0.0007896256080338704,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 0,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 0.5041666666666661,
+            "contact_points": 484,
+            "constraint_visits": 1688,
+            "position_tests": 121,
+            "active_substeps": 121
+          }
+        },
+        {
+          "case": "OffCenter",
+          "ticks": {
+            "peak_penetration": 0.019999999999988916,
+            "peak_speed": 757.1434834586818,
+            "peak_angular_speed": 9.871937742930825,
+            "peak_energy": 594316.5679808124,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 1.0500000000000012,
+            "contact_points": 679,
+            "constraint_visits": 2704,
+            "position_tests": 206,
+            "active_substeps": 252
+          },
+          "physical_substeps": {
+            "peak_penetration": 0.01999999999999602,
+            "peak_speed": 786.8572732550132,
+            "peak_angular_speed": 10.47077417532115,
+            "peak_energy": 640194.6819111797,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 1.0374999999999976,
+            "contact_points": 679,
+            "constraint_visits": 2704,
+            "position_tests": 206,
+            "active_substeps": 249
+          }
+        },
+        {
+          "case": "Removal",
+          "ticks": {
+            "peak_penetration": 0.0016808885350343417,
+            "peak_speed": 840,
+            "peak_angular_speed": 0.0009660746780322564,
+            "peak_energy": 705600,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 2,
+            "wake_transitions": 1,
+            "sleeping": 1,
+            "last_sleep_seconds": 2.749999999999995,
+            "contact_points": 972,
+            "constraint_visits": 2832,
+            "position_tests": 243,
+            "active_substeps": 304
+          },
+          "physical_substeps": {
+            "peak_penetration": 0.002353653658104804,
+            "peak_speed": 840,
+            "peak_angular_speed": 0.024995181316378248,
+            "peak_energy": 705600,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 2,
+            "wake_transitions": 1,
+            "sleeping": 1,
+            "last_sleep_seconds": 2.741666666666698,
+            "contact_points": 972,
+            "constraint_visits": 2832,
+            "position_tests": 243,
+            "active_substeps": 299
+          }
+        }
+      ]
+    },
+    {
+      "replay": 1,
+      "rows": [
+        {
+          "case": "Balanced",
+          "ticks": {
+            "peak_penetration": 5.706605183064539e-05,
+            "peak_speed": 0.017843453646455683,
+            "peak_angular_speed": 0.0009660746780322564,
+            "peak_energy": 0.0005199816992768002,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 0,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 0.5166666666666666,
+            "contact_points": 484,
+            "constraint_visits": 1688,
+            "position_tests": 121,
+            "active_substeps": 124
+          },
+          "physical_substeps": {
+            "peak_penetration": 6.100546596599088e-05,
+            "peak_speed": 0.022045516149004293,
+            "peak_angular_speed": 0.001185601944626108,
+            "peak_energy": 0.0007896256080338704,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 0,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 0.5041666666666661,
+            "contact_points": 484,
+            "constraint_visits": 1688,
+            "position_tests": 121,
+            "active_substeps": 121
+          }
+        },
+        {
+          "case": "OffCenter",
+          "ticks": {
+            "peak_penetration": 0.019999999999988916,
+            "peak_speed": 757.1434834586818,
+            "peak_angular_speed": 9.871937742930825,
+            "peak_energy": 594316.5679808124,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 1.0500000000000012,
+            "contact_points": 679,
+            "constraint_visits": 2704,
+            "position_tests": 206,
+            "active_substeps": 252
+          },
+          "physical_substeps": {
+            "peak_penetration": 0.01999999999999602,
+            "peak_speed": 786.8572732550132,
+            "peak_angular_speed": 10.47077417532115,
+            "peak_energy": 640194.6819111797,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 1.0374999999999976,
+            "contact_points": 679,
+            "constraint_visits": 2704,
+            "position_tests": 206,
+            "active_substeps": 249
+          }
+        },
+        {
+          "case": "Removal",
+          "ticks": {
+            "peak_penetration": 0.0016808885350343417,
+            "peak_speed": 840,
+            "peak_angular_speed": 0.0009660746780322564,
+            "peak_energy": 705600,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 2,
+            "wake_transitions": 1,
+            "sleeping": 1,
+            "last_sleep_seconds": 2.749999999999995,
+            "contact_points": 972,
+            "constraint_visits": 2832,
+            "position_tests": 243,
+            "active_substeps": 304
+          },
+          "physical_substeps": {
+            "peak_penetration": 0.002353653658104804,
+            "peak_speed": 840,
+            "peak_angular_speed": 0.024995181316378248,
+            "peak_energy": 705600,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 2,
+            "wake_transitions": 1,
+            "sleeping": 1,
+            "last_sleep_seconds": 2.741666666666698,
+            "contact_points": 972,
+            "constraint_visits": 2832,
+            "position_tests": 243,
+            "active_substeps": 299
+          }
+        }
+      ]
+    },
+    {
+      "replay": 2,
+      "rows": [
+        {
+          "case": "Balanced",
+          "ticks": {
+            "peak_penetration": 5.706605183064539e-05,
+            "peak_speed": 0.017843453646455683,
+            "peak_angular_speed": 0.0009660746780322564,
+            "peak_energy": 0.0005199816992768002,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 0,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 0.5166666666666666,
+            "contact_points": 484,
+            "constraint_visits": 1688,
+            "position_tests": 121,
+            "active_substeps": 124
+          },
+          "physical_substeps": {
+            "peak_penetration": 6.100546596599088e-05,
+            "peak_speed": 0.022045516149004293,
+            "peak_angular_speed": 0.001185601944626108,
+            "peak_energy": 0.0007896256080338704,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 0,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 0.5041666666666661,
+            "contact_points": 484,
+            "constraint_visits": 1688,
+            "position_tests": 121,
+            "active_substeps": 121
+          }
+        },
+        {
+          "case": "OffCenter",
+          "ticks": {
+            "peak_penetration": 0.019999999999988916,
+            "peak_speed": 757.1434834586818,
+            "peak_angular_speed": 9.871937742930825,
+            "peak_energy": 594316.5679808124,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 1.0500000000000012,
+            "contact_points": 679,
+            "constraint_visits": 2704,
+            "position_tests": 206,
+            "active_substeps": 252
+          },
+          "physical_substeps": {
+            "peak_penetration": 0.01999999999999602,
+            "peak_speed": 786.8572732550132,
+            "peak_angular_speed": 10.47077417532115,
+            "peak_energy": 640194.6819111797,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 1,
+            "wake_transitions": 0,
+            "sleeping": 1,
+            "last_sleep_seconds": 1.0374999999999976,
+            "contact_points": 679,
+            "constraint_visits": 2704,
+            "position_tests": 206,
+            "active_substeps": 249
+          }
+        },
+        {
+          "case": "Removal",
+          "ticks": {
+            "peak_penetration": 0.0016808885350343417,
+            "peak_speed": 840,
+            "peak_angular_speed": 0.0009660746780322564,
+            "peak_energy": 705600,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 2,
+            "wake_transitions": 1,
+            "sleeping": 1,
+            "last_sleep_seconds": 2.749999999999995,
+            "contact_points": 972,
+            "constraint_visits": 2832,
+            "position_tests": 243,
+            "active_substeps": 304
+          },
+          "physical_substeps": {
+            "peak_penetration": 0.002353653658104804,
+            "peak_speed": 840,
+            "peak_angular_speed": 0.024995181316378248,
+            "peak_energy": 705600,
+            "tail_speed": 0,
+            "tail_angular_speed": 0,
+            "support_departure": 1,
+            "sleep_transitions": 2,
+            "wake_transitions": 1,
+            "sleeping": 1,
+            "last_sleep_seconds": 2.741666666666698,
+            "contact_points": 972,
+            "constraint_visits": 2832,
+            "position_tests": 243,
+            "active_substeps": 299
+          }
+        }
+      ]
+    }
+  ]
+}
