@@ -1,5 +1,7 @@
 #[path = "support/dense_contact.rs"]
 mod dense;
+#[path = "support/obb_geometry.rs"]
+mod obb_geometry;
 #[test]
 fn glancing_projectile_keeps_the_opposite_contact_face_inside_the_dense_overlap_limit() {
     dense::run();
