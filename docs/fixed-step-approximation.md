@@ -52,6 +52,9 @@ zero interpenetration or energy conservation. The reference fixture's crate widt
 - Sweeps hold orientation fixed within each substep. This is continuous **translation** collision
   detection, not analytic rotational CCD. Fast spin and secondary ricochets within one substep
   are not fully resolved chronologically; choose a smaller step where needed.
+- Shared capsule/wedge sweeps return an atomic step error on exhausted or non-finite
+  search, never a collision miss. The 128-iteration limit is unchanged.
+  See [checked primitive searches](checked-primitive-sweeps.md) for lane scope and work evidence.
 - The API accepts finite durations from zero through 0.1 s; the demo uses 1/60 s. Positive durations
   too small to represent a substep are rejected. It does not adapt iteration counts to achieve
   an arbitrarily exact solution.

@@ -339,6 +339,18 @@ pub enum Error {
     DuplicateBody(BodyId),
     MissingBody(BodyId),
     NonFiniteState(BodyId),
+    /// A failed search cannot establish collision absence. The attempted step is rolled back.
+    CollisionSearchFailed {
+        bodies: [BodyId; 2],
+        reason: SweepFailure,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepFailure {
+    InvalidGeometryInput,
+    NonFiniteComputation,
+    IterationLimit,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -790,7 +802,17 @@ impl World {
                 }
             }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
-            self.manifolds::<CACHED>(h, &mut report, &mut pairs);
+            if let Err(error) = self.manifolds::<CACHED>(h, &mut report, &mut pairs) {
+                self.manifold_scratch = pairs;
+                self.failed_work = Some(FailedStepWork::capture(
+                    &report,
+                    BookkeepingStats {
+                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
+                        ..self.bookkeeping.work
+                    },
+                ));
+                return Err(error);
+            }
             let mut roots = std::mem::take(&mut self.bookkeeping.roots);
             roots.clear();
             reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
@@ -833,7 +855,17 @@ impl World {
                         }
                     }
                 }
-                self.manifolds::<CACHED>(h, &mut report, &mut pairs);
+                if let Err(error) = self.manifolds::<CACHED>(h, &mut report, &mut pairs) {
+                    self.manifold_scratch = pairs;
+                    self.failed_work = Some(FailedStepWork::capture(
+                        &report,
+                        BookkeepingStats {
+                            scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
+                            ..self.bookkeeping.work
+                        },
+                    ));
+                    return Err(error);
+                }
             }
             let mut constraints = std::mem::take(&mut self.constraints);
             constraints.clear();
@@ -1335,7 +1367,7 @@ impl World {
         h: Scalar,
         report: &mut Report,
         out: &mut Vec<(usize, usize, contact::Manifold)>,
-    ) {
+    ) -> Result<(), Error> {
         let s = &mut self.bookkeeping;
         if CACHED {
             self.geometry.begin(self.bodies.len());
@@ -1433,7 +1465,9 @@ impl World {
                 } else {
                     contact::current_counted(a, b, self.config.contact_slop, &mut report.geometry)
                 };
-                let m = current.or_else(|| {
+                let m = if current.is_some() {
+                    current
+                } else {
                     let travel = (b.velocity - a.velocity).length() * h;
                     if a.ccd
                         || b.ccd
@@ -1444,7 +1478,7 @@ impl World {
                                     .min_component()
                                     .min(b.shape.half_extents().min_component())
                     {
-                        if CACHED {
+                        let swept = if CACHED {
                             self.geometry.swept(
                                 [i, j],
                                 [a, b],
@@ -1454,11 +1488,15 @@ impl World {
                             )
                         } else {
                             contact::swept(a, b, h, self.config.contact_slop, &mut report.geometry)
-                        }
+                        };
+                        swept.map_err(|reason| Error::CollisionSearchFailed {
+                            bodies: [a.id, b.id],
+                            reason,
+                        })?
                     } else {
                         None
                     }
-                });
+                };
                 if let Some(m) = m {
                     push(out, (i, j, m), &mut s.work);
                 }
@@ -1486,6 +1524,7 @@ impl World {
                 .all(|index| m.time <= s.earliest[*index] + 1e-7)
         });
         out.sort_unstable_by_key(|(i, j, _)| (self.bodies[*i].id, self.bodies[*j].id));
+        Ok(())
     }
 }
 fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {

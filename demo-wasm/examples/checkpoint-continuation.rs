@@ -2,8 +2,8 @@
 use physics_engine::{
     BodyId,
     approximate::{
-        Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Error, Shape, Vector as V,
-        World,
+        Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Error, Shape, SweepFailure,
+        Vector as V, World,
     },
 };
 
@@ -52,6 +52,7 @@ fn restore(bytes: &[u8]) -> Result<World> {
     Ok(Checkpoint::from_bytes(bytes, CONTEXT, CheckpointLimits::default())?.restore())
 }
 fn run() -> Result<()> {
+    checked_sweep_failures()?;
     let mut uninterrupted = fixture()?;
     let mut captured = fixture()?;
     for world in [&mut uninterrupted, &mut captured] {
@@ -173,6 +174,60 @@ fn run() -> Result<()> {
     }
     if !retirement_seen {
         return Err("retirement control never hit the wall".into());
+    }
+    Ok(())
+}
+
+fn checked_sweep_failures() -> Result<()> {
+    for overflow_velocity in [true, false] {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            substeps: 1,
+            ..Config::default()
+        })?;
+        for (id, shape, x, mass) in [
+            (
+                1,
+                Shape::capsule(0.0, 1.0),
+                -4.0,
+                if overflow_velocity { 0.1 } else { 1.0 },
+            ),
+            (2, Shape::Sphere(1.0), 4.0, 1.0),
+        ] {
+            world.add_body(Body::new(BodyId(id), shape, V(x, 0.0, 0.0), mass))?;
+            if !overflow_velocity {
+                world.apply_impulse(
+                    BodyId(id),
+                    V(if id == 1 { f64::MAX } else { -f64::MAX }, 0.0, 0.0),
+                    V(x, 0.0, 0.0),
+                )?;
+            }
+        }
+        if overflow_velocity {
+            world.add_force(BodyId(1), V(f64::MAX, 0.0, 0.0))?;
+        }
+        let before = physical(&world)?;
+        let expected = Error::CollisionSearchFailed {
+            bodies: [BodyId(1), BodyId(2)],
+            reason: if overflow_velocity {
+                SweepFailure::InvalidGeometryInput
+            } else {
+                SweepFailure::NonFiniteComputation
+            },
+        };
+        for _ in 0..3 {
+            if world.step(0.1).err() != Some(expected) || physical(&world)? != before {
+                return Err("checked sweep failed to preserve its error/physical boundary".into());
+            }
+            let work = world
+                .last_failed_step_work()
+                .ok_or("missing failed sweep work")?;
+            if work.geometry.primitive_sweep_failures != 1 || !work.transaction.rolled_back {
+                return Err("failed sweep work or rollback missing".into());
+            }
+            drop(world);
+            world = restore(&before)?;
+        }
     }
     Ok(())
 }

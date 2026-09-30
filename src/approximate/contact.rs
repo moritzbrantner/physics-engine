@@ -664,7 +664,7 @@ pub(super) fn swept(
     dt: Scalar,
     margin: Scalar,
     work: &mut GeometryStats,
-) -> Option<Manifold> {
+) -> Result<Option<Manifold>, super::SweepFailure> {
     work.sweep_queries += 1;
     let (pair, reversed) = primitive::canonical_pair(a.shape, b.shape);
     let (left, right) = if reversed { (b, a) } else { (a, b) };
@@ -673,7 +673,7 @@ pub(super) fn swept(
             let Shape::Sphere(radius) = left.shape else {
                 unreachable!()
             };
-            sphere_box_time(left, right, radius, dt)?
+            sphere_box_time(left, right, radius, dt)
         }
         primitive::PrimitivePair::SphereSphere => {
             let Shape::Sphere(ra) = left.shape else {
@@ -688,7 +688,7 @@ pub(super) fn swept(
                 .into_iter()
                 .flatten()
                 .filter(|t| (0.0..=1.0).contains(t))
-                .min_by(Scalar::total_cmp)?
+                .min_by(Scalar::total_cmp)
         }
         primitive::PrimitivePair::BoxBox => box_sweep_time(
             left,
@@ -697,12 +697,15 @@ pub(super) fn swept(
             axes(left, right)
                 .into_iter()
                 .map(|(axis, feature)| (axis, feature, radius(left, axis), radius(right, axis))),
-        )?,
+        ),
         _ => primitive::swept_time(left, right, dt, margin, work)?,
     };
-    finish_sweep(a, b, dt, time, |aa, bb| {
+    let Some(time) = time else {
+        return Ok(None);
+    };
+    Ok(finish_sweep(a, b, dt, time, |aa, bb| {
         current_counted(aa, bb, margin.max(1e-6), work)
-    })
+    }))
 }
 
 fn box_sweep_time(

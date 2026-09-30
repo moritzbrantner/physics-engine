@@ -180,19 +180,22 @@ fn cached_negative_contact_does_not_suppress_changed_velocity_or_dt_ccd() {
     projectile.velocity = Vector(40.0, 0.0, 0.0);
     w.add_body(projectile).unwrap();
     let mut out = Vec::new();
-    w.manifolds::<true>(0.1, &mut Report::default(), &mut out);
+    w.manifolds::<true>(0.1, &mut Report::default(), &mut out)
+        .unwrap();
     assert!(out.is_empty(), "rounded corner near miss must stay a miss");
     w.set_velocity(BodyId(2), Vector(40.0, -2.0, 0.0)).unwrap();
     let mut report = Report::default();
-    w.manifolds::<true>(0.1, &mut report, &mut out);
+    w.manifolds::<true>(0.1, &mut report, &mut out).unwrap();
     assert_eq!(report.geometry.negative_hits, 1);
     assert_eq!(report.geometry.sweep_queries, 1);
     assert_eq!(out.len(), 1, "new trajectory must still be swept");
     assert!(out[0].2.swept);
     let mut reference = Vec::new();
-    w.manifolds::<false>(0.1, &mut Report::default(), &mut reference);
+    w.manifolds::<false>(0.1, &mut Report::default(), &mut reference)
+        .unwrap();
     assert_eq!(out, reference);
-    w.manifolds::<true>(0.001, &mut Report::default(), &mut out);
+    w.manifolds::<true>(0.001, &mut Report::default(), &mut out)
+        .unwrap();
     assert!(
         out.is_empty(),
         "shorter requested interval must not reuse old impact time"
@@ -428,9 +431,11 @@ fn rotating_frame_and_sweep_reuse_matches_uncached_oracle() {
         for dt in [1.0 / 240.0, 1.0 / 60.0, 0.001] {
             // Changing trajectory/time within a read-only pose pass must not reuse a time of hit.
             b[1].velocity = -b[1].velocity;
-            let actual = cache.swept([0, 1], [&b[0], &b[1]], dt, 0.02, &mut work);
+            let actual = cache
+                .swept([0, 1], [&b[0], &b[1]], dt, 0.02, &mut work)
+                .unwrap();
             let mut reference_work = GeometryStats::default();
-            let expected = contact::swept(&b[0], &b[1], dt, 0.02, &mut reference_work);
+            let expected = contact::swept(&b[0], &b[1], dt, 0.02, &mut reference_work).unwrap();
             assert_eq!(bits(&actual), bits(&expected), "dt={dt}");
             swept_hits += usize::from(actual.is_some());
         }
@@ -460,17 +465,21 @@ fn prepared_sweeps_preserve_thin_wall_and_changed_interval() {
     projectile.ccd = true;
     let mut work = GeometryStats::default();
     cache.begin(2);
-    let first = cache.swept([0, 1], [&wall, &projectile], 0.01, 0.02, &mut work);
+    let first = cache
+        .swept([0, 1], [&wall, &projectile], 0.01, 0.02, &mut work)
+        .unwrap();
     assert!(first.is_some());
     assert!(
         cache
             .swept([0, 1], [&wall, &projectile], 0.0001, 0.02, &mut work)
+            .unwrap()
             .is_none()
     );
     projectile.velocity = -projectile.velocity;
     assert!(
         cache
             .swept([0, 1], [&wall, &projectile], 0.01, 0.02, &mut work)
+            .unwrap()
             .is_none()
     );
     assert_eq!(work.frame_preparations, 2);

@@ -34,7 +34,8 @@ does not itself migrate a consumer to another world surface. See also the measur
 The optional `approximate::World` uses persistent f64 state, semi-implicit Euler integration,
 clipped box contact manifolds and bounded warm-started sequential impulses. It does not replace
 `RotatingWorld3d` silently. Returned numerical errors preserve the prior physical boundary through a
-[touched-state transaction](docs/floating-step-transactions.md). Explicit
+[touched-state transaction](docs/floating-step-transactions.md). Shared capsule/wedge
+[search failures](docs/checked-primitive-sweeps.md) return errors with the original 128-iteration limit. Explicit
 [physical checkpoints](docs/floating-checkpoints.md) preserve continuation on a supported build/target. Open `scenarios/fixed-step/` on Pages to compare direct hits and near
 misses. See [the algorithm, limits and benchmark instructions](docs/fixed-step-approximation.md).
 

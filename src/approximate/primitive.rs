@@ -3,11 +3,11 @@
 //! Reusable shape math lives in `geometry-kernels`. This module retains engine-local body,
 //! quaternion and work-counter boundaries; simulation policy remains owned by Physics Engine.
 
-use super::{Body, Shape, Vector as V, geometry::GeometryStats};
+use super::{Body, Shape, SweepFailure, Vector as V, geometry::GeometryStats};
 use geometry_kernels::primitive3::{
-    PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveWork3,
+    PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveSweepError3, PrimitiveWork3,
     bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
-    swept_time as kernel_swept_time,
+    try_swept_time as kernel_swept_time,
 };
 
 #[cfg(test)]
@@ -78,11 +78,23 @@ pub(super) fn swept_time(
     dt: f64,
     margin: f64,
     work: &mut GeometryStats,
-) -> Option<f64> {
+) -> Result<Option<f64>, SweepFailure> {
     let mut kernel_work = PrimitiveWork3::default();
-    let result = kernel_swept_time(kernel_body(a), kernel_body(b), dt, margin, &mut kernel_work);
+    let result = kernel_swept_time(
+        kernel_body(a),
+        kernel_body(b),
+        dt,
+        margin,
+        128,
+        &mut kernel_work,
+    );
     accumulate_work(work, kernel_work);
-    result
+    work.primitive_sweep_failures += u64::from(result.is_err());
+    result.map_err(|error| match error {
+        PrimitiveSweepError3::InvalidInput => SweepFailure::InvalidGeometryInput,
+        PrimitiveSweepError3::NonFiniteComputation => SweepFailure::NonFiniteComputation,
+        PrimitiveSweepError3::IterationLimit => SweepFailure::IterationLimit,
+    })
 }
 
 fn shape(shape: Shape) -> PrimitiveShape3 {
@@ -107,12 +119,14 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
         ],
         Shape::Box(_) | Shape::Wedge(_) => body.orientation.axes().map(to_array),
     };
-    PrimitiveBody3::new(
-        shape(body.shape),
-        to_array(body.position),
+    // Force integration can produce a non-finite velocity before the final body check.
+    // The checked sweep reports that failure; the constructor's debug assertion would panic.
+    PrimitiveBody3 {
+        shape: shape(body.shape),
+        position: to_array(body.position),
         axes,
-        to_array(body.velocity),
-    )
+        velocity: to_array(body.velocity),
+    }
 }
 
 const fn identity_axes() -> [[f64; 3]; 3] {
@@ -191,7 +205,9 @@ mod tests {
         capsule.velocity = V(0.0, 0.0, -10_000.0);
         let wedge = body(2, Shape::wedge(V(4.0, 4.0, 0.02)), V::ZERO);
         let mut work = GeometryStats::default();
-        let time = swept_time(&capsule, &wedge, 1.0 / 60.0, 0.02, &mut work).unwrap();
+        let time = swept_time(&capsule, &wedge, 1.0 / 60.0, 0.02, &mut work)
+            .unwrap()
+            .unwrap();
         assert!((0.0..=1.0).contains(&time));
         assert!(work.primitive_sweep_iterations > 0);
         assert!(work.primitive_sweep_iterations < 128);
