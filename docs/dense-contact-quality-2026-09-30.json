@@ -3486,5 +3486,16 @@
       ]
     }
   ],
-  "raw_evidence_files": "193-{current-budget,wasm-long-final}.json; 193-native-long-final.log; full raw timestep timings are retained locally rather than copied into this summary."
+  "raw_evidence_files": "193-{current-budget,wasm-long-final}.json; 193-native-long-final.log; full raw timestep timings are retained locally rather than copied into this summary.",
+  "profiles": [
+    {
+      "id": "4s-8v-2p",
+      "substeps": 4,
+      "velocity": 8,
+      "position": 2
+    }
+  ],
+  "trials": 2,
+  "wasm_ticks": 1200,
+  "dt": 0.016666666666666666
 }
