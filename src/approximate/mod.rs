@@ -1418,7 +1418,11 @@ impl World {
             };
             let angular = b.angular_velocity.length() * b.shape.radius() * h;
             let pad = Vector(angular, angular, angular)
-                + Vector(1.0, 1.0, 1.0) * self.config.contact_slop;
+                + Vector(1.0, 1.0, 1.0)
+                    * (self.config.contact_slop
+                        // Endpoint addition can round at the displacement's scale even
+                        // when the original pose and collider are small.
+                        + 8.0 * Scalar::EPSILON * delta.abs().max_component());
             row.lo = lo.min(lo + delta) - pad;
             row.hi = hi.max(hi + delta) + pad;
             row.active = active;

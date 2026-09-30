@@ -68,7 +68,14 @@ pub(super) struct Manifold {
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
     let e = primitive::bounds_extents(b);
-    (b.position - e, b.position + e)
+    // Bounds admission must not depend on contact_slop covering arithmetic error.
+    // Quaternion rotations, weighted extents and translation can differ by several ULPs.
+    // Match the ray-pruning error budget using pose/extent magnitude; this only widens
+    // candidate bounds and never changes narrow-phase geometry or physical correction.
+    let rounding =
+        64.0 * Scalar::EPSILON * (1.0 + b.position.abs().max_component() + e.max_component());
+    let pad = V(rounding, rounding, rounding);
+    (b.position - e - pad, b.position + e + pad)
 }
 fn radius(b: &Body, n: V) -> Scalar {
     match b.shape {
@@ -783,3 +790,6 @@ fn finish_sweep(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bounds_tests;

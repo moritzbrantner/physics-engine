@@ -194,8 +194,12 @@ fn check_bounds(w: &mut World, h: Scalar) {
                 b.velocity * h
             };
             let angular = b.angular_velocity.length() * b.shape.radius() * h;
-            let pad =
-                Vector(angular, angular, angular) + Vector(1.0, 1.0, 1.0) * w.config.contact_slop;
+            // The retained-row oracle includes the numerical endpoint allowance.
+            // Independent surface-extrema tests protect enclosure, rather than
+            // using this formula comparison as geometric correctness evidence.
+            let pad = Vector(angular, angular, angular)
+                + Vector(1.0, 1.0, 1.0)
+                    * (w.config.contact_slop + 8.0 * Scalar::EPSILON * delta.abs().max_component());
             (i, lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
         })
         .collect::<Vec<_>>();
