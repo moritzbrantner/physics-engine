@@ -8,6 +8,7 @@ description = "Deterministic continuous-collision physics kernel"
 
 [dependencies]
 geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "0b1919a4b841a57b077869c42c79104031aff418" }
+sha2 = { version = "0.10.9", default-features = false }
 
 [features]
 default = ["performance-counters"]

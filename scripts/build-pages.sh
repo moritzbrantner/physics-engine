@@ -7,6 +7,12 @@ SETTINGS_RAW_BASE="https://raw.githubusercontent.com/moritzbrantner/settings/${S
 export SETTINGS_BROWSER_DIST_COMMIT SETTINGS_SOURCE_SHA
 
 rustup target add wasm32-unknown-unknown
+# Separate acceptance driver: execute the physical checkpoint contract on WASM
+# without adding test exports or checkpoint behavior to the shipped demo.
+cargo build --manifest-path demo-wasm/Cargo.toml --example checkpoint-continuation \
+  --target wasm32-unknown-unknown --release --locked
+node scripts/test-checkpoint-wasm.mjs \
+  demo-wasm/target/wasm32-unknown-unknown/release/examples/checkpoint_continuation.wasm
 cargo build \
   --manifest-path demo-wasm/Cargo.toml \
   --target wasm32-unknown-unknown \
