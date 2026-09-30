@@ -13,7 +13,7 @@
     .tag{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:CanvasText}a{color:CanvasText}@media(max-width:700px){.lab{padding:20px}canvas{height:410px}.controls{gap:10px}}
   </style>
 </head>
-<body><main class="lab">
+<body data-scenario="fixed-step"><main class="lab">
   <a href="index.html">← All scenarios</a>
   <h1>Fixed-step physics comparison</h1>
   <p class="intro">The same Rust-owned 32-crate tower. Compare a bounded floating-point impulse solver with the existing event solver.</p>
@@ -23,6 +23,8 @@
     <label>Projectile<select id="projectile"><option value="arrow">Arrow</option><option value="sphere">Sphere</option><option value="rigid">Rigid box</option></select></label>
     <button id="hit" disabled>Shoot tower</button><button id="miss" disabled>Shoot beside tower</button><button id="pause" disabled>Resume</button><button id="reset" disabled>Reset</button>
   </div>
+  <button id="download-performance-log" disabled>Download current log (JSON)</button>
+  <p class="method">Recording starts automatically. Recent activity is retained locally and exported on failure.</p>
   <section class="world" aria-label="Physics comparison viewport">
     <canvas id="scene" width="1280" height="570" aria-label="Three-dimensional tower of crates"></canvas>
     <p class="status" id="status" role="status" aria-live="polite">Loading Rust/WASM…</p>
@@ -30,5 +32,5 @@
   <p class="tag" id="method-title">Explicit approximation · 4 substeps · 8 impulse iterations</p>
   <p class="method" id="method">Forces and impulses update velocity; the new velocity advances position and orientation. Contact manifolds retain accumulated impulses for the next substep. Fast projectiles use translation-only sweeps. Rapidly rotating continuous collisions are not exact. Changing a control resets both the fixture and its caches.</p>
   <p class="method">Rust owns all movement, contacts, waking and retirement. This page only sends commands and renders snapshots. Timing below is browser diagnostic evidence, not a stable benchmark or FPS claim.</p>
-  <script type="module" src="fixed-step-lab.js"></script>
+  <script type="module" src="bootstrap.mjs"></script>
 </main></body></html>

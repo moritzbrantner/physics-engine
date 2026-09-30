@@ -1,9 +1,6 @@
 import { createTowerRuntime } from "./tower-runtime.mjs";
 import { physicsFailureMessage } from "./physics-error.js";
-import {
-  createPerformanceSessionRecorder,
-  serializePerformanceSession,
-} from "./performance-log.mjs";
+import { scenarioLog } from "./scenario-log.mjs";
 import { createWebGlRenderer } from "./webgl-renderer.js";
 import { createWebGpuRenderer } from "./webgpu-renderer.js";
 
@@ -13,7 +10,6 @@ const debug = document.querySelector("#debug");
 const resetButton = document.querySelector("#reset");
 const pauseButton = document.querySelector("#pause");
 const stepButton = document.querySelector("#single-step");
-const startPerformanceLogButton = document.querySelector("#start-performance-log");
 const downloadPerformanceLogButton = document.querySelector("#download-performance-log");
 const performanceLogStatus = document.querySelector("#performance-log-status");
 const viewportShell = document.querySelector(".viewport-shell");
@@ -100,6 +96,7 @@ let buildProvenance = null;
 let pendingPhysicsStepMs = [];
 let pendingPhysicsStepStats = [];
 let recentPhysicsStepMs = [];
+let simulationStepIndex = 0;
 
 function performanceEnvironment() {
   return {
@@ -121,7 +118,7 @@ function performanceScenario() {
   const query = new URLSearchParams(window.location.search);
   return {
     id: scenarioId,
-    solver: engine?.solver ?? "sampled-event-f64",
+    solver: engine?.solver ?? (scenarioId === "tower" ? "fixed-step-f64" : "sampled-event-f64"),
     // The hidden legacy controls carry packed rule/policy bits, not these choices.
     character_response: document.querySelector("#character-response").value,
     crate_motion: document.querySelector("#crate-motion").value,
@@ -132,10 +129,23 @@ function performanceScenario() {
   };
 }
 
-const performanceRecorder = createPerformanceSessionRecorder({
+const performanceRecorder = scenarioLog.recorder;
+scenarioLog.configure({
   environment: performanceEnvironment,
   scenario: performanceScenario,
+  onFailure(failure) {
+    simulationError = failure.message;
+    paused = true;
+    pauseButton.textContent = "Resume";
+    status.textContent = simulationError;
+    performanceLogStatus.textContent = "Scenario stopped. Crash log is available beside the error.";
+    if (window.physicsTowerState) {
+      window.physicsTowerState = Object.freeze({ ...window.physicsTowerState, error: simulationError, paused: true });
+    }
+  },
 });
+downloadPerformanceLogButton.disabled = false;
+performanceLogStatus.textContent = "Recording automatically. Recent activity is retained locally; errors export a crash log.";
 
 const BOX_FACES = [
   { indices: [0, 2, 3, 1], normal: [0, 0, -1], axes: [0, 1] },
@@ -211,14 +221,20 @@ function selectProjectileType(projectileType) {
 
 function reset() {
   if (!engine || !renderer) return;
+  scenarioLog.start();
+  simulationStepIndex = 0;
   const resetWithOptions = engine[scenarioResetExport];
   const resetArgs = [Number(characterModeControl.value), Number(uprightCratesControl.checked), Number(fixedGeometryControl.value)];
   if (focusedScenarioId != null) resetArgs.unshift(focusedScenarioId);
-  if (
-    typeof resetWithOptions !== "function" ||
-    resetWithOptions(...resetArgs) !== 0
-  ) {
-    throw new Error(`Unable to initialize the selected ${scenarioId} physics options`);
+  scenarioLog.begin("reset", { export: scenarioResetExport, arguments: resetArgs });
+  if (typeof resetWithOptions !== "function") {
+    throw new Error(`Missing scenario reset export: ${scenarioResetExport}`);
+  }
+  const resetCode = resetWithOptions(...resetArgs);
+  if (resetCode !== 0) {
+    scenarioLog.fail(new Error(`Unable to initialize the selected ${scenarioId} physics options`),
+      { source: "engine", engine_code: resetCode });
+    return;
   }
   const projectileType = new Map([
     ["sphere", 0],
@@ -228,13 +244,18 @@ function reset() {
   if (projectileType == null) {
     throw new Error(`Unknown projectile type: ${projectileTypeControl.value}`);
   }
-  if (
-    typeof engine.sandbox_set_projectile_type !== "function" ||
-    engine.sandbox_set_projectile_type(projectileType) !== 0
-  ) {
-    throw new Error("Unable to initialize the selected projectile type");
+  scenarioLog.begin("projectile-configuration", { projectile_type: projectileTypeControl.value });
+  if (typeof engine.sandbox_set_projectile_type !== "function") {
+    throw new Error("Missing projectile configuration export");
+  }
+  const projectileCode = engine.sandbox_set_projectile_type(projectileType);
+  if (projectileCode !== 0) {
+    scenarioLog.fail(new Error("Unable to initialize the selected projectile type"),
+      { source: "engine", engine_code: projectileCode });
+    return;
   }
   simulationError = null;
+  previousTimestamp = null;
   keys.clear();
   yaw = 0;
   pitch = 0;
@@ -248,7 +269,8 @@ function reset() {
   recentPhysicsStepMs = [];
   pauseButton.textContent = "Pause";
   syncProjectileHud();
-  performanceRecorder.recordMarker("reset", performanceScenario());
+  scenarioLog.complete();
+  performanceLogStatus.textContent = "Recording automatically. Recent activity is retained locally; errors export a crash log.";
   status.textContent =
     scenarioId === "tower"
       ? `Tower ready · fixed-step f64. WASD moves, Space jumps, F shoots, 1/2/3 selects a projectile. Rendering with ${renderer.backend}.`
@@ -326,8 +348,12 @@ function lastPhysicsStepStats() {
 }
 
 function simulationStep() {
-  if (!engine || simulationError) return;
+  if (!engine || simulationError || scenarioLog.failed) return;
   const [velocityX, velocityZ] = movementVelocity();
+  scenarioLog.begin("physics-step", {
+    step_index: ++simulationStepIndex, velocity: [velocityX, velocityZ], jump: jumpQueued ? 1 : 0,
+    fixed_step_ms: FIXED_STEP_MS,
+  });
   const started = performance.now();
   const error = engine.sandbox_step_velocity(velocityX, velocityZ, jumpQueued ? 1 : 0);
   const durationMs = performance.now() - started;
@@ -348,26 +374,34 @@ function simulationStep() {
       ? `Fixed-step physics failed (${error}). Reset the fixture to continue.`
       : physicsFailureMessage(error, detail);
     status.textContent = simulationError;
-    performanceRecorder.recordMarker("physics-error", { error, detail });
+    scenarioLog.fail(new Error(simulationError), {
+      source: "engine", engine_code: error, engine_detail: detail,
+      pending_physics_steps_ms: pendingPhysicsStepMs,
+      pending_physics_step_stats: pendingPhysicsStepStats,
+    });
     return;
   }
   quiescent =
     typeof engine.sandbox_is_quiescent === "function" && engine.sandbox_is_quiescent() === 1;
+  scenarioLog.complete();
 }
 
 function shoot() {
-  if (!engine || simulationError) return;
+  if (!engine || simulationError || scenarioLog.failed) return;
   const cosPitch = Math.cos(pitch);
   const velocityX = Math.round(Math.sin(yaw) * cosPitch * PROJECTILE_SPEED);
   const velocityY = Math.round(-Math.sin(pitch) * PROJECTILE_SPEED);
   const velocityZ = Math.round(-Math.cos(yaw) * cosPitch * PROJECTILE_SPEED);
+  scenarioLog.begin("shoot", { velocity: [velocityX, velocityY, velocityZ], projectile_type: projectileTypeControl.value });
   if (engine.sandbox_shoot(velocityX, velocityY, velocityZ) < 0) {
+    performanceRecorder.recordMarker("projectile-rejected");
+    scenarioLog.complete();
     status.textContent = "The engine rejected projectile creation.";
     return;
   }
   quiescent = false;
   renderDirty = true;
-  performanceRecorder.recordMarker("shoot");
+  scenarioLog.complete();
 }
 
 function normalizeQuaternion(raw) {
@@ -714,6 +748,18 @@ function updateKeyboardLook(elapsedSeconds) {
 }
 
 function frame(timestamp) {
+  try {
+    if (!scenarioLog.failed) recordAnimationFrame(timestamp);
+  } catch (error) {
+    scenarioLog.fail(error, {
+      source: "animation-frame", pending_physics_steps_ms: pendingPhysicsStepMs,
+      pending_physics_step_stats: pendingPhysicsStepStats,
+    });
+  }
+  requestAnimationFrame(frame);
+}
+
+function recordAnimationFrame(timestamp) {
   const callbackStarted = performance.now();
   if (previousTimestamp === null) previousTimestamp = timestamp;
   const frameInterval = timestamp - previousTimestamp;
@@ -744,6 +790,8 @@ function frame(timestamp) {
     accumulator = 0;
   }
 
+  if (scenarioLog.failed) return;
+  scenarioLog.begin("render");
   const renderStarted = performance.now();
   const renderPerformed = render();
   const renderMs = performance.now() - renderStarted;
@@ -768,18 +816,7 @@ function frame(timestamp) {
   });
   pendingPhysicsStepMs = [];
   pendingPhysicsStepStats = [];
-  requestAnimationFrame(frame);
-}
-
-function downloadPerformanceSession(session) {
-  const blob = new Blob([serializePerformanceSession(session)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `physics-browser-session-${session.started_at.replaceAll(":", "-")}.json`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  scenarioLog.complete();
 }
 
 function applyLookDelta(deltaX, deltaY) {
@@ -796,7 +833,10 @@ canvas.addEventListener("pointerdown", (event) => {
   canvas.setPointerCapture?.(event.pointerId);
 
   if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock?.();
+    // Refused optional mouse capture is not an engine failure; drag/arrow look still works.
+    const captureUnavailable = error => console.warn("Mouse capture unavailable; use drag or arrow keys", error);
+    try { canvas.requestPointerLock?.()?.catch(captureUnavailable); }
+    catch (error) { captureUnavailable(error); }
   } else if (event.button === 0) {
     shoot();
   }
@@ -829,6 +869,7 @@ document.addEventListener("mousemove", (event) => {
 });
 
 document.addEventListener("pointerlockchange", () => {
+  if (scenarioLog.failed) return;
   status.textContent =
     document.pointerLockElement === canvas
       ? `Mouse captured. Press Esc to release it. Rendering with ${renderer.backend}.`
@@ -883,25 +924,18 @@ stepButton.addEventListener("click", () => {
   }
   simulationStep();
 });
-startPerformanceLogButton.addEventListener("click", () => {
-  pendingPhysicsStepMs = [];
-  pendingPhysicsStepStats = [];
-  performanceRecorder.start();
-  startPerformanceLogButton.disabled = true;
-  downloadPerformanceLogButton.disabled = false;
-  performanceLogStatus.textContent = "Recording locally. Exercise the behavior you want to analyze.";
-});
 downloadPerformanceLogButton.addEventListener("click", () => {
-  const session = performanceRecorder.finish();
-  downloadPerformanceSession(session);
-  startPerformanceLogButton.disabled = false;
-  downloadPerformanceLogButton.disabled = true;
-  performanceLogStatus.textContent = `${session.summary.recorded_frames} frames captured and downloaded.`;
+  const session = scenarioLog.failed ? scenarioLog.lastCrash : performanceRecorder.capture();
+  scenarioLog.download(session);
+  if (!scenarioLog.failed) performanceLogStatus.textContent = "JSON export requested. Automatic recording continues.";
 });
 
 try {
+  buildProvenance = await loadBuildProvenance();
+  performanceRecorder.refreshContext();
   renderer = await createRenderer();
-  [engine, buildProvenance] = await Promise.all([loadEngine(), loadBuildProvenance()]);
+  performanceRecorder.refreshContext();
+  engine = await loadEngine();
   if (scenarioId === "tower") engine = createTowerRuntime(engine);
   if (typeof engine.sandbox_step_velocity !== "function") {
     throw new Error("WASM sandbox does not expose canonical controller velocity input");
@@ -921,15 +955,15 @@ try {
   characterModeControl.disabled = false;
   uprightCratesControl.disabled = false;
   fixedGeometryControl.disabled = false;
-  startPerformanceLogButton.disabled = false;
   reset();
-  requestAnimationFrame(frame);
 } catch (error) {
   status.textContent = `Unable to load the Rust physics sandbox: ${error.message}`;
-  console.error(error);
+  scenarioLog.fail(error, { source: "initialization" });
 }
+// Keep the loop available after a failed initial reset; only an explicit reset resumes it.
+if (engine && renderer) requestAnimationFrame(frame);
 window.addEventListener("physics-projectile-type-change", () => {
-  if (!engine || scenarioId !== "tower") return;
+  if (!engine || scenarioLog.failed || scenarioId !== "tower") return;
   const kind = { sphere: 0, arrow: 1, rigid: 2 }[projectileTypeControl.value];
   if (engine.sandbox_set_projectile_type(kind) !== 0) {
     status.textContent = "The engine rejected this projectile selection.";
