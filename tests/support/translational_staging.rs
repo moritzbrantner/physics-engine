@@ -22,6 +22,8 @@ fn semantic_report(mut report: StepReport) -> StepReport {
     // Capacity retention is the intended observable diagnostic difference.
     report.stats.work.staged_state_capacity_growths = 0;
     report.stats.work.staged_state_capacity_bytes = 0;
+    report.stats.work.broad_phase_capacity_growths = 0;
+    report.stats.work.candidate_buffer_peak_capacity_bytes = 0;
     report
 }
 
@@ -52,7 +54,8 @@ pub fn lifecycle_and_release_keep_physics_identical() {
     let first = w.step(1).unwrap();
     assert_eq!(first.stats.work.staged_state_capacity_growths, 1);
     assert_eq!(
-        first.stats.work.staged_state_capacity_bytes,
+        first.stats.work.staged_state_capacity_bytes
+            + first.stats.work.candidate_buffer_peak_capacity_bytes,
         w.retained_step_scratch_bytes()
     );
     let capacity = w.retained_step_scratch_bytes();

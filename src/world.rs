@@ -44,6 +44,8 @@ pub struct TranslationalStepWork {
     pub sweep_bound_preparations: usize,
     pub broad_phase_sorts: usize,
     pub broad_phase_pair_sorts: usize,
+    /// Entry, active-index and candidate-pair vector capacity increases across all queries.
+    pub broad_phase_capacity_growths: usize,
     pub active_bound_checks: usize,
     pub fixed_pair_rejections: usize,
     pub stabilization_queries: usize,
@@ -141,6 +143,7 @@ pub struct World {
     stationary_step_is_no_op: bool,
     // Empty at every returned step boundary; the body map is the physical authority.
     staged_states: Vec<BodyState>,
+    broad_phase: BroadPhaseScratch,
 }
 
 impl Default for World {
@@ -158,6 +161,7 @@ impl World {
             dynamic_body_count: 0,
             stationary_step_is_no_op: false,
             staged_states: Vec::new(),
+            broad_phase: BroadPhaseScratch::default(),
         }
     }
 
@@ -282,9 +286,12 @@ impl World {
             return Ok(report);
         }
         let mut states = std::mem::take(&mut self.staged_states);
-        let result = self.step_staged(ticks, &mut states, report);
+        let mut broad_phase = std::mem::take(&mut self.broad_phase);
+        let result = self.step_staged(ticks, &mut states, &mut broad_phase, report);
         states.clear();
+        broad_phase.clear();
         self.staged_states = states;
+        self.broad_phase = broad_phase;
         result
     }
 
@@ -293,18 +300,21 @@ impl World {
     #[must_use]
     pub fn retained_step_scratch_bytes(&self) -> usize {
         self.staged_states.capacity() * std::mem::size_of::<BodyState>()
+            + self.broad_phase.capacity_bytes()
     }
 
     /// Releases disposable step capacity without changing bodies, stationary evidence or replay.
     /// A later active step may allocate again; no query or simulation history is discarded.
     pub fn release_step_scratch(&mut self) {
         self.staged_states = Vec::new();
+        self.broad_phase = BroadPhaseScratch::default();
     }
 
     fn step_staged(
         &mut self,
         ticks: i32,
         states: &mut Vec<BodyState>,
+        broad_phase: &mut BroadPhaseScratch,
         mut report: StepReport,
     ) -> Result<StepReport, PhysicsError> {
         debug_assert!(states.is_empty());
@@ -321,8 +331,12 @@ impl World {
             report.stats.work.initially_moving_bodies +=
                 usize::from(state.body.velocity != Vec3i::ZERO);
         }
-        let mut contacts_converged =
-            stabilize_contacts(states, self.config.stabilization_passes, &mut report.stats)?;
+        let mut contacts_converged = stabilize_contacts(
+            states,
+            self.config.stabilization_passes,
+            broad_phase,
+            &mut report.stats,
+        )?;
         // Gravity has already been applied for the complete interval. With zero
         // post-contact velocities, every remaining swept position is unchanged.
         let has_motion = states
@@ -334,7 +348,8 @@ impl World {
         let mut event_count = 0_usize;
 
         while has_motion && remaining_subticks > 0 {
-            let hits = find_earliest_hits(states, remaining_subticks, &mut report.stats);
+            let hits =
+                find_earliest_hits(states, remaining_subticks, broad_phase, &mut report.stats);
             if hits.is_empty() {
                 advance_all(states, remaining_subticks)?;
                 break;
@@ -369,8 +384,12 @@ impl World {
                 event_count += 1;
             }
 
-            contacts_converged =
-                stabilize_contacts(states, self.config.stabilization_passes, &mut report.stats)?;
+            contacts_converged = stabilize_contacts(
+                states,
+                self.config.stabilization_passes,
+                broad_phase,
+                &mut report.stats,
+            )?;
         }
 
         // Validate every fallible conversion before publishing any delta.
@@ -516,19 +535,40 @@ struct BroadPhaseBounds {
     max: [i128; 3],
 }
 
+#[derive(Clone, Debug, Default)]
+struct BroadPhaseScratch {
+    entries: Vec<BroadPhaseBounds>,
+    active: Vec<usize>,
+    pairs: Vec<(usize, usize)>,
+}
+
+impl BroadPhaseScratch {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.active.clear();
+        self.pairs.clear();
+    }
+
+    fn capacity_bytes(&self) -> usize {
+        self.entries.capacity() * std::mem::size_of::<BroadPhaseBounds>()
+            + self.active.capacity() * std::mem::size_of::<usize>()
+            + self.pairs.capacity() * std::mem::size_of::<(usize, usize)>()
+    }
+}
+
 fn find_earliest_hits(
     states: &[BodyState],
     remaining_subticks: i128,
+    scratch: &mut BroadPhaseScratch,
     stats: &mut StepStats,
 ) -> Vec<IndexedHit> {
-    let (candidate_pairs, pair_checks) =
-        broad_phase_pairs(states, remaining_subticks, &mut stats.work);
+    let pair_checks = broad_phase_pairs(states, remaining_subticks, scratch, &mut stats.work);
     stats.pair_checks += pair_checks;
 
     let mut earliest_time: Option<Ratio> = None;
     let mut hits = Vec::new();
 
-    for (left, right) in candidate_pairs {
+    for &(left, right) in &scratch.pairs {
         stats.work.current_contact_tests += 1;
         if contact_between(&states[left], &states[right]).is_some() {
             continue;
@@ -570,16 +610,28 @@ fn find_earliest_hits(
 fn broad_phase_pairs(
     states: &[BodyState],
     horizon_subticks: i128,
+    scratch: &mut BroadPhaseScratch,
     work: &mut TranslationalStepWork,
-) -> (Vec<(usize, usize)>, usize) {
+) -> usize {
     work.broad_phase_queries += 1;
     work.sweep_bound_preparations += states.len();
     work.broad_phase_sorts += 1;
-    let mut entries = states
-        .iter()
-        .enumerate()
-        .map(|(body_index, state)| swept_bounds(body_index, state, horizon_subticks))
-        .collect::<Vec<_>>();
+    scratch.clear();
+    let previous_capacity = scratch.entries.capacity();
+    scratch.entries.reserve_exact(states.len());
+    work.broad_phase_capacity_growths +=
+        usize::from(scratch.entries.capacity() > previous_capacity);
+    scratch.entries.extend(
+        states
+            .iter()
+            .enumerate()
+            .map(|(body_index, state)| swept_bounds(body_index, state, horizon_subticks)),
+    );
+    let BroadPhaseScratch {
+        entries,
+        active,
+        pairs,
+    } = scratch;
     entries.sort_by(|left, right| {
         left.min[0]
             .cmp(&right.min[0])
@@ -592,8 +644,6 @@ fn broad_phase_pairs(
             .then_with(|| left.body_index.cmp(&right.body_index))
     });
 
-    let mut active = Vec::<usize>::new();
-    let mut pairs = Vec::new();
     let mut pair_checks = 0_usize;
 
     for current_index in 0..entries.len() {
@@ -601,7 +651,7 @@ fn broad_phase_pairs(
         work.active_bound_checks += active.len();
         active.retain(|other_index| entries[*other_index].max[0] >= current.min[0]);
 
-        for &other_index in &active {
+        for &other_index in active.iter() {
             let other = entries[other_index];
             let (left, right) = ordered_pair(other.body_index, current.body_index);
             if states[left].body.kind == BodyKind::Fixed
@@ -615,10 +665,10 @@ fn broad_phase_pairs(
             if intervals_overlap(other.min[1], other.max[1], current.min[1], current.max[1])
                 && intervals_overlap(other.min[2], other.max[2], current.min[2], current.max[2])
             {
-                pairs.push((left, right));
+                push_broad_phase(pairs, (left, right), work);
             }
         }
-        active.push(current_index);
+        push_broad_phase(active, current_index, work);
     }
 
     work.candidate_buffer_peak_capacity_bytes = work.candidate_buffer_peak_capacity_bytes.max(
@@ -628,7 +678,13 @@ fn broad_phase_pairs(
     );
     work.broad_phase_pair_sorts += 1;
     pairs.sort_unstable();
-    (pairs, pair_checks)
+    pair_checks
+}
+
+fn push_broad_phase<T>(buffer: &mut Vec<T>, value: T, work: &mut TranslationalStepWork) {
+    let previous_capacity = buffer.capacity();
+    buffer.push(value);
+    work.broad_phase_capacity_growths += usize::from(buffer.capacity() > previous_capacity);
 }
 
 fn swept_bounds(body_index: usize, state: &BodyState, horizon_subticks: i128) -> BroadPhaseBounds {
@@ -670,15 +726,16 @@ const fn intervals_overlap(
 fn stabilize_contacts(
     states: &mut [BodyState],
     max_passes: usize,
+    scratch: &mut BroadPhaseScratch,
     stats: &mut StepStats,
 ) -> Result<bool, PhysicsError> {
     for _ in 0..max_passes {
         stats.work.stabilization_queries += 1;
-        let (candidate_pairs, checks) = broad_phase_pairs(states, 0, &mut stats.work);
+        let checks = broad_phase_pairs(states, 0, scratch, &mut stats.work);
         stats.work.stabilization_pair_checks += checks;
         let mut changed = false;
 
-        for (left, right) in candidate_pairs {
+        for &(left, right) in &scratch.pairs {
             stats.work.stabilization_exact_tests += 1;
             let Some(contact) = contact_between(&states[left], &states[right]) else {
                 continue;
@@ -933,6 +990,9 @@ mod maintenance_tests {
         let before = candidate.bodies().cloned().collect::<Vec<_>>();
         let actual = candidate.step(ticks);
         assert!(candidate.staged_states.is_empty());
+        assert!(candidate.broad_phase.entries.is_empty());
+        assert!(candidate.broad_phase.active.is_empty());
+        assert!(candidate.broad_phase.pairs.is_empty());
         let expected = oracle.step(ticks);
         match (actual, expected) {
             (Ok(actual), Ok(expected)) => {
@@ -987,6 +1047,87 @@ mod maintenance_tests {
                 .filter(|b| b.kind() == BodyKind::Dynamic)
                 .count()
         );
+    }
+
+    #[test]
+    fn retained_broad_phase_matches_exhaustive_pairs_after_horizon_and_population_changes() {
+        let make_state = |id: u64| {
+            let position = Vec3i::new(
+                (id % 5) as i32 * 8 - 20,
+                (id % 3) as i32 * 5 - 10,
+                id as i32 - 16,
+            );
+            BodyState::new(if id.is_multiple_of(7) {
+                RigidBody::fixed(BodyId(id), position, Vec3i::new(5, 5, 5))
+            } else {
+                RigidBody::dynamic(
+                    BodyId(id),
+                    position,
+                    Vec3i::new(id as i32 % 7 - 3, 0, 1),
+                    Vec3i::new(5, 5, 5),
+                )
+            })
+        };
+        let mut states = (0..32).map(make_state).collect::<Vec<_>>();
+        let mut scratch = BroadPhaseScratch::default();
+        for round in 0..12 {
+            if round == 3 {
+                states.truncate(8);
+            }
+            if round == 6 {
+                states.extend((8..48).map(make_state));
+            }
+            if round == 9 {
+                states[1] = BodyState::new(RigidBody::fixed(
+                    BodyId(1),
+                    Vec3i::new(-100, 0, 0),
+                    Vec3i::new(1, 1, 1),
+                ));
+            }
+            for horizon in [0, SUBTICK_SCALE, 5 * SUBTICK_SCALE] {
+                let mut expected = Vec::new();
+                for left in 0..states.len() {
+                    for right in left + 1..states.len() {
+                        if states[left].body.kind == BodyKind::Fixed
+                            && states[right].body.kind == BodyKind::Fixed
+                        {
+                            continue;
+                        }
+                        let a = swept_bounds(left, &states[left], horizon);
+                        let b = swept_bounds(right, &states[right], horizon);
+                        if (0..3)
+                            .all(|axis| a.min[axis] <= b.max[axis] && b.min[axis] <= a.max[axis])
+                        {
+                            expected.push((left, right));
+                        }
+                    }
+                }
+                broad_phase_pairs(
+                    &states,
+                    horizon,
+                    &mut scratch,
+                    &mut TranslationalStepWork::default(),
+                );
+                assert_eq!(scratch.pairs, expected);
+                let pointers = (
+                    scratch.entries.as_ptr(),
+                    scratch.active.as_ptr(),
+                    scratch.pairs.as_ptr(),
+                );
+                let mut warmed = TranslationalStepWork::default();
+                broad_phase_pairs(&states, horizon, &mut scratch, &mut warmed);
+                assert_eq!(scratch.pairs, expected);
+                assert_eq!(warmed.broad_phase_capacity_growths, 0);
+                assert_eq!(
+                    (
+                        scratch.entries.as_ptr(),
+                        scratch.active.as_ptr(),
+                        scratch.pairs.as_ptr()
+                    ),
+                    pointers
+                );
+            }
+        }
     }
 
     #[test]
@@ -1422,6 +1563,7 @@ mod maintenance_tests {
                 black_box(broad_phase_pairs(
                     black_box(&states),
                     SUBTICK_SCALE,
+                    &mut BroadPhaseScratch::default(),
                     &mut TranslationalStepWork::default(),
                 ));
                 query_ms += start.elapsed().as_secs_f64() * 1000.0;
