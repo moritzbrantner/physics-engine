@@ -118,3 +118,60 @@ Controlled median totals for 120 ticks are 10.84 → 10.70 ms for one moving bod
 5.13 → 5.14 ms for crowded spawn. Changes are small and timings remain advisory;
 the deterministic result is capacity reuse with unchanged physics, not a broad
 speedup. Quiet 2048-body calls remain approximately 0.48 ms in both versions.
+
+## Retained broad-phase buffers
+
+The separate #227 slice additionally retains the entry, active-index and candidate-
+pair vectors across necessary broad-phase queries and stabilization passes. Each
+query clears their logical contents and recomputes all bounds from the current
+staged state and remaining horizon. It retains capacity rather than candidate truth:
+population changes, mutations, same-ID reuse and changed horizons cannot reuse an
+old pair row. The existing X-axis sort and final BodyId pair sort are unchanged.
+
+The step wrapper clears all three buffers on success or returned error, alongside
+the body-staging values. `retained_step_scratch_bytes()` now reports staging plus
+all three broad-phase vector payloads; `release_step_scratch()` releases them all.
+The #226 records above describe its earlier staging-only implementation. Active
+`candidate_buffer_peak_capacity_bytes` reports actual retained vector capacities
+used during the call, while cached quiet calls still report zero active work.
+High-water capacities may outlive population shrink, and callers can explicitly
+release them at a suitable boundary.
+
+`broad_phase_capacity_growths` counts actual capacity increases across these three
+vectors and every query, including multiple stabilization/event passes in a
+successful step. Warmed equal-capacity calls report zero; new populations or more
+candidate work may grow buffers. Returned errors still publish no success report;
+retained payload remains observable, and exhaustive failure/recovery controls ensure
+logical contents are cleared. No discarded solver-work counter is invented.
+
+Native tests compare complete candidate lists with an exhaustive bounds traversal
+through horizon/population/ID changes and check the three allocation identities on
+repeated requests. The existing independent rebuilding world continues to compare
+full physical bodies, ordered events and errors through mutation, contact and
+failure sequences. Shared native/WASM controls additionally exercise exact ties,
+multiple same-step ricochets, alternating durations, warmed capacity and release.
+They run through the existing translational-maintenance driver and Pages build.
+
+This does not retain impact-hit/event output, standard-library stable-sort scratch
+or fixed bounds, and it does not eliminate all-N preparation/sorting. Timings remain
+advisory, and no zero-allocation whole-step or consumer-adoption claim follows.
+Fixed-bound reuse and wider locality/adoption remain #228/#190.
+
+[Recorded broad-phase evidence](translational-broad-phase-work-2026-09-30.json)
+compares baseline `3fb9f96` with clean code producer `ebda365` on rustc 1.98.0,
+`x86_64-unknown-linux-gnu`. Both binaries were prebuilt, then run in three
+alternating-order blocks: nine trials per version and workload, each completing
+120 ticks. All seven workload body/event checksums and semantic counts match;
+raw per-call times and the last-call work counters are retained.
+
+Median totals are 10.40 → 10.63 ms for one moving body, 10.63 → 10.68 ms for
+eight, 14.01 → 13.65 ms for supported gravity, and 5.15 → 4.91 ms for crowded
+spawn. These small mixed changes remain advisory. Warmed active calls report
+zero broad-phase capacity growth. The sparse workload retains 57,472 bytes of
+broad-phase payload plus 57,344 bytes of staging. Supported gravity retains
+65,904 plus 57,456 bytes. Crowded spawn retains 11,296 bytes of broad-phase
+payload, 2,048 bytes above the baseline's per-query peak because component
+high-water capacities can occur in different queries. Its staging is 7,168 bytes.
+Quiet calls continue to report zero active payload; retained bootstrap capacity
+is observable through the explicit scratch getter. These are vector payloads,
+not complete world/process memory.
