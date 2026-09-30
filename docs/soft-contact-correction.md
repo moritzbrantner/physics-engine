@@ -175,8 +175,9 @@ missing old-module energy telemetry as null, not a guessed value. Phase duration
 between correction policies because their physical trajectories differ.
 
 Known general approximation limits (frozen rotation within sweeps, non-chronological secondary
-substep ricochets, omitted gyroscopic terms, no universal cross-target bit identity, and no
-mid-step transactional rollback) are unchanged. See `fixed-step-approximation.md`.
+substep ricochets, omitted gyroscopic terms and no universal cross-target bit identity) are
+unchanged. Returned mid-step errors now restore physical state, including experimental relaxation;
+see `floating-step-transactions.md` and `fixed-step-approximation.md`.
 
 ## Follow-up: correct penetration error, not contacts already within slop
 

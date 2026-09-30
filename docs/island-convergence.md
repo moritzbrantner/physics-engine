@@ -141,7 +141,8 @@ TOWER_TICKS=1200 TOWER_TRIALS=2 node scripts/test-tower-runtime.mjs \
 The mixed fixture is the next acceptance workload, not a Battlefield capacity claim. Jointed
 ragdolls, vehicle suspension, varied timesteps between coupled bodies, a general convex/mesh
 solver and the dense-overlap repair remain separate work. Within-substep fixed-orientation
-CCD and existing nontransactional mid-step-error limitations are unchanged.
+CCD limitations are unchanged. Returned mid-step errors now restore the physical boundary; see
+[`floating-step-transactions.md`](floating-step-transactions.md).
 
 The existing Performance Evidence job runs the diagnostic crate test and two full policy
 comparisons for 600 post-start ticks, retaining the module and raw results. The ordinary

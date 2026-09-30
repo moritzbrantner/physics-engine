@@ -16,7 +16,9 @@ The repository is not a game engine. It must remain usable by ECS experiments, g
 The runtime architecture has one authoritative mutable world. Simulation changes are expressed and committed as explicit deltas; search/frontier/solver structures must not own complete world copies. Snapshots are explicit caller-requested products for persistence, replay/debug checkpoints, fixtures or export and must not be used as an ordinary stepping/rollback mechanism. Derived collision state should persist and be invalidated from precise changed-body IDs. See `docs/world-state-architecture.md`.
 
 The limited `approximate::World` retains floating-point state in a persistent-manifold, warm-started
-solver with bounded iterations and translation CCD. The canonical Tower Stability runtime uses that
+solver with bounded iterations and translation CCD. Returned step errors restore touched physical state,
+pending inputs and warm-start/sleep history; see `docs/floating-step-transactions.md`. A serialized
+continuation-complete checkpoint remains a separate #198 requirement. The canonical Tower Stability runtime uses that
 path with explicit fixed-contact position correction and passes its recorded repeated-volley matrix
 (see `docs/tower-stability.md`). The separate legacy frame-38 tower regression is repaired with its unchanged 240-frame acceptance
 (see `docs/legacy-contact-continuation.md`). General dense dynamic contact quality remains limited. Passing the canonical fixture does not prove universal contact quality or make

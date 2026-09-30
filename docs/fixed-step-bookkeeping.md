@@ -63,8 +63,9 @@ WASM `approximate_stat` indices 0 through 13 retain their meanings; indices 14 t
 The retained-byte gauge excludes body storage, response scratch from #154, contact-cache and
 allocator overhead, and heap allocations inside geometry routines. Capacity-growth counts are
 not a global allocation profiler. API-triggered wake/graph work is included in the next positive
-successful step; zero-duration steps do not consume that pending work. The experimental solver's
-existing nontransactional error contract is unchanged.
+successful step; zero-duration steps do not consume that pending work. Returned numerical failures
+restore the physical boundary and expose discarded work separately; see
+[`floating-step-transactions.md`](floating-step-transactions.md).
 
 The deterministic warmed-neighborhood test uses 32/128/512 sleeping bodies and one isolated
 moving body. With unchanged topology it requires zero adjacency/active-view rebuilds, four body

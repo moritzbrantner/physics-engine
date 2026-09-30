@@ -33,7 +33,8 @@ does not itself migrate a consumer to another world surface. See also the measur
 
 The optional `approximate::World` uses persistent f64 state, semi-implicit Euler integration,
 clipped box contact manifolds and bounded warm-started sequential impulses. It does not replace
-`RotatingWorld3d` silently. Open `scenarios/fixed-step/` on Pages to compare direct hits and near
+`RotatingWorld3d` silently. Returned numerical errors preserve the prior physical boundary through a
+[touched-state transaction](docs/floating-step-transactions.md). Open `scenarios/fixed-step/` on Pages to compare direct hits and near
 misses. See [the algorithm, limits and benchmark instructions](docs/fixed-step-approximation.md).
 
 ## Current foundation

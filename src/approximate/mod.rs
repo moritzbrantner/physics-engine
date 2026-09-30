@@ -35,6 +35,8 @@ pub use math::{Quaternion, Vector};
 use numeric::Scalar;
 use response::PreparedResponse;
 use std::collections::BTreeMap;
+mod transaction;
+pub use transaction::{FailedStepWork, TransactionStats};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -421,6 +423,9 @@ pub struct World {
     #[cfg(feature = "experimental-soft-contact")]
     relaxation_bias: Vec<Scalar>,
     pub last_report: Report,
+    transaction: transaction::Journal,
+    last_transaction: TransactionStats,
+    failed_work: Option<FailedStepWork>,
     elapsed: Scalar,
 }
 impl World {
@@ -461,6 +466,9 @@ impl World {
             #[cfg(feature = "experimental-soft-contact")]
             relaxation_bias: Vec::new(),
             last_report: Report::default(),
+            transaction: transaction::Journal::default(),
+            last_transaction: TransactionStats::default(),
+            failed_work: None,
             elapsed: 0.0,
         })
     }
@@ -469,6 +477,26 @@ impl World {
     }
     pub fn body(&self, id: BodyId) -> Option<&Body> {
         self.index(id).ok().map(|i| &self.bodies[i])
+    }
+    /// Work from the most recent step attempt, including a numerical failure.
+    /// A call that does not enter the solver journals nothing. Capacities describe
+    /// vector storage observed during the attempt, excluding allocator/tree overhead.
+    /// This observation never substitutes for a success report.
+    pub fn last_step_transaction(&self) -> TransactionStats {
+        self.last_transaction
+    }
+    /// Discarded work if the most recent attempt entered the solver and failed.
+    /// Early input rejection and successful attempts return None. Actual time,
+    /// body state, events and the successful report remain the prior boundary.
+    pub fn last_failed_step_work(&self) -> Option<&FailedStepWork> {
+        self.failed_work.as_ref()
+    }
+    /// Releases disposable rollback storage at a call boundary. Physical contact
+    /// history, pending input and the previous successful report are retained.
+    pub fn release_transaction_scratch(&mut self) {
+        self.transaction = transaction::Journal::default();
+        self.last_transaction = TransactionStats::default();
+        self.failed_work = None;
     }
     pub fn elapsed_seconds(&self) -> Scalar {
         self.elapsed
@@ -611,6 +639,7 @@ impl World {
         for &i in &s.traversal.island {
             let b = &mut self.bodies[i];
             if b.sleeping {
+                self.transaction.body(i, b);
                 count += 1;
                 b.sleeping = false;
                 b.quiet_time = 0.0;
@@ -629,6 +658,8 @@ impl World {
         })
     }
     /// Advance up to 0.1 seconds in a bounded number of substeps. No dropped remainder.
+    /// A returned error preserves physical state/history, pending inputs, time
+    /// and the previous successful report. Panics are outside this guarantee.
     pub fn step(&mut self, dt: Scalar) -> Result<Report, Error> {
         self.step_with_preparation::<true>(dt)
     }
@@ -641,6 +672,11 @@ impl World {
         &mut self,
         dt: Scalar,
     ) -> Result<Report, Error> {
+        self.failed_work = None;
+        self.last_transaction = TransactionStats {
+            vector_capacity_bytes: self.transaction.capacity_bytes(),
+            ..TransactionStats::default()
+        };
         if !dt.is_finite() || !(0.0..=0.1).contains(&dt) {
             return Err(Error::InvalidInput);
         }
@@ -677,6 +713,40 @@ impl World {
             self.last_report = report.clone();
             return Ok(report);
         }
+        self.transaction.begin(self.bodies.len());
+        let prior_h = self.last_h;
+        let prior_activity = self.bookkeeping.activity.count;
+        let result = self.advance_substeps::<PREPARED, CACHED>(
+            dt,
+            #[cfg(feature = "experimental-soft-contact")]
+            softness,
+        );
+        self.last_transaction = self.transaction.stats(result.is_err());
+        if let Some(work) = &mut self.failed_work {
+            work.transaction = self.last_transaction;
+        }
+        match result {
+            Ok(report) => {
+                self.transaction.commit();
+                self.last_report = report.clone();
+                Ok(report)
+            }
+            Err(error) => {
+                let mut journal = std::mem::take(&mut self.transaction);
+                journal.rollback(self);
+                self.transaction = journal;
+                self.last_h = prior_h;
+                self.bookkeeping.activity.count = prior_activity;
+                Err(error)
+            }
+        }
+    }
+    fn advance_substeps<const PREPARED: bool, const CACHED: bool>(
+        &mut self,
+        dt: Scalar,
+        #[cfg(feature = "experimental-soft-contact")] softness: Option<correction::Coefficients>,
+    ) -> Result<Report, Error> {
+        let mut report = Report::default();
         let h = dt / self.config.substeps as Scalar;
         for substep in 0..self.config.substeps {
             report.substeps += 1;
@@ -691,7 +761,13 @@ impl World {
             }
             // External impulses still apply exactly once, before the first force integration.
             if substep == 0 {
-                for (b, cached) in self.bodies.iter_mut().zip(&self.responses) {
+                for (i, (b, cached)) in self.bodies.iter_mut().zip(&self.responses).enumerate() {
+                    if (b.movable() && !b.sleeping)
+                        || b.impulse != Vector::ZERO
+                        || b.angular_impulse != Vector::ZERO
+                    {
+                        self.transaction.body(i, b);
+                    }
                     if b.movable() {
                         let prepared = cached.select::<PREPARED>(b, &mut report);
                         b.velocity += b.impulse * prepared.inverse_mass;
@@ -701,8 +777,9 @@ impl World {
                     b.angular_impulse = Vector::ZERO;
                 }
             }
-            for (b, cached) in self.bodies.iter_mut().zip(&self.responses) {
+            for (i, (b, cached)) in self.bodies.iter_mut().zip(&self.responses).enumerate() {
                 if b.movable() && !b.sleeping {
+                    self.transaction.body(i, b);
                     let prepared = cached.select::<PREPARED>(b, &mut report);
                     b.velocity += (self.config.gravity + b.force / b.mass) * h;
                     b.angular_velocity += prepared.inertia(b, b.torque, &mut report) * h;
@@ -951,6 +1028,8 @@ impl World {
             self.manifold_scratch = pairs;
             report.contact_points += constraints.len() as u64;
             for c in &constraints {
+                self.transaction.body(c.a, &self.bodies[c.a]);
+                self.transaction.body(c.b, &self.bodies[c.b]);
                 apply::<PREPARED>(
                     &mut self.bodies,
                     &self.responses,
@@ -1031,6 +1110,7 @@ impl World {
             // Reuse point allocations when the pair survives. Warm starting has already read the
             // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
             for (&(a, b), points) in &mut self.cache {
+                let key = (a, b);
                 let a = self
                     .bodies
                     .binary_search_by_key(&a, |b| b.id)
@@ -1040,6 +1120,9 @@ impl World {
                     .binary_search_by_key(&b, |b| b.id)
                     .expect("live contact");
                 if !scratch.supported[a] || !scratch.supported[b] {
+                    if !points.is_empty() {
+                        self.transaction.pair(key, Some(points));
+                    }
                     points.clear();
                 }
             }
@@ -1059,6 +1142,8 @@ impl World {
                     }
                 }
                 if c.sep <= self.config.contact_slop * 2.0 {
+                    self.transaction
+                        .pair((a.id, b.id), self.cache.get(&(a.id, b.id)));
                     let points = match self.cache.entry((a.id, b.id)) {
                         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                         std::collections::btree_map::Entry::Vacant(entry) => {
@@ -1081,8 +1166,9 @@ impl World {
                     }
                 }
             }
-            self.cache.retain(|_, points| {
+            self.cache.retain(|&key, points| {
                 if points.is_empty() {
+                    self.transaction.pair(key, Some(points));
                     scratch.graph.dirty = true;
                     false
                 } else {
@@ -1097,6 +1183,7 @@ impl World {
             scratch.activity.refresh(&self.bodies, &mut scratch.work);
             for &i in &scratch.activity.indices {
                 let b = &mut self.bodies[i];
+                self.transaction.body(i, b);
                 report.integrated_bodies += 1;
                 #[cfg(not(feature = "experimental-soft-contact"))]
                 let (movement, spin, correction_quiet) = (b.velocity, b.angular_velocity, true);
@@ -1124,7 +1211,15 @@ impl World {
                     b.orientation = b.orientation.integrate(spin, h);
                 }
                 if !b.valid() {
-                    return Err(Error::NonFiniteState(b.id));
+                    let error = Error::NonFiniteState(b.id);
+                    self.failed_work = Some(FailedStepWork::capture(
+                        &report,
+                        BookkeepingStats {
+                            scratch_retained_bytes: scratch.retained_bytes() as u64,
+                            ..scratch.work
+                        },
+                    ));
+                    return Err(error);
                 }
                 if b.movable()
                     && b.sleep_allowed
@@ -1140,7 +1235,16 @@ impl World {
                 b.cached_bounds = contact::bounds(b);
             }
             self.constraints = constraints;
-            self.correct_fixed_positions(h, &mut report.position)?;
+            if let Err(error) = self.correct_fixed_positions(h, &mut report.position) {
+                self.failed_work = Some(FailedStepWork::capture(
+                    &report,
+                    BookkeepingStats {
+                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
+                        ..self.bookkeeping.work
+                    },
+                ));
+                return Err(error);
+            }
             self.sleep_quiet_islands();
             // Retirement is local; remove all affected cached edges before indexed graph reuse.
             self.bookkeeping.retired.sort_unstable();
@@ -1151,20 +1255,30 @@ impl World {
                     let b = self.bodies.remove(i);
                     self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                     self.geometry.remove(id);
-                    self.cache.retain(|&(a, b), _| a != id && b != id);
+                    self.cache.retain(|&(a, b), points| {
+                        if a == id || b == id {
+                            self.transaction.pair((a, b), Some(points));
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    self.transaction.remove(i, b);
                     self.bookkeeping.layout_changed();
                     report.retired.push(id);
                 }
             }
             self.last_h = h;
         }
-        for b in &mut self.bodies {
+        for (i, b) in self.bodies.iter_mut().enumerate() {
+            if b.force != Vector::ZERO || b.torque != Vector::ZERO {
+                self.transaction.body(i, b);
+            }
             b.force = Vector::ZERO;
             b.torque = Vector::ZERO;
         }
         self.elapsed += dt;
         self.finish_bookkeeping(&mut report);
-        self.last_report = report.clone();
         Ok(report)
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
@@ -1200,6 +1314,7 @@ impl World {
             }) {
                 for &i in &s.traversal.island {
                     let b = &mut self.bodies[i];
+                    self.transaction.body(i, b);
                     slept += usize::from(!b.sleeping);
                     b.sleeping = true;
                     b.velocity = Vector::ZERO;
