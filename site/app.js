@@ -965,11 +965,19 @@ if (engine && renderer) requestAnimationFrame(frame);
 window.addEventListener("physics-projectile-type-change", () => {
   if (!engine || scenarioLog.failed || scenarioId !== "tower") return;
   const kind = { sphere: 0, arrow: 1, rigid: 2 }[projectileTypeControl.value];
-  if (engine.sandbox_set_projectile_type(kind) !== 0) {
+  scenarioLog.begin("projectile-configuration", {
+    export: "sandbox_set_projectile_type", projectile_type: projectileTypeControl.value,
+    arguments: [kind],
+  });
+  const code = engine.sandbox_set_projectile_type(kind);
+  if (code !== 0) {
+    performanceRecorder.recordMarker("projectile-type-rejected", { engine_code: code });
+    scenarioLog.complete();
     status.textContent = "The engine rejected this projectile selection.";
     return;
   }
   syncProjectileHud();
   renderDirty = true;
   performanceRecorder.recordMarker("projectile-type", { type: projectileTypeControl.value });
+  scenarioLog.complete();
 });

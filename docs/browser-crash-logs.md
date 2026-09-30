@@ -64,6 +64,26 @@ python scripts/test-scenario-log-browser.py --output scenario-log-browser-eviden
 
 It checks automatic startup, actual JSON downloads, first-error retention, manual
 fallback after a delivery error, global exception/rejection handlers, reset, and
-URL retention on a simulated BFCache pagehide. Full scenario navigation, real
-BFCache navigation, and session-storage recovery across reload remain separate
-browser acceptance requirements; the isolated boundary check does not prove them.
+URL retention on a simulated BFCache pagehide.
+
+Full-page acceptance uses the actual built pages and WASM:
+
+```sh
+python scripts/test-scenario-log-pages.py --url http://127.0.0.1:8765 \
+  --output scenario-log-pages-evidence
+```
+
+This suite exercises sandbox, tower, parkour and fixed-step startup, current-log
+exports without stopping recording, explicit resets, actual initialization failures,
+a returned event-reference error 6/detail 611 after a direct tower hit, crash JSON
+contents, and stopped engine/render calls. Export-boundary trap fixtures verify
+projectile-selection inputs and seven completed warm-up calls before a manual-reset
+trap; the original regressions failed before the fixes. These controlled traps test
+reporting, not physical failure semantics or a repaired solver.
+
+Reload restores the saved report without another automatic download. Actual back
+navigation checks that its manual download remains valid, recording whether Chromium
+restored the document from BFCache or initialized a new document using session
+storage. BFCache availability is browser-dependent. Screenshots, downloaded JSON
+and results are written to the requested evidence directory. These browser checks
+are behavioral acceptance, not deterministic timing or continuation-complete replay.

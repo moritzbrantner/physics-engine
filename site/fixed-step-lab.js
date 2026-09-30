@@ -87,33 +87,37 @@ function tick(){
   ticks++; dirty=true; scenarioLog.complete();
 }
 function reset(){
-  scenarioLog.start(); pendingStepMs = []; attemptedSteps = 0; last = null;
-  const started = performance.now();
-  const rules=(1<<29)|((1<<11)-2)|(1<<14)|(2<<12)|($('crates').value==='upright'?1<<11:0);
-  scenarioLog.begin("reset", { export: "sandbox_reset_tower_with_baking_options", arguments: [rules, 0, 1] });
-  const resetCode = e.sandbox_reset_tower_with_baking_options(rules, 0, 1);
-  if (resetCode !== 0) {
-    scenarioLog.fail(new Error("Rust fixture reset failed"), { source: "engine", engine_code: resetCode });
-    return;
-  }
-  if (approximate()) {
-    scenarioLog.begin("solver-initialization", { export: "approximate_reset_from_sandbox", arguments: [4, 8] });
-    const importCode = e.approximate_reset_from_sandbox(4, 8);
-    if (importCode !== 0) {
-      scenarioLog.fail(new Error("Approximation import failed"), { source: "engine", engine_code: importCode });
+  try {
+    scenarioLog.start(); pendingStepMs = []; attemptedSteps = 0; last = null;
+    const started = performance.now();
+    const rules=(1<<29)|((1<<11)-2)|(1<<14)|(2<<12)|($('crates').value==='upright'?1<<11:0);
+    scenarioLog.begin("reset", { export: "sandbox_reset_tower_with_baking_options", arguments: [rules, 0, 1] });
+    const resetCode = e.sandbox_reset_tower_with_baking_options(rules, 0, 1);
+    if (resetCode !== 0) {
+      scenarioLog.fail(new Error("Rust fixture reset failed"), { source: "engine", engine_code: resetCode });
       return;
     }
+    if (approximate()) {
+      scenarioLog.begin("solver-initialization", { export: "approximate_reset_from_sandbox", arguments: [4, 8] });
+      const importCode = e.approximate_reset_from_sandbox(4, 8);
+      if (importCode !== 0) {
+        scenarioLog.fail(new Error("Approximation import failed"), { source: "engine", engine_code: importCode });
+        return;
+      }
+    }
+    ticks=0;error=null;recent=[];paused=true;accumulator=0;
+    scenarioLog.complete();
+    for(let i=0;i<240&&!error;i++)tick();
+    if (scenarioLog.failed) return;
+    recent=[];$('pause').textContent='Resume';
+    $('method-title').textContent=approximate()?'Explicit approximation · 4 substeps · 8 impulse iterations':'Existing sampled-event solver · f64 arithmetic';
+    $('method').textContent=approximate()?'Forces and impulses update velocity; the new velocity advances position and orientation. Contact manifolds retain accumulated impulses for the next substep. Fast projectiles use translation-only sweeps. Rapidly rotating continuous collisions are not exact.':'The reference repeatedly searches for sampled collision times, resolves the simultaneous contacts, stabilizes them, and searches the remaining time again. Its free-rotating direct-hit tower case is still known to exhaust the event budget.';
+    const url=new URL(location.href);for(const id of controls)url.searchParams.set(id,$(id).value);history.replaceState(null,'',url);
+    scenarioLog.begin("render"); const renderStarted = performance.now(); render();
+    recordFrame(0, started, true, performance.now() - renderStarted); scenarioLog.complete();
+  } catch (failure) {
+    scenarioLog.fail(failure, { source: "reset", pending_physics_steps_ms: pendingStepMs });
   }
-  ticks=0;error=null;recent=[];paused=true;accumulator=0;
-  scenarioLog.complete();
-  for(let i=0;i<240&&!error;i++)tick();
-  if (scenarioLog.failed) return;
-  recent=[];$('pause').textContent='Resume';
-  $('method-title').textContent=approximate()?'Explicit approximation · 4 substeps · 8 impulse iterations':'Existing sampled-event solver · f64 arithmetic';
-  $('method').textContent=approximate()?'Forces and impulses update velocity; the new velocity advances position and orientation. Contact manifolds retain accumulated impulses for the next substep. Fast projectiles use translation-only sweeps. Rapidly rotating continuous collisions are not exact.':'The reference repeatedly searches for sampled collision times, resolves the simultaneous contacts, stabilizes them, and searches the remaining time again. Its free-rotating direct-hit tower case is still known to exhaust the event budget.';
-  const url=new URL(location.href);for(const id of controls)url.searchParams.set(id,$(id).value);history.replaceState(null,'',url);
-  scenarioLog.begin("render"); const renderStarted = performance.now(); render();
-  recordFrame(0, started, true, performance.now() - renderStarted); scenarioLog.complete();
 }
 function shoot(miss){
   if(error || scenarioLog.failed)return;
