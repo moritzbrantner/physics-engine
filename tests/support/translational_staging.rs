@@ -25,6 +25,18 @@ fn semantic_report(mut report: StepReport) -> StepReport {
     report
 }
 
+fn paired_step(w: &mut World) -> StepReport {
+    let mut rebuilding = World::new(w.config());
+    for b in w.bodies().cloned() {
+        rebuilding.add_body(b).unwrap();
+    }
+    let actual = w.step(1).unwrap();
+    let expected = rebuilding.step(1).unwrap();
+    assert_eq!(semantic_report(actual.clone()), semantic_report(expected));
+    assert_eq!(physical(w), physical(&rebuilding));
+    actual
+}
+
 pub fn lifecycle_and_release_keep_physics_identical() {
     let mut w = World::new(WorldConfig {
         gravity: Vec3i::ZERO,
@@ -45,22 +57,15 @@ pub fn lifecycle_and_release_keep_physics_identical() {
     );
     let capacity = w.retained_step_scratch_bytes();
     for _ in 0..32 {
-        let mut rebuilding = World::new(w.config());
-        for b in w.bodies().cloned() {
-            rebuilding.add_body(b).unwrap();
-        }
-        let actual = w.step(1).unwrap();
-        let expected = rebuilding.step(1).unwrap();
-        assert_eq!(semantic_report(actual.clone()), semantic_report(expected));
+        let actual = paired_step(&mut w);
         assert_eq!(actual.stats.work.staged_state_capacity_growths, 0);
         assert_eq!(w.retained_step_scratch_bytes(), capacity);
-        assert_eq!(physical(&w), physical(&rebuilding));
     }
     for id in 128..257 {
         w.add_body(body(id)).unwrap();
     }
     assert_eq!(
-        w.step(1).unwrap().stats.work.staged_state_capacity_growths,
+        paired_step(&mut w).stats.work.staged_state_capacity_growths,
         1
     );
     let high_water = w.retained_step_scratch_bytes();
@@ -73,7 +78,7 @@ pub fn lifecycle_and_release_keep_physics_identical() {
     w.remove_body(BodyId(50)).unwrap();
     w.add_body(body(50)).unwrap();
     assert_eq!(
-        w.step(1).unwrap().stats.work.staged_state_capacity_growths,
+        paired_step(&mut w).stats.work.staged_state_capacity_growths,
         0
     );
     assert_eq!(w.retained_step_scratch_bytes(), high_water);

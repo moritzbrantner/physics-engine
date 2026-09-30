@@ -990,6 +990,48 @@ mod maintenance_tests {
     }
 
     #[test]
+    fn retained_staging_growth_and_shrink_match_the_exhaustive_rebuilding_oracle() {
+        let body = |id| {
+            RigidBody::dynamic(
+                BodyId(id),
+                Vec3i::new(id as i32 * 100 - 10_000, 20, -30),
+                if id == 1 {
+                    Vec3i::new(1, 0, 0)
+                } else {
+                    Vec3i::ZERO
+                },
+                Vec3i::new(10, 20, 10),
+            )
+        };
+        let (mut candidate, mut oracle) = worlds(
+            WorldConfig {
+                gravity: Vec3i::ZERO,
+                ..Default::default()
+            },
+            (0..16).map(body).collect(),
+        );
+        step_matches(&mut candidate, &mut oracle, 1);
+        let small_capacity = candidate.retained_step_scratch_bytes();
+        for id in 16..129 {
+            candidate.add_body(body(id)).unwrap();
+            oracle.add_body(body(id)).unwrap();
+        }
+        step_matches(&mut candidate, &mut oracle, 1);
+        let high_water = candidate.retained_step_scratch_bytes();
+        assert!(high_water > small_capacity);
+        for id in 16..129 {
+            assert_eq!(
+                candidate.remove_body(BodyId(id)),
+                oracle.remove_body(BodyId(id))
+            );
+        }
+        step_matches(&mut candidate, &mut oracle, 1);
+        assert_eq!(candidate.retained_step_scratch_bytes(), high_water);
+        candidate.release_step_scratch();
+        step_matches(&mut candidate, &mut oracle, 1);
+    }
+
+    #[test]
     fn staging_allocation_is_reused_and_logically_empty_at_step_boundaries() {
         let mut world = stationary_world(128);
         world.set_velocity(BodyId(9), Vec3i::new(1, 0, 0)).unwrap();
