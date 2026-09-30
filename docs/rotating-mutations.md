@@ -14,6 +14,8 @@ Genuine fixed geometry is unregistered/reprepared when its shape, kind or solver
 
 ## Intended motion
 
+Use a clone of the single authoritative body with `RigidBox3d::with_body` to edit its translational/material descriptor while retaining angular state and policies. The builder validates identity, half extents, mass and fixed-body spin without normalizing an already simulated quaternion again. `with_motion_authority` changes ownership without reconstructing physical state; an unchanged authority preserves sleep policy, external ownership disables sleep, and returning to physics selects normal sleep.
+
 `RotatingWorld3d::set_motion(id, linear_velocity, angular_velocity)` validates and applies both components together, returning whether effective motion changed. A missing body fails. A fixed body rejects nonzero linear or angular velocity before wake/mutation; zero is a no-op. Rotation locks suppress supplied angular velocity. Equal effective motion preserves a parked body and its sleep history. Changed motion activates the target and stores both components in authoritative physics state. Later contact admission controls propagation to other bodies.
 
 These APIs deliberately do not accept a full-world synchronization snapshot. Consumers should retain identity/metadata mappings, submit only intended changes, let physics own simulated pose and velocity, and treat converted output as an observable view. A normal unchanged tick calls neither mutation command. Full output conversion may still be required by a consumer's export contract.

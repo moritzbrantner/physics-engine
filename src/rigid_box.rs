@@ -122,6 +122,7 @@ pub struct RigidBox3d {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RigidBoxError3d {
+    BodyIdentityChange { expected: BodyId, actual: BodyId },
     InvalidHalfExtents(BodyId),
     ZeroMass(BodyId),
     FixedAngularVelocity(BodyId),
@@ -131,6 +132,11 @@ pub enum RigidBoxError3d {
 impl fmt::Display for RigidBoxError3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BodyIdentityChange { expected, actual } => write!(
+                formatter,
+                "rotating rigid box {} cannot change identity to {}",
+                expected.0, actual.0
+            ),
             Self::InvalidHalfExtents(body) => write!(
                 formatter,
                 "rotating rigid box {} requires strictly positive half extents",
@@ -168,17 +174,7 @@ impl RigidBox3d {
     /// Returns [`RigidBoxError3d`] for degenerate box dimensions, zero dynamic mass, non-zero angular
     /// velocity on a fixed body, or an invalid orientation.
     pub fn new(body: RigidBody, angular: AngularState3d) -> Result<Self, RigidBoxError3d> {
-        let half_extents = body.half_extents();
-        if half_extents.x <= 0 || half_extents.y <= 0 || half_extents.z <= 0 {
-            return Err(RigidBoxError3d::InvalidHalfExtents(body.id()));
-        }
-        if body.kind() == BodyKind::Dynamic && body.mass_units() == 0 {
-            return Err(RigidBoxError3d::ZeroMass(body.id()));
-        }
-        if body.kind() == BodyKind::Fixed && !angular.angular_velocity.is_zero() {
-            return Err(RigidBoxError3d::FixedAngularVelocity(body.id()));
-        }
-
+        Self::validate_body(&body, angular.angular_velocity)?;
         let angular =
             AngularState3d::new(angular.orientation.normalized()?, angular.angular_velocity);
         Ok(Self {
@@ -192,6 +188,38 @@ impl RigidBox3d {
             motion_authority: MotionAuthority3d::Physics,
             sleep_mode: SleepMode3d::Normal,
         })
+    }
+
+    fn validate_body(
+        body: &RigidBody,
+        angular_velocity: AngularVelocity3d,
+    ) -> Result<(), RigidBoxError3d> {
+        let half_extents = body.half_extents();
+        if half_extents.x <= 0 || half_extents.y <= 0 || half_extents.z <= 0 {
+            return Err(RigidBoxError3d::InvalidHalfExtents(body.id()));
+        }
+        if body.kind() == BodyKind::Dynamic && body.mass_units() == 0 {
+            return Err(RigidBoxError3d::ZeroMass(body.id()));
+        }
+        if body.kind() == BodyKind::Fixed && !angular_velocity.is_zero() {
+            return Err(RigidBoxError3d::FixedAngularVelocity(body.id()));
+        }
+        Ok(())
+    }
+
+    /// Changes the translational/material descriptor while preserving validated angular state and policy.
+    /// Unlike constructing a new box, this does not normalize the simulated orientation again.
+    /// Identity changes, invalid geometry/mass and a spinning dynamic-to-fixed transition are rejected.
+    pub fn with_body(mut self, body: RigidBody) -> Result<Self, RigidBoxError3d> {
+        if self.body.id() != body.id() {
+            return Err(RigidBoxError3d::BodyIdentityChange {
+                expected: self.body.id(),
+                actual: body.id(),
+            });
+        }
+        Self::validate_body(&body, self.angular.angular_velocity)?;
+        self.body = body;
+        Ok(self)
     }
 
     /// Prevents collision response and free-flight integration from changing this box's orientation.
@@ -243,9 +271,26 @@ impl RigidBox3d {
     /// External motion never participates in engine sleep because a sleeping proxy would hide caller-owned
     /// movement. The body remains a solid collision target unless separately marked overlap-only.
     #[must_use]
-    pub const fn with_external_motion(mut self) -> Self {
-        self.motion_authority = MotionAuthority3d::External;
-        self.sleep_mode = SleepMode3d::Never;
+    pub const fn with_external_motion(self) -> Self {
+        self.with_motion_authority(MotionAuthority3d::External)
+    }
+
+    /// Changes motion ownership without reconstructing pose or angular state.
+    /// External ownership disables sleep; returning to physics ownership selects normal sleep.
+    #[must_use]
+    pub const fn with_motion_authority(mut self, authority: MotionAuthority3d) -> Self {
+        if matches!(
+            (self.motion_authority, authority),
+            (MotionAuthority3d::Physics, MotionAuthority3d::Physics)
+                | (MotionAuthority3d::External, MotionAuthority3d::External)
+        ) {
+            return self;
+        }
+        self.motion_authority = authority;
+        self.sleep_mode = match authority {
+            MotionAuthority3d::Physics => SleepMode3d::Normal,
+            MotionAuthority3d::External => SleepMode3d::Never,
+        };
         self
     }
 

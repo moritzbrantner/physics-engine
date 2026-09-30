@@ -1,7 +1,8 @@
 use physics_engine::{
     AngularState3d, AngularVelocity3d, BodyId, CollisionLayers3d, FixedGeometryPreparationMode3d,
     InteractionCategory3d, Material, MotionAuthority3d, Orientation3d, RigidBody, RigidBox3d,
-    RotatingIntervalConfig3d, RotatingWorld3d, RotatingWorldConfig3d, RotatingWorldError3d, Vec3i,
+    RigidBoxError3d, RotatingIntervalConfig3d, RotatingWorld3d, RotatingWorldConfig3d,
+    RotatingWorldError3d, Vec3i,
 };
 
 fn world() -> RotatingWorld3d {
@@ -336,7 +337,9 @@ pub fn authority_changes_update_solver_partitions_without_cross_world_effects() 
         Vec3i::new(0, -10, 0)
     );
     let external = first.box_by_id(BodyId(1)).unwrap();
-    let physics_owned = RigidBox3d::new(external.body().clone(), external.angular()).unwrap();
+    let physics_owned = external
+        .clone()
+        .with_motion_authority(MotionAuthority3d::Physics);
     first.replace_box(physics_owned).unwrap();
     first.step(1, 60).unwrap();
     assert_eq!(
@@ -399,4 +402,70 @@ pub fn newly_eligible_layers_wake_a_dependency_beyond_the_replacement_bounds() {
         "newly eligible contact with the awake intermediary admits its parked dependency"
     );
     assert_eq!(world.body_contacts(BodyId(3)).unwrap()[0].other, BodyId(2));
+}
+
+#[cfg_attr(test, test)]
+pub fn material_edits_preserve_simulated_angular_state_and_body_policy() {
+    let aggressive = body(5, Vec3i::ZERO).with_aggressive_sleep();
+    assert_eq!(
+        aggressive
+            .clone()
+            .with_motion_authority(MotionAuthority3d::Physics),
+        aggressive
+    );
+    let mut world = world();
+    world
+        .add_box(
+            body(1, Vec3i::ZERO)
+                .with_external_motion()
+                .with_transient_contacts(),
+        )
+        .unwrap();
+    world
+        .set_motion(
+            BodyId(1),
+            Vec3i::new(600, 0, 0),
+            AngularVelocity3d::new(123_456, 789_012, 345_678),
+        )
+        .unwrap();
+    world.step(1, 60).unwrap();
+    let original = world.box_by_id(BodyId(1)).unwrap().clone();
+    let replacement = original
+        .clone()
+        .with_body(
+            original
+                .body()
+                .clone()
+                .with_mass(7)
+                .with_material(Material::new(500).with_friction(800)),
+        )
+        .unwrap();
+    world.replace_box(replacement.clone()).unwrap();
+    let changed = world.box_by_id(BodyId(1)).unwrap();
+    assert_eq!(changed.angular(), original.angular());
+    assert_eq!(changed.body().position(), original.body().position());
+    assert_eq!(changed.body().velocity(), original.body().velocity());
+    assert_eq!(changed.motion_authority(), original.motion_authority());
+    assert_eq!(
+        changed.contact_persistence(),
+        original.contact_persistence()
+    );
+    assert_eq!(
+        original.clone().with_body(body(2, Vec3i::ZERO).into_body()),
+        Err(RigidBoxError3d::BodyIdentityChange {
+            expected: BodyId(1),
+            actual: BodyId(2)
+        })
+    );
+    assert_eq!(
+        original
+            .clone()
+            .with_body(original.body().clone().with_mass(0)),
+        Err(RigidBoxError3d::ZeroMass(BodyId(1)))
+    );
+    assert_eq!(
+        original.with_body(floor(1, 0).into_body()),
+        Err(RigidBoxError3d::FixedAngularVelocity(BodyId(1)))
+    );
+    assert_eq!(world.box_by_id(BodyId(1)), Some(&replacement));
 }
