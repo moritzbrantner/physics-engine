@@ -8,4 +8,4 @@ assert.equal(typeof instance.exports.shape_query_contract, "function");
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.shape_query_contract(), 0, `WASM shape query replay ${replay}`);
 }
-console.log("WASM geometry queries: three native-contract replays passed, including all four primitives, finite rays and shape casts, thin walls, touching/overlap, retained output, failed searches and certified capsule-intersection clearance, actual row work and discarded search/physical-step work.");
+console.log("WASM geometry queries: three native-contract replays passed, including all four primitives, finite rays and shape casts, thin walls, touching/overlap, retained output, failed searches and certified capsule-intersection clearance, actual row work and discarded search/physical-step work and conservative rotated-corner admission.");

@@ -52,7 +52,9 @@ exclusive positive integer endpoint; Rust's saturating cast must not hide an ove
 
 An explicit zero duration is valid. Positive time composition underflowing to zero is a range
 failure, not an implicit successful zero-duration step. Swept bounds round outward so rounding
-cannot narrow the volume admitted to collision detection. This conservative padding is not
+cannot narrow the volume admitted to collision detection. The floating world uses
+[separate numerical candidate guards](floating-conservative-bounds.md) for cached
+pose extents and swept endpoint addition, independent of physical contact slop. This conservative padding is not
 allowed to become a position correction or an invented physical contact.
 
 Use a documented absolute/relative tolerance to compare mathematically equivalent numerical
