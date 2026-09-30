@@ -151,6 +151,39 @@ impl EcsRotatingWorld3d {
         Some(removed)
     }
 
+    /// Applies an explicit teleport, geometry/material, kind, or authority change to one existing body.
+    /// Equal descriptors preserve sleep and caches. Identity and interaction category are retained.
+    /// Replacement bounds and affected contacts are validated before any body is changed or woken.
+    /// This command is for actual changes; ordinary stepping never replays descriptors through it.
+    pub fn replace_box(&mut self, replacement: RigidBox3d) -> Result<bool, RotatingWorldError3d> {
+        let id = replacement.body().id();
+        let preparation_changed = self.physics.box_by_id(id).is_some_and(|previous| {
+            previous.oriented_box() != replacement.oriented_box()
+                || previous.body().kind() != replacement.body().kind()
+                || previous.solver_participation() != replacement.solver_participation()
+        });
+        let prepared = self.fixed_geometry.clone();
+        let changed =
+            with_fixed_geometry_context(&prepared, || self.physics.replace_box(replacement))?;
+        if changed && preparation_changed {
+            self.fixed_geometry.unregister(id);
+            self.fixed_geometry
+                .register_fixed(self.physics.box_by_id(id).expect("replaced body"));
+        }
+        Ok(changed)
+    }
+
+    /// Sets intended linear and angular motion together. Fixed bodies reject nonzero commands.
+    /// Equal effective motion does not wake a body; a rotation lock suppresses angular motion.
+    pub fn set_motion(
+        &mut self,
+        id: BodyId,
+        velocity: Vec3i,
+        angular_velocity: crate::AngularVelocity3d,
+    ) -> Result<bool, RotatingWorldError3d> {
+        self.physics.set_motion(id, velocity, angular_velocity)
+    }
+
     pub fn add_ballistic_sphere(
         &mut self,
         projectile: BallisticSphere3d,

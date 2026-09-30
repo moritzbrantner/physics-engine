@@ -8,4 +8,4 @@ assert.equal(typeof instance.exports.rotating_interval_contract, "function");
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.rotating_interval_contract(), 0, `WASM rotating interval replay ${replay}`);
 }
-console.log("WASM rotating intervals: three public-contract replays passed, including late-error rollback, sleep deadlines, parked activation, damping and quiet work.");
+console.log("WASM rotating intervals and mutations: three public-contract replays passed, including late-error rollback, sleep deadlines, parked activation, damping, quiet work, descriptor changes and intended motion.");

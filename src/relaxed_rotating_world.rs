@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind, InteractionCategory3d,
-    InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d, OrientedBox3d,
-    PerformanceCounterU64, RigidBox3d, RigidBoxFreeFlightConfig3d, RotatingBroadPhaseError3d,
-    RotatingWorldConfig3d, RotatingWorldError3d, RotatingWorldStepReport3d,
-    RotatingWorldStepStats3d, SolverParticipation3d, Vec3i, WakePropagation3d,
-    rigid_box_free_flight_sweep_bounds, rotating_broad_phase::RotatingBoundsIndex3d,
+    AngularVelocity3d, BallisticSphere3d, BodyCurrentContact3d, BodyId, BodyKind,
+    InteractionCategory3d, InteractionExecutionPlan3d, InteractionPolicy3d, Orientation3d,
+    OrientedBox3d, PerformanceCounterU64, RigidBox3d, RigidBoxFreeFlightConfig3d,
+    RotatingBroadPhaseError3d, RotatingWorldConfig3d, RotatingWorldError3d,
+    RotatingWorldStepReport3d, RotatingWorldStepStats3d, SolverParticipation3d, Vec3i,
+    WakePropagation3d, rigid_box_free_flight_sweep_bounds,
+    rotating_broad_phase::RotatingBoundsIndex3d,
     strict_stabilized_rotating_world::RotatingWorld3d as StrictRotatingWorld3d,
 };
 
@@ -174,6 +175,116 @@ impl RotatingWorld3d {
         Some(removed)
     }
 
+    /// Replaces a genuinely changed body descriptor without removing its identity or interaction policy.
+    /// All fallible geometry/contact admission happens before authoritative mutation.
+    pub fn replace_box(&mut self, replacement: RigidBox3d) -> Result<bool, RotatingWorldError3d> {
+        let id = replacement.body().id();
+        let previous = self
+            .box_by_id(id)
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        if previous == &replacement {
+            return Ok(false);
+        }
+        let was_dynamic = previous.body().kind() == BodyKind::Dynamic;
+        let was_solid = previous.solver_participation() == SolverParticipation3d::Solid;
+        let bounds = rigid_box_free_flight_sweep_bounds(
+            &replacement,
+            RigidBoxFreeFlightConfig3d::new(Vec3i::ZERO, 0, 1),
+        )?;
+        let mut dependents = if was_solid {
+            self.contact_dependents(id, false)?
+        } else if self.parked.contains_key(&id) {
+            BTreeSet::from([id])
+        } else {
+            BTreeSet::new()
+        };
+        let mut affected = BTreeSet::new();
+        if replacement.solver_participation() == SolverParticipation3d::Solid {
+            // A same-pose replacement can change layers or participation. The known-body
+            // overlap shortcut would reuse the old descriptor's eligibility, losing new contacts.
+            // Borrow active dynamic membership and admit each candidate using the replacement.
+            let mut candidates = self
+                .active
+                .boxes()
+                .filter(|body| body.body().kind() == BodyKind::Dynamic)
+                .map(|body| body.body().id())
+                .collect::<Vec<_>>();
+            candidates.extend(self.parked_wake_index.overlapping_ids(bounds).body_ids);
+            candidates.sort_unstable();
+            candidates.dedup();
+            for candidate in candidates {
+                if candidate == id {
+                    continue;
+                }
+                let target = self
+                    .box_by_id(candidate)
+                    .expect("query returned a live body");
+                if target.body().kind() == BodyKind::Dynamic
+                    && target.solver_participation() == SolverParticipation3d::Solid
+                    && replacement
+                        .collision_layers()
+                        .collides_with(target.collision_layers())
+                    && crate::obb_contact_seed(replacement.oriented_box(), target.oriented_box())?
+                        .is_some()
+                {
+                    affected.insert(candidate);
+                    dependents.extend(self.contact_dependents(candidate, false)?);
+                }
+            }
+        }
+        // These transitions are infallible for retained, validated parked members. Admission above
+        // can fail without waking anything; ordinary mutations do not clone the world for rollback.
+        for dependent in dependents {
+            self.unpark_body(dependent)
+                .expect("admitted parked dependencies remain valid");
+        }
+        let dynamic = replacement.body().kind() == BodyKind::Dynamic;
+        self.active
+            .replace_box(replacement, &affected.into_iter().collect::<Vec<_>>());
+        if was_dynamic && !dynamic {
+            self.active_dynamic_count -= 1;
+        } else if !was_dynamic && dynamic {
+            self.active_dynamic_count += 1;
+        }
+        Ok(true)
+    }
+
+    /// Applies one intended linear/angular velocity command after validating both components.
+    /// Equal effective motion is a no-op, including on parked bodies. Rotation locks clear angular input.
+    pub fn set_motion(
+        &mut self,
+        id: BodyId,
+        velocity: Vec3i,
+        angular_velocity: AngularVelocity3d,
+    ) -> Result<bool, RotatingWorldError3d> {
+        let previous = self
+            .box_by_id(id)
+            .ok_or(RotatingWorldError3d::MissingBody(id))?;
+        if previous.body().kind() == BodyKind::Fixed {
+            if velocity != Vec3i::ZERO {
+                return Err(RotatingWorldError3d::FixedBodyVelocity(id));
+            }
+            if !angular_velocity.is_zero() {
+                return Err(RotatingWorldError3d::FixedBodyAngularVelocity(id));
+            }
+            return Ok(false);
+        }
+        let angular_velocity = if previous.rotation_locked() {
+            AngularVelocity3d::default()
+        } else {
+            angular_velocity
+        };
+        if previous.body().velocity() == velocity
+            && previous.angular().angular_velocity == angular_velocity
+        {
+            return Ok(false);
+        }
+        self.unpark_body(id)
+            .expect("validated parked body remains live");
+        self.active.set_motion(id, velocity, angular_velocity);
+        Ok(true)
+    }
+
     pub fn add_ballistic_sphere(
         &mut self,
         projectile: BallisticSphere3d,
@@ -291,11 +402,17 @@ impl RotatingWorld3d {
         for _ in 0..config.substeps {
             match self.step(config.timestep_numerator, denominator) {
                 Ok(report) => {
+                    if let Err(cause) = work.record_completed_step(
+                        report.stats.sampled_events,
+                        report.stats.tail_contacts,
+                    ) {
+                        error = Some(cause);
+                        break;
+                    }
                     reports.push(report);
-                    work.completed_substeps += 1;
                 }
                 Err(cause) => {
-                    error = Some(cause);
+                    error = Some(RotatingIntervalError3d::World(cause));
                     break;
                 }
             }
@@ -343,10 +460,7 @@ impl RotatingWorld3d {
             reports.clear();
         }
         if let Some(error) = error {
-            Err(Box::new(RotatingIntervalFailure3d {
-                error: RotatingIntervalError3d::World(error),
-                work,
-            }))
+            Err(Box::new(RotatingIntervalFailure3d { error, work }))
         } else {
             Ok(work)
         }
