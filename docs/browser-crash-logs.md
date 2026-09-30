@@ -8,7 +8,8 @@ or authoritative physics behavior is changed.
 On a returned engine failure, JavaScript exception, WASM trap, or unhandled promise
 rejection, the first failure stops simulation work, finalizes the log, and requests
 a JSON download. The error stays visible and a **Download crash log (JSON)** link
-remains available if automatic downloading is blocked. Reporting does not query a
+remains available if automatic downloading is blocked. The report sits outside
+non-interactive HUD containers and above the settings scrim so its link stays clickable. Reporting does not query a
 trapped engine. Secondary errors cannot replace the first captured failure.
 
 The report includes the existing build/environment/scenario metadata, recent

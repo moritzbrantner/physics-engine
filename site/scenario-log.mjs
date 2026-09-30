@@ -111,7 +111,7 @@ function createBrowserScenarioLog() {
     if (crashUrl) URL.revokeObjectURL(crashUrl);
     crashPanel?.remove();
     crashPanel = document.createElement("section");
-    crashPanel.className = "status";
+    crashPanel.className = "crash-report";
     crashPanel.setAttribute("aria-label", "Crash report");
     const heading = document.createElement("p");
     heading.textContent = `${automatic ? "Captured crash" : "Previous crash report"}: ${session.failure.message}`;
@@ -121,9 +121,8 @@ function createBrowserScenarioLog() {
     link.download = filename(session);
     link.textContent = "Download crash log (JSON)";
     crashPanel.append(heading, link);
-    const target = document.querySelector("#status");
-    if (target) target.insertAdjacentElement("afterend", crashPanel);
-    else document.body.append(crashPanel);
+    // Keep the report outside non-interactive HUD containers and above modal scrims.
+    document.body.append(crashPanel);
     // Keep the link and object URL alive: an automatic download can be blocked by browser policy.
     if (automatic) {
       try { link.click(); }

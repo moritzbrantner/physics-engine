@@ -204,9 +204,7 @@ def main():
             page.go_back(wait_until='networkidle')
             page.wait_for_function('window.physicsCrashLog?.failure?.message === "navigation crash fixture"')
             restored_from_bfcache = page.evaluate('logPageShows.at(-1)')
-            close_settings = page.locator('#close-settings')
-            if close_settings.count() and close_settings.is_visible():
-                close_settings.click()
+            # The report must remain clickable even with the modal settings drawer open.
             with page.expect_download() as manual:
                 page.get_by_role('link', name='Download crash log (JSON)').click()
             manual.value.save_as(str(output / 'navigation-manual.json'))

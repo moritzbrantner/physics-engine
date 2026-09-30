@@ -276,6 +276,8 @@ test -s pages-dist/scenarios/tower/index.html
 test -s pages-dist/scenarios/parkour/index.html
 test -s pages-dist/app.js
 test -s pages-dist/bootstrap.mjs
+test -s pages-dist/scenario-log.mjs
+test -s pages-dist/scenario-log.css
 test -s pages-dist/physics-settings.mjs
 test -s pages-dist/webgpu-renderer.js
 test -s pages-dist/webgl-renderer.js
