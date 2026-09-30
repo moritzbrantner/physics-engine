@@ -156,3 +156,22 @@ This does not retain impact-hit/event output, standard-library stable-sort scrat
 or fixed bounds, and it does not eliminate all-N preparation/sorting. Timings remain
 advisory, and no zero-allocation whole-step or consumer-adoption claim follows.
 Fixed-bound reuse and wider locality/adoption remain #228/#190.
+
+[Recorded broad-phase evidence](translational-broad-phase-work-2026-09-30.json)
+compares baseline `3fb9f96` with clean code producer `ebda365` on rustc 1.98.0,
+`x86_64-unknown-linux-gnu`. Both binaries were prebuilt, then run in three
+alternating-order blocks: nine trials per version and workload, each completing
+120 ticks. All seven workload body/event checksums and semantic counts match;
+raw per-call times and the last-call work counters are retained.
+
+Median totals are 10.40 → 10.63 ms for one moving body, 10.63 → 10.68 ms for
+eight, 14.01 → 13.65 ms for supported gravity, and 5.15 → 4.91 ms for crowded
+spawn. These small mixed changes remain advisory. Warmed active calls report
+zero broad-phase capacity growth. The sparse workload retains 57,472 bytes of
+broad-phase payload plus 57,344 bytes of staging. Supported gravity retains
+65,904 plus 57,456 bytes. Crowded spawn retains 11,296 bytes of broad-phase
+payload, 2,048 bytes above the baseline's per-query peak because component
+high-water capacities can occur in different queries. Its staging is 7,168 bytes.
+Quiet calls continue to report zero active payload; retained bootstrap capacity
+is observable through the explicit scratch getter. These are vector payloads,
+not complete world/process memory.
