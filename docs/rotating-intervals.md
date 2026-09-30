@@ -9,8 +9,9 @@ It is the engine prerequisite for the persistent rotating adapter in
 The command validates the numerator, denominator, partition multiplication and
 angular damping before stepping. It currently accepts rigid-box worlds only and
 rejects any ballistic membership before mutation. Ballistic motion and retirement
-are intentionally outside this transaction. A zero interval retains the existing
-no-op physical and sleep-history contract.
+are intentionally outside this transaction. A zero interval skips integration and sleep-history updates, matching ordinary
+`step(0, denominator)`, while still applying explicitly requested angular damping
+with the existing ECS consumer's once-per-request rule.
 
 On success, the caller's reusable report vector contains every completed substep
 in order. Angular damping is applied once, after the complete interval, using the
@@ -52,7 +53,7 @@ wake and subsequent impacts, successful partition equivalence, once-per-interval
 damping, invalid/zero intervals, ballistic rejection, and a fully parked 128-body
 zero-journal/zero-contact-work interval, and fixed-preparation parity after rollback,
 support removal, ID reuse, external motion authority, and positive/negative damping
-ties with a report whose only delta comes from damping. The separate Pages acceptance driver runs
+ties with a report whose only delta comes from damping, including a zero interval. The separate Pages acceptance driver runs
 the same fixtures three times on WASM and is not shipped in the demo module.
 
 This slice does not implement the persistent ECS adapter, ECS lifecycle deltas,

@@ -7,7 +7,8 @@ use crate::RotatingWorldError3d;
 /// One requested physical interval, partitioned into `substeps` equal solver commands.
 ///
 /// Angular damping applies only to physics-owned bodies, once after all substeps, using the legacy integer milli scale
-/// and rounding to nearest (ties away from zero). Damping deltas are included in the last substep report. A zero interval leaves motion and sleep history unchanged.
+/// and rounding to nearest (ties away from zero). Damping deltas are included in the last substep report.
+/// A zero interval skips integration/sleep updates and still applies explicitly requested damping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RotatingIntervalConfig3d {
     pub timestep_numerator: i32,

@@ -425,3 +425,47 @@ pub fn damping_rounds_nearest_and_reports_a_motion_only_delta() {
     assert_eq!(reports.last().unwrap().changed_body_ids, vec![BodyId(1)]);
     assert_eq!(work.damping_changes, 1);
 }
+
+#[cfg_attr(test, test)]
+pub fn zero_interval_retains_pose_and_applies_explicit_consumer_damping() {
+    let mut world = world();
+    let angular = AngularState3d::new(Orientation3d::IDENTITY, AngularVelocity3d::new(1, -1, 3));
+    world
+        .add_box(
+            RigidBox3d::new(
+                RigidBody::dynamic(
+                    BodyId(1),
+                    Vec3i::ZERO,
+                    Vec3i::new(600, 0, 0),
+                    Vec3i::new(100, 100, 100),
+                ),
+                angular,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut reports = Vec::new();
+    let work = world
+        .advance_interval(
+            RotatingIntervalConfig3d {
+                timestep_numerator: 0,
+                angular_damping_milli: 500,
+                ..interval()
+            },
+            &mut reports,
+        )
+        .unwrap();
+    let body = world.box_by_id(BodyId(1)).unwrap();
+    assert_eq!(body.body().position(), Vec3i::ZERO);
+    assert_eq!(body.body().velocity(), Vec3i::new(600, 0, 0));
+    assert_eq!(body.angular().orientation, Orientation3d::IDENTITY);
+    assert_eq!(
+        body.angular().angular_velocity,
+        AngularVelocity3d::new(1, -1, 2)
+    );
+    assert_eq!(work.contact_work, [0; 4]);
+    assert_eq!(work.sleep_before_images, 0);
+    assert_eq!(work.damping_changes, 1);
+    assert_eq!(reports.last().unwrap().changed_body_ids, vec![BodyId(1)]);
+    assert!(!world.is_sleeping(BodyId(1)));
+}

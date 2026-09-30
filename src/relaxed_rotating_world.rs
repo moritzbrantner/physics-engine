@@ -300,7 +300,7 @@ impl RotatingWorld3d {
                 }
             }
         }
-        if error.is_none() && config.timestep_numerator != 0 {
+        if error.is_none() {
             let (visits, changed) = self
                 .active
                 .damp_interval_angular_velocity(config.angular_damping_milli);
