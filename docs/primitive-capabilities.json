@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "world": "approximate::World",
+  "scalar": "f64",
+  "capabilities": {
+    "bounds": "internal-conservative",
+    "sweptBounds": "internal-conservative-translation",
+    "support": "internal-analytic-or-fixed-topology",
+    "distance": "internal-witness-separation",
+    "contacts": "specialized",
+    "manifolds": "bounded",
+    "mass": "public-uniform",
+    "centerOfMass": "public-local",
+    "inertia": "public-full-com",
+    "overlaps": "public-snapshot",
+    "rays": "public-finite-with-local-features",
+    "shapeCasts": "public-translation",
+    "shapeCastFeatures": "missing",
+    "translationCcd": "fixed-orientation-per-substep",
+    "rotationCcd": "unsupported",
+    "chronologicalImpactResponse": "missing"
+  },
+  "validation": {
+    "finiteValuesRequired": true,
+    "positiveDimensionMinimum": 1e-06,
+    "dimensionMaximumExclusive": 1000000000000.0,
+    "capsuleHalfSegmentMinimum": 0,
+    "fixedMass": 0,
+    "positiveMassMinimum": 1e-06,
+    "massMaximumExclusive": 1000000000000.0
+  },
+  "shapes": [
+    {
+      "kind": "sphere",
+      "solverCom": "geometric-com",
+      "collapsedSkeleton": false,
+      "solverDynamicRotation": "supported"
+    },
+    {
+      "kind": "box",
+      "solverCom": "geometric-com",
+      "collapsedSkeleton": false,
+      "solverDynamicRotation": "supported"
+    },
+    {
+      "kind": "capsule",
+      "solverCom": "geometric-com",
+      "collapsedSkeleton": true,
+      "solverDynamicRotation": "supported"
+    },
+    {
+      "kind": "wedge",
+      "solverCom": "bounding-box-origin",
+      "collapsedSkeleton": false,
+      "solverDynamicRotation": "rotation-locked"
+    }
+  ],
+  "pairs": [
+    {
+      "left": "sphere",
+      "right": "sphere",
+      "dispatchIndex": 0,
+      "classification": "analytic-specialized",
+      "manifoldPointLimit": 1,
+      "translationSearch": "analytic-conservative",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "sphere",
+      "right": "box",
+      "dispatchIndex": 1,
+      "classification": "analytic-specialized",
+      "manifoldPointLimit": 1,
+      "translationSearch": "analytic-conservative",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "sphere",
+      "right": "capsule",
+      "dispatchIndex": 2,
+      "classification": "analytic-specialized",
+      "manifoldPointLimit": 1,
+      "translationSearch": "bounded-iterative",
+      "genericFallback": "none",
+      "referenceAcceptance": "capsule-row",
+      "evidence": [
+        "docs/capsule-row-acceptance.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "sphere",
+      "right": "wedge",
+      "dispatchIndex": 3,
+      "classification": "fixed-topology-feature",
+      "manifoldPointLimit": 1,
+      "translationSearch": "bounded-iterative",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "box",
+      "right": "box",
+      "dispatchIndex": 4,
+      "classification": "fixed-topology-sat",
+      "manifoldPointLimit": 4,
+      "translationSearch": "fixed-axis-sat",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "fixed-axis-sat"
+    },
+    {
+      "left": "box",
+      "right": "capsule",
+      "dispatchIndex": 5,
+      "classification": "analytic-specialized",
+      "manifoldPointLimit": 1,
+      "translationSearch": "bounded-iterative",
+      "genericFallback": "none",
+      "referenceAcceptance": "capsule-row",
+      "evidence": [
+        "docs/capsule-row-acceptance.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "box",
+      "right": "wedge",
+      "dispatchIndex": 6,
+      "classification": "fixed-topology-sat",
+      "manifoldPointLimit": 1,
+      "translationSearch": "fixed-axis-sat",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "fixed-axis-sat"
+    },
+    {
+      "left": "capsule",
+      "right": "capsule",
+      "dispatchIndex": 7,
+      "classification": "analytic-specialized",
+      "manifoldPointLimit": 1,
+      "translationSearch": "bounded-iterative",
+      "genericFallback": "none",
+      "referenceAcceptance": "capsule-row",
+      "evidence": [
+        "docs/capsule-row-acceptance.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "capsule",
+      "right": "wedge",
+      "dispatchIndex": 8,
+      "classification": "fixed-topology-feature",
+      "manifoldPointLimit": 1,
+      "translationSearch": "bounded-iterative",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "bounded-iterative"
+    },
+    {
+      "left": "wedge",
+      "right": "wedge",
+      "dispatchIndex": 9,
+      "classification": "fixed-topology-sat",
+      "manifoldPointLimit": 1,
+      "translationSearch": "fixed-axis-sat",
+      "genericFallback": "none",
+      "referenceAcceptance": "partial",
+      "evidence": [
+        "docs/primitive-capabilities.md"
+      ],
+      "shapeCastSearch": "fixed-axis-sat"
+    }
+  ],
+  "referenceAcceptance": "partial",
+  "limitations": [
+    "Wedge mass products describe its geometric COM; body poses and lever arms still use the bounding-box origin. Solver-owned dynamic wedges require rotation lock.",
+    "Translation sweeps hold orientation fixed per substep; general angular CCD and chronological secondary-impact response remain incomplete.",
+    "Contact witness separation is not a public general closest-distance API. Shape casts do not supply stable local feature identity.",
+    "Ten specialized dispatches do not prove independent reference acceptance for all ten pairs. Capsule-row evidence does not complete the global matrix."
+  ],
+  "workCounters": [
+    "geometry.specialized_pair_dispatches",
+    "geometry.generic_fallback_calls",
+    "geometry.support_evaluations",
+    "geometry.sat_axes_tested",
+    "geometry.clip_passes",
+    "geometry.primitive_queries",
+    "geometry.primitive_axes_tested",
+    "geometry.primitive_vertex_tests",
+    "geometry.primitive_segment_distance_evaluations",
+    "geometry.primitive_segment_feature_tests",
+    "geometry.manifold_candidates",
+    "geometry.primitive_sweep_iterations",
+    "geometry.primitive_sweep_failures",
+    "geometry.retained_bytes",
+    "bookkeeping.scratch_growths",
+    "bookkeeping.scratch_retained_bytes"
+  ],
+  "worldApiStatus": "limited/experimental"
+}

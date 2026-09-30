@@ -17,6 +17,9 @@ experimental-soft-contact = ["physics-engine/experimental-soft-contact"]
 [dependencies]
 physics-engine = { path = ".." }
 
+[dev-dependencies]
+serde_json = "=1.0.151"
+
 [[example]]
 name = "checkpoint-continuation"
 crate-type = ["cdylib"]
