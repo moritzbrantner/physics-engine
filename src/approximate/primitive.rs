@@ -138,6 +138,15 @@ pub(super) fn snapshot_sweep(
     kernel_swept_time(a, b, 1.0, 0.0, max_iterations, work).map_err(sweep_failure)
 }
 
+pub(super) fn volume_properties(
+    value: Shape,
+) -> Result<
+    geometry_kernels::primitive3::PrimitiveVolumeProperties3,
+    geometry_kernels::primitive3::PrimitiveVolumeError3,
+> {
+    geometry_kernels::primitive3::try_volume_properties(shape(value))
+}
+
 fn shape(shape: Shape) -> PrimitiveShape3 {
     match shape {
         Shape::Sphere(radius) => PrimitiveShape3::sphere(radius),
