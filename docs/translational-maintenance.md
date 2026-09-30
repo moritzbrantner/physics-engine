@@ -169,9 +169,18 @@ eight, 14.01 → 13.65 ms for supported gravity, and 5.15 → 4.91 ms for crowde
 spawn. These small mixed changes remain advisory. Warmed active calls report
 zero broad-phase capacity growth. The sparse workload retains 57,472 bytes of
 broad-phase payload plus 57,344 bytes of staging. Supported gravity retains
-65,904 plus 57,456 bytes. Crowded spawn retains 11,296 bytes of broad-phase
-payload, 2,048 bytes above the baseline's per-query peak because component
-high-water capacities can occur in different queries. Its staging is 7,168 bytes.
-Quiet calls continue to report zero active payload; retained bootstrap capacity
-is observable through the explicit scratch getter. These are vector payloads,
-not complete world/process memory.
+65,904 plus 57,456 bytes. On the recorded last call, crowded spawn retains
+11,296 bytes of broad-phase payload, while the baseline reports a 9,248-byte
+transient peak across that call's queries: a 2,048-byte difference at this observed
+boundary. Its staging is 7,168 bytes. Retained component capacities can carry
+high-water marks from earlier queries or steps; the baseline whole-trace transient
+peak was not recorded, so this comparison does not establish a 2,048-byte increase
+in the worst peak over all 120 ticks.
+
+The baseline retained no broad-phase vector payload between calls. The candidate
+retains the full reported broad-phase payload until release; it is not merely the
+2,048-byte difference above. Quiet calls continue to report zero active payload;
+retained bootstrap capacity is observable through the explicit scratch getter.
+These are vector payloads, not allocator overhead, RSS or complete world/process
+memory. Raw work snapshots in this record are last-call observations, while raw
+timings cover every completed call.
