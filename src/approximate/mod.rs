@@ -153,7 +153,13 @@ pub struct Body {
     pub shape: Shape,
     /// Zero is immovable geometry; positive mass is dynamic unless `external` is set.
     pub mass: Scalar,
+    /// Finite coefficient in [0, 10], default 0.6. Contacts use the larger coefficient
+    /// and clamp the accumulated tangential impulse to a disk of radius mu * normal impulse.
+    /// Linear-support contacts disable friction. See docs/contact-materials.md.
     pub friction: Scalar,
+    /// Finite coefficient in [0, 1], default zero. Contacts use the smaller coefficient.
+    /// Restitution requires closing speed > 1 scene unit/s, separation <= contact_slop
+    /// and no retained pair history; speculative positive separation does not bounce.
     pub restitution: Scalar,
     pub rotation_locked: bool,
     pub layers: CollisionLayers3d,
