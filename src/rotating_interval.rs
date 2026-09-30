@@ -22,6 +22,7 @@ pub enum RotatingIntervalError3d {
     InvalidPartition,
     InvalidAngularDamping(u16),
     BallisticBodiesUnsupported,
+    EventCountOverflow,
     World(RotatingWorldError3d),
 }
 
@@ -34,6 +35,9 @@ impl fmt::Display for RotatingIntervalError3d {
             }
             Self::BallisticBodiesUnsupported => {
                 formatter.write_str("atomic rotating intervals currently support rigid boxes only")
+            }
+            Self::EventCountOverflow => {
+                formatter.write_str("rotating interval event counts overflowed")
             }
             Self::World(error) => error.fmt(formatter),
         }
@@ -48,6 +52,9 @@ impl Error for RotatingIntervalError3d {}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RotatingIntervalWork3d {
     pub completed_substeps: u8,
+    /// Checked totals from completed solver commands; overflow rolls back the requested interval.
+    pub sampled_events: usize,
+    pub tail_contacts: usize,
     pub motion_before_images: usize,
     pub sleep_before_images: usize,
     pub parked_before_images: usize,
@@ -61,6 +68,51 @@ pub struct RotatingIntervalWork3d {
 pub struct RotatingIntervalFailure3d {
     pub error: RotatingIntervalError3d,
     pub work: RotatingIntervalWork3d,
+}
+
+impl RotatingIntervalWork3d {
+    pub(crate) fn record_completed_step(
+        &mut self,
+        sampled_events: usize,
+        tail_contacts: usize,
+    ) -> Result<(), RotatingIntervalError3d> {
+        self.completed_substeps += 1;
+        let sampled_events = self
+            .sampled_events
+            .checked_add(sampled_events)
+            .ok_or(RotatingIntervalError3d::EventCountOverflow)?;
+        let tail_contacts = self
+            .tail_contacts
+            .checked_add(tail_contacts)
+            .ok_or(RotatingIntervalError3d::EventCountOverflow)?;
+        self.sampled_events = sampled_events;
+        self.tail_contacts = tail_contacts;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RotatingIntervalError3d, RotatingIntervalWork3d};
+
+    #[test]
+    fn event_totals_are_checked_before_committing_the_requested_interval() {
+        let mut work = RotatingIntervalWork3d::default();
+        work.record_completed_step(3, usize::MAX).unwrap();
+        assert_eq!((work.sampled_events, work.tail_contacts), (3, usize::MAX));
+        assert_eq!(
+            work.record_completed_step(7, 1),
+            Err(RotatingIntervalError3d::EventCountOverflow)
+        );
+        assert_eq!(work.completed_substeps, 2);
+        assert_eq!((work.sampled_events, work.tail_contacts), (3, usize::MAX));
+        let mut sampled = RotatingIntervalWork3d::default();
+        sampled.record_completed_step(usize::MAX, 0).unwrap();
+        assert_eq!(
+            sampled.record_completed_step(1, 0),
+            Err(RotatingIntervalError3d::EventCountOverflow)
+        );
+    }
 }
 
 impl fmt::Display for RotatingIntervalFailure3d {

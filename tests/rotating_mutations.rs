@@ -469,3 +469,57 @@ pub fn material_edits_preserve_simulated_angular_state_and_body_policy() {
     );
     assert_eq!(world.box_by_id(BodyId(1)), Some(&replacement));
 }
+
+#[cfg_attr(test, test)]
+pub fn interval_event_totals_include_completed_discarded_contact_work() {
+    let mut world = world();
+    world.add_box(body(1, Vec3i::new(-10, 0, 0))).unwrap();
+    world.add_box(body(2, Vec3i::ZERO)).unwrap();
+    world
+        .set_motion(
+            BodyId(1),
+            Vec3i::new(1200, 0, 0),
+            AngularVelocity3d::default(),
+        )
+        .unwrap();
+    let interval = RotatingIntervalConfig3d {
+        timestep_numerator: 1,
+        timestep_denominator: 60,
+        substeps: 2,
+        angular_damping_milli: 1000,
+    };
+    let mut reports = Vec::new();
+    let mut control = world.clone();
+    let work = control.advance_interval(interval, &mut reports).unwrap();
+    assert!(work.sampled_events > 0);
+    assert_eq!(
+        work.sampled_events,
+        reports
+            .iter()
+            .map(|report| report.stats.sampled_events)
+            .sum()
+    );
+    assert_eq!(
+        work.tail_contacts,
+        reports
+            .iter()
+            .map(|report| report.stats.tail_contacts)
+            .sum()
+    );
+    world
+        .add_box(body(3, Vec3i::new(i32::MAX - 128, 0, 0)))
+        .unwrap();
+    world
+        .set_motion(
+            BodyId(3),
+            Vec3i::new(8400, 0, 0),
+            AngularVelocity3d::default(),
+        )
+        .unwrap();
+    let before = world.boxes().cloned().collect::<Vec<_>>();
+    let failure = world.advance_interval(interval, &mut reports).unwrap_err();
+    assert_eq!(failure.work.completed_substeps, 1);
+    assert!(failure.work.sampled_events > 0);
+    assert!(reports.is_empty());
+    assert_eq!(world.boxes().cloned().collect::<Vec<_>>(), before);
+}

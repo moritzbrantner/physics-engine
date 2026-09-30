@@ -402,11 +402,17 @@ impl RotatingWorld3d {
         for _ in 0..config.substeps {
             match self.step(config.timestep_numerator, denominator) {
                 Ok(report) => {
+                    if let Err(cause) = work.record_completed_step(
+                        report.stats.sampled_events,
+                        report.stats.tail_contacts,
+                    ) {
+                        error = Some(cause);
+                        break;
+                    }
                     reports.push(report);
-                    work.completed_substeps += 1;
                 }
                 Err(cause) => {
-                    error = Some(cause);
+                    error = Some(RotatingIntervalError3d::World(cause));
                     break;
                 }
             }
@@ -454,10 +460,7 @@ impl RotatingWorld3d {
             reports.clear();
         }
         if let Some(error) = error {
-            Err(Box::new(RotatingIntervalFailure3d {
-                error: RotatingIntervalError3d::World(error),
-                work,
-            }))
+            Err(Box::new(RotatingIntervalFailure3d { error, work }))
         } else {
             Ok(work)
         }

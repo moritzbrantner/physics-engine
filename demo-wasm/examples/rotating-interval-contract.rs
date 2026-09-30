@@ -29,5 +29,6 @@ pub extern "C" fn rotating_interval_contract() -> i32 {
     mutations::overlap_only_edits_preserve_sleep_and_refresh_contact_eligibility();
     mutations::newly_eligible_layers_wake_a_dependency_beyond_the_replacement_bounds();
     mutations::material_edits_preserve_simulated_angular_state_and_body_policy();
+    mutations::interval_event_totals_include_completed_discarded_contact_work();
     0
 }
