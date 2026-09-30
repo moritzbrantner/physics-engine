@@ -1,11 +1,11 @@
-//! Optional bounded nonlinear *position* correction of admitted contacts.
+//! Optional bounded nonlinear *position* correction.
 //!
 //! This is not a sweep and cannot replace CCD. It removes residual overlap after pose
 //! integration, without adding correction velocity/kinetic energy or integrating time again.
 //! Admitted awake dynamic pairs may share the same pass budget when explicitly selected.
 //! Fixed, external and still-sleeping bodies are never modified.
 use super::{
-    Body, Error, PositionCorrection, Shape, Vector, World, contact, geometry::GeometryStats,
+    Body, Error, PositionCorrection, Scalar, Shape, Vector, World, contact, geometry::GeometryStats,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -20,7 +20,7 @@ pub struct PositionReport {
     pub dynamic_corrections: u64,
     pub geometry: GeometryStats,
     /// Largest corrected pair separation (or fixed-to-dynamic displacement).
-    pub max_distance: f64,
+    pub max_distance: Scalar,
     /// Eligible dynamic bodies visited, once per position pass.
     pub body_visits: u64,
     pub fixed_index_rebuilds: u64,
@@ -84,7 +84,7 @@ impl Scratch {
 impl World {
     pub(super) fn correct_positions(
         &mut self,
-        h: f64,
+        h: Scalar,
         report: &mut PositionReport,
     ) -> Result<(), Error> {
         #[cfg(test)]
@@ -156,7 +156,7 @@ impl World {
                     let depth = (&m.points)
                         .into_iter()
                         .map(|p| -p.separation)
-                        .fold(0.0, f64::max);
+                        .fold(0.0, Scalar::max);
                     let distance = (depth - self.config.contact_slop).max(0.0);
                     if distance <= 0.0 {
                         continue;
