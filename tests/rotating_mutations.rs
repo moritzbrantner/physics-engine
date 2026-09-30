@@ -491,7 +491,10 @@ pub fn interval_event_totals_include_completed_discarded_contact_work() {
     let mut reports = Vec::new();
     let mut control = world.clone();
     let work = control.advance_interval(interval, &mut reports).unwrap();
-    assert!(work.sampled_events > 0);
+    assert_ne!(
+        control.box_by_id(BodyId(1)).unwrap().body().velocity(),
+        Vec3i::new(1200, 0, 0)
+    );
     assert_eq!(
         work.sampled_events,
         reports
@@ -506,6 +509,7 @@ pub fn interval_event_totals_include_completed_discarded_contact_work() {
             .map(|report| report.stats.tail_contacts)
             .sum()
     );
+    let first_report = world.clone().step(1, 120).unwrap();
     world
         .add_box(body(3, Vec3i::new(i32::MAX - 128, 0, 0)))
         .unwrap();
@@ -519,7 +523,11 @@ pub fn interval_event_totals_include_completed_discarded_contact_work() {
     let before = world.boxes().cloned().collect::<Vec<_>>();
     let failure = world.advance_interval(interval, &mut reports).unwrap_err();
     assert_eq!(failure.work.completed_substeps, 1);
-    assert!(failure.work.sampled_events > 0);
+    assert_eq!(
+        failure.work.sampled_events,
+        first_report.stats.sampled_events
+    );
+    assert_eq!(failure.work.tail_contacts, first_report.stats.tail_contacts);
     assert!(reports.is_empty());
     assert_eq!(world.boxes().cloned().collect::<Vec<_>>(), before);
 }

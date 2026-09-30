@@ -46,8 +46,8 @@ impl fmt::Display for RotatingIntervalError3d {
 
 impl Error for RotatingIntervalError3d {}
 
-/// Work includes discarded attempts. Counts are available independently of diagnostic counters.
-/// Contact counters are diagnostic and are zero when `performance-counters` is disabled.
+/// Work includes discarded attempts. Before-image, damping and completed-substep counts do not require diagnostics.
+/// Event totals and contact-work counters are diagnostic: zero when `performance-counters` is disabled.
 /// Before-image counts describe touched entries, excluding allocator/tree overhead and solver scratch.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RotatingIntervalWork3d {
@@ -91,30 +91,6 @@ impl RotatingIntervalWork3d {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{RotatingIntervalError3d, RotatingIntervalWork3d};
-
-    #[test]
-    fn event_totals_are_checked_before_committing_the_requested_interval() {
-        let mut work = RotatingIntervalWork3d::default();
-        work.record_completed_step(3, usize::MAX).unwrap();
-        assert_eq!((work.sampled_events, work.tail_contacts), (3, usize::MAX));
-        assert_eq!(
-            work.record_completed_step(7, 1),
-            Err(RotatingIntervalError3d::EventCountOverflow)
-        );
-        assert_eq!(work.completed_substeps, 2);
-        assert_eq!((work.sampled_events, work.tail_contacts), (3, usize::MAX));
-        let mut sampled = RotatingIntervalWork3d::default();
-        sampled.record_completed_step(usize::MAX, 0).unwrap();
-        assert_eq!(
-            sampled.record_completed_step(1, 0),
-            Err(RotatingIntervalError3d::EventCountOverflow)
-        );
-    }
-}
-
 impl fmt::Display for RotatingIntervalFailure3d {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.error.fmt(formatter)
@@ -136,5 +112,29 @@ impl RotatingIntervalConfig3d {
         self.timestep_denominator
             .checked_mul(i32::from(self.substeps))
             .ok_or(RotatingIntervalError3d::InvalidPartition)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RotatingIntervalError3d, RotatingIntervalWork3d};
+
+    #[test]
+    fn event_totals_are_checked_before_committing_the_requested_interval() {
+        let mut work = RotatingIntervalWork3d::default();
+        work.record_completed_step(3, usize::MAX).unwrap();
+        assert_eq!((work.sampled_events, work.tail_contacts), (3, usize::MAX));
+        assert_eq!(
+            work.record_completed_step(7, 1),
+            Err(RotatingIntervalError3d::EventCountOverflow)
+        );
+        assert_eq!(work.completed_substeps, 2);
+        assert_eq!((work.sampled_events, work.tail_contacts), (3, usize::MAX));
+        let mut sampled = RotatingIntervalWork3d::default();
+        sampled.record_completed_step(usize::MAX, 0).unwrap();
+        assert_eq!(
+            sampled.record_completed_step(1, 0),
+            Err(RotatingIntervalError3d::EventCountOverflow)
+        );
     }
 }

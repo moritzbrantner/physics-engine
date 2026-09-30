@@ -1,6 +1,6 @@
 # Atomic rotating intervals
 
-Sampled-event and tail-contact totals are checked inside the interval transaction and returned in its work report. A reporting overflow rolls back physical and sleep state before returning an error, so a consumer does not need a fallible aggregation after commit. Failed-interval work retains counts for completed discarded solver commands.
+Sampled-event and tail-contact totals are checked inside the interval transaction and returned in its work report. A reporting overflow rolls back physical and sleep state before returning an error, so a consumer does not need a fallible aggregation after commit. Failed-interval work retains counts for completed discarded solver commands. Event totals inherit diagnostic step statistics and are zero with `performance-counters` disabled; physical state and rollback do not depend on those counters.
 
 `RotatingWorld3d::advance_interval` partitions one rational physical interval into a
 positive number of equal substeps using the existing integer rotating solver. This
