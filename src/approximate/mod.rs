@@ -938,6 +938,16 @@ impl World {
                 used.clear();
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
                 for point in &m.points {
+                    let mut point = *point;
+                    if !m.swept && !linear && a.movable() && b.movable() && response == [true, true]
+                    {
+                        // Opposite impulses at separate witnesses create an internal
+                        // friction couple. Reciprocal dynamic current contacts share
+                        // the midpoint, while separation still owns the normal target.
+                        let shift = ((b.position - a.position) + point.rb - point.ra) * 0.5;
+                        point.ra += shift;
+                        point.rb -= shift;
+                    }
                     let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
                     let arms = [point.ra, point.rb];
                     let k = effective_mass::<PREPARED>(

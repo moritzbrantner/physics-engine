@@ -10,7 +10,9 @@ const fields = [
   "constraint_visits", "position_tests", "active_substeps",
 ];
 assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, 0)));
+assert(Number.isNaN(instance.exports.contact_momentum_metric(0)));
 let previous;
+let previousMomentum;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
   const rows = ["Balanced", "OffCenter", "Removal"].map((name, index) => {
@@ -30,6 +32,21 @@ for (let replay = 0; replay < 3; replay += 1) {
   });
   if (previous) assert.deepEqual(rows, previous, "same-target measured replay");
   previous = rows;
+  const momentum = Object.fromEntries([
+    "normalized_linear_error", "normalized_angular_error", "energy_ratio", "cases",
+  ].map((field, i) => {
+    const value = instance.exports.contact_momentum_metric(i);
+    assert(Number.isFinite(value), field);
+    return [field, value];
+  }));
+  assert(momentum.normalized_linear_error <= 1e-10);
+  assert(momentum.normalized_angular_error <= 1e-10);
+  assert(momentum.energy_ratio <= 1 + 1e-10);
+  assert.equal(momentum.cases, 768);
+  if (previousMomentum) assert.deepEqual(momentum, previousMomentum);
+  previousMomentum = momentum;
+  assert(Number.isNaN(instance.exports.contact_momentum_metric(4)));
+  console.log(`CONTACT_MOMENTUM_WASM ${JSON.stringify({ replay, momentum })}`);
   assert(Number.isNaN(instance.exports.narrow_support_metric(3, 0, 0)));
   assert(Number.isNaN(instance.exports.narrow_support_metric(0, 2, 0)));
   assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, fields.length)));

@@ -12,13 +12,28 @@ thread_local! {
     static NARROW_RESULTS: std::cell::RefCell<Option<[narrow_support::Measurements; 3]>> = const {
         std::cell::RefCell::new(None)
     };
+    static MOMENTUM_RESULTS: std::cell::Cell<Option<[f64; 4]>> = const {
+        std::cell::Cell::new(None)
+    };
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn dense_contact_contract() -> i32 {
     dense::run();
     materials::run();
+    MOMENTUM_RESULTS.with(|results| {
+        results.set(Some(materials::reciprocal_current_contact_momentum()));
+    });
     NARROW_RESULTS.with(|results| *results.borrow_mut() = Some(narrow_support::run()));
     0
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn contact_momentum_metric(field: u32) -> f64 {
+    MOMENTUM_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|values| values.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn narrow_support_metric(case: u32, cadence: u32, field: u32) -> f64 {
@@ -38,6 +53,7 @@ mod tests {
     fn native_dense_contact_contract() {
         super::dense::run();
         super::materials::run();
+        super::materials::reciprocal_current_contact_momentum();
         super::narrow_support::run();
     }
 }

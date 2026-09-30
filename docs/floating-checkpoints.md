@@ -19,6 +19,13 @@ The caller supplies two 32-byte `CheckpointContext` identities. `build` must ide
 
 The dense-contact repair introduces format 2 and algorithm 2. Format 1/algorithm 1 checkpoints are explicitly rejected. The new position-policy bit changes the wire interpretation, and admitted-contact correction changes continuation semantics. The empty-world digest changes for the version headers and checksum, without changing any empty-world trajectory. This is an intentional compatibility boundary, not automatic save migration.
 
+The reciprocal current-contact momentum repair advances the algorithm to 3 while
+retaining wire format 2. Algorithm 2 checkpoints are rejected: contact impulses and
+their local warm-start anchors now use a shared point for reciprocal dynamic current
+contacts, changing continuation semantics. Fixed, external, one-way and swept
+response authority remains explicit. The empty-world digest changes only because
+the algorithm header and its checksum change; its physical trajectory is unchanged.
+
 All current shapes, materials and fixed geometry are inline. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
 
 ## Continuation inventory
