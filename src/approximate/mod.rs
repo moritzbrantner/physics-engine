@@ -49,6 +49,9 @@ pub use checkpoint::{
     Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, CheckpointStats,
 };
 
+mod capabilities;
+pub use capabilities::PRIMITIVE_CAPABILITIES_JSON;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
     Box(Vector),

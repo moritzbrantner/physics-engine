@@ -33,6 +33,12 @@ requirement; the public wrapper owns no mirrored component world.
 
 ## Capability matrix
 
+The floating primitive [machine-checkable ledger](primitive-capabilities.md) is
+available as `approximate::PRIMITIVE_CAPABILITIES_JSON` for native/WASM consumers.
+It covers shape capabilities and the ten unordered pairs, including missing
+semantics and motion restrictions; dispatch coverage is separate from reference
+acceptance. The cross-world comparison below remains the solver selection contract.
+
 | Capability | `World` | `RotatingWorld3d` | `approximate::World` |
 | --- | --- | --- | --- |
 | Authoritative state | **Compatibility-only:** `Vec3i` position/velocity, integer mass/material boundary | **Supported:** one authoritative rotating-body world; quantized translational/material state plus fixed-point orientation/angular velocity | **Limited / experimental:** persistent `f64` position, velocity, quaternion and angular velocity |
@@ -95,9 +101,14 @@ surface, not proof that the API already covers the game consumers above.
 
 `moritzbrantner/ecs-lab/crates/physics-3d/src/physics_engine_adapter.rs` imports `RotatingWorld3d`,
 converts ECS rigid-box snapshots through `add_box`, runs rational-duration `step` calls, then converts
-`boxes()` back to ECS state. The current adapter constructs a world per invocation. Retaining it across
-frames is `moritzbrantner/ecs-lab#133`; changing its solver is a separate task under
-`moritzbrantner/ecs-lab#134`. ECS identity, storage and synchronization remain consumer-owned.
+`boxes()` back to ECS state. Merged ECS Lab #136 retains the rotating world across adapter invocations and
+applies actual changed-body deltas through the supported engine mutation API.
+The pinned native/WASM Room, Tower and lifecycle evidence is documented in ECS
+Lab's `docs/experiments/persistent-physics.md`. The earlier world-per-invocation
+adapter is superseded. Further solver migration remains independent of retention.
+
+Changing its solver remains a separate task under `moritzbrantner/ecs-lab#134`.
+ECS identity, storage and synchronization remain consumer-owned.
 
 ### Medieval (query only)
 

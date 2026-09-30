@@ -14,11 +14,16 @@ mod capsule_row_work;
 
 #[path = "../../tests/floating_conservative_bounds.rs"]
 mod conservative_bounds;
+#[path = "../../tests/primitive_capabilities.rs"]
+mod primitive_capabilities;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn run() -> Result<()> {
     ray_contract()?;
     conservative_bounds::rotated_corner_contact_survives_sub_ulp_contact_slop();
+    primitive_capabilities::advertised_shape_queries_and_mass_cross_the_public_api();
+    primitive_capabilities::every_advertised_pair_executes_its_dispatch_in_both_orders();
+    primitive_capabilities::restrictions_and_validation_remain_explicit();
     capsule_row_work::capsule_row_public_queries_report_actual_distance_and_feature_work();
     capsule_row_work::failed_capsule_search_retains_discarded_distance_work();
     capsule_row_work::capsule_contacts_report_distance_work_through_physical_steps();

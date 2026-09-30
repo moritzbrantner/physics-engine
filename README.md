@@ -55,6 +55,7 @@ The existing compatibility foundation includes:
 - deterministic swept sweep-and-prune broad-phase candidate generation;
 - snapshot overlap, swept-AABB and ray queries ordered by TOI and body ID;
 - physics-native AABB and sphere compatibility collider geometry with exact integer contact evidence;
+- engine-owned [machine-checkable primitive capabilities and pair ledger](docs/primitive-capabilities.md), with explicit motion restrictions and partial reference coverage;
 - f64 fixed-step capsule geometry with analytic support/distance, capsule inertia and translation CCD, protected by [independent row and actual-work acceptance](docs/capsule-row-acceptance.md);
 - checked [uniform mass products](docs/shape-mass-properties.md) for existing sphere/box/capsule/wedge shapes, including local COM and full inertia tensors;
 - [conservative floating candidate bounds](docs/floating-conservative-bounds.md) with numerical admission guards independent of physical contact slop;
