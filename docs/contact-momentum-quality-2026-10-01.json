@@ -1,0 +1,733 @@
+{
+  "schema_version": 1,
+  "issue": 237,
+  "convention_source_revision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "producer_commit": "c59d9402e0c0364d5944d7daaf706e44ced123bf",
+  "baseline_commit": "b81a410e0d45bb3816c626b6128cd1ef9da76bcf",
+  "native": {
+    "passed": true,
+    "repeats": [
+      {
+        "values": [
+          5.057012078047297e-16,
+          4.731782613072224e-16,
+          0.9975247524752475,
+          768.0
+        ]
+      },
+      {
+        "values": [
+          5.057012078047297e-16,
+          4.731782613072224e-16,
+          0.9975247524752475,
+          768.0
+        ]
+      }
+    ]
+  },
+  "wasm": {
+    "passed": true,
+    "repeats": [
+      {
+        "replay": 0,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "replay": 1,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "replay": 2,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      }
+    ],
+    "build": "release wasm32-unknown-unknown diagnostic dense-contact-contract"
+  },
+  "sleeping_anchor": {
+    "failed_before_guard_fix": true,
+    "passed_after_guard_fix": true,
+    "body_id_orders": 2,
+    "woken_bodies": 0,
+    "swept_contacts": 0,
+    "oracle": "full awake-body equality with equivalent fixed-anchor response"
+  },
+  "dense_contact": {
+    "passed": true,
+    "producer_commit": "3ba630597cebd88be0b3a04038e783be300b1182",
+    "scope": "Before the sleeping-anchor guard refinement. These dense fixtures disable sleep; the refinement therefore cannot change their dynamics.",
+    "traces": [
+      {
+        "ticks": 300,
+        "bodies": 32,
+        "scene": 0,
+        "replay": 0,
+        "peak_overlap": 0.05789955116610912,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          202076,
+          164778,
+          4539
+        ],
+        "retained_payload_bytes": 268457,
+        "state_hash": "5a5c3ee22102333a"
+      },
+      {
+        "ticks": 300,
+        "bodies": 32,
+        "scene": 0,
+        "replay": 1,
+        "peak_overlap": 0.05789955116610912,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          202076,
+          164778,
+          4539
+        ],
+        "retained_payload_bytes": 268457,
+        "state_hash": "5a5c3ee22102333a"
+      },
+      {
+        "ticks": 300,
+        "bodies": 32,
+        "scene": 1,
+        "replay": 0,
+        "peak_overlap": 0.2972933202021295,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          188542,
+          171100,
+          43271
+        ],
+        "retained_payload_bytes": 278034,
+        "state_hash": "cab80ceace1f4488"
+      },
+      {
+        "ticks": 300,
+        "bodies": 32,
+        "scene": 1,
+        "replay": 1,
+        "peak_overlap": 0.2972933202021295,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          188542,
+          171100,
+          43271
+        ],
+        "retained_payload_bytes": 278034,
+        "state_hash": "cab80ceace1f4488"
+      },
+      {
+        "ticks": 300,
+        "bodies": 64,
+        "scene": 0,
+        "replay": 0,
+        "peak_overlap": 0.05200677226337547,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          627479,
+          528709,
+          12144
+        ],
+        "retained_payload_bytes": 633993,
+        "state_hash": "030dbca3aaf2baa9"
+      },
+      {
+        "ticks": 300,
+        "bodies": 64,
+        "scene": 0,
+        "replay": 1,
+        "peak_overlap": 0.05200677226337547,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          627479,
+          528709,
+          12144
+        ],
+        "retained_payload_bytes": 633993,
+        "state_hash": "030dbca3aaf2baa9"
+      },
+      {
+        "ticks": 300,
+        "bodies": 64,
+        "scene": 1,
+        "replay": 0,
+        "peak_overlap": 0.7710781593373,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          642482,
+          571468,
+          52364
+        ],
+        "retained_payload_bytes": 652818,
+        "state_hash": "63487140caf0020a"
+      },
+      {
+        "ticks": 300,
+        "bodies": 64,
+        "scene": 1,
+        "replay": 1,
+        "peak_overlap": 0.7710781593373,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          642482,
+          571468,
+          52364
+        ],
+        "retained_payload_bytes": 652818,
+        "state_hash": "63487140caf0020a"
+      },
+      {
+        "ticks": 300,
+        "bodies": 128,
+        "scene": 0,
+        "replay": 0,
+        "peak_overlap": 0.06676204452224255,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          2135684,
+          1816207,
+          86936
+        ],
+        "retained_payload_bytes": 1652937,
+        "state_hash": "7c244035a6be18af"
+      },
+      {
+        "ticks": 300,
+        "bodies": 128,
+        "scene": 0,
+        "replay": 1,
+        "peak_overlap": 0.06676204452224255,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          2135684,
+          1816207,
+          86936
+        ],
+        "retained_payload_bytes": 1652937,
+        "state_hash": "7c244035a6be18af"
+      },
+      {
+        "ticks": 300,
+        "bodies": 128,
+        "scene": 1,
+        "replay": 0,
+        "peak_overlap": 0.7764118337481989,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          1408725,
+          1269325,
+          113625
+        ],
+        "retained_payload_bytes": 1690290,
+        "state_hash": "128f5df29b80bb83"
+      },
+      {
+        "ticks": 300,
+        "bodies": 128,
+        "scene": 1,
+        "replay": 1,
+        "peak_overlap": 0.7764118337481989,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          1408725,
+          1269325,
+          113625
+        ],
+        "retained_payload_bytes": 1690290,
+        "state_hash": "128f5df29b80bb83"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 32,
+        "scene": 0,
+        "replay": 0,
+        "peak_overlap": 0.05789955116610912,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          716876,
+          582378,
+          4539
+        ],
+        "retained_payload_bytes": 268457,
+        "state_hash": "42c72c039cb71715"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 32,
+        "scene": 0,
+        "replay": 1,
+        "peak_overlap": 0.05789955116610912,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          716876,
+          582378,
+          4539
+        ],
+        "retained_payload_bytes": 268457,
+        "state_hash": "42c72c039cb71715"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 32,
+        "scene": 1,
+        "replay": 0,
+        "peak_overlap": 0.2972933202021295,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          597553,
+          576094,
+          154367
+        ],
+        "retained_payload_bytes": 279826,
+        "state_hash": "24fd5dfa9f157d0c"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 32,
+        "scene": 1,
+        "replay": 1,
+        "peak_overlap": 0.2972933202021295,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          597553,
+          576094,
+          154367
+        ],
+        "retained_payload_bytes": 279826,
+        "state_hash": "24fd5dfa9f157d0c"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 64,
+        "scene": 0,
+        "replay": 0,
+        "peak_overlap": 0.05200677226337547,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          2063879,
+          1745509,
+          12144
+        ],
+        "retained_payload_bytes": 633993,
+        "state_hash": "7213de019b0a1aa3"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 64,
+        "scene": 0,
+        "replay": 1,
+        "peak_overlap": 0.05200677226337547,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          2063879,
+          1745509,
+          12144
+        ],
+        "retained_payload_bytes": 633993,
+        "state_hash": "7213de019b0a1aa3"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 64,
+        "scene": 1,
+        "replay": 0,
+        "peak_overlap": 0.7710781593373,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          1734596,
+          1578922,
+          62138
+        ],
+        "retained_payload_bytes": 652818,
+        "state_hash": "1f347763f3e2b60d"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 64,
+        "scene": 1,
+        "replay": 1,
+        "peak_overlap": 0.7710781593373,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          1734596,
+          1578922,
+          62138
+        ],
+        "retained_payload_bytes": 652818,
+        "state_hash": "1f347763f3e2b60d"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 128,
+        "scene": 0,
+        "replay": 0,
+        "peak_overlap": 0.06676204452224255,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          7543286,
+          6423139,
+          160345
+        ],
+        "retained_payload_bytes": 1652937,
+        "state_hash": "f36b44a1db030a26"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 128,
+        "scene": 0,
+        "replay": 1,
+        "peak_overlap": 0.06676204452224255,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          7543286,
+          6423139,
+          160345
+        ],
+        "retained_payload_bytes": 1652937,
+        "state_hash": "f36b44a1db030a26"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 128,
+        "scene": 1,
+        "replay": 0,
+        "peak_overlap": 0.7764118337481989,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          3327525,
+          3083725,
+          113625
+        ],
+        "retained_payload_bytes": 1690290,
+        "state_hash": "a223f375bcd3321e"
+      },
+      {
+        "ticks": 1200,
+        "bodies": 128,
+        "scene": 1,
+        "replay": 1,
+        "peak_overlap": 0.7764118337481989,
+        "peak_floor": 0.020000000000003126,
+        "dynamic_work": [
+          3327525,
+          3083725,
+          113625
+        ],
+        "retained_payload_bytes": 1690290,
+        "state_hash": "a223f375bcd3321e"
+      }
+    ]
+  },
+  "unresolved_tilted_stacks": {
+    "passed": false,
+    "issues": [
+      232,
+      236
+    ],
+    "fixture_source": "https://github.com/moritzbrantner/physics-engine/issues/232#issuecomment-5921786087",
+    "duration_seconds": 20,
+    "substeps": 4,
+    "velocity_iterations": 8,
+    "position_passes": 2,
+    "baseline": [
+      {
+        "case": "Equal",
+        "ticks": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.3301284323083564,
+          "peak_speed": 180.0,
+          "peak_angular_speed": 3.331468493019259,
+          "peak_energy": 43200.0,
+          "tail_speed": 48.89006150266493,
+          "tail_angular_speed": 0.8660552266667351,
+          "tail_energy": 3640.7661829161702,
+          "tail_displacement": 1.6901533699731652,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 3.0,
+          "contact_points": 61238.0,
+          "constraint_visits": 489864.0,
+          "position_tests": 36324.0,
+          "active_substeps": 4800.0
+        },
+        "physical_substeps": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.5531612145281954,
+          "peak_speed": 195.0,
+          "peak_angular_speed": 6.5230316321975375,
+          "peak_energy": 54456.630491453805,
+          "tail_speed": 49.99779121396046,
+          "tail_angular_speed": 0.9969080425320214,
+          "tail_energy": 4184.181539873889,
+          "tail_displacement": 1.3422942977311316,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 12.0,
+          "contact_points": 61238.0,
+          "constraint_visits": 489864.0,
+          "position_tests": 36324.0,
+          "active_substeps": 4800.0
+        },
+        "acceptance_passed": false
+      },
+      {
+        "case": "Mixed",
+        "ticks": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.9838345669790769,
+          "peak_speed": 180.0,
+          "peak_angular_speed": 5.679031162241978,
+          "peak_energy": 50400.0,
+          "tail_speed": 101.32415757447517,
+          "tail_angular_speed": 2.64303484155691,
+          "tail_energy": 18621.115748527354,
+          "tail_displacement": 9.116395012431184,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 16.0,
+          "contact_points": 52904.0,
+          "constraint_visits": 417550.0,
+          "position_tests": 36141.0,
+          "active_substeps": 4800.0
+        },
+        "physical_substeps": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.984082910709418,
+          "peak_speed": 194.12595764855573,
+          "peak_angular_speed": 5.679031162241978,
+          "peak_energy": 50400.0,
+          "tail_speed": 113.64862587202705,
+          "tail_angular_speed": 3.0736047994270015,
+          "tail_energy": 20680.92950055714,
+          "tail_displacement": 9.056526709203627,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 0.0,
+          "disconnected_observations": 62.0,
+          "contact_points": 52904.0,
+          "constraint_visits": 417550.0,
+          "position_tests": 36141.0,
+          "active_substeps": 4800.0
+        },
+        "acceptance_passed": false
+      },
+      {
+        "case": "Sliding",
+        "ticks": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.3686476639690639,
+          "peak_speed": 180.0,
+          "peak_angular_speed": 1.5209545182461899,
+          "peak_energy": 39600.0,
+          "tail_speed": 0.0,
+          "tail_angular_speed": 0.0,
+          "tail_energy": 0.0,
+          "tail_displacement": 0.0,
+          "sleep_transitions": 8.0,
+          "wake_transitions": 4.0,
+          "sleeping_count": 4.0,
+          "last_all_sleep_seconds": 4.783333333333322,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 3.0,
+          "contact_points": 16084.0,
+          "constraint_visits": 128632.0,
+          "position_tests": 6240.0,
+          "active_substeps": 1024.0
+        },
+        "physical_substeps": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.5343508370470076,
+          "peak_speed": 195.0,
+          "peak_angular_speed": 5.845819489521638,
+          "peak_energy": 61258.123206273856,
+          "tail_speed": 0.0,
+          "tail_angular_speed": 0.0,
+          "tail_energy": 0.0,
+          "tail_displacement": 0.0,
+          "sleep_transitions": 8.0,
+          "wake_transitions": 4.0,
+          "sleeping_count": 4.0,
+          "last_all_sleep_seconds": 4.783333333333382,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 12.0,
+          "contact_points": 16084.0,
+          "constraint_visits": 128632.0,
+          "position_tests": 6240.0,
+          "active_substeps": 1023.0
+        },
+        "acceptance_passed": true
+      }
+    ],
+    "candidate": [
+      {
+        "case": "Equal",
+        "ticks": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.3718528638963008,
+          "peak_speed": 180.0,
+          "peak_angular_speed": 1.7020788481789884,
+          "peak_energy": 43200.0,
+          "tail_speed": 59.286467420472846,
+          "tail_angular_speed": 0.9120596998491726,
+          "tail_energy": 5361.32043449714,
+          "tail_displacement": 2.1902601008966367,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 3.0,
+          "contact_points": 59977.0,
+          "constraint_visits": 479776.0,
+          "position_tests": 36845.0,
+          "active_substeps": 4800.0
+        },
+        "physical_substeps": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.5363782407097588,
+          "peak_speed": 195.0,
+          "peak_angular_speed": 5.7706709094971735,
+          "peak_energy": 54460.99487131894,
+          "tail_speed": 60.13233268573448,
+          "tail_angular_speed": 0.9120596998491726,
+          "tail_energy": 5361.32043449714,
+          "tail_displacement": 2.526955635991625,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 12.0,
+          "contact_points": 59977.0,
+          "constraint_visits": 479776.0,
+          "position_tests": 36845.0,
+          "active_substeps": 4800.0
+        },
+        "acceptance_passed": false
+      },
+      {
+        "case": "Mixed",
+        "ticks": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 1.215676113287394,
+          "peak_speed": 180.0,
+          "peak_angular_speed": 5.679453100293721,
+          "peak_energy": 50400.0,
+          "tail_speed": 88.1014574941883,
+          "tail_angular_speed": 3.0916152511749453,
+          "tail_energy": 17751.719992946804,
+          "tail_displacement": 8.73798261955825,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 0.0,
+          "disconnected_observations": 15.0,
+          "contact_points": 51978.0,
+          "constraint_visits": 408946.0,
+          "position_tests": 35862.0,
+          "active_substeps": 4800.0
+        },
+        "physical_substeps": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 1.215676113287394,
+          "peak_speed": 194.08643899674615,
+          "peak_angular_speed": 5.679453100293721,
+          "peak_energy": 50400.0,
+          "tail_speed": 94.29926954495406,
+          "tail_angular_speed": 3.0916152511749453,
+          "tail_energy": 17751.719992946804,
+          "tail_displacement": 9.186563202128612,
+          "sleep_transitions": 0.0,
+          "wake_transitions": 0.0,
+          "sleeping_count": 0.0,
+          "last_all_sleep_seconds": 0.0,
+          "min_tail_floor_connections": 0.0,
+          "disconnected_observations": 70.0,
+          "contact_points": 51978.0,
+          "constraint_visits": 408946.0,
+          "position_tests": 35862.0,
+          "active_substeps": 4800.0
+        },
+        "acceptance_passed": false
+      },
+      {
+        "case": "Sliding",
+        "ticks": {
+          "peak_fixed_penetration": 0.020000000000003126,
+          "peak_pair_penetration": 0.38649725259890744,
+          "peak_speed": 180.0,
+          "peak_angular_speed": 1.5353644777565028,
+          "peak_energy": 39600.0,
+          "tail_speed": 0.0,
+          "tail_angular_speed": 0.0,
+          "tail_energy": 0.0,
+          "tail_displacement": 0.0,
+          "sleep_transitions": 8.0,
+          "wake_transitions": 4.0,
+          "sleeping_count": 4.0,
+          "last_all_sleep_seconds": 4.783333333333322,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 3.0,
+          "contact_points": 5906.0,
+          "constraint_visits": 47208.0,
+          "position_tests": 2064.0,
+          "active_substeps": 384.0
+        },
+        "physical_substeps": {
+          "peak_fixed_penetration": 0.020000000000010232,
+          "peak_pair_penetration": 0.542597846567574,
+          "peak_speed": 195.0,
+          "peak_angular_speed": 5.749356958235004,
+          "peak_energy": 61258.06483309062,
+          "tail_speed": 0.0,
+          "tail_angular_speed": 0.0,
+          "tail_energy": 0.0,
+          "tail_displacement": 0.0,
+          "sleep_transitions": 8.0,
+          "wake_transitions": 4.0,
+          "sleeping_count": 4.0,
+          "last_all_sleep_seconds": 4.775000000000049,
+          "min_tail_floor_connections": 4.0,
+          "disconnected_observations": 12.0,
+          "contact_points": 5906.0,
+          "constraint_visits": 47208.0,
+          "position_tests": 2064.0,
+          "active_substeps": 381.0
+        },
+        "acceptance_passed": true
+      }
+    ],
+    "note": "Equal and mixed-mass stacks still fail natural settling. Equal tail speed increases; mixed tail speed decreases. Penetration remains within predeclared limits, and low-friction Sliding still settles. No jitter repair or acceptance promotion is claimed."
+  },
+  "fast_tier": {
+    "passed": true,
+    "checks": 16
+  }
+}

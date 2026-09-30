@@ -24,8 +24,8 @@ response decision; collision geometry, admission and shared kernel ownership do
 not change. The midpoint uses relative coordinates rather than adding large
 absolute world points.
 
-Fixed, external, sleeping-anchor, linear-support and nonreciprocal response keep their existing
-authority. Swept contacts keep their existing temporal witness semantics. This
+Fixed, external, sleeping-anchor, linear-support and nonreciprocal response keep
+their existing authority. Swept contacts keep their existing temporal witness semantics. This
 repair does not promise angular-momentum conservation for an externally constrained
 system or stronger rotational CCD. No solver pass, simulation time, damping,
 material rule or sleep threshold is added or changed. The extra work is bounded
@@ -71,6 +71,16 @@ Native and WASM repeat within their own build/target; no cross-target bit identi
 is implied. The private all-zero checkpoint build tag is a same-process test
 context, not a consumer compatibility identity.
 
+[Recorded evidence](contact-momentum-quality-2026-10-01.json) identifies producer
+`c59d940` and retains two native and three release-WASM measurements. Maximum
+normalized linear error is `5.057012078047297e-16`, angular error is
+`4.731782613072224e-16`, and kinetic-energy ratio is `0.9975247524752475`.
+All 16 fast-tier checks passed. The 24 original/20-second dense traces also passed
+their unchanged bounds and replay assertions at `3ba6305`, before the sleeping-anchor
+guard refinement; those fixtures disable sleep, so the refinement cannot change
+their response. The evidence preserves that distinct producer rather than
+attributing the trace to the later commit.
+
 ```sh
 cargo test --release --locked --test contact_materials --test floating_checkpoints
 cargo build --manifest-path demo-wasm/Cargo.toml --release --locked \
@@ -85,8 +95,14 @@ This does not repair #236 or complete #232/#193. The predeclared equal/mixed-mas
 20-second stack controls pass their penetration limits but remain moving. On the
 original baseline, physical-substep tail speeds are approximately 50.0 and 113.6,
 with angular speeds 0.997 and 3.074 rad/s. The low-friction control naturally settles.
-The midpoint diagnostic still fails settling; those adverse observations remain
-explicit in #236. Zero penetration velocity bias, coupled tangent solving,
+At `c59d940`, equal/mixed physical-substep tail speeds are `60.1323` and `94.2993`;
+angular speeds are `0.9121` and `3.0916`. Neither stack sleeps. Equal-mass tail speed
+increases, while mixed-mass speed decreases; neither meets acceptance. Peak pair
+penetrations `0.5364` and `1.2157` remain within 1.8, and the low-friction control
+still settles. Full raw tick/substep histories' measured extrema and work are in
+the evidence JSON, with the failing diagnostic source published in
+[issue #232](https://github.com/moritzbrantner/physics-engine/issues/232#issuecomment-5921786087).
+Zero penetration velocity bias, coupled tangent solving,
 anisotropic friction projection and separated normal/friction sweeps were rejected
 because they failed the original controls. None is promoted by this repair.
 
