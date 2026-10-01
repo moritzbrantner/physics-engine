@@ -18,8 +18,7 @@ fn physical(world: &World) -> Vec<RigidBody> {
     world.bodies().cloned().collect()
 }
 
-#[path = "translational_report.rs"]
-mod report;
+use super::report;
 
 fn paired_step(w: &mut World) -> StepReport {
     let mut rebuilding = World::new(w.config());

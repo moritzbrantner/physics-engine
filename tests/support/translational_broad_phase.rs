@@ -29,8 +29,7 @@ fn fixture() -> World {
     w
 }
 
-#[path = "translational_report.rs"]
-mod report;
+use super::report;
 
 pub fn ricochets_reuse_capacity_and_preserve_canonical_events() {
     let mut w = fixture();

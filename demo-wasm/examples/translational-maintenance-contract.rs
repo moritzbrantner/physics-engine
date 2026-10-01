@@ -5,6 +5,8 @@ mod broad_phase;
 mod fixed_bound_workload;
 #[path = "../../tests/support/translational_fixed_bounds.rs"]
 mod fixed_bounds;
+#[path = "../../tests/support/translational_report.rs"]
+mod report;
 #[path = "../../tests/support/translational_staging.rs"]
 mod staging;
 
