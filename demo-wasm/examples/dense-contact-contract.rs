@@ -15,9 +15,14 @@ mod moving_support;
 mod narrow_support;
 #[path = "../../tests/support/primitive_contacts.rs"]
 mod primitive_contacts;
+#[path = "../../tests/support/stationary_external_support.rs"]
+mod stationary_external_support;
 #[path = "../../tests/support/tangential_contact_wake.rs"]
 mod tangential_contact_wake;
 thread_local! {
+    static STATIONARY_RESULTS: std::cell::Cell<Option<[[f64; 21]; 36]>> = const {
+        std::cell::Cell::new(None)
+    };
     static TANGENT_RESULTS: std::cell::Cell<Option<[[f64; 20]; 24]>> = const {
         std::cell::Cell::new(None)
     };
@@ -40,6 +45,7 @@ thread_local! {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn dense_contact_contract() -> i32 {
+    STATIONARY_RESULTS.with(|results| results.set(Some(stationary_external_support::run())));
     TANGENT_RESULTS.with(|results| results.set(Some(tangential_contact_wake::run())));
     FORCE_RESULTS.with(|results| results.set(Some(contact_wake_forces::run())));
     DRIVEN_RESULTS.with(|results| results.set(Some(driven_parked_contact::run())));
@@ -49,6 +55,16 @@ pub extern "C" fn dense_contact_contract() -> i32 {
     PRIMITIVE_RESULTS.with(|results| results.set(Some(primitive_contacts::run())));
     MOVING_RESULTS.with(|results| *results.borrow_mut() = Some(moving_support::run()));
     0
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn stationary_support_metric(case: u32, field: u32) -> f64 {
+    STATIONARY_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|rows| rows.get(case as usize).copied())
+            .and_then(|row| row.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn tangential_contact_metric(case: u32, field: u32) -> f64 {
@@ -119,6 +135,7 @@ mod tests {
     fn native_dense_contact_contract() {
         super::contact_wake_forces::run();
         super::tangential_contact_wake::run();
+        super::stationary_external_support::run();
         super::driven_parked_contact::run();
         super::dense::run();
         super::materials::run();

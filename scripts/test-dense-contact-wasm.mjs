@@ -15,6 +15,8 @@ assert(Number.isNaN(instance.exports.moving_support_metric(0, 0, 0)));
 assert(Number.isNaN(instance.exports.driven_parked_metric(0, 0)));
 assert(Number.isNaN(instance.exports.contact_wake_force_metric(0, 0)));
 assert(Number.isNaN(instance.exports.tangential_contact_metric(0, 0)));
+assert(Number.isNaN(instance.exports.stationary_support_metric(0, 0)));
+let previousStationary;
 let previousTangent;
 let previousForces;
 let previousDriven;
@@ -23,6 +25,53 @@ let previousPrimitive;
 let previousMoving;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
+  const stationaryFields = [
+    "vx", "vy", "vz", "wx", "wy", "wz", "energy", "external_work", "woken_bodies",
+    "response_preparations", "inertia_preparations", "inertia_applications", "current_queries",
+    "sweep_queries", "contact_points", "constraint_visits", "elapsed", "max_motion_error",
+    "sleeping", "independent_sleeping", "parked_at_seconds",
+  ];
+  const stationary = ["Stationary", "Normal", "Tangent", "DownwardDeparture",
+    "HorizontalDeparture", "Removal", "NearMiss", "UnrelatedRemoval", "SharedSideContact"]
+    .flatMap((name, caseIndex) => [0, 1, 2, 3].map(variant => {
+      const m = Object.fromEntries(stationaryFields.map((field, i) => {
+        const value = instance.exports.stationary_support_metric(4 * caseIndex + variant, i);
+        assert(Number.isFinite(value), `${name}/${variant}/${field}`);
+        return [field, value];
+      }));
+      const sleeping = name === "Stationary" || name === "NearMiss" || name === "UnrelatedRemoval";
+      const substeps = variant % 2 === 0 ? 1 : 4;
+      const dt = substeps / 240;
+      const horizontal = name === "HorizontalDeparture";
+      const fall = horizontal ? substeps - 1 : substeps;
+      const falling = horizontal || name === "DownwardDeparture" || name === "Removal";
+      const vx = name === "Tangent" ? 6 * dt : horizontal ? 6 / 240 : name === "SharedSideContact" ? 3 : 0;
+      const vy = falling ? -10 * fall / 240 : name === "Normal" ? 3 : 0;
+      const wz = name === "Tangent" ? 15 * dt : horizontal ? 15 / 240 : name === "SharedSideContact" ? -15 * dt : 0;
+      assert(Math.abs(m.vx - vx) <= 1e-10);
+      assert(Math.abs(m.vy - vy) <= 1e-10);
+      assert(Math.abs(m.wz - wz) <= 1e-10);
+      assert.equal(m.vz, 0); assert.equal(m.wx, 0); assert.equal(m.wy, 0);
+      assert.equal(m.sleeping, Number(sleeping));
+      assert.equal(m.woken_bodies, Number(!sleeping && name !== "Removal"));
+      assert.equal(m.response_preparations, sleeping ? 0 : substeps);
+      assert.equal(m.inertia_preparations, m.response_preparations);
+      assert.equal(m.independent_sleeping, 1);
+      assert(m.parked_at_seconds >= 0.5 - 1e-12 && m.parked_at_seconds <= 0.5 + 1 / 60 + 1e-12);
+      const dy = falling ? -5 * fall * (fall + 1) / 240 ** 2 : name === "Normal" ? 3 * dt : 0;
+      assert(m.energy + 20 * dy <= m.external_work + 1e-10);
+      assert(Math.abs(m.elapsed - dt) <= 1e-14);
+      assert(m.max_motion_error <= 1e-10);
+      assert(m.constraint_visits <= 8 * m.contact_points);
+      if (sleeping) { assert.equal(m.contact_points, 0); assert.equal(m.constraint_visits, 0); }
+      if (name === "NearMiss") assert(m.sweep_queries > 0);
+      return { case: name, ids: variant < 2 ? [1, 10] : [10, 1], substeps, ...m };
+    }));
+  if (previousStationary) assert.deepEqual(stationary, previousStationary, "same-target stationary support replay");
+  previousStationary = stationary;
+  assert(Number.isNaN(instance.exports.stationary_support_metric(36, 0)));
+  assert(Number.isNaN(instance.exports.stationary_support_metric(0, stationaryFields.length)));
+  console.log(`STATIONARY_EXTERNAL_SUPPORT_WASM ${JSON.stringify({ replay, rows: stationary })}`);
   const tangentFields = [
     "vx", "vy", "vz", "wx", "wy", "wz", "energy", "external_work", "woken_bodies",
     "response_preparations", "inertia_preparations", "inertia_applications", "current_queries",

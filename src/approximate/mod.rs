@@ -862,6 +862,7 @@ impl World {
             let mut roots = std::mem::take(&mut self.bookkeeping.roots);
             roots.clear();
             reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
+            let up = (-self.config.gravity).unit();
             roots.extend(
                 pairs
                     .iter()
@@ -869,6 +870,16 @@ impl World {
                         let a = &self.bodies[*i];
                         let b = &self.bodies[*j];
                         let approach = -(b.velocity - a.velocity).dot(m.normal);
+                        // A separating command alone is not wake evidence. An admitted
+                        // previously load-bearing support moving away is a dependency loss.
+                        let departing_support = approach < 0.0
+                            && ((a.external && b.sleeping && m.normal.dot(up) > 0.5)
+                                || (b.external && a.sleeping && m.normal.dot(up) < -0.5))
+                            && self.cache.get(&(a.id, b.id)).is_some_and(|points| {
+                                points
+                                    .iter()
+                                    .any(|p| p.impulse > 0.0 && p.normal.dot(m.normal) > 0.99)
+                            });
                         let driven_contact_motion = (a.sleeping || b.sleeping)
                             && (a.external || b.external)
                             && (&m.points).into_iter().any(|point| {
@@ -880,6 +891,7 @@ impl World {
                         let disruptive = m.swept
                             || approach > self.config.sleep_speed
                             || ((a.external || b.external) && approach > 0.0)
+                            || departing_support
                             || driven_contact_motion;
                         [
                             if disruptive && a.sleeping && b.mass > 0.0 {
@@ -1189,9 +1201,13 @@ impl World {
             scratch.support_edges.clear();
             reserve(&mut scratch.supported, self.bodies.len(), &mut scratch.work);
             scratch.supported.clear();
-            scratch
-                .supported
-                .extend(self.bodies.iter().map(|b| b.mass == 0.0 || b.sleeping));
+            scratch.supported.extend(self.bodies.iter().map(|b| {
+                b.mass == 0.0
+                    || b.sleeping
+                    || (b.external
+                        && b.velocity == Vector::ZERO
+                        && b.angular_velocity == Vector::ZERO)
+            }));
             // Reuse point allocations when the pair survives. Warm starting has already read the
             // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
             for (&(a, b), points) in &mut self.cache {
