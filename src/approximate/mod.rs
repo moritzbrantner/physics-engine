@@ -852,7 +852,9 @@ impl World {
                         let a = &self.bodies[*i];
                         let b = &self.bodies[*j];
                         let approach = -(b.velocity - a.velocity).dot(m.normal);
-                        let disruptive = m.swept || approach > self.config.sleep_speed;
+                        let disruptive = m.swept
+                            || approach > self.config.sleep_speed
+                            || ((a.external || b.external) && approach > 0.0);
                         [
                             if disruptive && a.sleeping && b.mass > 0.0 {
                                 Some(a.id)
@@ -1478,31 +1480,46 @@ impl World {
                 };
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
+                let driven_contact_candidate = (a.movable()
+                    && b.external
+                    && (b.velocity != Vector::ZERO || b.angular_velocity != Vector::ZERO))
+                    || (b.movable()
+                        && a.external
+                        && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
+                let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
                 if a.sensor
                     || b.sensor
                     || !a.layers.collides_with(b.layers)
-                    || (a.inverse_mass() == 0.0 && b.inverse_mass() == 0.0)
+                    || (a.inverse_mass() == 0.0
+                        && b.inverse_mass() == 0.0
+                        && !driven_wake_candidate)
                 {
                     continue;
                 }
+                // A tolerance-only manifold is not wake evidence. Probe the actual surface
+                // and full interval before replacing the parked body's zero response.
+                let margin = if driven_wake_candidate {
+                    0.0
+                } else {
+                    self.config.contact_slop
+                };
                 report.narrow_tests += 1;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
                 // complete pair results only when both orientation dependencies are stable.
                 let current = if CACHED {
-                    self.geometry.query(
-                        [i, j],
-                        [a, b],
-                        self.config.contact_slop,
-                        &mut report.geometry,
-                    )
+                    self.geometry
+                        .query([i, j], [a, b], margin, &mut report.geometry)
                 } else {
-                    contact::current_counted(a, b, self.config.contact_slop, &mut report.geometry)
+                    contact::current_counted(a, b, margin, &mut report.geometry)
                 };
                 let m = if current.is_some() {
                     current
                 } else {
                     let travel = (b.velocity - a.velocity).length() * h;
-                    if a.ccd
+                    // Retain full-interval discovery after response preparation wakes the
+                    // body; the second geometry pass must not discard an admitted sweep.
+                    if driven_contact_candidate
+                        || a.ccd
                         || b.ccd
                         || travel
                             > 0.5
@@ -1512,15 +1529,10 @@ impl World {
                                     .min(b.shape.half_extents().min_component())
                     {
                         let swept = if CACHED {
-                            self.geometry.swept(
-                                [i, j],
-                                [a, b],
-                                h,
-                                self.config.contact_slop,
-                                &mut report.geometry,
-                            )
+                            self.geometry
+                                .swept([i, j], [a, b], h, margin, &mut report.geometry)
                         } else {
-                            contact::swept(a, b, h, self.config.contact_slop, &mut report.geometry)
+                            contact::swept(a, b, h, margin, &mut report.geometry)
                         };
                         swept.map_err(|reason| Error::CollisionSearchFailed {
                             bodies: [a.id, b.id],
