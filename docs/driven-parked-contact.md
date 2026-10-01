@@ -65,8 +65,10 @@ Current normal response independently requires the platform's prescribed speed
 and displacement within `1e-10`. Sphere kinetic energy is
 `v·v + .4*omega·omega`; prescribed normal work is `2*u*delta_vy`. Kinetic energy
 plus gravitational potential increase `20*(y-1)` must not exceed that work plus
-`1e-10`. The current case records energy9, imposed work18 and potential increase1.
-The slow case records energy.0625 and work.125. External position and velocity
+`1e-10`. The recorded algorithm-3 producer below precedes #253's force-on-wake repair; its current case records energy9, imposed work18 and potential increase1.
+The same historical slow case records energy.0625 and work.125. The current
+fixture includes the additional substep gravity impulse in prescribed normal work
+when waking, as documented in [First-substep forces on contact wake](contact-wake-forces.md). External position and velocity
 must retain their prescribed motion; impulses cannot change the driver.
 
 Swept admission proves contact discovery, wake, restored response and bounded
