@@ -73,6 +73,17 @@ impl Input {
     }
 }
 
+fn accumulate_control_work(totals: &mut [u64; 4], work: physics_engine::TranslationalStepWork) {
+    for (sum, value) in totals.iter_mut().zip([
+        work.fixed_sweep_bound_preparations,
+        work.dynamic_sweep_bound_preparations,
+        work.broad_phase_queries,
+        work.staged_bodies,
+    ]) {
+        *sum += value as u64;
+    }
+}
+
 pub fn run() -> [f64; 12] {
     let input = input();
     let count = 8;
@@ -99,14 +110,7 @@ pub fn run() -> [f64; 12] {
             rebuilt.bodies().collect::<Vec<_>>()
         );
         for work in [report.stats.work, reference.stats.work] {
-            for (sum, value) in all_work.iter_mut().zip([
-                work.fixed_sweep_bound_preparations,
-                work.dynamic_sweep_bound_preparations,
-                work.broad_phase_queries,
-                work.staged_bodies,
-            ]) {
-                *sum += value as u64;
-            }
+            accumulate_control_work(&mut all_work, work);
         }
         let work = report.stats.work;
         assert_eq!(
@@ -139,20 +143,15 @@ pub fn run() -> [f64; 12] {
     let bootstrap = quiet.step(1).unwrap().stats.work;
     let no_op = quiet.step(1).unwrap().stats.work;
     for work in [bootstrap, no_op] {
-        for (sum, value) in all_work.iter_mut().zip([
-            work.fixed_sweep_bound_preparations,
-            work.dynamic_sweep_bound_preparations,
-            work.broad_phase_queries,
-            work.staged_bodies,
-        ]) {
-            *sum += value as u64;
-        }
+        accumulate_control_work(&mut all_work, work);
     }
     assert!(no_op.cached_stationary_step);
     assert_eq!(no_op.sweep_bound_preparations, 0);
     assert_eq!(no_op.fixed_sweep_bound_preparations, 0);
     assert_eq!(no_op.dynamic_sweep_bound_preparations, 0);
     let mut values = [0.0; 12];
+    // Read-only transport: the bounded populations, calls and event/pass ceilings
+    // keep every observed integer counter below 2^53. These are not physics state.
     for (value, sum) in values[..7].iter_mut().zip(totals) {
         *value = sum as f64;
     }
