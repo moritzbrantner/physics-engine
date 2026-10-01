@@ -178,7 +178,7 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
     check_activity(&mut w);
     assert!(w.is_quiescent());
 }
-fn check_bounds(w: &mut World, h: Scalar) {
+fn check_bounds(w: &mut World, h: Real) {
     let mut out = Vec::new();
     w.manifolds::<true>(h, &mut super::super::Report::default(), &mut out)
         .unwrap();
@@ -199,7 +199,7 @@ fn check_bounds(w: &mut World, h: Scalar) {
             // using this formula comparison as geometric correctness evidence.
             let pad = Vector(angular, angular, angular)
                 + Vector(1.0, 1.0, 1.0)
-                    * (w.config.contact_slop + 8.0 * Scalar::EPSILON * delta.abs().max_component());
+                    * (w.config.contact_slop + 8.0 * Real::EPSILON * delta.abs().max_component());
             (i, lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
         })
         .collect::<Vec<_>>();

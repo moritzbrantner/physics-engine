@@ -5,7 +5,7 @@
 //! Admitted awake dynamic pairs may share the same pass budget when explicitly selected.
 //! Fixed, external and still-sleeping bodies are never modified.
 use super::{
-    Body, Error, PositionCorrection, Scalar, Shape, Vector, World, contact, geometry::GeometryStats,
+    Body, Error, PositionCorrection, Real, Shape, Vector, World, contact, geometry::GeometryStats,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -20,7 +20,7 @@ pub struct PositionReport {
     pub dynamic_corrections: u64,
     pub geometry: GeometryStats,
     /// Largest corrected pair separation (or fixed-to-dynamic displacement).
-    pub max_distance: Scalar,
+    pub max_distance: Real,
     /// Eligible dynamic bodies visited, once per position pass.
     pub body_visits: u64,
     pub fixed_index_rebuilds: u64,
@@ -84,7 +84,7 @@ impl Scratch {
 impl World {
     pub(super) fn correct_positions(
         &mut self,
-        h: Scalar,
+        h: Real,
         report: &mut PositionReport,
     ) -> Result<(), Error> {
         #[cfg(test)]
@@ -156,7 +156,7 @@ impl World {
                     let depth = (&m.points)
                         .into_iter()
                         .map(|p| -p.separation)
-                        .fold(0.0, Scalar::max);
+                        .fold(0.0, Real::max);
                     let distance = (depth - self.config.contact_slop).max(0.0);
                     if distance <= 0.0 {
                         continue;
@@ -248,7 +248,7 @@ impl World {
                     let depth = (&m.points)
                         .into_iter()
                         .map(|p| -p.separation)
-                        .fold(0.0, f64::max);
+                        .fold(0.0, Real::max);
                     let distance = (depth - self.config.contact_slop).max(0.0);
                     if distance <= 0.0 {
                         continue;

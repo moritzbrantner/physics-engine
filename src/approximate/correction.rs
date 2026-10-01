@@ -1,15 +1,15 @@
 //! Opt-in soft normal constraints and frozen-contact velocity relaxation.
 //! Based on the mass-independent soft-constraint formulation described in
 //! https://box2d.org/posts/2024/02/solver2d/. The default solver remains Baumgarte.
-use super::{Constraint, Convergence, Report, Scalar, Vector, World, convergence};
+use super::{Constraint, Convergence, Report, Real, Vector, World, convergence};
 
 /// Experimental correction policy. It does not change global damping or sleeping thresholds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SoftContact {
     /// Natural frequency in cycles/second. Capped at one quarter of the substep rate.
-    pub frequency_hz: Scalar,
+    pub frequency_hz: Real,
     /// Dimensionless damping of the constraint spring, not whole-body drag.
-    pub damping_ratio: Scalar,
+    pub damping_ratio: Real,
     /// Additional bias-free velocity passes per nonempty substep, after saving the motion.
     pub relaxation_iterations: u8,
 }
@@ -30,9 +30,9 @@ impl SoftContact {
             && (0.0..=10.0).contains(&self.damping_ratio)
             && self.relaxation_iterations <= 8
     }
-    pub(super) fn prepare(self, h: Scalar) -> Option<Coefficients> {
+    pub(super) fn prepare(self, h: Real) -> Option<Coefficients> {
         let frequency = self.frequency_hz.min(0.25 / h);
-        let omega = 2.0 * std::f64::consts::PI * frequency;
+        let omega = 2.0 * crate::approximate::real_consts::PI * frequency;
         let a1 = 2.0 * self.damping_ratio + omega * h;
         let a2 = h * omega * a1;
         let impulse_scale = 1.0 / (1.0 + a2);
@@ -50,9 +50,9 @@ impl SoftContact {
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Coefficients {
-    pub bias_rate: Scalar,
-    pub mass_scale: Scalar,
-    pub impulse_scale: Scalar,
+    pub bias_rate: Real,
+    pub mass_scale: Real,
+    pub impulse_scale: Real,
 }
 impl Coefficients {
     pub const RIGID: Self = Self {

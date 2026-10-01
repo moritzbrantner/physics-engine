@@ -1,4 +1,8 @@
-//! Explicit f64 fixed-step approximation, alongside (not silently replacing) the event solver.
+//! Explicit floating fixed-step approximation, alongside (not silently replacing) the event solver.
+//!
+//! Physical state uses [`Real`]: `f64` by default, `f32` with the whole-build `f32-physics`
+//! feature. Elapsed time stays [`numeric::Scalar`] (`f64`) in every build; each substep narrows
+//! its `dt` to `Real` once. See docs/numerics.md for the f32 precision envelope.
 //!
 //! External impulses change velocity once; forces act for the requested duration. Each bounded
 //! substep prepares contacts, accumulates clamped sequential impulses, then integrates the new
@@ -7,6 +11,45 @@
 //!
 //! CCD sweeps translation over each substep for fast shapes. Orientations are held fixed during
 //! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
+#[cfg(all(feature = "f32-physics", feature = "exact-reference"))]
+compile_error!("`f32-physics` and the diagnostic `exact-reference` backend are mutually exclusive");
+
+/// Floating-solver physical scalar: `f32` with the `f32-physics` feature, else `f64`.
+///
+/// The feature is a whole-build choice. Legacy worlds and time composition keep
+/// [`numeric::Scalar`] (`f64`) in every build.
+#[cfg(feature = "f32-physics")]
+pub type Real = f32;
+/// Floating-solver physical scalar: `f32` with the `f32-physics` feature, else `f64`.
+///
+/// The feature is a whole-build choice. Legacy worlds and time composition keep
+/// [`numeric::Scalar`] (`f64`) in every build.
+#[cfg(not(feature = "f32-physics"))]
+pub type Real = f64;
+#[cfg(feature = "f32-physics")]
+#[allow(unused_imports)]
+use std::f32::consts as real_consts;
+#[cfg(not(feature = "f32-physics"))]
+#[allow(unused_imports)]
+use std::f64::consts as real_consts;
+/// Bit width of [`Real`] in this build (32 or 64).
+pub const REAL_BITS: u32 = (size_of::<Real>() * 8) as u32;
+
+/// Narrows f64 time to the solver scalar once per substep (identity in the f64 build).
+#[allow(clippy::unnecessary_cast)]
+fn narrow_time(seconds: Scalar) -> Real {
+    seconds as Real
+}
+/// Widens a solver substep exactly into the f64 time domain (identity in the f64 build).
+#[allow(clippy::unnecessary_cast)]
+fn widen_time(seconds: Real) -> Scalar {
+    seconds as Scalar
+}
+/// Substep length in solver precision. The division happens in f64 before one narrowing.
+fn substep_length(dt: Scalar, substeps: u8) -> Real {
+    narrow_time(dt / Scalar::from(substeps))
+}
+
 mod bookkeeping;
 mod contact;
 mod mass;
@@ -55,17 +98,17 @@ pub use capabilities::PRIMITIVE_CAPABILITIES_JSON;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
     Box(Vector),
-    Sphere(Scalar),
+    Sphere(Real),
     /// Local-Y segment expanded by a spherical radius.
     Capsule {
-        half_segment: Scalar,
-        radius: Scalar,
+        half_segment: Real,
+        radius: Real,
     },
     /// Right triangular prism inside the local bounding box. The ramp rises toward -X.
     Wedge(Vector),
 }
 impl Shape {
-    pub const fn capsule(half_segment: Scalar, radius: Scalar) -> Self {
+    pub const fn capsule(half_segment: Real, radius: Real) -> Self {
         Self::Capsule {
             half_segment,
             radius,
@@ -74,7 +117,7 @@ impl Shape {
     pub const fn wedge(half_extents: Vector) -> Self {
         Self::Wedge(half_extents)
     }
-    pub fn radius(self) -> Scalar {
+    pub fn radius(self) -> Real {
         match self {
             Self::Box(h) | Self::Wedge(h) => h.length(),
             Self::Sphere(r) => r,
@@ -111,7 +154,7 @@ impl Shape {
             }
         }
     }
-    fn local_inverse_inertia(self, mass: Scalar) -> Option<Vector> {
+    fn local_inverse_inertia(self, mass: Real) -> Option<Vector> {
         match self {
             Self::Sphere(r) => {
                 let inverse = 2.5 / (mass * r * r);
@@ -152,15 +195,15 @@ pub struct Body {
     pub angular_velocity: Vector,
     pub shape: Shape,
     /// Zero is immovable geometry; positive mass is dynamic unless `external` is set.
-    pub mass: Scalar,
+    pub mass: Real,
     /// Finite coefficient in [0, 10], default 0.6. Contacts use the larger coefficient
     /// and clamp the accumulated tangential impulse to a disk of radius mu * normal impulse.
     /// Linear-support contacts disable friction. See docs/contact-materials.md.
-    pub friction: Scalar,
+    pub friction: Real,
     /// Finite coefficient in [0, 1], default zero. Contacts use the smaller coefficient.
     /// Restitution requires closing speed > 1 scene unit/s, separation <= contact_slop
     /// and no retained pair history; speculative positive separation does not bounce.
-    pub restitution: Scalar,
+    pub restitution: Real,
     pub rotation_locked: bool,
     pub layers: CollisionLayers3d,
     pub external: bool,
@@ -170,7 +213,7 @@ pub struct Body {
     pub retire_on_impact: bool,
     pub linear_support: Option<Vector>,
     sleeping: bool,
-    quiet_time: Scalar,
+    quiet_time: Real,
     force: Vector,
     torque: Vector,
     impulse: Vector,
@@ -178,7 +221,7 @@ pub struct Body {
     cached_bounds: (Vector, Vector),
 }
 impl Body {
-    pub fn new(id: BodyId, shape: Shape, position: Vector, mass: Scalar) -> Self {
+    pub fn new(id: BodyId, shape: Shape, position: Vector, mass: Real) -> Self {
         Self {
             id,
             shape,
@@ -211,7 +254,7 @@ impl Body {
         let b = body.body();
         let a = body.angular();
         let q = a.orientation;
-        let qs = crate::ORIENTATION_SCALE as Scalar;
+        let qs = crate::ORIENTATION_SCALE as Real;
         let mut out = Self::new(
             b.id(),
             Shape::Box(b.half_extents().into()),
@@ -219,22 +262,22 @@ impl Body {
             if b.kind() == BodyKind::Fixed {
                 0.0
             } else {
-                b.mass_units() as Scalar
+                b.mass_units() as Real
             },
         );
         out.velocity = b.velocity().into();
         out.orientation = Quaternion(
-            q.x as Scalar / qs,
-            q.y as Scalar / qs,
-            q.z as Scalar / qs,
-            q.w as Scalar / qs,
+            q.x as Real / qs,
+            q.y as Real / qs,
+            q.z as Real / qs,
+            q.w as Real / qs,
         )
         .normalized();
         let w = a.angular_velocity;
-        let ws = crate::ANGULAR_VELOCITY_SCALE as Scalar;
-        out.angular_velocity = Vector(w.x as Scalar / ws, w.y as Scalar / ws, w.z as Scalar / ws);
-        out.friction = b.material().friction_milli() as Scalar / 1000.0;
-        out.restitution = b.material().restitution_milli() as Scalar / 1000.0;
+        let ws = crate::ANGULAR_VELOCITY_SCALE as Real;
+        out.angular_velocity = Vector(w.x as Real / ws, w.y as Real / ws, w.z as Real / ws);
+        out.friction = b.material().friction_milli() as Real / 1000.0;
+        out.restitution = b.material().restitution_milli() as Real / 1000.0;
         out.rotation_locked = body.rotation_locked();
         out.layers = body.collision_layers();
         out.external = body.motion_authority() == MotionAuthority3d::External;
@@ -248,7 +291,7 @@ impl Body {
     /// Diagnostic kinetic energy in mass-units * scene-units squared / second squared.
     /// This observation does not feed back into dynamics or the sleep policy.
     /// Angular motion with unsupported inertia returns NaN rather than invented energy.
-    pub fn kinetic_energy(&self) -> Scalar {
+    pub fn kinetic_energy(&self) -> Real {
         if self.mass == 0.0 {
             return 0.0;
         }
@@ -257,7 +300,7 @@ impl Body {
             return linear;
         }
         let Some(inverse) = self.shape.local_inverse_inertia(self.mass) else {
-            return Scalar::NAN;
+            return Real::NAN;
         };
         let w = self.orientation.inverse_rotate(self.angular_velocity);
         linear + 0.5 * (w.0 * w.0 / inverse.0 + w.1 * w.1 / inverse.1 + w.2 * w.2 / inverse.2)
@@ -268,7 +311,7 @@ impl Body {
     fn movable(&self) -> bool {
         self.mass > 0.0 && !self.external
     }
-    fn inverse_mass(&self) -> Scalar {
+    fn inverse_mass(&self) -> Real {
         if self.movable() && !self.sleeping {
             1.0 / self.mass
         } else {
@@ -330,9 +373,9 @@ pub struct Config {
     pub fixed_position_iterations: u8,
     pub position_correction: PositionCorrection,
     /// Scene-space length, default 0.02. Chosen explicitly for the legacy 36-unit crates.
-    pub contact_slop: Scalar,
-    pub sleep_speed: Scalar,
-    pub sleep_seconds: Scalar,
+    pub contact_slop: Real,
+    pub sleep_speed: Real,
+    pub sleep_seconds: Real,
     pub warm_start: bool,
     /// None retains the fixed-pass reference. Some permits a checked early exit.
     pub convergence: Option<Convergence>,
@@ -401,7 +444,7 @@ pub struct Report {
     pub woken_bodies: u64,
     pub swept_contacts: u64,
     pub retired: Vec<BodyId>,
-    pub max_penetration: Scalar,
+    pub max_penetration: Real,
     pub bookkeeping: BookkeepingStats,
     pub geometry: GeometryStats,
     pub convergence: ConvergenceStats,
@@ -421,7 +464,7 @@ struct CachedPoint {
     a: Vector,
     b: Vector,
     normal: Vector,
-    impulse: Scalar,
+    impulse: Real,
     tangent: Vector,
 }
 #[derive(Clone, Debug)]
@@ -433,19 +476,19 @@ struct Constraint {
     rb: Vector,
     t1: Vector,
     t2: Vector,
-    normal_mass: Scalar,
-    tangent_mass: [Scalar; 2],
-    bias: Scalar,
+    normal_mass: Real,
+    tangent_mass: [Real; 2],
+    bias: Real,
     #[cfg(feature = "experimental-soft-contact")]
     hard_normal: bool,
     #[cfg(feature = "experimental-soft-contact")]
     relaxing_normal: bool,
     #[cfg(feature = "experimental-soft-contact")]
     normal_coefficients: correction::Coefficients,
-    friction: Scalar,
-    normal_impulse: Scalar,
-    tangent_impulse: [Scalar; 2],
-    sep: Scalar,
+    friction: Real,
+    normal_impulse: Real,
+    tangent_impulse: [Real; 2],
+    sep: Real,
     swept: bool,
     response: [bool; 2],
     spin: bool,
@@ -455,6 +498,7 @@ pub struct World {
     config: Config,
     bodies: Vec<Body>,
     cache: BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
+    /// Prior substep length. Time composition and its checkpoint value stay f64.
     last_h: Scalar,
     // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
     responses: Vec<PreparedResponse>,
@@ -466,7 +510,7 @@ pub struct World {
     #[cfg(feature = "experimental-soft-contact")]
     relaxation_motion: Vec<correction::Motion>,
     #[cfg(feature = "experimental-soft-contact")]
-    relaxation_bias: Vec<Scalar>,
+    relaxation_bias: Vec<Real>,
     pub last_report: Report,
     transaction: transaction::Journal,
     last_transaction: TransactionStats,
@@ -700,7 +744,7 @@ impl World {
     fn wake_contact_island<const PREPARED: bool>(
         &mut self,
         root: BodyId,
-        h: Scalar,
+        h: Real,
         report: &mut Report,
     ) -> u64 {
         let woke = self.wake_island(root);
@@ -759,7 +803,7 @@ impl World {
             }
             return Ok(self.last_report.clone());
         }
-        if dt / self.config.substeps as Scalar == 0.0 {
+        if substep_length(dt, self.config.substeps) == 0.0 {
             return Err(Error::InvalidInput);
         }
         #[cfg(feature = "experimental-soft-contact")]
@@ -767,7 +811,7 @@ impl World {
             .config
             .soft_contact
             .map(|c| {
-                c.prepare(dt / self.config.substeps as Scalar)
+                c.prepare(substep_length(dt, self.config.substeps))
                     .ok_or(Error::InvalidInput)
             })
             .transpose()?;
@@ -812,7 +856,7 @@ impl World {
         #[cfg(feature = "experimental-soft-contact")] softness: Option<correction::Coefficients>,
     ) -> Result<Report, Error> {
         let mut report = Report::default();
-        let h = dt / self.config.substeps as Scalar;
+        let h = substep_length(dt, self.config.substeps);
         for substep in 0..self.config.substeps {
             report.substeps += 1;
             self.responses
@@ -1126,7 +1170,7 @@ impl World {
                                 < 0.1 * a.shape.radius().min(b.shape.radius())
                         {
                             used.push(idx);
-                            let scale = (h / self.last_h).clamp(0.0, 2.0);
+                            let scale = (h / narrow_time(self.last_h)).clamp(0.0, 2.0);
                             c.normal_impulse = p.impulse * scale;
                             c.tangent_impulse =
                                 [p.tangent.dot(t1) * scale, p.tangent.dot(t2) * scale];
@@ -1401,7 +1445,7 @@ impl World {
                     report.retired.push(id);
                 }
             }
-            self.last_h = h;
+            self.last_h = widen_time(h);
         }
         for (i, b) in self.bodies.iter_mut().enumerate() {
             if b.force != Vector::ZERO || b.torque != Vector::ZERO {
@@ -1417,7 +1461,7 @@ impl World {
     fn apply_substep_forces<const PREPARED: bool>(
         &mut self,
         index: usize,
-        h: Scalar,
+        h: Real,
         report: &mut Report,
     ) {
         let b = &mut self.bodies[index];
@@ -1473,7 +1517,7 @@ impl World {
 
     fn manifolds<const CACHED: bool>(
         &mut self,
-        h: Scalar,
+        h: Real,
         report: &mut Report,
         out: &mut Vec<(usize, usize, contact::Manifold)>,
     ) -> Result<(), Error> {
@@ -1511,7 +1555,7 @@ impl World {
                     * (self.config.contact_slop
                         // Endpoint addition can round at the displacement's scale even
                         // when the original pose and collider are small.
-                        + 8.0 * Scalar::EPSILON * delta.abs().max_component());
+                        + 8.0 * Real::EPSILON * delta.abs().max_component());
             row.lo = lo.min(lo + delta) - pad;
             row.hi = hi.max(hi + delta) + pad;
             row.active = active;
@@ -1636,7 +1680,7 @@ impl World {
         // where the already-updated velocity becomes authoritative. No event-restart loop is added.
         reserve(&mut s.earliest, self.bodies.len(), &mut s.work);
         s.earliest.clear();
-        s.earliest.resize(self.bodies.len(), Scalar::INFINITY);
+        s.earliest.resize(self.bodies.len(), Real::INFINITY);
         for (i, j, m) in out.iter() {
             for index in [*i, *j] {
                 if self.bodies[index].ccd {
@@ -1668,7 +1712,7 @@ fn effective_mass<const PREPARED: bool>(
     response: [bool; 2],
     spin: bool,
     report: &mut Report,
-) -> Scalar {
+) -> Real {
     let mut k = 0.0;
     for (((body, cached), r), yes) in bodies.into_iter().zip(arms).zip(response) {
         if yes {

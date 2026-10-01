@@ -5,21 +5,27 @@ use sha2::{Digest, Sha256};
 
 use super::{
     Body, BodyId, CachedPoint, CollisionLayers3d, Config, Convergence, ConvergenceScope,
-    PositionCorrection, Quaternion, Scalar, Shape, Vector, World, contact,
+    PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, Vector, World, contact,
 };
 
-const MAGIC: &[u8; 8] = b"PEFLOAT\0";
+// Each scalar width has its own magic; the layout is otherwise shared. Physical
+// values use `Real` at native width; elapsed/prior-substep time is always f64.
+const MAGIC_F64: &[u8; 8] = b"PEFLOAT\0";
+const MAGIC_F32: &[u8; 8] = b"PEFLT32\0";
+const MAGIC: &[u8; 8] = if REAL_BITS == 32 { MAGIC_F32 } else { MAGIC_F64 };
 const FORMAT: u32 = 2;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 7;
 const DIGEST_BYTES: usize = 32;
-const MIN_BODY_BYTES: usize = 260;
-const POINT_BYTES: usize = 104;
+const REAL_BYTES: usize = size_of::<Real>();
+// Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 30 physical scalars.
+const MIN_BODY_BYTES: usize = 20 + 30 * REAL_BYTES;
+const POINT_BYTES: usize = 13 * REAL_BYTES;
 // Conservative envelopes for stored normalization/rotated-normal results. The
 // existing normalization can lose unit length for extreme finite input scales;
 // a checkpoint preserves that accepted state rather than silently repairing it.
-const ORIENTATION_COMPONENT_LIMIT: Scalar = 2.0;
-const NORMAL_COMPONENT_LIMIT: Scalar = 64.0;
+const ORIENTATION_COMPONENT_LIMIT: Real = 2.0;
+const NORMAL_COMPONENT_LIMIT: Real = 64.0;
 
 /// Consumer-owned compatibility identities. The build tag must identify the exact
 /// engine/dependency/compiler/flags/ABI policy; content identifies static content
@@ -60,6 +66,12 @@ pub enum CheckpointError {
     IncompatibleTarget,
     UnsupportedPolicy,
     ResourceLimit,
+    /// The bytes come from a build whose floating-solver scalar width differs
+    /// (`f32-physics` versus the default f64 build). Rejected before the version fields.
+    ScalarWidthMismatch {
+        expected_bits: u32,
+        found_bits: u32,
+    },
 }
 impl std::fmt::Display for CheckpointError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -148,7 +160,7 @@ impl Checkpoint {
         world
     }
 
-    /// Canonical little-endian encoding of exact f64 bits. SHA-256 detects damaged
+    /// Canonical little-endian encoding of exact `Real` bits (f64 time). SHA-256 detects damaged
     /// bytes; authentication/persistence and consumer snapshot atomicity stay outside physics.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -163,8 +175,8 @@ impl Checkpoint {
             out.extend_from_slice(target.as_bytes());
         }
         encode_config(&mut out, self.config);
-        scalar(&mut out, self.elapsed);
-        scalar(&mut out, self.last_h);
+        time(&mut out, self.elapsed);
+        time(&mut out, self.last_h);
         count(&mut out, self.bodies.len());
         for body in &self.bodies {
             encode_body(&mut out, body);
@@ -204,8 +216,15 @@ impl Checkpoint {
             .ok_or(CheckpointError::InvalidData)?;
         let (payload, digest) = bytes.split_at(payload_len);
         let mut reader = Reader { bytes: payload };
-        if &reader.array::<8>()? != MAGIC {
-            return Err(CheckpointError::InvalidData);
+        match &reader.array::<8>()? {
+            magic if magic == MAGIC => {}
+            magic if magic == MAGIC_F64 || magic == MAGIC_F32 => {
+                return Err(CheckpointError::ScalarWidthMismatch {
+                    expected_bits: REAL_BITS,
+                    found_bits: if magic == MAGIC_F32 { 32 } else { 64 },
+                });
+            }
+            _ => return Err(CheckpointError::InvalidData),
         }
         let format = reader.u32()?;
         if format != FORMAT {
@@ -232,8 +251,8 @@ impl Checkpoint {
             }
         }
         let config = reader.config()?;
-        let elapsed = reader.scalar()?;
-        let last_h = reader.scalar()?;
+        let elapsed = reader.time()?;
+        let last_h = reader.time()?;
         let body_count = reader.count(limits.bodies, MIN_BODY_BYTES)?;
         let mut bodies = Vec::with_capacity(body_count);
         for _ in 0..body_count {
@@ -346,7 +365,10 @@ fn valid_orientation(q: Quaternion) -> bool {
 fn count(out: &mut Vec<u8>, value: usize) {
     out.extend_from_slice(&(value as u64).to_le_bytes());
 }
-fn scalar(out: &mut Vec<u8>, value: Scalar) {
+fn scalar(out: &mut Vec<u8>, value: Real) {
+    out.extend_from_slice(&value.to_bits().to_le_bytes());
+}
+fn time(out: &mut Vec<u8>, value: Scalar) {
     out.extend_from_slice(&value.to_bits().to_le_bytes());
 }
 fn vector(out: &mut Vec<u8>, v: Vector) {
@@ -488,7 +510,10 @@ impl<'a> Reader<'a> {
     fn u64(&mut self) -> Result<u64, CheckpointError> {
         Ok(u64::from_le_bytes(self.array()?))
     }
-    fn scalar(&mut self) -> Result<Scalar, CheckpointError> {
+    fn scalar(&mut self) -> Result<Real, CheckpointError> {
+        Ok(Real::from_le_bytes(self.array()?))
+    }
+    fn time(&mut self) -> Result<Scalar, CheckpointError> {
         Ok(Scalar::from_bits(self.u64()?))
     }
     fn vector(&mut self) -> Result<Vector, CheckpointError> {

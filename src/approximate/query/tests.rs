@@ -6,8 +6,8 @@ fn next(seed: &mut u64) -> u64 {
         .wrapping_add(1442695040888963407);
     *seed
 }
-fn coordinate(seed: &mut u64) -> Scalar {
-    (next(seed) >> 32) as Scalar / u32::MAX as Scalar * 40.0 - 20.0
+fn coordinate(seed: &mut u64) -> Real {
+    (next(seed) >> 32) as Real / u32::MAX as Real * 40.0 - 20.0
 }
 fn shape(index: u64) -> Shape {
     match index % 4 {
@@ -99,7 +99,7 @@ fn warmed_query_outputs_reuse_capacity_and_prune_unrelated_geometry() {
             .add_body(Body::new(
                 BodyId(id),
                 Shape::Sphere(0.5),
-                V(id as Scalar * 10.0, 0.0, 0.0),
+                V(id as Real * 10.0, 0.0, 0.0),
                 0.0,
             ))
             .unwrap();
@@ -140,7 +140,7 @@ fn paired_query_workload_evidence() {
                 .add_body(Body::new(
                     BodyId(id),
                     shape(id),
-                    V(id as Scalar * 10.0, 0.0, 0.0),
+                    V(id as Real * 10.0, 0.0, 0.0),
                     0.0,
                 ))
                 .unwrap();

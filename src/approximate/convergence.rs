@@ -1,14 +1,14 @@
 //! Bounded velocity solving with a projected fixed-point residual, never a wall-clock budget.
-use super::{Body, Constraint, PreparedResponse, Report, Scalar, apply, contact_velocity};
+use super::{Body, Constraint, PreparedResponse, Report, Real, apply, contact_velocity};
 
 /// Absolute scene-unit tolerances plus a relative per-contact scale. Zero selects exact checks.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Convergence {
     /// Velocity residual in scene units per second.
-    pub absolute_velocity: Scalar,
+    pub absolute_velocity: Real,
     /// Incremental impulse in mass-units * scene-units per second.
-    pub absolute_impulse: Scalar,
-    pub relative: Scalar,
+    pub absolute_impulse: Real,
+    pub relative: Real,
 }
 impl Default for Convergence {
     fn default() -> Self {
@@ -28,10 +28,10 @@ impl Convergence {
     }
     fn small(
         self,
-        delta: Scalar,
-        mass: Scalar,
-        impulse_scale: Scalar,
-        velocity_scale: Scalar,
+        delta: Real,
+        mass: Real,
+        impulse_scale: Real,
+        velocity_scale: Real,
     ) -> bool {
         let impulse_limit = self.absolute_impulse + self.relative * impulse_scale;
         let velocity_limit = self.absolute_velocity + self.relative * velocity_scale;
@@ -56,9 +56,9 @@ pub struct ConvergenceStats {
     pub empty_substeps: u64,
     pub skipped_iterations: u64,
     /// Maximum final-pass impulse change across accepted early exits only.
-    pub max_exit_impulse_delta: Scalar,
+    pub max_exit_impulse_delta: Real,
     /// Maximum projected velocity residual across accepted early exits only.
-    pub max_exit_velocity_residual: Scalar,
+    pub max_exit_velocity_residual: Real,
     pub fixed_substeps: u64,
     pub probe_passes: u64,
     pub delta_constraint_checks: u64,
@@ -72,7 +72,7 @@ fn projected_residual(
     constraints: &[Constraint],
     tolerance: Convergence,
     stats: &mut ConvergenceStats,
-) -> Option<Scalar> {
+) -> Option<Real> {
     projected_residual_rows(bodies, constraints.iter(), tolerance, stats)
 }
 
@@ -81,9 +81,9 @@ fn projected_residual_rows<'a>(
     constraints: impl Iterator<Item = &'a Constraint>,
     tolerance: Convergence,
     stats: &mut ConvergenceStats,
-) -> Option<Scalar> {
+) -> Option<Real> {
     stats.residual_checks += 1;
-    let mut max_residual: Scalar = 0.0;
+    let mut max_residual: Real = 0.0;
     for c in constraints {
         stats.residual_constraint_visits += 1;
         let rel = contact_velocity(&bodies[c.b], c.rb, c.spin)
@@ -118,7 +118,7 @@ fn projected_residual_rows<'a>(
         if limit > 0.0 {
             let vt = [rel.dot(c.t1), rel.dot(c.t2)];
             let mut gradient = [-vt[0] * c.tangent_mass[0], -vt[1] * c.tangent_mass[1]];
-            if old_length > 0.0 && old_length >= limit - 8.0 * Scalar::EPSILON * limit {
+            if old_length > 0.0 && old_length >= limit - 8.0 * Real::EPSILON * limit {
                 let unit = [
                     c.tangent_impulse[0] / old_length,
                     c.tangent_impulse[1] / old_length,
@@ -328,7 +328,7 @@ fn solve_rows<
             && completed >= 2
             && completed.is_power_of_two()
             && completed < u32::from(iterations);
-        let mut max_delta: Scalar = 0.0;
+        let mut max_delta: Real = 0.0;
         let mut unchecked = 0;
         if candidate {
             report.convergence.probe_passes += 1;
@@ -410,7 +410,7 @@ fn solve_rows<
 
 // Compile-time opt-in: ordinary builds retain the original hard row formula and layout.
 #[inline(always)]
-fn next_normal(c: &Constraint, vn: Scalar) -> Scalar {
+fn next_normal(c: &Constraint, vn: Real) -> Real {
     #[cfg(feature = "experimental-soft-contact")]
     if !c.hard_normal && !c.relaxing_normal {
         let coefficients = c.normal_coefficients;
@@ -421,7 +421,7 @@ fn next_normal(c: &Constraint, vn: Scalar) -> Scalar {
     (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0)
 }
 #[inline(always)]
-fn normal_error(c: &Constraint, vn: Scalar) -> Scalar {
+fn normal_error(c: &Constraint, vn: Real) -> Real {
     #[cfg(feature = "experimental-soft-contact")]
     if !c.hard_normal && !c.relaxing_normal {
         let coefficients = c.normal_coefficients;
@@ -435,8 +435,8 @@ fn normal_error(c: &Constraint, vn: Scalar) -> Scalar {
 
 #[derive(Default)]
 struct Change {
-    impulse: [Scalar; 3],
-    velocity_scale: [Scalar; 3],
+    impulse: [Real; 3],
+    velocity_scale: [Real; 3],
 }
 
 // The arithmetic order is identical in both specializations. READ_CHANGE=false removes only

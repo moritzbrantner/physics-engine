@@ -1,18 +1,17 @@
 //! Physical scaling of reusable uniform-solid geometric products.
 
-use super::{Shape, Vector, primitive};
-use crate::numeric::Scalar;
+use super::{Real, Shape, Vector, primitive};
 
 /// Uniform-solid products in the shape's local frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MassProperties {
-    pub mass: Scalar,
-    pub volume: Scalar,
+    pub mass: Real,
+    pub volume: Real,
     /// Offset from the existing shape origin, in scene length units.
     pub local_center_of_mass: Vector,
     /// Inertia about the center of mass, in mass * scene length squared units.
     /// Rows and columns follow local X/Y/Z; off-diagonal products are included.
-    pub local_inertia: [[Scalar; 3]; 3],
+    pub local_inertia: [[Real; 3]; 3],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,7 +29,7 @@ impl Shape {
     /// `[0, 1e12)`. Zero mass is an immovable-body policy, not a uniform-solid mass.
     /// Wedge products describe its geometric COM; they do not change the existing
     /// origin-based body pose or enable rotation for solver-owned dynamic wedges.
-    pub fn mass_properties(self, mass: Scalar) -> Result<MassProperties, MassPropertiesError> {
+    pub fn mass_properties(self, mass: Real) -> Result<MassProperties, MassPropertiesError> {
         if !self.valid_dimensions() {
             return Err(MassPropertiesError::InvalidDimensions);
         }
@@ -40,24 +39,27 @@ impl Shape {
         let geometry =
             primitive::volume_properties(self).map_err(|_| MassPropertiesError::Unrepresentable)?;
         let moment = geometry.normalized_second_moment;
+        // The kernel product stays f64; scale in f64, then narrow each result once.
+        let wide = primitive::widen(mass);
         // Sum the other diagonals directly to avoid trace-minus-diagonal cancellation.
         let local_inertia = [
             [
-                mass * (moment[1][1] + moment[2][2]),
-                -mass * moment[0][1],
-                -mass * moment[0][2],
+                wide * (moment[1][1] + moment[2][2]),
+                -wide * moment[0][1],
+                -wide * moment[0][2],
             ],
             [
-                -mass * moment[1][0],
-                mass * (moment[0][0] + moment[2][2]),
-                -mass * moment[1][2],
+                -wide * moment[1][0],
+                wide * (moment[0][0] + moment[2][2]),
+                -wide * moment[1][2],
             ],
             [
-                -mass * moment[2][0],
-                -mass * moment[2][1],
-                mass * (moment[0][0] + moment[1][1]),
+                -wide * moment[2][0],
+                -wide * moment[2][1],
+                wide * (moment[0][0] + moment[1][1]),
             ],
-        ];
+        ]
+        .map(|row| row.map(primitive::nearest));
         if local_inertia
             .iter()
             .flatten()
@@ -68,11 +70,11 @@ impl Shape {
         }
         Ok(MassProperties {
             mass,
-            volume: geometry.volume,
+            volume: primitive::nearest(geometry.volume),
             local_center_of_mass: Vector(
-                geometry.centroid[0],
-                geometry.centroid[1],
-                geometry.centroid[2],
+                primitive::nearest(geometry.centroid[0]),
+                primitive::nearest(geometry.centroid[1]),
+                primitive::nearest(geometry.centroid[2]),
             ),
             local_inertia,
         })

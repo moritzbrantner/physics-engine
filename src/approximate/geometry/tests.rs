@@ -135,7 +135,7 @@ fn bits(m: &Option<contact::Manifold>) -> Option<(Vec<u64>, bool)> {
 fn query(
     cache: &mut GeometryCache,
     bodies: &[Body; 2],
-    margin: Scalar,
+    margin: Real,
 ) -> (Option<contact::Manifold>, GeometryStats) {
     let mut work = GeometryStats::default();
     cache.begin(2);

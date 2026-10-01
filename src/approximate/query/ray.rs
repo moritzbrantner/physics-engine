@@ -20,8 +20,8 @@ impl RayCast {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RayHit {
     pub body: BodyId,
-    pub fraction: Scalar,
-    pub distance: Scalar,
+    pub fraction: Real,
+    pub distance: Real,
     /// Surface entry point, or the original interior point for an initial overlap.
     pub point: V,
     /// Outward at the surface; opposite displacement for an interior origin.
@@ -115,7 +115,7 @@ impl World {
                     .max(target.position.abs().max_component())
                     .max(target.shape.radius());
                 // Conservative rounding padding only; snapshot rays have no collision skin.
-                let pad = 64.0 * Scalar::EPSILON * (1.0 + magnitude);
+                let pad = 64.0 * Real::EPSILON * (1.0 + magnitude);
                 let (min, max) = target.cached_bounds;
                 if (0..3)
                     .any(|i| bounds.1.at(i) + pad < min.at(i) || max.at(i) + pad < bounds.0.at(i))
@@ -133,7 +133,13 @@ impl World {
             let Some(hit) = result.map_err(failure)? else {
                 continue;
             };
-            let point = V(hit.point[0], hit.point[1], hit.point[2]);
+            let point = V(
+                primitive::nearest(hit.point[0]),
+                primitive::nearest(hit.point[1]),
+                primitive::nearest(hit.point[2]),
+            );
+            // An earlier fraction is the conservative narrowing of the kernel hit.
+            let fraction = primitive::toward_zero(hit.fraction);
             let support_velocity =
                 target.velocity + target.angular_velocity.cross(point - target.position);
             if !support_velocity.finite() {
@@ -142,10 +148,14 @@ impl World {
             let capacity = hits.capacity();
             hits.push(RayHit {
                 body: target.id,
-                fraction: hit.fraction,
-                distance: distance * hit.fraction,
+                fraction,
+                distance: distance * fraction,
                 point,
-                normal: V(hit.normal[0], hit.normal[1], hit.normal[2]),
+                normal: V(
+                    primitive::nearest(hit.normal[0]),
+                    primitive::nearest(hit.normal[1]),
+                    primitive::nearest(hit.normal[2]),
+                ),
                 feature: hit.feature,
                 starts_overlapping: hit.starts_inside,
                 support_velocity,

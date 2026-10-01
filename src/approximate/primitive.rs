@@ -2,8 +2,13 @@
 //!
 //! Reusable shape math lives in `geometry-kernels`. This module retains engine-local body,
 //! quaternion and work-counter boundaries; simulation policy remains owned by Physics Engine.
+//!
+//! The kernels stay f64 in every build. [`Real`] inputs widen exactly to f64. Results narrow
+//! conservatively: time of impact and sweep fractions toward zero (earlier), bounds/extents
+//! outward, separation toward smaller; directions and witnesses round to nearest. In the
+//! default f64 build every conversion is the identity.
 
-use super::{Body, Shape, SweepFailure, Vector as V, geometry::GeometryStats};
+use super::{Body, Real, Shape, SweepFailure, Vector as V, geometry::GeometryStats};
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveSweepError3, PrimitiveWork3,
     bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
@@ -18,7 +23,7 @@ use geometry_kernels::primitive3::query as kernel_query;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct PrimitiveContact {
     pub normal: V,
-    pub separation: f64,
+    pub separation: Real,
     pub point_a: V,
     pub point_b: V,
 }
@@ -28,7 +33,8 @@ pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool)
 }
 
 pub(super) fn bounds_extents(body: &Body) -> V {
-    from_array(kernel_bounds(kernel_body(body)))
+    let [x, y, z] = kernel_bounds(kernel_body(body));
+    V(round_up(x), round_up(y), round_up(z))
 }
 
 #[cfg(test)]
@@ -74,22 +80,24 @@ pub(super) fn reference_query(
 pub(super) fn swept_time(
     a: &Body,
     b: &Body,
-    dt: f64,
-    margin: f64,
+    dt: Real,
+    margin: Real,
     work: &mut GeometryStats,
-) -> Result<Option<f64>, SweepFailure> {
+) -> Result<Option<Real>, SweepFailure> {
     let mut kernel_work = PrimitiveWork3::default();
     let result = kernel_swept_time(
         kernel_body(a),
         kernel_body(b),
-        dt,
-        margin,
+        widen(dt),
+        widen(margin),
         128,
         &mut kernel_work,
     );
     accumulate_work(work, kernel_work);
     work.primitive_sweep_failures += u64::from(result.is_err());
-    result.map_err(sweep_failure)
+    result
+        .map(|time| time.map(toward_zero))
+        .map_err(sweep_failure)
 }
 
 fn sweep_failure(error: PrimitiveSweepError3) -> SweepFailure {
@@ -130,12 +138,14 @@ pub(super) fn snapshot_sweep(
     displacement: V,
     max_iterations: u32,
     work: &mut PrimitiveWork3,
-) -> Result<Option<f64>, SweepFailure> {
+) -> Result<Option<Real>, SweepFailure> {
     let mut a = kernel_body(query);
     let mut b = kernel_body(target);
     a.velocity = to_array(displacement);
     b.velocity = [0.0; 3];
-    kernel_swept_time(a, b, 1.0, 0.0, max_iterations, work).map_err(sweep_failure)
+    kernel_swept_time(a, b, 1.0, 0.0, max_iterations, work)
+        .map(|fraction| fraction.map(toward_zero))
+        .map_err(sweep_failure)
 }
 
 pub(super) fn volume_properties(
@@ -149,12 +159,12 @@ pub(super) fn volume_properties(
 
 fn shape(shape: Shape) -> PrimitiveShape3 {
     match shape {
-        Shape::Sphere(radius) => PrimitiveShape3::sphere(radius),
+        Shape::Sphere(radius) => PrimitiveShape3::sphere(widen(radius)),
         Shape::Box(half) => PrimitiveShape3::cuboid(to_array(half)),
         Shape::Capsule {
             half_segment,
             radius,
-        } => PrimitiveShape3::capsule(half_segment, radius),
+        } => PrimitiveShape3::capsule(widen(half_segment), widen(radius)),
         Shape::Wedge(half) => PrimitiveShape3::wedge(to_array(half)),
     }
 }
@@ -183,18 +193,59 @@ const fn identity_axes() -> [[f64; 3]; 3] {
     [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 }
 
+/// Exact widening of a solver value to the f64 kernel domain.
+#[allow(clippy::unnecessary_cast)]
+pub(super) const fn widen(value: Real) -> f64 {
+    value as f64
+}
+
+/// Round-to-nearest narrowing for directions and witness points.
+#[allow(clippy::unnecessary_cast)]
+pub(super) const fn nearest(value: f64) -> Real {
+    value as Real
+}
+
+/// Largest `Real` not above `value` (exact in the f64 build; NaN stays NaN).
+pub(super) fn round_down(value: f64) -> Real {
+    let narrowed = nearest(value);
+    if widen(narrowed) > value {
+        narrowed.next_down()
+    } else {
+        narrowed
+    }
+}
+
+/// Smallest `Real` not below `value` (exact in the f64 build; NaN stays NaN).
+pub(super) fn round_up(value: f64) -> Real {
+    let narrowed = nearest(value);
+    if widen(narrowed) < value {
+        narrowed.next_up()
+    } else {
+        narrowed
+    }
+}
+
+/// Narrowing toward zero: an impact time or fraction never moves later.
+pub(super) fn toward_zero(value: f64) -> Real {
+    if value >= 0.0 {
+        round_down(value)
+    } else {
+        round_up(value)
+    }
+}
+
 const fn to_array(value: V) -> [f64; 3] {
-    [value.0, value.1, value.2]
+    [widen(value.0), widen(value.1), widen(value.2)]
 }
 
 const fn from_array(value: [f64; 3]) -> V {
-    V(value[0], value[1], value[2])
+    V(nearest(value[0]), nearest(value[1]), nearest(value[2]))
 }
 
 fn from_contact(contact: PrimitiveContact3) -> PrimitiveContact {
     PrimitiveContact {
         normal: from_array(contact.normal),
-        separation: contact.separation,
+        separation: round_down(contact.separation),
         point_a: from_array(contact.point_a),
         point_b: from_array(contact.point_b),
     }
@@ -235,8 +286,8 @@ mod tests {
         capsule.orientation = Quaternion(
             0.0,
             0.0,
-            std::f64::consts::FRAC_1_SQRT_2,
-            std::f64::consts::FRAC_1_SQRT_2,
+            crate::approximate::real_consts::FRAC_1_SQRT_2,
+            crate::approximate::real_consts::FRAC_1_SQRT_2,
         );
         let mut work = GeometryStats::default();
         let forward = query(&capsule, &wedge, &mut work).unwrap();

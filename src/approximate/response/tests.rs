@@ -48,7 +48,7 @@ fn prepared_response_is_bit_identical_to_original_formula() {
     }
 }
 
-fn compare_step(prepared: &mut World, reference: &mut World, dt: Scalar) -> Report {
+fn compare_step(prepared: &mut World, reference: &mut World, dt: Real) -> Report {
     let got = prepared.step(dt).unwrap();
     let want = reference.step_with_preparation::<false>(dt).unwrap();
     assert_eq!(

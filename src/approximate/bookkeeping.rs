@@ -1,6 +1,6 @@
 //! Derived membership, contact adjacency and reusable traversal storage.
 //! Body state and cached contact keys remain authoritative. No contact admission or solver math here.
-use super::{Body, BodyId, CachedPoint, Scalar, Vector};
+use super::{Body, BodyId, CachedPoint, Real, Vector};
 use std::collections::BTreeMap;
 
 /// Source-level bookkeeping work. Capacity gauges exclude allocator overhead and contact geometry.
@@ -285,7 +285,7 @@ pub(super) struct Scratch {
     pub support: SupportPropagation,
     pub supported: Vec<bool>,
     pub support_edges: Vec<(usize, usize)>,
-    pub earliest: Vec<Scalar>,
+    pub earliest: Vec<Real>,
 }
 impl Scratch {
     pub fn layout_changed(&mut self) {

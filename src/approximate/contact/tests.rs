@@ -30,7 +30,7 @@ fn box_edge_contact_keeps_the_midpoint_of_tied_support_features() {
 }
 
 // Independent pre-change allocating clipper; this is a test oracle, not a production path.
-fn reference_clip(input: &[V], n: V, limit: Scalar) -> Vec<V> {
+fn reference_clip(input: &[V], n: V, limit: Real) -> Vec<V> {
     let mut out = Vec::with_capacity(8);
     if input.is_empty() {
         return out;
@@ -163,14 +163,14 @@ fn pair_bodies(pair: primitive::PrimitivePair) -> (Body, Body) {
     (a, b)
 }
 
-fn separations(manifold: &Manifold) -> Vec<Scalar> {
+fn separations(manifold: &Manifold) -> Vec<Real> {
     let mut values = manifold
         .points
         .clone()
         .into_iter()
         .map(|point| point.separation)
         .collect::<Vec<_>>();
-    values.sort_by(Scalar::total_cmp);
+    values.sort_by(Real::total_cmp);
     values
 }
 

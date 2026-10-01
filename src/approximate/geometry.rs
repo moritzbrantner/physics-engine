@@ -4,7 +4,9 @@
 //! still run SAT and clipping, but unchanged orientations reuse frames and support projections.
 //! Retained ordinary geometry has no velocity/timestep key. Moving fixed-box interval manifolds
 //! use fresh motion and never retain pair results; CCD also always runs fresh after a miss.
-use super::{Body, BodyId, Quaternion, Scalar, Shape, SweepFailure, Vector, contact};
+use super::{
+    Body, BodyId, Quaternion, Real, Shape, SweepFailure, Vector, contact, primitive,
+};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -55,11 +57,15 @@ pub struct GeometryStats {
     pub retained_bytes: u64,
 }
 
+/// Exact cache-key bits; widening to f64 keeps keys injective in both builds.
+fn bits(x: Real) -> u64 {
+    primitive::widen(x).to_bits()
+}
 fn vector_bits(v: Vector) -> [u64; 3] {
-    [v.0.to_bits(), v.1.to_bits(), v.2.to_bits()]
+    [bits(v.0), bits(v.1), bits(v.2)]
 }
 fn quaternion_bits(q: Quaternion) -> [u64; 4] {
-    [q.0.to_bits(), q.1.to_bits(), q.2.to_bits(), q.3.to_bits()]
+    [bits(q.0), bits(q.1), bits(q.2), bits(q.3)]
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ShapeKey {
@@ -70,13 +76,13 @@ struct ShapeKey {
 impl ShapeKey {
     fn new(b: &Body) -> Self {
         let shape = match b.shape {
-            Shape::Box(h) => [0, h.0.to_bits(), h.1.to_bits(), h.2.to_bits()],
-            Shape::Sphere(r) => [1, r.to_bits(), 0, 0],
+            Shape::Box(h) => [0, bits(h.0), bits(h.1), bits(h.2)],
+            Shape::Sphere(r) => [1, bits(r), 0, 0],
             Shape::Capsule {
                 half_segment,
                 radius,
-            } => [2, half_segment.to_bits(), radius.to_bits(), 0],
-            Shape::Wedge(h) => [3, h.0.to_bits(), h.1.to_bits(), h.2.to_bits()],
+            } => [2, bits(half_segment), bits(radius), 0],
+            Shape::Wedge(h) => [3, bits(h.0), bits(h.1), bits(h.2)],
         };
         Self {
             id: b.id,
@@ -155,8 +161,8 @@ impl GeometryCache {
         &mut self,
         indices: [usize; 2],
         bodies: [&Body; 2],
-        h: Scalar,
-        margin: Scalar,
+        h: Real,
+        margin: Real,
         work: &mut GeometryStats,
     ) -> Option<contact::Manifold> {
         let [a, b] = bodies;
@@ -183,7 +189,7 @@ impl GeometryCache {
         &mut self,
         indices: [usize; 2],
         bodies: [&Body; 2],
-        margin: Scalar,
+        margin: Real,
         work: &mut GeometryStats,
     ) -> Option<contact::Manifold> {
         let [a, b] = bodies;
@@ -215,8 +221,8 @@ impl GeometryCache {
         &mut self,
         indices: [usize; 2],
         bodies: [&Body; 2],
-        dt: Scalar,
-        margin: Scalar,
+        dt: Real,
+        margin: Real,
         work: &mut GeometryStats,
     ) -> Result<Option<contact::Manifold>, SweepFailure> {
         let [a, b] = bodies;
@@ -242,7 +248,7 @@ impl GeometryCache {
         &mut self,
         indices: [usize; 2],
         bodies: [&Body; 2],
-        margin: Scalar,
+        margin: Real,
         work: &mut GeometryStats,
     ) -> Option<contact::Manifold> {
         let [a, b] = bodies;
@@ -253,7 +259,7 @@ impl GeometryCache {
         if let Some(pair) = self.pairs.get_mut(&id)
             && pair.keys == keys
             && pair.positions == positions
-            && pair.margin == margin.to_bits()
+            && pair.margin == bits(margin)
         {
             pair.epoch = self.epoch;
             work.manifold_hits += 1;
@@ -271,7 +277,7 @@ impl GeometryCache {
         let pair = self.pairs.entry(id).or_insert_with(|| Pair {
             keys,
             positions,
-            margin: margin.to_bits(),
+            margin: bits(margin),
             current: None,
             projections: contact::BoxProjections::default(),
             epoch: self.epoch,
@@ -302,7 +308,7 @@ impl GeometryCache {
         };
         pair.keys = keys;
         pair.positions = positions;
-        pair.margin = margin.to_bits();
+        pair.margin = bits(margin);
         match (&mut pair.current, &result) {
             (Some(old), Some(new)) => {
                 old.normal = new.normal;
