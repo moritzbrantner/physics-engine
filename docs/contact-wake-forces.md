@@ -63,8 +63,9 @@ first substep records spin .0625, energy9.0015625 and imposed work18.15.
 A private response test additionally queues downward force `(0,-20,0)` and yaw
 torque `(0,.8,0)` on the parked body. It compares prepared, unprepared and uncached
 paths through two calls against the doubled floor load and yaw increment `h`.
-This uses an internal history seam because public force/torque mutations already
-wake their body. Existing rollback and negative admission tests remain active.
+The force is seeded internally because public `add_force` wakes immediately;
+queued torque currently has no public setter. Existing rollback and negative
+admission tests remain active.
 
 ## Replay and evidence
 
