@@ -680,19 +680,39 @@ impl World {
         s.traversal.begin(self.bodies.len(), &mut s.work);
         s.traversal
             .collect(root, &self.bodies, &s.graph, &mut s.work);
-        let mut count = 0;
-        for &i in &s.traversal.island {
+        // Retain only newly awakened indices for same-substep force preparation.
+        // The next traversal resets this scratch; no persistent wake-state copy is added.
+        s.traversal.island.retain(|&i| {
             let b = &mut self.bodies[i];
-            if b.sleeping {
-                self.transaction.body(i, b);
-                count += 1;
-                b.sleeping = false;
-                b.quiet_time = 0.0;
+            if !b.sleeping {
+                return false;
             }
-        }
-        s.activity.count += count as usize;
+            self.transaction.body(i, b);
+            b.sleeping = false;
+            b.quiet_time = 0.0;
+            true
+        });
+        let count = s.traversal.island.len();
+        s.activity.count += count;
         s.activity.dirty |= count > 0;
-        count
+        count as u64
+    }
+    fn wake_contact_island<const PREPARED: bool>(
+        &mut self,
+        root: BodyId,
+        h: Scalar,
+        report: &mut Report,
+    ) -> u64 {
+        let woke = self.wake_island(root);
+        for n in 0..self.bookkeeping.traversal.island.len() {
+            let i = self.bookkeeping.traversal.island[n];
+            if PREPARED {
+                self.responses[i] = PreparedResponse::new(&self.bodies[i], report);
+            }
+            // These bodies skipped the ordinary force phase while parked.
+            self.apply_substep_forces::<PREPARED>(i, h, report);
+        }
+        woke
     }
     pub fn has_support(&self, id: BodyId) -> bool {
         let up = (-self.config.gravity).unit();
@@ -822,12 +842,9 @@ impl World {
                     b.angular_impulse = Vector::ZERO;
                 }
             }
-            for (i, (b, cached)) in self.bodies.iter_mut().zip(&self.responses).enumerate() {
-                if b.movable() && !b.sleeping {
-                    self.transaction.body(i, b);
-                    let prepared = cached.select::<PREPARED>(b, &mut report);
-                    b.velocity += (self.config.gravity + b.force / b.mass) * h;
-                    b.angular_velocity += prepared.inertia(b, b.torque, &mut report) * h;
+            for i in 0..self.bodies.len() {
+                if self.bodies[i].movable() && !self.bodies[i].sleeping {
+                    self.apply_substep_forces::<PREPARED>(i, h, &mut report);
                 }
             }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
@@ -872,20 +889,12 @@ impl World {
             );
             let mut woke = 0;
             for root in roots.drain(..) {
-                woke += self.wake_island(root);
+                woke += self.wake_contact_island::<PREPARED>(root, h, &mut report);
             }
             self.bookkeeping.roots = roots;
             report.woken_bodies += woke;
             if woke > 0 {
-                // Wake admission changes inverse response before the contact's impulse, not next tick.
-                // Pose/shape/mass cannot otherwise change during these velocity iterations.
-                if PREPARED {
-                    for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
-                        if prepared.inverse_mass == 0.0 && b.movable() && !b.sleeping {
-                            *prepared = PreparedResponse::new(b, &mut report);
-                        }
-                    }
-                }
+                // Real response and forces are ready before the regenerated contact impulse.
                 if let Err(error) = self.manifolds::<CACHED>(h, &mut report, &mut pairs) {
                     self.manifold_scratch = pairs;
                     self.failed_work = Some(FailedStepWork::capture(
@@ -1347,6 +1356,18 @@ impl World {
         self.elapsed += dt;
         self.finish_bookkeeping(&mut report);
         Ok(report)
+    }
+    fn apply_substep_forces<const PREPARED: bool>(
+        &mut self,
+        index: usize,
+        h: Scalar,
+        report: &mut Report,
+    ) {
+        let b = &mut self.bodies[index];
+        self.transaction.body(index, b);
+        let prepared = self.responses[index].select::<PREPARED>(b, report);
+        b.velocity += (self.config.gravity + b.force / b.mass) * h;
+        b.angular_velocity += prepared.inertia(b, b.torque, report) * h;
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
         #[cfg(feature = "experimental-soft-contact")]

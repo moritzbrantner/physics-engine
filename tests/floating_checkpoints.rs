@@ -385,7 +385,8 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
     }
     for (offset, value, error) in [
         (8, 3u32, CheckpointError::UnsupportedFormat(3)),
-        (12, 4u32, CheckpointError::UnsupportedAlgorithm(4)),
+        (12, 5u32, CheckpointError::UnsupportedAlgorithm(5)),
+        (12, 3u32, CheckpointError::UnsupportedAlgorithm(3)),
         (12, 2u32, CheckpointError::UnsupportedAlgorithm(2)),
         (8, 1u32, CheckpointError::UnsupportedFormat(1)),
         (12, 1u32, CheckpointError::UnsupportedAlgorithm(1)),
@@ -585,7 +586,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_two_algorithm_three_empty_world_wire_fixture_is_stable() {
+fn format_two_algorithm_four_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         ..Config::default()
@@ -594,7 +595,7 @@ fn format_two_algorithm_three_empty_world_wire_fixture_is_stable() {
     let encoded = bytes(&world);
     assert_eq!(
         format!("{:x}", Sha256::digest(&encoded)),
-        "df4c6db2702cf00926839f05a4d9bca4385e7a8686ff05da879eb3104424e308"
+        "fc3ebbdeabbf0e3188254e0aafa69a7d05f0e6e2bd1bd06b271f8ce236e63b7a"
     );
 }
 

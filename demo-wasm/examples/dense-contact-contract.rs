@@ -1,6 +1,8 @@
 //! Dedicated native/WASM regression; absent from the production Pages module.
 #[path = "../../tests/support/box_fixture_oracle.rs"]
 mod box_fixture_oracle;
+#[path = "../../tests/support/contact_wake_forces.rs"]
+mod contact_wake_forces;
 #[path = "../../tests/support/dense_contact.rs"]
 mod dense;
 #[path = "../../tests/support/driven_parked_contact.rs"]
@@ -14,6 +16,9 @@ mod narrow_support;
 #[path = "../../tests/support/primitive_contacts.rs"]
 mod primitive_contacts;
 thread_local! {
+    static FORCE_RESULTS: std::cell::Cell<Option<[[f64; 17]; 16]>> = const {
+        std::cell::Cell::new(None)
+    };
     static DRIVEN_RESULTS: std::cell::Cell<Option<[[f64; 18]; 20]>> = const {
         std::cell::Cell::new(None)
     };
@@ -30,6 +35,7 @@ thread_local! {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn dense_contact_contract() -> i32 {
+    FORCE_RESULTS.with(|results| results.set(Some(contact_wake_forces::run())));
     DRIVEN_RESULTS.with(|results| results.set(Some(driven_parked_contact::run())));
     dense::run();
     materials::run();
@@ -37,6 +43,16 @@ pub extern "C" fn dense_contact_contract() -> i32 {
     PRIMITIVE_RESULTS.with(|results| results.set(Some(primitive_contacts::run())));
     MOVING_RESULTS.with(|results| *results.borrow_mut() = Some(moving_support::run()));
     0
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn contact_wake_force_metric(case: u32, field: u32) -> f64 {
+    FORCE_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|rows| rows.get(case as usize).copied())
+            .and_then(|row| row.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn driven_parked_metric(case: u32, field: u32) -> f64 {
@@ -85,6 +101,7 @@ pub extern "C" fn narrow_support_metric(case: u32, cadence: u32, field: u32) -> 
 mod tests {
     #[test]
     fn native_dense_contact_contract() {
+        super::contact_wake_forces::run();
         super::driven_parked_contact::run();
         super::dense::run();
         super::materials::run();

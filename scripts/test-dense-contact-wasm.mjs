@@ -13,12 +13,50 @@ assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, 0)));
 assert(Number.isNaN(instance.exports.primitive_contact_metric(0)));
 assert(Number.isNaN(instance.exports.moving_support_metric(0, 0, 0)));
 assert(Number.isNaN(instance.exports.driven_parked_metric(0, 0)));
+assert(Number.isNaN(instance.exports.contact_wake_force_metric(0, 0)));
+let previousForces;
 let previousDriven;
 let previous;
 let previousPrimitive;
 let previousMoving;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
+  const forceFields = [
+    "vx", "vy", "vz", "angular_speed", "energy", "external_work", "woken_bodies",
+    "response_preparations", "inertia_preparations", "inertia_applications",
+    "current_queries", "sweep_queries", "contact_points", "constraint_visits",
+    "elapsed", "max_motion_error", "independent_sleeping",
+  ];
+  const forces = ["ContactWake", "RepeatedRoots", "AwakeReference", "RemovedSupport"]
+    .flatMap((name, caseIndex) => [0, 1, 2, 3].map(variant => {
+      const index = 4 * caseIndex + variant;
+      const substeps = variant % 2 === 0 ? 1 : 4;
+      const m = Object.fromEntries(forceFields.map((field, i) => {
+        const value = instance.exports.contact_wake_force_metric(index, i);
+        assert(Number.isFinite(value), `${name}/${variant}/${field}`);
+        return [field, value];
+      }));
+      const removed = name === "RemovedSupport";
+      assert.equal(m.woken_bodies, Number(name === "ContactWake" || name === "RepeatedRoots"));
+      assert.equal(m.response_preparations, substeps);
+      assert.equal(m.inertia_preparations, substeps);
+      assert.equal(m.independent_sleeping, 1);
+      assert(Math.abs(m.vx - 3) <= 1e-10);
+      assert(Math.abs(m.vy - (removed ? -10 * substeps / 240 : 0)) <= 1e-10);
+      assert(Math.abs(m.vz - (name === "RepeatedRoots" ? 3 : 0)) <= 1e-10);
+      assert(Math.abs(m.angular_speed - (removed ? 0 : 15 * substeps / 240)) <= 1e-10);
+      assert(Math.abs(m.elapsed - substeps / 240) <= 1e-14);
+      assert(m.max_motion_error <= 1e-10);
+      const y = removed ? 1 - 5 * substeps * (substeps + 1) / 240 ** 2 : 1;
+      assert(m.energy + 20 * (y - 1) <= m.external_work + 1e-10);
+      assert(m.constraint_visits <= 8 * m.contact_points);
+      return { case: name, ids: variant < 2 ? [1, 10] : [10, 1], substeps, ...m };
+    }));
+  if (previousForces) assert.deepEqual(forces, previousForces, "same-target first-force replay");
+  previousForces = forces;
+  assert(Number.isNaN(instance.exports.contact_wake_force_metric(16, 0)));
+  assert(Number.isNaN(instance.exports.contact_wake_force_metric(0, forceFields.length)));
+  console.log(`CONTACT_WAKE_FORCES_WASM ${JSON.stringify({ replay, rows: forces })}`);
   const drivenFields = [
     "rider_y", "rider_vy", "energy", "external_work", "woken_bodies",
     "response_preparations", "inertia_preparations", "inertia_applications",
@@ -154,4 +192,4 @@ for (let replay = 0; replay < 3; replay += 1) {
   assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, fields.length)));
   console.log(`NARROW_SUPPORT_WASM ${JSON.stringify({ replay, rows })}`);
 }
-console.log("Dense contact WASM: three replays passed, including physical substeps, materials, narrow supports, axial primitive pairs moving supports and driven/parked admission.");
+console.log("Dense contact WASM: three replays passed, including physical substeps, materials, narrow supports, axial primitive pairs moving supports driven/parked admission and first-substep forces.");
