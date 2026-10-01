@@ -15,6 +15,7 @@ enum Case {
     Current,
     SlowCurrent,
     Swept,
+    SweptOutsideSlop,
     SkinMiss,
     BroadMiss,
     Stationary,
@@ -24,10 +25,13 @@ enum Case {
 }
 impl Case {
     fn admits(self) -> bool {
-        matches!(self, Self::Current | Self::SlowCurrent | Self::Swept)
+        matches!(
+            self,
+            Self::Current | Self::SlowCurrent | Self::Swept | Self::SweptOutsideSlop
+        )
     }
     fn interval(self) -> f64 {
-        if matches!(self, Self::Current) {
+        if matches!(self, Self::Current | Self::SweptOutsideSlop) {
             1.0 / 60.0
         } else {
             H
@@ -44,6 +48,7 @@ impl Case {
     fn position(self) -> V {
         match self {
             Self::Swept => V(0.0, -0.505, 0.0),
+            Self::SweptOutsideSlop => V(0.0, -0.525, 0.0),
             Self::SkinMiss => V(0.0, -0.515, 0.0),
             Self::BroadMiss => V(4.9, -0.5, 4.9),
             _ => V(0.0, -0.5, 0.0),
@@ -157,7 +162,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
             gap >= -1e-10,
             "admitted normal response leaves penetration {gap}"
         );
-        if !matches!(case, Case::Swept) {
+        if !matches!(case, Case::Swept | Case::SweptOutsideSlop) {
             assert!((rider.velocity.1 - case.speed()).abs() <= 1e-10);
             assert!((rider.position.1 - 1.0 - case.speed() * h).abs() <= 1e-10);
             assert_eq!(rider.angular_velocity, V::ZERO);
@@ -216,13 +221,14 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     println!("DRIVEN_PARKED {{\"case\":\"{case:?}\",\"ids\":{ids:?},\"values\":{values:?}}}");
     values
 }
-pub fn run() -> [[f64; 18]; 18] {
+pub fn run() -> [[f64; 18]; 20] {
     std::array::from_fn(|index| {
         run_case(
             [
                 Case::Current,
                 Case::SlowCurrent,
                 Case::Swept,
+                Case::SweptOutsideSlop,
                 Case::SkinMiss,
                 Case::BroadMiss,
                 Case::Stationary,

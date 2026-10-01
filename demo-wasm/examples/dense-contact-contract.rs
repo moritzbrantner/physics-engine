@@ -14,7 +14,7 @@ mod narrow_support;
 #[path = "../../tests/support/primitive_contacts.rs"]
 mod primitive_contacts;
 thread_local! {
-    static DRIVEN_RESULTS: std::cell::Cell<Option<[[f64; 18]; 18]>> = const {
+    static DRIVEN_RESULTS: std::cell::Cell<Option<[[f64; 18]; 20]>> = const {
         std::cell::Cell::new(None)
     };
     // Read-only acceptance measurements; this example is absent from production Pages.

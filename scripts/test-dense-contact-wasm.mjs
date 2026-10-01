@@ -26,7 +26,7 @@ for (let replay = 0; replay < 3; replay += 1) {
     "contact_points", "constraint_visits", "swept_contacts", "sleeping",
     "independent_sleeping", "elapsed",
   ];
-  const driven = ["Current", "SlowCurrent", "Swept", "SkinMiss", "BroadMiss", "Stationary", "Separating", "Sensor", "Layers"]
+  const driven = ["Current", "SlowCurrent", "Swept", "SweptOutsideSlop", "SkinMiss", "BroadMiss", "Stationary", "Separating", "Sensor", "Layers"]
     .flatMap((name, caseIndex) => [0, 1].map(order => {
       const index = 2 * caseIndex + order;
       const m = Object.fromEntries(drivenFields.map((field, fieldIndex) => {
@@ -34,20 +34,20 @@ for (let replay = 0; replay < 3; replay += 1) {
         assert(Number.isFinite(value), `${name}/${order}/${field}`);
         return [field, value];
       }));
-      const admitted = caseIndex < 3;
+      const admitted = caseIndex < 4;
       assert.equal(m.woken_bodies, Number(admitted));
       assert.equal(m.sleeping, Number(!admitted));
       assert.equal(m.independent_sleeping, 1);
       assert.equal(m.response_preparations, Number(admitted));
       assert.equal(m.inertia_preparations, Number(admitted));
-      assert(Math.abs(m.elapsed - (name === "Current" ? 1 / 60 : 1 / 240)) <= 1e-14);
+      assert(Math.abs(m.elapsed - ((name === "Current" || name === "SweptOutsideSlop") ? 1 / 60 : 1 / 240)) <= 1e-14);
       assert(m.energy + 20 * (m.rider_y - 1) <= m.external_work + 1e-10);
       if (name === "Current" || name === "SlowCurrent") {
         const speed = name === "Current" ? 3 : 0.25;
         assert(Math.abs(m.rider_vy - speed) <= 1e-10);
-        assert(Math.abs(m.rider_y - 1 - speed * (name === "Current" ? 1 / 60 : 1 / 240)) <= 1e-10);
+        assert(Math.abs(m.rider_y - 1 - speed * ((name === "Current" || name === "SweptOutsideSlop") ? 1 / 60 : 1 / 240)) <= 1e-10);
       }
-      if (name === "Swept" || name === "SkinMiss" || name === "BroadMiss") assert(m.sweep_queries > 0);
+      if (name === "Swept" || name === "SweptOutsideSlop" || name === "SkinMiss" || name === "BroadMiss") assert(m.sweep_queries > 0);
       if (!admitted) {
         assert.equal(m.rider_y, 1);
         assert.equal(m.rider_vy, 0);
@@ -58,7 +58,7 @@ for (let replay = 0; replay < 3; replay += 1) {
     }));
   if (previousDriven) assert.deepEqual(driven, previousDriven, "same-target driven/parked replay");
   previousDriven = driven;
-  assert(Number.isNaN(instance.exports.driven_parked_metric(18, 0)));
+  assert(Number.isNaN(instance.exports.driven_parked_metric(20, 0)));
   assert(Number.isNaN(instance.exports.driven_parked_metric(0, drivenFields.length)));
   console.log(`DRIVEN_PARKED_WASM ${JSON.stringify({ replay, rows: driven })}`);
   const rows = ["Balanced", "OffCenter", "Removal"].map((name, index) => {

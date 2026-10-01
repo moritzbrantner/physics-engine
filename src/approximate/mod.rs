@@ -1480,14 +1480,13 @@ impl World {
                 };
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
-                let driven_wake_candidate = (a.sleeping
-                    && a.movable()
+                let driven_contact_candidate = (a.movable()
                     && b.external
                     && (b.velocity != Vector::ZERO || b.angular_velocity != Vector::ZERO))
-                    || (b.sleeping
-                        && b.movable()
+                    || (b.movable()
                         && a.external
                         && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
+                let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
                 if a.sensor
                     || b.sensor
                     || !a.layers.collides_with(b.layers)
@@ -1517,7 +1516,9 @@ impl World {
                     current
                 } else {
                     let travel = (b.velocity - a.velocity).length() * h;
-                    if driven_wake_candidate
+                    // Retain full-interval discovery after response preparation wakes the
+                    // body; the second geometry pass must not discard an admitted sweep.
+                    if driven_contact_candidate
                         || a.ccd
                         || b.ccd
                         || travel
