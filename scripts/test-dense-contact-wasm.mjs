@@ -10,7 +10,9 @@ const fields = [
   "constraint_visits", "position_tests", "active_substeps",
 ];
 assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, 0)));
+assert(Number.isNaN(instance.exports.primitive_contact_metric(0)));
 let previous;
+let previousPrimitive;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
   const rows = ["Balanced", "OffCenter", "Removal"].map((name, index) => {
@@ -30,9 +32,31 @@ for (let replay = 0; replay < 3; replay += 1) {
   });
   if (previous) assert.deepEqual(rows, previous, "same-target measured replay");
   previous = rows;
+  const primitive = Object.fromEntries([
+    "peak_overlap", "residual_overlap", "normalized_velocity_error",
+    "normalized_momentum_response_error", "energy_ratio", "cases",
+    "continuous_contact_samples", "constraint_visits", "min_elapsed", "max_elapsed",
+  ].map((field, i) => {
+    const value = instance.exports.primitive_contact_metric(i);
+    assert(Number.isFinite(value), field);
+    return [field, value];
+  }));
+  assert(primitive.peak_overlap <= 0.02 + 1e-10);
+  assert(primitive.residual_overlap <= 0.02 + 1e-10);
+  assert(primitive.normalized_velocity_error <= 1e-10);
+  assert(primitive.normalized_momentum_response_error <= 1e-10);
+  assert(primitive.energy_ratio <= 1 + 1e-10);
+  assert.equal(primitive.cases, 384);
+  assert.equal(primitive.continuous_contact_samples, 8192);
+  assert(Math.abs(primitive.min_elapsed - 64 / 240) <= 1e-12);
+  assert(Math.abs(primitive.max_elapsed - 64 / 240) <= 1e-12);
+  if (previousPrimitive) assert.deepEqual(primitive, previousPrimitive);
+  previousPrimitive = primitive;
+  assert(Number.isNaN(instance.exports.primitive_contact_metric(10)));
+  console.log(`PRIMITIVE_CONTACT_WASM ${JSON.stringify({ replay, primitive })}`);
   assert(Number.isNaN(instance.exports.narrow_support_metric(3, 0, 0)));
   assert(Number.isNaN(instance.exports.narrow_support_metric(0, 2, 0)));
   assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, fields.length)));
   console.log(`NARROW_SUPPORT_WASM ${JSON.stringify({ replay, rows })}`);
 }
-console.log("Dense contact WASM: three replays passed, including physical substeps, materials and narrow supports.");
+console.log("Dense contact WASM: three replays passed, including physical substeps, materials, narrow supports and axial primitive pairs.");
