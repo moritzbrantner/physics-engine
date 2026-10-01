@@ -37,9 +37,45 @@ the same contact with a fixed anchor, in both `BodyId` orders. The anchor remain
 asleep with zero wake events; its inactive mass/inertia cannot opt into reciprocal
 response just because it has positive nominal mass.
 
-Continuation semantics change, so checkpoints use algorithm 3 with unchanged wire
-format 2 and reject algorithm 2. The empty-world wire digest changes with the
+Continuation semantics change, so checkpoints use algorithm 7 with unchanged wire
+format 2 and reject algorithms 1 through 6. The empty-world wire digest changes with the
 algorithm header/checksum, while the empty physical trajectory remains unchanged.
+
+## Fixed-floor interval prerequisite (#243)
+
+The original reciprocal-response candidate failed the unchanged optional mixed-stack
+floor bound: peak penetration 2.0045971396464055 against 0.5. Its first breach reduced
+to a falling box that travels below the old half-extent sweep threshold. A later breach
+reduced to a rotating box with an admitted corner contact; clipping discarded other
+corners that could reach the floor during the same interval.
+
+Fixed-boundary pairs now request the existing full translation sweep after a current
+miss when relative travel exceeds contact slop. For admitted fixed/rotating box pairs,
+SAT admission and normal selection still use the original slop. Clipping additionally
+retains incident-face corners within translation plus radius-times-angular travel of
+the boundary. Swept manifolds use the remaining interval after their analytic contact
+time. Extra corners constrain approach through their original positive separation;
+they have zero friction while separated at the admitted time. Existing actual-impact
+witnesses retain friction. This is bounded speculative contact preparation, not a
+claim of exact rotational TOI or same-step elastic ricochet continuation (#246).
+
+The public regression records both captured states, both ID orders, physical intervals
+1/240 and 1/480 second, one/four substeps, and distant/sensor/layer negative controls:
+64 cases each in production and optional soft-contact builds. It independently computes
+box projection onto the floor, requires penetration at most 0.5 and complete time,
+checks unchanged eight primary/two optional relaxation ceilings, preserves the fixed
+body, and compares full checkpoint bytes with repeat and restore continuations at each
+call. The fixture fails without the prerequisite (0.6339107403425608); retaining corners
+also repairs the separate admitted-contact reproducer. Cached/prepared paths are compared
+with fresh geometry and original response arithmetic using changing intervals.
+
+The original seven stack comparisons are retained without fixture or acceptance edits.
+The final candidate's selected mixed/relaxed peak is 0.21862795838047824, peak kinetic
+energy 50400, final energy zero, and natural sleep. All equal/sliding soft controls
+settle, as does the low-friction rigid control. The equal rigid comparison still moves
+(final energy about 2494.79); this PR does not resolve the existing general settling
+limitation. Raw prior failures and rejected sweep-only/early-friction probes remain
+part of the diagnostic evidence rather than being reclassified as passing results.
 
 ## Independent acceptance
 

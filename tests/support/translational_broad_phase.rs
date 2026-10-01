@@ -1,5 +1,5 @@
 //! Public capacity and canonical-event controls shared with the existing WASM driver.
-use physics_engine::{BodyId, Material, RigidBody, StepReport, Vec3i, World, WorldConfig};
+use physics_engine::{BodyId, Material, RigidBody, Vec3i, World, WorldConfig};
 
 fn fixture() -> World {
     let mut w = World::new(WorldConfig {
@@ -29,13 +29,7 @@ fn fixture() -> World {
     w
 }
 
-fn semantic(mut report: StepReport) -> StepReport {
-    report.stats.work.staged_state_capacity_growths = 0;
-    report.stats.work.broad_phase_capacity_growths = 0;
-    report.stats.work.staged_state_capacity_bytes = 0;
-    report.stats.work.candidate_buffer_peak_capacity_bytes = 0;
-    report
-}
+use super::report;
 
 pub fn ricochets_reuse_capacity_and_preserve_canonical_events() {
     let mut w = fixture();
@@ -47,7 +41,10 @@ pub fn ricochets_reuse_capacity_and_preserve_canonical_events() {
         }
         let actual = w.step(ticks).unwrap();
         let expected = fresh.step(ticks).unwrap();
-        assert_eq!(semantic(actual.clone()), semantic(expected));
+        assert_eq!(
+            report::semantic_report(actual.clone()),
+            report::semantic_report(expected)
+        );
         assert_eq!(
             w.bodies().collect::<Vec<_>>(),
             fresh.bodies().collect::<Vec<_>>()
@@ -71,7 +68,8 @@ pub fn ricochets_reuse_capacity_and_preserve_canonical_events() {
         assert_eq!(
             w.retained_step_scratch_bytes(),
             actual.stats.work.staged_state_capacity_bytes
-                + actual.stats.work.candidate_buffer_peak_capacity_bytes,
+                + actual.stats.work.candidate_buffer_peak_capacity_bytes
+                + actual.stats.work.fixed_bound_cache_capacity_bytes,
         );
     }
     let before = w.bodies().cloned().collect::<Vec<_>>();

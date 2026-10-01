@@ -680,19 +680,39 @@ impl World {
         s.traversal.begin(self.bodies.len(), &mut s.work);
         s.traversal
             .collect(root, &self.bodies, &s.graph, &mut s.work);
-        let mut count = 0;
-        for &i in &s.traversal.island {
+        // Retain only newly awakened indices for same-substep force preparation.
+        // The next traversal resets this scratch; no persistent wake-state copy is added.
+        s.traversal.island.retain(|&i| {
             let b = &mut self.bodies[i];
-            if b.sleeping {
-                self.transaction.body(i, b);
-                count += 1;
-                b.sleeping = false;
-                b.quiet_time = 0.0;
+            if !b.sleeping {
+                return false;
             }
-        }
-        s.activity.count += count as usize;
+            self.transaction.body(i, b);
+            b.sleeping = false;
+            b.quiet_time = 0.0;
+            true
+        });
+        let count = s.traversal.island.len();
+        s.activity.count += count;
         s.activity.dirty |= count > 0;
-        count
+        count as u64
+    }
+    fn wake_contact_island<const PREPARED: bool>(
+        &mut self,
+        root: BodyId,
+        h: Scalar,
+        report: &mut Report,
+    ) -> u64 {
+        let woke = self.wake_island(root);
+        for n in 0..self.bookkeeping.traversal.island.len() {
+            let i = self.bookkeeping.traversal.island[n];
+            if PREPARED {
+                self.responses[i] = PreparedResponse::new(&self.bodies[i], report);
+            }
+            // These bodies skipped the ordinary force phase while parked.
+            self.apply_substep_forces::<PREPARED>(i, h, report);
+        }
+        woke
     }
     pub fn has_support(&self, id: BodyId) -> bool {
         let up = (-self.config.gravity).unit();
@@ -822,12 +842,9 @@ impl World {
                     b.angular_impulse = Vector::ZERO;
                 }
             }
-            for (i, (b, cached)) in self.bodies.iter_mut().zip(&self.responses).enumerate() {
-                if b.movable() && !b.sleeping {
-                    self.transaction.body(i, b);
-                    let prepared = cached.select::<PREPARED>(b, &mut report);
-                    b.velocity += (self.config.gravity + b.force / b.mass) * h;
-                    b.angular_velocity += prepared.inertia(b, b.torque, &mut report) * h;
+            for i in 0..self.bodies.len() {
+                if self.bodies[i].movable() && !self.bodies[i].sleeping {
+                    self.apply_substep_forces::<PREPARED>(i, h, &mut report);
                 }
             }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
@@ -845,6 +862,7 @@ impl World {
             let mut roots = std::mem::take(&mut self.bookkeeping.roots);
             roots.clear();
             reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
+            let up = (-self.config.gravity).unit();
             roots.extend(
                 pairs
                     .iter()
@@ -852,7 +870,29 @@ impl World {
                         let a = &self.bodies[*i];
                         let b = &self.bodies[*j];
                         let approach = -(b.velocity - a.velocity).dot(m.normal);
-                        let disruptive = m.swept || approach > self.config.sleep_speed;
+                        // A separating command alone is not wake evidence. An admitted
+                        // previously load-bearing support moving away is a dependency loss.
+                        let departing_support = approach < 0.0
+                            && ((a.external && b.sleeping && m.normal.dot(up) > 0.5)
+                                || (b.external && a.sleeping && m.normal.dot(up) < -0.5))
+                            && self.cache.get(&(a.id, b.id)).is_some_and(|points| {
+                                points
+                                    .iter()
+                                    .any(|p| p.impulse > 0.0 && p.normal.dot(m.normal) > 0.99)
+                            });
+                        let driven_contact_motion = (a.sleeping || b.sleeping)
+                            && (a.external || b.external)
+                            && (&m.points).into_iter().any(|point| {
+                                let spin = a.linear_support.is_none() && b.linear_support.is_none();
+                                let relative = contact_velocity(b, point.rb, spin)
+                                    - contact_velocity(a, point.ra, spin);
+                                relative != Vector::ZERO && relative.dot(m.normal) <= 0.0
+                            });
+                        let disruptive = m.swept
+                            || approach > self.config.sleep_speed
+                            || ((a.external || b.external) && approach > 0.0)
+                            || departing_support
+                            || driven_contact_motion;
                         [
                             if disruptive && a.sleeping && b.mass > 0.0 {
                                 Some(a.id)
@@ -870,20 +910,12 @@ impl World {
             );
             let mut woke = 0;
             for root in roots.drain(..) {
-                woke += self.wake_island(root);
+                woke += self.wake_contact_island::<PREPARED>(root, h, &mut report);
             }
             self.bookkeeping.roots = roots;
             report.woken_bodies += woke;
             if woke > 0 {
-                // Wake admission changes inverse response before the contact's impulse, not next tick.
-                // Pose/shape/mass cannot otherwise change during these velocity iterations.
-                if PREPARED {
-                    for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
-                        if prepared.inverse_mass == 0.0 && b.movable() && !b.sleeping {
-                            *prepared = PreparedResponse::new(b, &mut report);
-                        }
-                    }
-                }
+                // Real response and forces are ready before the regenerated contact impulse.
                 if let Err(error) = self.manifolds::<CACHED>(h, &mut report, &mut pairs) {
                     self.manifold_scratch = pairs;
                     self.failed_work = Some(FailedStepWork::capture(
@@ -1046,7 +1078,13 @@ impl World {
                         relaxing_normal: false,
                         #[cfg(feature = "experimental-soft-contact")]
                         normal_coefficients: soft.unwrap_or(correction::Coefficients::RIGID),
-                        friction: if linear {
+                        // Additional corners can limit approach while still separated at the
+                        // admitted contact time. They have no frictional load yet.
+                        friction: if linear
+                            || (contact::fixed_box_interval(a, b)
+                                && point.separation + (b.velocity - a.velocity).dot(n) * h * m.time
+                                    > self.config.contact_slop)
+                        {
                             0.0
                         } else {
                             a.friction.max(b.friction)
@@ -1185,9 +1223,13 @@ impl World {
             scratch.support_edges.clear();
             reserve(&mut scratch.supported, self.bodies.len(), &mut scratch.work);
             scratch.supported.clear();
-            scratch
-                .supported
-                .extend(self.bodies.iter().map(|b| b.mass == 0.0 || b.sleeping));
+            scratch.supported.extend(self.bodies.iter().map(|b| {
+                b.mass == 0.0
+                    || b.sleeping
+                    || (b.external
+                        && b.velocity == Vector::ZERO
+                        && b.angular_velocity == Vector::ZERO)
+            }));
             // Reuse point allocations when the pair survives. Warm starting has already read the
             // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
             for (&(a, b), points) in &mut self.cache {
@@ -1362,6 +1404,18 @@ impl World {
         self.finish_bookkeeping(&mut report);
         Ok(report)
     }
+    fn apply_substep_forces<const PREPARED: bool>(
+        &mut self,
+        index: usize,
+        h: Scalar,
+        report: &mut Report,
+    ) {
+        let b = &mut self.bodies[index];
+        self.transaction.body(index, b);
+        let prepared = self.responses[index].select::<PREPARED>(b, report);
+        b.velocity += (self.config.gravity + b.force / b.mass) * h;
+        b.angular_velocity += prepared.inertia(b, b.torque, report) * h;
+    }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
         #[cfg(feature = "experimental-soft-contact")]
         {
@@ -1494,32 +1548,50 @@ impl World {
                 };
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
+                let driven_contact_candidate = (a.movable()
+                    && b.external
+                    && (b.velocity != Vector::ZERO || b.angular_velocity != Vector::ZERO))
+                    || (b.movable()
+                        && a.external
+                        && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
+                let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
                 if a.sensor
                     || b.sensor
                     || !a.layers.collides_with(b.layers)
-                    || (a.inverse_mass() == 0.0 && b.inverse_mass() == 0.0)
+                    || (a.inverse_mass() == 0.0
+                        && b.inverse_mass() == 0.0
+                        && !driven_wake_candidate)
                 {
                     continue;
                 }
+                // A tolerance-only manifold is not wake evidence. Probe the actual surface
+                // and full interval before replacing the parked body's zero response.
+                let margin = if driven_wake_candidate {
+                    0.0
+                } else {
+                    self.config.contact_slop
+                };
                 report.narrow_tests += 1;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
                 // complete pair results only when both orientation dependencies are stable.
                 let current = if CACHED {
-                    self.geometry.query(
-                        [i, j],
-                        [a, b],
-                        self.config.contact_slop,
-                        &mut report.geometry,
-                    )
+                    self.geometry
+                        .query_interval([i, j], [a, b], h, margin, &mut report.geometry)
                 } else {
-                    contact::current_counted(a, b, self.config.contact_slop, &mut report.geometry)
+                    contact::current_interval_counted(a, b, h, margin, &mut report.geometry)
                 };
                 let m = if current.is_some() {
                     current
                 } else {
                     let travel = (b.velocity - a.velocity).length() * h;
-                    if a.ccd
+                    // Retain full-interval discovery after response preparation wakes the
+                    // body; the second geometry pass must not discard an admitted sweep.
+                    // A fixed boundary may be crossed below the shape-sized fast threshold.
+                    // The current margin only rules out travel no larger than that margin.
+                    if driven_contact_candidate
+                        || a.ccd
                         || b.ccd
+                        || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.config.contact_slop)
                         || travel
                             > 0.5
                                 * a.shape
@@ -1528,15 +1600,10 @@ impl World {
                                     .min(b.shape.half_extents().min_component())
                     {
                         let swept = if CACHED {
-                            self.geometry.swept(
-                                [i, j],
-                                [a, b],
-                                h,
-                                self.config.contact_slop,
-                                &mut report.geometry,
-                            )
+                            self.geometry
+                                .swept([i, j], [a, b], h, margin, &mut report.geometry)
                         } else {
-                            contact::swept(a, b, h, self.config.contact_slop, &mut report.geometry)
+                            contact::swept(a, b, h, margin, &mut report.geometry)
                         };
                         swept.map_err(|reason| Error::CollisionSearchFailed {
                             bodies: [a.id, b.id],

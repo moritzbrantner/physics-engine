@@ -18,14 +18,7 @@ fn physical(world: &World) -> Vec<RigidBody> {
     world.bodies().cloned().collect()
 }
 
-fn semantic_report(mut report: StepReport) -> StepReport {
-    // Capacity retention is the intended observable diagnostic difference.
-    report.stats.work.staged_state_capacity_growths = 0;
-    report.stats.work.staged_state_capacity_bytes = 0;
-    report.stats.work.broad_phase_capacity_growths = 0;
-    report.stats.work.candidate_buffer_peak_capacity_bytes = 0;
-    report
-}
+use super::report;
 
 fn paired_step(w: &mut World) -> StepReport {
     let mut rebuilding = World::new(w.config());
@@ -34,7 +27,10 @@ fn paired_step(w: &mut World) -> StepReport {
     }
     let actual = w.step(1).unwrap();
     let expected = rebuilding.step(1).unwrap();
-    assert_eq!(semantic_report(actual.clone()), semantic_report(expected));
+    assert_eq!(
+        report::semantic_report(actual.clone()),
+        report::semantic_report(expected)
+    );
     assert_eq!(physical(w), physical(&rebuilding));
     actual
 }
@@ -55,7 +51,8 @@ pub fn lifecycle_and_release_keep_physics_identical() {
     assert_eq!(first.stats.work.staged_state_capacity_growths, 1);
     assert_eq!(
         first.stats.work.staged_state_capacity_bytes
-            + first.stats.work.candidate_buffer_peak_capacity_bytes,
+            + first.stats.work.candidate_buffer_peak_capacity_bytes
+            + first.stats.work.fixed_bound_cache_capacity_bytes,
         w.retained_step_scratch_bytes()
     );
     let capacity = w.retained_step_scratch_bytes();
@@ -173,7 +170,10 @@ pub fn failed_steps_retain_only_disposable_capacity_and_recover() {
         }
         let actual = w.step(1).unwrap();
         let expected = uninterrupted.step(1).unwrap();
-        assert_eq!(semantic_report(actual.clone()), semantic_report(expected));
+        assert_eq!(
+            report::semantic_report(actual.clone()),
+            report::semantic_report(expected)
+        );
         assert_eq!(actual.stats.work.staged_state_capacity_growths, 0);
         assert_eq!(physical(&w), physical(&uninterrupted));
     }

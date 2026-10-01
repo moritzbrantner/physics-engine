@@ -1,6 +1,52 @@
 use super::super::{Config, Report, World, primitive};
 use super::*;
 
+#[test]
+fn fixed_interval_contacts_match_fresh_geometry_and_response() {
+    for ids in [[1, 2], [2, 1]] {
+        let mut world = World::new(Config {
+            gravity: Vector(0.0, -10.0, 0.0),
+            substeps: 1,
+            convergence: None,
+            ..Config::default()
+        })
+        .unwrap();
+        world
+            .add_body(Body::new(
+                BodyId(ids[0]),
+                Shape::Box(Vector(4.0, 0.5, 4.0)),
+                Vector(0.0, -0.5, 0.0),
+                0.0,
+            ))
+            .unwrap();
+        let mut body = Body::new(
+            BodyId(ids[1]),
+            Shape::Box(Vector(1.0, 1.0, 1.0)),
+            Vector(0.0, 1.19, 0.0),
+            2.0,
+        );
+        body.orientation = Quaternion(0.0, 0.0, 0.1_f64.sin(), 0.1_f64.cos());
+        body.velocity = Vector(-3.0, -10.0, 0.0);
+        body.angular_velocity = Vector(1.0, 0.0, 3.0);
+        world.add_body(body).unwrap();
+        let mut fresh = world.clone();
+        let mut unprepared = world.clone();
+        for h in [1.0 / 240.0, 1.0 / 480.0, 1.0 / 120.0, 1.0 / 240.0] {
+            let got = world.step(h).unwrap();
+            let expected = fresh.step_with_geometry::<false, false>(h).unwrap();
+            unprepared.step_with_preparation::<false>(h).unwrap();
+            for other in [&fresh, &unprepared] {
+                assert_eq!(world.bodies, other.bodies);
+                assert_eq!(world.cache, other.cache);
+                assert_eq!(world.elapsed, other.elapsed);
+            }
+            assert_eq!(got.contact_points, expected.contact_points);
+            assert_eq!(got.swept_contacts, expected.swept_contacts);
+            assert_eq!(got.impulse_iterations, expected.impulse_iterations);
+        }
+    }
+}
+
 fn pair() -> [Body; 2] {
     [
         Body::new(

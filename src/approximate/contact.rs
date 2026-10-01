@@ -310,12 +310,75 @@ pub(super) fn box_current_with_frames(
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
+    box_with_point_margin([a, b], margin, margin, frames, work, scratch)
+}
+
+/// Extend an admitted fixed-box manifold to corners reachable during this interval.
+/// The SAT admission margin and normal selection remain unchanged.
+pub(super) fn fixed_box_interval(a: &Body, b: &Body) -> bool {
+    matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_)))
+        && (a.mass == 0.0 || b.mass == 0.0)
+        && [(a, b), (b, a)].into_iter().any(|(moving, fixed)| {
+            fixed.mass == 0.0
+                && moving.movable()
+                && !moving.sleeping
+                && !moving.rotation_locked
+                && moving.angular_velocity != V::ZERO
+        })
+}
+pub(super) fn box_current_interval_with_frames(
+    bodies: [&Body; 2],
+    h: Scalar,
+    margin: Scalar,
+    frames: [[V; 3]; 2],
+    work: &mut GeometryStats,
+    scratch: &mut ClipScratch,
+) -> Option<Manifold> {
+    let [a, b] = bodies;
+    // Translation plus radius * angular travel bounds how far any corner can move.
+    let reach = (b.velocity - a.velocity).length() * h
+        + (a.angular_velocity.length() * a.shape.radius()
+            + b.angular_velocity.length() * b.shape.radius())
+            * h;
+    box_with_point_margin([a, b], margin, margin + reach, frames, work, scratch)
+}
+fn box_with_point_margin(
+    bodies: [&Body; 2],
+    admission_margin: Scalar,
+    point_margin: Scalar,
+    frames: [[V; 3]; 2],
+    work: &mut GeometryStats,
+    scratch: &mut ClipScratch,
+) -> Option<Manifold> {
+    let [a, b] = bodies;
     work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
     let projected_axes = frame_projection_axes(a, b, frames);
-    let manifold = select_axis(a, b, margin, projected_axes, work)
-        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    let manifold = select_axis(a, b, admission_margin, projected_axes, work)
+        .and_then(|best| box_points(a, b, point_margin, best, frames, work, scratch));
     work.manifold_candidates += u64::from(manifold.is_some());
     manifold
+}
+
+pub(super) fn current_interval_counted(
+    a: &Body,
+    b: &Body,
+    h: Scalar,
+    margin: Scalar,
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    if !fixed_box_interval(a, b) {
+        return current_counted(a, b, margin, work);
+    }
+    work.current_queries += 1;
+    work.manifold_refreshes += 1;
+    box_current_interval_with_frames(
+        [a, b],
+        h,
+        margin,
+        [a.orientation.axes(), b.orientation.axes()],
+        work,
+        &mut ClipScratch::default(),
+    )
 }
 
 pub(super) fn box_prepared(
@@ -711,7 +774,7 @@ pub(super) fn swept(
         return Ok(None);
     };
     Ok(finish_sweep(a, b, dt, time, |aa, bb| {
-        current_counted(aa, bb, margin.max(1e-6), work)
+        current_interval_counted(aa, bb, dt * (1.0 - time), margin.max(1e-6), work)
     }))
 }
 
@@ -764,7 +827,18 @@ pub(super) fn box_swept_with_frames(
     finish_sweep(a, b, dt, time, |aa, bb| {
         work.current_queries += 1;
         work.manifold_refreshes += 1;
-        box_current_with_frames(aa, bb, margin.max(1e-6), frames, work, scratch)
+        if fixed_box_interval(aa, bb) {
+            box_current_interval_with_frames(
+                [aa, bb],
+                dt * (1.0 - time),
+                margin.max(1e-6),
+                frames,
+                work,
+                scratch,
+            )
+        } else {
+            box_current_with_frames(aa, bb, margin.max(1e-6), frames, work, scratch)
+        }
     })
 }
 
