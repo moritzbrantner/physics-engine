@@ -18,20 +18,8 @@ fn physical(world: &World) -> Vec<RigidBody> {
     world.bodies().cloned().collect()
 }
 
-fn semantic_report(mut report: StepReport) -> StepReport {
-    // Capacity retention is the intended observable diagnostic difference.
-    report.stats.work.staged_state_capacity_growths = 0;
-    report.stats.work.staged_state_capacity_bytes = 0;
-    report.stats.work.broad_phase_capacity_growths = 0;
-    report.stats.work.candidate_buffer_peak_capacity_bytes = 0;
-    // Compare equivalent query work separately from actual preparation/reuse.
-    report.stats.work.sweep_bound_preparations += report.stats.work.fixed_sweep_bound_reuses;
-    report.stats.work.fixed_sweep_bound_preparations += report.stats.work.fixed_sweep_bound_reuses;
-    report.stats.work.fixed_sweep_bound_reuses = 0;
-    report.stats.work.fixed_bound_invalidations = 0;
-    report.stats.work.fixed_bound_cache_capacity_bytes = 0;
-    report
-}
+#[path = "translational_report.rs"]
+mod report;
 
 fn paired_step(w: &mut World) -> StepReport {
     let mut rebuilding = World::new(w.config());
@@ -40,7 +28,10 @@ fn paired_step(w: &mut World) -> StepReport {
     }
     let actual = w.step(1).unwrap();
     let expected = rebuilding.step(1).unwrap();
-    assert_eq!(semantic_report(actual.clone()), semantic_report(expected));
+    assert_eq!(
+        report::semantic_report(actual.clone()),
+        report::semantic_report(expected)
+    );
     assert_eq!(physical(w), physical(&rebuilding));
     actual
 }
@@ -180,7 +171,10 @@ pub fn failed_steps_retain_only_disposable_capacity_and_recover() {
         }
         let actual = w.step(1).unwrap();
         let expected = uninterrupted.step(1).unwrap();
-        assert_eq!(semantic_report(actual.clone()), semantic_report(expected));
+        assert_eq!(
+            report::semantic_report(actual.clone()),
+            report::semantic_report(expected)
+        );
         assert_eq!(actual.stats.work.staged_state_capacity_growths, 0);
         assert_eq!(physical(&w), physical(&uninterrupted));
     }
