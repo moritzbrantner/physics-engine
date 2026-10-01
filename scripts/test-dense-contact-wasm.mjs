@@ -40,12 +40,12 @@ for (let replay = 0; replay < 3; replay += 1) {
       assert.equal(m.independent_sleeping, 1);
       assert.equal(m.response_preparations, Number(admitted));
       assert.equal(m.inertia_preparations, Number(admitted));
-      assert(Math.abs(m.elapsed - 1 / 240) <= 1e-14);
+      assert(Math.abs(m.elapsed - (name === "Current" ? 1 / 60 : 1 / 240)) <= 1e-14);
       assert(m.energy + 20 * (m.rider_y - 1) <= m.external_work + 1e-10);
       if (name === "Current" || name === "SlowCurrent") {
         const speed = name === "Current" ? 3 : 0.25;
         assert(Math.abs(m.rider_vy - speed) <= 1e-10);
-        assert(Math.abs(m.rider_y - 1 - speed / 240) <= 1e-10);
+        assert(Math.abs(m.rider_y - 1 - speed * (name === "Current" ? 1 / 60 : 1 / 240)) <= 1e-10);
       }
       if (name === "Swept" || name === "SkinMiss" || name === "BroadMiss") assert(m.sweep_queries > 0);
       if (!admitted) {

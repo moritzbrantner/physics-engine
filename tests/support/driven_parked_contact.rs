@@ -26,6 +26,13 @@ impl Case {
     fn admits(self) -> bool {
         matches!(self, Self::Current | Self::SlowCurrent | Self::Swept)
     }
+    fn interval(self) -> f64 {
+        if matches!(self, Self::Current) {
+            1.0 / 60.0
+        } else {
+            H
+        }
+    }
     fn speed(self) -> f64 {
         match self {
             Self::SlowCurrent => 0.25,
@@ -102,17 +109,18 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     let mut restored = Checkpoint::from_bytes(&bytes, CONTEXT, CheckpointLimits::default())
         .unwrap()
         .restore();
+    let h = case.interval();
     let before = w.elapsed_seconds();
-    let report = w.step(H).unwrap();
-    repeated.step(H).unwrap();
-    restored.step(H).unwrap();
+    let report = w.step(h).unwrap();
+    repeated.step(h).unwrap();
+    restored.step(h).unwrap();
     for other in [&repeated, &restored] {
         assert_eq!(
             w.checkpoint(CONTEXT).unwrap().to_bytes(),
             other.checkpoint(CONTEXT).unwrap().to_bytes()
         );
     }
-    assert!((w.elapsed_seconds() - before - H).abs() <= 16.0 * f64::EPSILON * (before + H));
+    assert!((w.elapsed_seconds() - before - h).abs() <= 16.0 * f64::EPSILON * (before + h));
     assert_eq!(report.substeps, 1);
     assert!(report.impulse_iterations <= 8);
     assert!(report.convergence.constraint_visits <= 8 * report.contact_points);
@@ -121,7 +129,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     let driven = w.body(BodyId(ids[0])).unwrap();
     assert!(driven.external && !driven.is_sleeping());
     assert_eq!(driven.velocity, V(0.0, case.speed(), 0.0));
-    assert!((driven.position - (case.position() + driven.velocity * H)).length() <= 1e-12);
+    assert!((driven.position - (case.position() + driven.velocity * h)).length() <= 1e-12);
     let rider = w.body(BodyId(ids[1])).unwrap();
     assert_eq!(rider.mass, 2.0);
     assert!(rider.position.finite() && rider.velocity.finite() && rider.angular_velocity.finite());
@@ -151,7 +159,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
         );
         if !matches!(case, Case::Swept) {
             assert!((rider.velocity.1 - case.speed()).abs() <= 1e-10);
-            assert!((rider.position.1 - 1.0 - case.speed() * H).abs() <= 1e-10);
+            assert!((rider.position.1 - 1.0 - case.speed() * h).abs() <= 1e-10);
             assert_eq!(rider.angular_velocity, V::ZERO);
         } else {
             // Admission is the contract here; restitution/remaining-time response is #246.
