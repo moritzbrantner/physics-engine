@@ -124,11 +124,15 @@ pub fn run() {
     );
     assert_eq!(world.bodies().cloned().collect::<Vec<_>>(), before);
     check(&mut world, 0, 0);
+    // Releasing capacity must preserve invalidations already performed by mutation.
+    world
+        .set_position(BodyId(20), Vec3i::new(55, 0, 0))
+        .unwrap();
     let before_release = world.bodies().cloned().collect::<Vec<_>>();
     world.release_step_scratch();
     assert_eq!(world.retained_step_scratch_bytes(), 0);
     assert_eq!(world.bodies().cloned().collect::<Vec<_>>(), before_release);
-    check(&mut world, 3, 0);
+    check(&mut world, 3, 1);
     check(&mut world, 0, 0);
     let mut cloned = world.clone();
     check(&mut cloned, 0, 0);

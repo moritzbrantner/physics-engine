@@ -331,8 +331,10 @@ impl World {
     /// Releases disposable step capacity without changing bodies, stationary evidence or replay.
     /// A later active step may allocate again; no query or simulation history is discarded.
     pub fn release_step_scratch(&mut self) {
+        let pending_invalidations = self.broad_phase.fixed_bounds.pending_invalidations;
         self.staged_states = Vec::new();
         self.broad_phase = BroadPhaseScratch::default();
+        self.broad_phase.fixed_bounds.pending_invalidations = pending_invalidations;
     }
 
     fn step_staged(
