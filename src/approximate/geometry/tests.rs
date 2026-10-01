@@ -2,6 +2,63 @@ use super::super::{Config, Report, World, primitive};
 use super::*;
 
 #[test]
+fn interval_points_preserve_ordinary_admission_witnesses_and_fallbacks() {
+    let floor = Body::new(
+        BodyId(1),
+        Shape::Box(Vector(1.0, 0.5, 1.0)),
+        Vector::ZERO,
+        0.0,
+    );
+    let mut seed = 243_u64;
+    let mut value = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 32) as f64 / u32::MAX as f64 * 2.0 - 1.0
+    };
+    let (mut admitted, mut fallbacks) = (0_u32, 0_u32);
+    for _ in 0..2000 {
+        let mut body = Body::new(
+            BodyId(2),
+            Shape::Box(Vector(1.0, 1.0, 1.0)),
+            Vector(value() * 2.0, 1.5 + value(), value() * 2.0),
+            2.0,
+        );
+        body.orientation = Quaternion(value(), value(), value(), value()).normalized();
+        body.velocity = Vector(value(), value(), value());
+        body.angular_velocity = Vector(3.0, -2.0, 4.0);
+        let mut ordinary_work = GeometryStats::default();
+        let ordinary = contact::current_counted(&floor, &body, 0.02, &mut ordinary_work);
+        let mut cache = GeometryCache::default();
+        cache.begin(2);
+        let interval = cache.query_interval(
+            [0, 1],
+            [&floor, &body],
+            1.0 / 60.0,
+            0.02,
+            &mut GeometryStats::default(),
+        );
+        assert_eq!(ordinary.is_some(), interval.is_some());
+        if let (Some(ordinary), Some(interval)) = (ordinary, interval) {
+            admitted += 1;
+            assert_eq!(ordinary.normal, interval.normal);
+            let ordinary_points: Vec<_> = ordinary.points.into_iter().collect();
+            let interval_points: Vec<_> = interval.points.into_iter().collect();
+            let retained: Vec<_> = interval_points
+                .into_iter()
+                .filter(|p| p.separation <= 0.02)
+                .collect();
+            assert_eq!(retained, ordinary_points);
+            if ordinary_work.support_evaluations == 2 {
+                fallbacks += 1;
+            }
+        }
+    }
+    assert!(
+        admitted > 0 && fallbacks > 0,
+        "admitted={admitted} fallback={fallbacks}"
+    );
+}
+
+#[test]
 fn fixed_interval_contacts_match_fresh_geometry_and_response() {
     for ids in [[1, 2], [2, 1]] {
         let mut world = World::new(Config {

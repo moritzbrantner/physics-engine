@@ -30,18 +30,19 @@ let previousMoving;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
   const fixedInterval = Object.fromEntries([
-    "peak_floor", "cases", "contact_points", "sweep_queries", "constraint_visits",
+    "peak_floor", "cases", "contact_points", "sweep_queries", "constraint_visits", "retained_upward_velocity",
   ].map((field, i) => {
     const value = instance.exports.fixed_contact_interval_metric(i);
     assert(Number.isFinite(value), field);
     return [field, value];
   }));
   assert(fixedInterval.peak_floor <= 0.5);
+  assert(fixedInterval.retained_upward_velocity > 0);
   assert.equal(fixedInterval.cases, 64);
   assert(fixedInterval.contact_points > 0 && fixedInterval.sweep_queries > 0 && fixedInterval.constraint_visits > 0);
   if (previousFixedInterval) assert.deepEqual(fixedInterval, previousFixedInterval);
   previousFixedInterval = fixedInterval;
-  assert(Number.isNaN(instance.exports.fixed_contact_interval_metric(5)));
+  assert(Number.isNaN(instance.exports.fixed_contact_interval_metric(6)));
   console.log(`FIXED_CONTACT_INTERVAL_WASM ${JSON.stringify({ replay, fixedInterval })}`);
   const stationaryFields = [
     "vx", "vy", "vz", "wx", "wy", "wz", "energy", "external_work", "woken_bodies",

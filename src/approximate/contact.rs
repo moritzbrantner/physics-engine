@@ -31,6 +31,49 @@ impl Points {
     fn one(p: Point) -> Self {
         Self::selected(&[p])
     }
+    fn with_speculative(input: &[Point], admission_margin: Scalar) -> Self {
+        // No reduction is needed when every candidate fits. Keep geometric traversal order.
+        if input.len() <= 4 {
+            return Self::selected(input);
+        }
+        let admitted = input
+            .iter()
+            .filter(|p| p.separation <= admission_margin)
+            .count();
+        let mut out = Self {
+            values: [Point::default(); 4],
+            len: admitted.min(4),
+        };
+        // Preserve the ordinary manifold's selection and order before adding future corners.
+        for slot in 0..out.len {
+            let ordinal = if admitted > 4 {
+                slot * admitted / 4
+            } else {
+                slot
+            };
+            if let Some(point) = input
+                .iter()
+                .filter(|p| p.separation <= admission_margin)
+                .nth(ordinal)
+            {
+                out.values[slot] = *point;
+            }
+        }
+        let separated = input.len() - admitted;
+        let extra = (4 - out.len).min(separated);
+        for slot in 0..extra {
+            let ordinal = slot * separated / extra;
+            if let Some(point) = input
+                .iter()
+                .filter(|p| p.separation > admission_margin)
+                .nth(ordinal)
+            {
+                out.values[out.len] = *point;
+                out.len += 1;
+            }
+        }
+        out
+    }
     pub fn len(&self) -> usize {
         self.len
     }
@@ -244,7 +287,10 @@ fn box_manifold(a: &Body, b: &Body, margin: Scalar, work: &mut GeometryStats) ->
     box_points(
         a,
         b,
-        margin,
+        ContactMargins {
+            admission: margin,
+            points: margin,
+        },
         best,
         [a.orientation.axes(), b.orientation.axes()],
         work,
@@ -353,8 +399,20 @@ fn box_with_point_margin(
     let [a, b] = bodies;
     work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
     let projected_axes = frame_projection_axes(a, b, frames);
-    let manifold = select_axis(a, b, admission_margin, projected_axes, work)
-        .and_then(|best| box_points(a, b, point_margin, best, frames, work, scratch));
+    let manifold = select_axis(a, b, admission_margin, projected_axes, work).and_then(|best| {
+        box_points(
+            a,
+            b,
+            ContactMargins {
+                admission: admission_margin,
+                points: point_margin,
+            },
+            best,
+            frames,
+            work,
+            scratch,
+        )
+    });
     work.manifold_candidates += u64::from(manifold.is_some());
     manifold
 }
@@ -391,16 +449,33 @@ pub(super) fn box_prepared(
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
     work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
-    let manifold = select_axis(a, b, margin, projections.axes.iter().copied(), work)
-        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    let manifold =
+        select_axis(a, b, margin, projections.axes.iter().copied(), work).and_then(|best| {
+            box_points(
+                a,
+                b,
+                ContactMargins {
+                    admission: margin,
+                    points: margin,
+                },
+                best,
+                frames,
+                work,
+                scratch,
+            )
+        });
     work.manifold_candidates += u64::from(manifold.is_some());
     manifold
 }
 
+struct ContactMargins {
+    admission: Scalar,
+    points: Scalar,
+}
 fn box_points(
     a: &Body,
     b: &Body,
-    margin: Scalar,
+    margins: ContactMargins,
     best: (Scalar, V, usize),
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
@@ -455,7 +530,7 @@ fn box_points(
         }
         for &p in &scratch.polygon {
             let sep = (p - ref_center).dot(rn);
-            if sep <= margin {
+            if sep <= margins.points {
                 let projected = p - rn * sep;
                 let (pa, pb) = if swap { (p, projected) } else { (projected, p) };
                 points.push(Point {
@@ -466,7 +541,7 @@ fn box_points(
             }
         }
     }
-    if points.is_empty() {
+    if !points.iter().any(|p| p.separation <= margins.admission) {
         let a_support = box_contact_support(a, n, work);
         let b_support = box_contact_support(b, -n, work);
         let p = (a_support + b_support) * 0.5;
@@ -478,7 +553,11 @@ fn box_points(
     }
     Some(Manifold {
         normal: n,
-        points: Points::selected(points),
+        points: if margins.points > margins.admission {
+            Points::with_speculative(points, margins.admission)
+        } else {
+            Points::selected(points)
+        },
         swept: false,
         time: 0.0,
     })

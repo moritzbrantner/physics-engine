@@ -22,7 +22,7 @@ mod stationary_external_support;
 #[path = "../../tests/support/tangential_contact_wake.rs"]
 mod tangential_contact_wake;
 thread_local! {
-    static FIXED_INTERVAL_RESULTS: std::cell::Cell<Option<[f64; 5]>> = const {
+    static FIXED_INTERVAL_RESULTS: std::cell::Cell<Option<[f64; 6]>> = const {
         std::cell::Cell::new(None)
     };
     static STATIONARY_RESULTS: std::cell::Cell<Option<[[f64; 21]; 36]>> = const {

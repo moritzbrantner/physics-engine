@@ -13,7 +13,10 @@ fn box_edge_contact_keeps_the_midpoint_of_tied_support_features() {
     let manifold = box_points(
         &a,
         &b,
-        0.0,
+        ContactMargins {
+            admission: 0.0,
+            points: 0.0,
+        },
         (-0.1, V::X, 6),
         [a.orientation.axes(), b.orientation.axes()],
         &mut work,

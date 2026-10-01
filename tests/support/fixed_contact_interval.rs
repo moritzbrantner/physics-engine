@@ -61,8 +61,8 @@ fn bytes(w: &World) -> Vec<u8> {
     w.checkpoint(CONTEXT).unwrap().to_bytes()
 }
 
-/// [peak floor error, cases, total contact points, sweep queries, constraint visits].
-pub fn run() -> [f64; 5] {
+/// [64-case peak floor error, cases, points, sweeps, visits, finite-floor upward response].
+pub fn run() -> [f64; 6] {
     let mut peak_floor = 0.0_f64;
     let mut cases = 0_u32;
     let (mut points, mut sweeps, mut visits) = (0_u64, 0_u64, 0_u64);
@@ -180,5 +180,54 @@ pub fn run() -> [f64; 5] {
         points as f64,
         sweeps as f64,
         visits as f64,
+        finite_floor_retains_actual_contacts(),
     ]
+}
+
+/// Upward response for the two ID orders of a seven-vertex finite-floor contact.
+pub fn finite_floor_retains_actual_contacts() -> f64 {
+    let mut minimum_upward_velocity = f64::INFINITY;
+    for ids in [[1, 2], [2, 1]] {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            substeps: 1,
+            convergence: None,
+            ..Config::default()
+        })
+        .unwrap();
+        world
+            .add_body(Body::new(
+                BodyId(ids[0]),
+                Shape::Box(V(18.0, 9.0, 18.0)),
+                V::ZERO,
+                0.0,
+            ))
+            .unwrap();
+        let mut body = Body::new(
+            BodyId(ids[1]),
+            Shape::Box(V(18.0, 18.0, 18.0)),
+            V(-1.4180084689188672, 36.00023777180524, -5.57869237669652),
+            2.0,
+        );
+        body.orientation = Q(
+            0.4301449589172992,
+            0.023109449875315845,
+            -0.06802955923209429,
+            0.8998962421941668,
+        );
+        body.angular_velocity = V(0.0, 0.0, -200.0);
+        let initial_energy = body.kinetic_energy();
+        world.add_body(body).unwrap();
+        let report = world.step(1.0 / 240.0).unwrap();
+        let body = world.body(BodyId(ids[1])).unwrap();
+        assert!(
+            body.velocity.1 > 0.0,
+            "the approaching actual corner must receive a normal impulse: {body:?}"
+        );
+        minimum_upward_velocity = minimum_upward_velocity.min(body.velocity.1);
+        assert!(body.kinetic_energy() <= initial_energy * (1.0 + 1e-10));
+        assert!(report.contact_points <= 4 && report.impulse_iterations <= 8);
+        assert_eq!(world.elapsed_seconds(), 1.0 / 240.0);
+    }
+    minimum_upward_velocity
 }
