@@ -14,6 +14,8 @@ assert(Number.isNaN(instance.exports.primitive_contact_metric(0)));
 assert(Number.isNaN(instance.exports.moving_support_metric(0, 0, 0)));
 assert(Number.isNaN(instance.exports.driven_parked_metric(0, 0)));
 assert(Number.isNaN(instance.exports.contact_wake_force_metric(0, 0)));
+assert(Number.isNaN(instance.exports.tangential_contact_metric(0, 0)));
+let previousTangent;
 let previousForces;
 let previousDriven;
 let previous;
@@ -21,6 +23,48 @@ let previousPrimitive;
 let previousMoving;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
+  const tangentFields = [
+    "vx", "vy", "vz", "wx", "wy", "wz", "energy", "external_work", "woken_bodies",
+    "response_preparations", "inertia_preparations", "inertia_applications", "current_queries",
+    "sweep_queries", "contact_points", "constraint_visits", "elapsed", "max_motion_error",
+    "sleeping", "independent_sleeping",
+  ];
+  const tangent = ["Tangent", "Loaded", "LoadedFour", "Slow", "Normal", "Stationary",
+    "Separating", "SkinMiss", "BroadMiss", "Sensor", "Layers", "SpinCenter"]
+    .flatMap((name, caseIndex) => [0, 1].map(order => {
+      const m = Object.fromEntries(tangentFields.map((field, i) => {
+        const value = instance.exports.tangential_contact_metric(2 * caseIndex + order, i);
+        assert(Number.isFinite(value), `${name}/${order}/${field}`);
+        return [field, value];
+      }));
+      const admitted = caseIndex < 5;
+      const loaded = name === "Loaded" || name === "LoadedFour";
+      const substeps = name === "LoadedFour" ? 4 : 1;
+      const dt = substeps / 240;
+      assert.equal(m.woken_bodies, Number(admitted));
+      assert.equal(m.sleeping, Number(!admitted));
+      assert.equal(m.independent_sleeping, 1);
+      assert.equal(m.response_preparations, admitted ? substeps : 0);
+      assert.equal(m.inertia_preparations, m.response_preparations);
+      assert(Math.abs(m.vx - (loaded ? 6 * dt : 0)) <= 1e-10);
+      assert(Math.abs(m.vy - (name === "Normal" ? 3 : 0)) <= 1e-10);
+      assert.equal(m.vz, 0);
+      assert.equal(m.wx, 0);
+      assert.equal(m.wy, 0);
+      assert(Math.abs(m.wz - (loaded ? 15 * dt : 0)) <= 1e-10);
+      assert(Math.abs(m.elapsed - dt) <= 1e-14);
+      assert(m.max_motion_error <= 1e-10);
+      assert(m.energy + (name === "Normal" ? 60 * dt : 0) <= m.external_work + 1e-10);
+      assert(m.constraint_visits <= 8 * m.contact_points);
+      if (!admitted) { assert.equal(m.contact_points, 0); assert.equal(m.constraint_visits, 0); }
+      if (name === "SkinMiss" || name === "BroadMiss") assert(m.sweep_queries > 0);
+      return { case: name, ids: order === 0 ? [1, 10] : [10, 1], substeps, ...m };
+    }));
+  if (previousTangent) assert.deepEqual(tangent, previousTangent, "same-target tangent contact replay");
+  previousTangent = tangent;
+  assert(Number.isNaN(instance.exports.tangential_contact_metric(24, 0)));
+  assert(Number.isNaN(instance.exports.tangential_contact_metric(0, tangentFields.length)));
+  console.log(`TANGENTIAL_CONTACT_WAKE_WASM ${JSON.stringify({ replay, rows: tangent })}`);
   const forceFields = [
     "vx", "vy", "vz", "angular_speed", "energy", "external_work", "woken_bodies",
     "response_preparations", "inertia_preparations", "inertia_applications",

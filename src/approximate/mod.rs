@@ -869,9 +869,18 @@ impl World {
                         let a = &self.bodies[*i];
                         let b = &self.bodies[*j];
                         let approach = -(b.velocity - a.velocity).dot(m.normal);
+                        let driven_contact_motion = (a.sleeping || b.sleeping)
+                            && (a.external || b.external)
+                            && (&m.points).into_iter().any(|point| {
+                                let spin = a.linear_support.is_none() && b.linear_support.is_none();
+                                let relative = contact_velocity(b, point.rb, spin)
+                                    - contact_velocity(a, point.ra, spin);
+                                relative != Vector::ZERO && relative.dot(m.normal) <= 0.0
+                            });
                         let disruptive = m.swept
                             || approach > self.config.sleep_speed
-                            || ((a.external || b.external) && approach > 0.0);
+                            || ((a.external || b.external) && approach > 0.0)
+                            || driven_contact_motion;
                         [
                             if disruptive && a.sleeping && b.mass > 0.0 {
                                 Some(a.id)

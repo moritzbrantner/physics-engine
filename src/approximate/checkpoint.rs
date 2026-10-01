@@ -11,7 +11,7 @@ use super::{
 const MAGIC: &[u8; 8] = b"PEFLOAT\0";
 const FORMAT: u32 = 2;
 // Bump when continuation semantics change, even if the byte layout does not.
-const ALGORITHM: u32 = 4;
+const ALGORITHM: u32 = 5;
 const DIGEST_BYTES: usize = 32;
 const MIN_BODY_BYTES: usize = 260;
 const POINT_BYTES: usize = 104;
