@@ -59,3 +59,9 @@ This admission change is not a replacement for the floating-state persistent-man
 The separate direct-impact tower matrix remains an independent acceptance case. Do not label a
 near-miss pass as proof that the free-rotating tower survives direct projectile impacts. The default
 numerical backend remains f64; no exact-reference fallback or raised event budget is introduced.
+
+The floating-state solver separately admits translating external contacts with
+naturally parked dynamics before refreshing their response. Its strict-surface
+and interval-miss controls, discarded geometry work, checkpoint boundary and
+remaining restart/CCD limitations are documented in
+[External contact admission for parked dynamics](driven-parked-contact.md).
