@@ -8,7 +8,7 @@ The source of next steps is the roadmap issue #191 and its open child issues (PE
 
 | Agent | Does |
 | --- | --- |
-| Claude Opus | Orchestrates (`/orchestrate`). Turns drafts into ready specs, writes new specs from the roadmap, reviews PRs against their spec and merges them. Implements critical-path and cross-cutting engine work itself (`agent:opus`): anything a consumer repository is blocked on, public API and world-contract changes, checkpoint format/algorithm changes. |
+| Claude Opus | Orchestrates (`/orchestrate`): classifies every open issue for Opus, Sonnet or Sol, turns drafts into ready specs, writes new specs from the roadmap, reviews PRs against their spec and merges them. Implements critical-path and cross-cutting engine work itself (`agent:opus`): anything a consumer repository is blocked on, public API and world-contract changes, checkpoint format/algorithm changes. |
 | ChatGPT Sol | Implements narrow, technically deep `agent:sol` tasks via the Codex `implementer-loop` skill. The spec should settle the API surface, solver semantics, versions and scope so Sol can spend depth on correctness rather than redesigning adjacent systems. Typical work: contact-quality controls, primitive collider kernels, measured maintenance slices. Runs occasionally, separately from `/orchestrate`, through a backlog of up to three tasks that nothing else waits on. |
 | Claude Sonnet | Implements `agent:sonnet` tasks: Pages scenario UI (`site/`), docs, and mechanical follow-ups. |
 | GitHub Actions | The full deterministic gate on every PR (`validate.yml`: fast tier, long replays, performance ratchet, Pages build with WASM contract tests; `performance-evidence.yml`: advisory evidence for path-matched PRs). |
