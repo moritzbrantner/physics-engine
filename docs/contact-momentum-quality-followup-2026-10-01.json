@@ -4,9 +4,9 @@
     237,
     243
   ],
-  "producerCommit": "4389758b5ce139d9a6ab7af68f1f6d5a2911fee7",
+  "producerCommit": "11b070b0b9ba7fa0a3640cf9a57b4f17b6c6fa4e",
   "sourceDirty": false,
-  "sourceRevision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "sourceRevision": "46d8793bb3034326561f876dcc67dbaa5aa1e432",
   "build": {
     "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
     "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
@@ -24,8 +24,8 @@
         "experimental-soft-contact"
       ]
     ],
-    "productionDiagnosticModuleSha256": "06236338f64c5976eb8ad84e1b866f1e7daf033de89700c5428ccfc54def9422",
-    "productionModuleSha256": "03307c7219ca8f996e9da6a87e7b594590ba2c0aa5bed57107af6451fc28c775"
+    "productionDiagnosticModuleSha256": "7f5a6981c1d9c207073f81b6e10305e6c597cbcefe35a652d775925c9ed0f739",
+    "productionModuleSha256": "456994a8e7a4b5827cb36e92669ba0e3e5fe03740a6674d2fd0f18024166a4d1"
   },
   "checkpoint": {
     "format": 2,
@@ -122,6 +122,24 @@
       "sweep queries",
       "primary constraint visits",
       "minimum finite-floor upward response"
+    ],
+    "softMomentum": [
+      {
+        "values": [
+          5.057012078047297e-16,
+          4.731782613072224e-16,
+          0.9975247524752475,
+          768.0
+        ]
+      },
+      {
+        "values": [
+          5.057012078047297e-16,
+          4.731782613072224e-16,
+          0.9975247524752475,
+          768.0
+        ]
+      }
     ]
   },
   "wasm": {
@@ -1062,14 +1080,14 @@
     "otherContracts": "The same calls also assert dense/material/moving/parked/force/tangent/stationary contracts. Their raw historical producers remain in their own evidence records; no new bit identity across feature sets or targets is promised."
   },
   "originalStackComparisons": {
-    "producerCommit": "4389758b5ce139d9a6ab7af68f1f6d5a2911fee7",
+    "producerCommit": "11b070b0b9ba7fa0a3640cf9a57b4f17b6c6fa4e",
     "rows": [
       {
         "case": "equal",
         "policy": 0,
-        "peak_floor": 0.16786101297283013,
-        "peak_energy": 49107.901843146916,
-        "final_energy": 2494.7872006226835,
+        "peak_floor": 0.1678610137127538,
+        "peak_energy": 49107.90184314622,
+        "final_energy": 3454.116904159384,
         "sleeping": false
       },
       {
@@ -1083,15 +1101,15 @@
       {
         "case": "equal",
         "policy": 2,
-        "peak_floor": 0.06502937587659194,
-        "peak_energy": 55716.69108997547,
+        "peak_floor": 0.06502937587657773,
+        "peak_energy": 55716.69108997549,
         "final_energy": 0.0,
         "sleeping": true
       },
       {
         "case": "mixed",
         "policy": 2,
-        "peak_floor": 0.21862795838047824,
+        "peak_floor": 0.21862795838059904,
         "peak_energy": 50400.0,
         "final_energy": 0.0,
         "sleeping": true
@@ -1115,7 +1133,7 @@
       {
         "case": "sliding",
         "policy": 2,
-        "peak_floor": 0.03799754279371475,
+        "peak_floor": 0.037997542793711196,
         "peak_energy": 51336.86044406519,
         "final_energy": 0.0,
         "sleeping": true
@@ -1456,6 +1474,98 @@
           "sleeping": true
         }
       ]
+    },
+    {
+      "name": "Superseded full-gap midpoint producer before box tangential-roundoff repair",
+      "producerCommit": "4389758b5ce139d9a6ab7af68f1f6d5a2911fee7",
+      "rows": [
+        {
+          "case": "equal",
+          "policy": 0,
+          "peak_floor": 0.16786101297283013,
+          "peak_energy": 49107.901843146916,
+          "final_energy": 2494.7872006226835,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 1,
+          "peak_floor": 0.05358973925994105,
+          "peak_energy": 56928.68718706514,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "equal",
+          "policy": 2,
+          "peak_floor": 0.06502937587659194,
+          "peak_energy": 55716.69108997547,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "mixed",
+          "policy": 2,
+          "peak_floor": 0.21862795838047824,
+          "peak_energy": 50400.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 0,
+          "peak_floor": 0.1024070461498343,
+          "peak_energy": 39600.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 1,
+          "peak_floor": 0.03749482187761909,
+          "peak_energy": 54414.37788711329,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 2,
+          "peak_floor": 0.03799754279371475,
+          "peak_energy": 51336.86044406519,
+          "final_energy": 0.0,
+          "sleeping": true
+        }
+      ]
+    },
+    {
+      "name": "Hosted initial tower-rest failure",
+      "producerCommit": "8406acf83d0e801165d85e55e62bf9714676f8b0",
+      "run": "https://github.com/moritzbrantner/physics-engine/actions/runs/36825238666",
+      "test": "relaxed_arrow_impact_stops_recorrecting_the_tower_within_the_regression_window",
+      "initial240TickQuiescence": false,
+      "arrowFired": false,
+      "localReproductions": 2
+    },
+    {
+      "name": "Nine-crate reduced diagnostic rejected",
+      "state": "Uncommitted diagnostic removed; also fails with reciprocal correction disabled, so not a candidate-regression fixture",
+      "bodyIds": [
+        100,
+        101,
+        104,
+        108,
+        116,
+        117,
+        123,
+        129,
+        130
+      ]
+    },
+    {
+      "name": "Unconditional normal projection rejected",
+      "state": "Uncommitted one-variable probe removed; generic primitive support witnesses have real tangential gaps",
+      "control": "generic_support_witnesses_keep_the_full_reciprocal_midpoint",
+      "result": "Fails zero cube spin; box-only guard passes"
     }
   ],
   "verification": {
@@ -1470,9 +1580,18 @@
     "geometryRetentionControls": 2000,
     "geometryRetentionAssertions": "Ordinary SAT admission and normal unchanged; original admitted witnesses and existing fallback retained in relative order. Both ordinary and fallback cases exercised.",
     "reviewStandards": "zero remaining",
-    "reviewSpec": "zero remaining after admitted-witness correction",
+    "reviewSpec": "zero remaining after admitted-witness and box-only projection corrections",
     "productionDiagnosticIsolation": "Both getters absent from the ordinary production WASM module",
-    "hosted": "pending; acceptance and ratchet epoch unchanged"
+    "hosted": "pending on final documentation head; prior failed run retained",
+    "softDemoApproximateLibrary": {
+      "passed": 6,
+      "failed": 0,
+      "towerRestTicks": 240,
+      "postArrowRestTicks": 90,
+      "fixtureAndLimitsUnchanged": true
+    },
+    "rotatedTranslatedMomentumControls": 12,
+    "genericMidpointControls": 2
   },
   "limitations": [
     "Fixed-box extra corners use conservative reach and first-order speculative velocity targets; not exact rotational TOI.",

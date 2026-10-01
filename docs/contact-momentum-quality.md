@@ -22,7 +22,11 @@ together before effective-mass preparation, velocity solving and local warm-star
 anchor capture. Separation still supplies the original normal target. This is a
 response decision; collision geometry, admission and shared kernel ownership do
 not change. The midpoint uses relative coordinates rather than adding large
-absolute world points.
+absolute world points. For box/box contacts, clipping constructs normal-aligned
+witnesses, so midpoint preparation projects their reconstructed gap onto that
+normal. This avoids feeding tangential cancellation roundoff into resting friction
+rows. Other primitive pairs retain the full gap: their independent support vertices
+can have real tangential separation.
 
 Fixed, external, sleeping-anchor, linear-support and nonreciprocal response keep
 their existing authority. Swept contacts keep their existing temporal witness semantics. This
@@ -78,21 +82,26 @@ admission, normals and actual/fallback witnesses. The review-found pre-correctio
 had zero response despite its approaching actual corner.
 
 The original seven stack comparisons are retained without fixture or acceptance edits.
-The final candidate's selected mixed/relaxed peak is 0.21862795838047824, peak kinetic
+The final candidate's selected mixed/relaxed peak is 0.21862795838059904, peak kinetic
 energy 50400, final energy zero, and natural sleep. All equal/sliding soft controls
 settle, as does the low-friction rigid control. The equal rigid comparison still moves
-(final energy about 2494.79); this PR does not resolve the existing general settling
+(final energy about 3454.12); this PR does not resolve the existing general settling
 limitation. Raw prior failures and rejected sweep-only/early-friction probes remain
 part of the diagnostic evidence rather than being reclassified as passing results.
 
 [Fresh follow-up evidence](contact-momentum-quality-followup-2026-10-01.json) records
-producer `4389758b5ce139d9a6ab7af68f1f6d5a2911fee7`, both native feature modes,
+producer `11b070b0b9ba7fa0a3640cf9a57b4f17b6c6fa4e`, both native feature modes,
 three WASM repeats per mode, all seven stack comparisons and retained rejected probes.
 The 64-case peak floor error is 0.0006985640750514222 in production and
 0.0006996034284334485 with optional soft contacts; momentum errors remain below
 5.1e-16. Measurements repeat within their own build/target/feature identity.
 All 16 fast checks, 109 optional solver tests (seven existing ignored diagnostics),
-checkpoint controls and both independent reviews pass. Both diagnostic getters are
+six optional demo tests, 12 rotated/translated momentum controls and two generic
+midpoint controls pass. The existing tower test requires initial rest after 240 ticks
+and rest 90 ticks after the arrow. The prior hosted failure occurred before the
+arrow was fired; its run and rejected reductions remain in the raw evidence.
+
+Checkpoint controls and both independent reviews pass. Both diagnostic getters are
 absent from the ordinary production WASM module.
 
 ## Independent acceptance
@@ -160,4 +169,5 @@ Zero penetration velocity bias, coupled tangent solving,
 anisotropic friction projection and separated normal/friction sweeps were rejected
 because they failed the original controls. None is promoted by this repair.
 
-Resolved convention sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
+Final follow-up convention sourceRevision: `46d8793bb3034326561f876dcc67dbaa5aa1e432`.
+Historical producers used `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
