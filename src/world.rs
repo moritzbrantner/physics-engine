@@ -42,6 +42,10 @@ pub struct TranslationalStepWork {
     pub committed_velocity_deltas: usize,
     pub broad_phase_queries: usize,
     pub sweep_bound_preparations: usize,
+    /// Actual bound preparations for BodyKind::Fixed, across every query in this call.
+    pub fixed_sweep_bound_preparations: usize,
+    /// Actual bound preparations for BodyKind::Dynamic, across every query in this call.
+    pub dynamic_sweep_bound_preparations: usize,
     pub broad_phase_sorts: usize,
     pub broad_phase_pair_sorts: usize,
     /// Entry, active-index and candidate-pair vector capacity increases across all queries.
@@ -621,12 +625,15 @@ fn broad_phase_pairs(
     scratch.entries.reserve_exact(states.len());
     work.broad_phase_capacity_growths +=
         usize::from(scratch.entries.capacity() > previous_capacity);
-    scratch.entries.extend(
-        states
-            .iter()
-            .enumerate()
-            .map(|(body_index, state)| swept_bounds(body_index, state, horizon_subticks)),
-    );
+    scratch
+        .entries
+        .extend(states.iter().enumerate().map(|(body_index, state)| {
+            match state.body.kind {
+                BodyKind::Fixed => work.fixed_sweep_bound_preparations += 1,
+                BodyKind::Dynamic => work.dynamic_sweep_bound_preparations += 1,
+            }
+            swept_bounds(body_index, state, horizon_subticks)
+        }));
     let BroadPhaseScratch {
         entries,
         active,
@@ -944,6 +951,63 @@ fn quantize_axis(value: i128, id: BodyId) -> Result<i32, PhysicsError> {
 mod maintenance_tests {
     use super::*;
     use std::{hint::black_box, time::Instant};
+
+    mod fixed_bound_workload {
+        use crate as physics_engine;
+        include!("../tests/support/fixed_bound_workload.rs");
+    }
+
+    #[test]
+    #[ignore = "isolated preparation-stage timing; run explicitly in release mode"]
+    fn fixed_heavy_bound_preparation_stage() {
+        let input = fixed_bound_workload::input();
+        // The shared control also checks actual query counters and rebuilding parity.
+        black_box(fixed_bound_workload::run());
+        for count in [8, 64, 128] {
+            let mut world = input.world(count, input.gravity);
+            world.step(1).unwrap();
+            let mut states = world
+                .bodies()
+                .cloned()
+                .map(BodyState::new)
+                .collect::<Vec<_>>();
+            for state in &mut states {
+                state.apply_gravity(input.gravity, 1).unwrap();
+            }
+            let (fixed, dynamic): (Vec<_>, Vec<_>) = states
+                .iter()
+                .enumerate()
+                .partition(|(_, state)| state.body.kind == BodyKind::Fixed);
+            assert_eq!(fixed.len(), 261);
+            assert_eq!(dynamic.len(), count);
+            for horizon in [0, SUBTICK_SCALE] {
+                for trial in 0..9 {
+                    let measure = |rows: &[(usize, &BodyState)]| {
+                        let start = Instant::now();
+                        for _ in 0..120 {
+                            for &(index, state) in rows {
+                                black_box(swept_bounds(
+                                    index,
+                                    black_box(state),
+                                    black_box(horizon),
+                                ));
+                            }
+                        }
+                        start.elapsed().as_secs_f64() * 1000.0
+                    };
+                    let (fixed_ms, dynamic_ms) = if trial % 2 == 0 {
+                        (measure(&fixed), measure(&dynamic))
+                    } else {
+                        let dynamic_ms = measure(&dynamic);
+                        (measure(&fixed), dynamic_ms)
+                    };
+                    println!(
+                        "FIXED_BOUND_STAGE {{\"dynamic_bodies\":{count},\"fixed_bodies\":261,\"trial\":{trial},\"repetitions\":120,\"horizon_subticks\":{horizon},\"fixed_ms\":{fixed_ms},\"dynamic_ms\":{dynamic_ms}}}"
+                    );
+                }
+            }
+        }
+    }
 
     fn stationary_world(count: u64) -> World {
         let mut world = World::new(WorldConfig {
