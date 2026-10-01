@@ -3,6 +3,8 @@
 mod box_fixture_oracle;
 #[path = "../../tests/support/dense_contact.rs"]
 mod dense;
+#[path = "../../tests/support/driven_parked_contact.rs"]
+mod driven_parked_contact;
 #[path = "../../tests/support/contact_materials.rs"]
 mod materials;
 #[path = "../../tests/support/moving_support.rs"]
@@ -12,6 +14,9 @@ mod narrow_support;
 #[path = "../../tests/support/primitive_contacts.rs"]
 mod primitive_contacts;
 thread_local! {
+    static DRIVEN_RESULTS: std::cell::Cell<Option<[[f64; 18]; 18]>> = const {
+        std::cell::Cell::new(None)
+    };
     // Read-only acceptance measurements; this example is absent from production Pages.
     static NARROW_RESULTS: std::cell::RefCell<Option<[narrow_support::Measurements; 3]>> = const {
         std::cell::RefCell::new(None)
@@ -25,12 +30,23 @@ thread_local! {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn dense_contact_contract() -> i32 {
+    DRIVEN_RESULTS.with(|results| results.set(Some(driven_parked_contact::run())));
     dense::run();
     materials::run();
     NARROW_RESULTS.with(|results| *results.borrow_mut() = Some(narrow_support::run()));
     PRIMITIVE_RESULTS.with(|results| results.set(Some(primitive_contacts::run())));
     MOVING_RESULTS.with(|results| *results.borrow_mut() = Some(moving_support::run()));
     0
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn driven_parked_metric(case: u32, field: u32) -> f64 {
+    DRIVEN_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|rows| rows.get(case as usize).copied())
+            .and_then(|row| row.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn moving_support_metric(case: u32, cadence: u32, field: u32) -> f64 {
@@ -69,6 +85,7 @@ pub extern "C" fn narrow_support_metric(case: u32, cadence: u32, field: u32) -> 
 mod tests {
     #[test]
     fn native_dense_contact_contract() {
+        super::driven_parked_contact::run();
         super::dense::run();
         super::materials::run();
         super::narrow_support::run();

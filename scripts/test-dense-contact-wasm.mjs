@@ -12,11 +12,55 @@ const fields = [
 assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, 0)));
 assert(Number.isNaN(instance.exports.primitive_contact_metric(0)));
 assert(Number.isNaN(instance.exports.moving_support_metric(0, 0, 0)));
+assert(Number.isNaN(instance.exports.driven_parked_metric(0, 0)));
+let previousDriven;
 let previous;
 let previousPrimitive;
 let previousMoving;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
+  const drivenFields = [
+    "rider_y", "rider_vy", "energy", "external_work", "woken_bodies",
+    "response_preparations", "inertia_preparations", "inertia_applications",
+    "pair_tests", "narrow_tests", "current_queries", "sweep_queries",
+    "contact_points", "constraint_visits", "swept_contacts", "sleeping",
+    "independent_sleeping", "elapsed",
+  ];
+  const driven = ["Current", "SlowCurrent", "Swept", "SkinMiss", "BroadMiss", "Stationary", "Separating", "Sensor", "Layers"]
+    .flatMap((name, caseIndex) => [0, 1].map(order => {
+      const index = 2 * caseIndex + order;
+      const m = Object.fromEntries(drivenFields.map((field, fieldIndex) => {
+        const value = instance.exports.driven_parked_metric(index, fieldIndex);
+        assert(Number.isFinite(value), `${name}/${order}/${field}`);
+        return [field, value];
+      }));
+      const admitted = caseIndex < 3;
+      assert.equal(m.woken_bodies, Number(admitted));
+      assert.equal(m.sleeping, Number(!admitted));
+      assert.equal(m.independent_sleeping, 1);
+      assert.equal(m.response_preparations, Number(admitted));
+      assert.equal(m.inertia_preparations, Number(admitted));
+      assert(Math.abs(m.elapsed - 1 / 240) <= 1e-14);
+      assert(m.energy + 20 * (m.rider_y - 1) <= m.external_work + 1e-10);
+      if (name === "Current" || name === "SlowCurrent") {
+        const speed = name === "Current" ? 3 : 0.25;
+        assert(Math.abs(m.rider_vy - speed) <= 1e-10);
+        assert(Math.abs(m.rider_y - 1 - speed / 240) <= 1e-10);
+      }
+      if (name === "Swept" || name === "SkinMiss" || name === "BroadMiss") assert(m.sweep_queries > 0);
+      if (!admitted) {
+        assert.equal(m.rider_y, 1);
+        assert.equal(m.rider_vy, 0);
+        assert.equal(m.contact_points, 0);
+        assert.equal(m.constraint_visits, 0);
+      }
+      return { case: name, ids: order === 0 ? [1, 10] : [10, 1], ...m };
+    }));
+  if (previousDriven) assert.deepEqual(driven, previousDriven, "same-target driven/parked replay");
+  previousDriven = driven;
+  assert(Number.isNaN(instance.exports.driven_parked_metric(18, 0)));
+  assert(Number.isNaN(instance.exports.driven_parked_metric(0, drivenFields.length)));
+  console.log(`DRIVEN_PARKED_WASM ${JSON.stringify({ replay, rows: driven })}`);
   const rows = ["Balanced", "OffCenter", "Removal"].map((name, index) => {
     const result = { case: name };
     for (const [cadence, key] of ["ticks", "physical_substeps"].entries()) {
@@ -110,4 +154,4 @@ for (let replay = 0; replay < 3; replay += 1) {
   assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, fields.length)));
   console.log(`NARROW_SUPPORT_WASM ${JSON.stringify({ replay, rows })}`);
 }
-console.log("Dense contact WASM: three replays passed, including physical substeps, materials, narrow supports, axial primitive pairs and moving supports.");
+console.log("Dense contact WASM: three replays passed, including physical substeps, materials, narrow supports, axial primitive pairs moving supports and driven/parked admission.");
