@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "issue": 242,
-  "producer_commit": "f88e1b8162c5c8f58122fe7246ca9afe4e277ed7",
+  "producer_commit": "9d9116cb98351ae3cbff4df3d23840e90d92207c",
   "convention_source_revision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
   "predeclared_inputs": "https://github.com/moritzbrantner/physics-engine/issues/242#issuecomment-5922229959",
   "scope": "Locked translating-platform reference only; awake riders, no claim of parked moving-support activation, rotating platforms, broader CCD or character policy. Existing parked narrow-support removal controls remain active.",
@@ -1509,5 +1509,10 @@
   "fast_tier": {
     "passed": true,
     "checks": 16
+  },
+  "public_support_queries": {
+    "airborne_support_clears": true,
+    "settled_recontact_support_returns": true,
+    "guard": "gap exceeds two slop lengths plus one physical step of maximum upward speed; near-surface speculative support remains permitted"
   }
 }

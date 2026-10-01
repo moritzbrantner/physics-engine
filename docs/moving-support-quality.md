@@ -88,7 +88,7 @@ narrow supports. Its read-only 19-field getter returns NaN for uninitialized or
 invalid selection and is absent from the production Pages module.
 
 [Recorded evidence](moving-support-quality-2026-10-01.json) identifies clean producer
-`f88e1b8`, with two native matrix runs and three release-WASM repeats. All 16
+`9d9116c`, with two native matrix runs and three release-WASM repeats. All 16
 fast-tier checks passed. Every trace consumes four seconds; maximum observed
 motion/ballistic error is `3.730349362740526e-13`, penetration is zero and imposed
 horizontal work is 8. Both BodyId orders have matching measurements.
