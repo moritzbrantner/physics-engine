@@ -178,6 +178,24 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
     if case == Case::Carry || step <= COMMAND_STEP {
         assert!(supported && w.has_support(BodyId(ids[1])));
     }
+    if case == Case::Departure && step > COMMAND_STEP {
+        let gap = rider.position.1 - 1.5;
+        // The query reads admitted pre-integration rows. Exclude their two-slop
+        // margin and one physical step of the maximum imposed upward speed.
+        let airborne = 2.0 * w.config().contact_slop + 3.0 * H + 1e-9;
+        if gap > airborne {
+            assert!(
+                !w.has_support(BodyId(ids[1])),
+                "stale airborne support at step {step}"
+            );
+        }
+        if supported && rider.velocity.1.abs() <= 1e-9 {
+            assert!(
+                w.has_support(BodyId(ids[1])),
+                "missing settled recontact at step {step}"
+            );
+        }
+    }
     let sleeping = rider.is_sleeping();
     m.sleep_transitions += u64::from(!m.last_sleeping && sleeping);
     m.wake_transitions += u64::from(m.last_sleeping && !sleeping);

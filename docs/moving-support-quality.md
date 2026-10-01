@@ -48,6 +48,10 @@ geometric support and the public support flag at every observation. Departure
 requires a gap above .3 and later recontact. Removal immediately clears cached
 support, then has 480 unsupported physical steps following the 480 supported ones.
 Penetration is bounded by unchanged slop .02 plus `1e-9` numerical tolerance.
+Departure also requires the public cached-support flag to clear while clearly
+airborne and return after settled recontact. The airborne check excludes the
+admitted pre-integration row's two-slop margin plus one physical step of imposed
+upward speed 3; it does not mislabel near-surface speculative support as stale.
 
 The platform is an external energy source. With rider mass 2 and platform speed 2,
 imposed horizontal work is independently the sum of `4*delta_vx`, which totals 8.
