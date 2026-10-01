@@ -184,3 +184,13 @@ retained bootstrap capacity is observable through the explicit scratch getter.
 These are vector payloads, not allocator overhead, RSS or complete world/process
 memory. Raw work snapshots in this record are last-call observations, while raw
 timings cover every completed call.
+
+## Fixed-heavy preparation measurement
+
+[Fixed-bound preparation](fixed-bound-preparation.md) records actual fixed and
+dynamic preparation counts on 261 fixed boxes from committed consumer geometry,
+with supported and sparse dynamic populations. Complete baseline/candidate
+body/event traces match. Raw whole-call and isolated-stage timings are retained,
+including slower instrumented active-case medians. This completes #247's
+measurement prerequisite; #228 remains open for dependency-valid retention and
+fresh cache evidence, and #190 retains consumer adoption.

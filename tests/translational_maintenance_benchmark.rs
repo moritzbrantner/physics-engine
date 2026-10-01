@@ -8,6 +8,109 @@ use std::{
     time::Instant,
 };
 
+#[path = "support/fixed_bound_workload.rs"]
+mod fixed_bound_workload;
+
+fn preparation_split(work: &physics_engine::TranslationalStepWork) -> [Option<usize>; 2] {
+    [
+        Some(work.fixed_sweep_bound_preparations),
+        Some(work.dynamic_sweep_bound_preparations),
+    ]
+}
+
+#[test]
+#[ignore = "whole-call fixed-heavy measurement; run explicitly in release mode"]
+fn fixed_heavy_consumer_workload_measurement() {
+    use std::io::Write;
+    let input = fixed_bound_workload::input();
+    black_box(fixed_bound_workload::run());
+    for (mode, count, moving) in [
+        ("quiet", 8, 0),
+        ("supported", 8, 0),
+        ("supported", 64, 0),
+        ("supported", 128, 0),
+        ("sparse", 64, 1),
+    ] {
+        let gravity = if mode == "quiet" {
+            Vec3i::ZERO
+        } else {
+            input.gravity
+        };
+        let mut previous = None;
+        for trial in 0..3 {
+            let mut world = input.world(count, gravity);
+            let mut hash = DefaultHasher::new();
+            let mut times = Vec::new();
+            let mut totals = [0_usize; 7];
+            let mut fixed = Some(0_usize);
+            let mut dynamic = Some(0_usize);
+            let mut peak_payload = 0;
+            let mut trace = std::env::var_os("FIXED_BOUND_TRACE_DIR").map(|root| {
+                std::fs::File::create(
+                    std::path::PathBuf::from(root).join(format!("{mode}-{count}-{trial}.jsonl")),
+                )
+                .unwrap()
+            });
+            for tick in 0..120 {
+                world
+                    .set_velocity(
+                        BodyId(fixed_bound_workload::DYNAMIC_BASE),
+                        Vec3i::new(
+                            if moving > 0 {
+                                if tick % 2 == 0 { 1 } else { -1 }
+                            } else {
+                                0
+                            },
+                            0,
+                            0,
+                        ),
+                    )
+                    .unwrap();
+                let start = Instant::now();
+                let report = black_box(world.step(1).unwrap());
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+                let bodies = format!("{:?}", world.bodies().collect::<Vec<_>>());
+                let events = format!("{:?}", report.events);
+                bodies.hash(&mut hash);
+                events.hash(&mut hash);
+                if let Some(file) = &mut trace {
+                    writeln!(
+                        file,
+                        "{}",
+                        serde_json::json!({"tick":tick,"bodies":bodies,"events":events})
+                    )
+                    .unwrap();
+                }
+                let work = report.stats.work;
+                let split = preparation_split(&work);
+                fixed = fixed.zip(split[0]).map(|(sum, n)| sum + n);
+                dynamic = dynamic.zip(split[1]).map(|(sum, n)| sum + n);
+                peak_payload = peak_payload.max(
+                    work.staged_state_capacity_bytes + work.candidate_buffer_peak_capacity_bytes,
+                );
+                for (sum, n) in totals.iter_mut().zip([
+                    work.broad_phase_queries,
+                    work.sweep_bound_preparations,
+                    work.staged_bodies,
+                    work.active_bound_checks,
+                    work.fixed_pair_rejections,
+                    report.stats.contact_resolutions,
+                    report.stats.collision_events,
+                ]) {
+                    *sum += n;
+                }
+            }
+            let checksum = hash.finish();
+            assert!(previous.is_none_or(|value| value == checksum));
+            previous = Some(checksum);
+            println!(
+                "FIXED_BOUND_WORKLOAD {}",
+                serde_json::json!({"mode":mode,"dynamic_bodies":count,"fixed_bodies":261,"moving":moving,"trial":trial,"ticks":120,"state_event_checksum":format!("{checksum:016x}"),"total_ms":times.iter().sum::<f64>(),"raw_ms":times,"queries":totals[0],"bound_preparations":totals[1],"staged_bodies":totals[2],"active_bound_checks":totals[3],"fixed_pair_rejections":totals[4],"contact_resolutions":totals[5],"collision_events":totals[6],"fixed_preparations":fixed,"dynamic_preparations":dynamic,"peak_active_vector_payload_bytes":peak_payload,"retained_vector_payload_bytes":world.retained_step_scratch_bytes()})
+            );
+        }
+    }
+}
+
 fn world(count: u64, mode: &str) -> World {
     let supported = mode == "supported-gravity";
     let mut world = World::new(WorldConfig {
