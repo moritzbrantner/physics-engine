@@ -255,3 +255,75 @@ fn quiescent_and_zero_steps_do_not_prepare_response() {
         assert_eq!(r.inertia_applications, 0);
     }
 }
+
+#[test]
+fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_paths() {
+    let mut w = World::new(Config {
+        gravity: Vector(0.0, -10.0, 0.0),
+        substeps: 1,
+        convergence: None,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(Body::new(
+        BodyId(0),
+        Shape::Box(Vector(4.0, 0.5, 4.0)),
+        Vector(0.0, -0.5, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    let mut target = Body::new(BodyId(10), Shape::Sphere(1.0), Vector(0.0, 1.0, 0.0), 2.0);
+    target.friction = 0.0;
+    w.add_body(target).unwrap();
+    for _ in 0..32 {
+        w.step(1.0 / 60.0).unwrap();
+    }
+    assert!(w.body(BodyId(10)).unwrap().is_sleeping());
+    for (id, half, position, velocity) in [
+        (
+            1,
+            Vector(0.5, 4.0, 4.0),
+            Vector(-1.5, 1.0, 0.0),
+            Vector(3.0, 0.0, 0.0),
+        ),
+        (
+            20,
+            Vector(4.0, 4.0, 0.5),
+            Vector(0.0, 1.0, -1.5),
+            Vector(0.0, 0.0, 3.0),
+        ),
+    ] {
+        let mut wall = Body::new(BodyId(id), Shape::Box(half), position, 1.0);
+        wall.external = true;
+        wall.friction = 0.0;
+        wall.velocity = velocity;
+        w.add_body(wall).unwrap();
+    }
+    // Exercise accepted queued history internally; the public force setter wakes immediately.
+    let target = w.index(BodyId(10)).unwrap();
+    w.bodies[target].force = Vector(0.0, -20.0, 0.0);
+    w.bodies[target].torque = Vector(0.0, 0.8, 0.0);
+    let mut unprepared = w.clone();
+    let mut uncached = w.clone();
+    let h = 1.0 / 240.0;
+    let report = compare_step(&mut w, &mut unprepared, h);
+    uncached.step_with_geometry::<false, false>(h).unwrap();
+    assert_eq!(w.bodies, uncached.bodies);
+    assert_eq!(w.cache, uncached.cache);
+    assert_eq!(report.woken_bodies, 1);
+    assert_eq!(report.response_preparations, 1);
+    let b = w.body(BodyId(10)).unwrap();
+    assert_eq!(b.velocity, Vector(3.0, 0.0, 3.0));
+    // Total downward acceleration20 supplies friction spin30h; torque/I supplies yaw h.
+    assert!((b.angular_velocity.1 - h).abs() <= 1e-10);
+    assert!(
+        (Vector(b.angular_velocity.0, 0.0, b.angular_velocity.2).length() - 30.0 * h).abs()
+            <= 1e-10
+    );
+    assert_eq!(b.force, Vector::ZERO);
+    assert_eq!(b.torque, Vector::ZERO);
+    compare_step(&mut w, &mut unprepared, h);
+    uncached.step_with_geometry::<false, false>(h).unwrap();
+    assert_eq!(w.bodies, uncached.bodies);
+    assert_eq!(w.cache, uncached.cache);
+}

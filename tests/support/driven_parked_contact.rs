@@ -147,7 +147,12 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     assert_eq!(neighbor.velocity, V::ZERO);
     let energy = rider.velocity.dot(rider.velocity)
         + 0.4 * rider.angular_velocity.dot(rider.angular_velocity);
-    let external_work = 2.0 * case.speed() * rider.velocity.1;
+    // Contact-awakened bodies receive this substep's gravity before response (#253).
+    let external_work = if case.admits() {
+        2.0 * case.speed() * (rider.velocity.1 + 10.0 * h)
+    } else {
+        0.0
+    };
     assert!(energy + 20.0 * (rider.position.1 - 1.0) <= external_work + 1e-10);
     if case.admits() {
         assert_eq!(report.woken_bodies, 1);
