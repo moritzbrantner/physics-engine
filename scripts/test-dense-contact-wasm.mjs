@@ -10,6 +10,10 @@ const fields = [
   "constraint_visits", "position_tests", "active_substeps",
 ];
 assert(Number.isNaN(instance.exports.narrow_support_metric(0, 0, 0)));
+assert(Number.isNaN(instance.exports.contact_momentum_metric(0)));
+assert(Number.isNaN(instance.exports.fixed_contact_interval_metric(0)));
+let previousFixedInterval;
+let previousMomentum;
 assert(Number.isNaN(instance.exports.primitive_contact_metric(0)));
 assert(Number.isNaN(instance.exports.moving_support_metric(0, 0, 0)));
 assert(Number.isNaN(instance.exports.driven_parked_metric(0, 0)));
@@ -25,6 +29,21 @@ let previousPrimitive;
 let previousMoving;
 for (let replay = 0; replay < 3; replay += 1) {
   assert.equal(instance.exports.dense_contact_contract(), 0, `dense contact WASM replay ${replay}`);
+  const fixedInterval = Object.fromEntries([
+    "peak_floor", "cases", "contact_points", "sweep_queries", "constraint_visits", "retained_upward_velocity",
+  ].map((field, i) => {
+    const value = instance.exports.fixed_contact_interval_metric(i);
+    assert(Number.isFinite(value), field);
+    return [field, value];
+  }));
+  assert(fixedInterval.peak_floor <= 0.5);
+  assert(fixedInterval.retained_upward_velocity > 0);
+  assert.equal(fixedInterval.cases, 64);
+  assert(fixedInterval.contact_points > 0 && fixedInterval.sweep_queries > 0 && fixedInterval.constraint_visits > 0);
+  if (previousFixedInterval) assert.deepEqual(fixedInterval, previousFixedInterval);
+  previousFixedInterval = fixedInterval;
+  assert(Number.isNaN(instance.exports.fixed_contact_interval_metric(6)));
+  console.log(`FIXED_CONTACT_INTERVAL_WASM ${JSON.stringify({ replay, fixedInterval })}`);
   const stationaryFields = [
     "vx", "vy", "vz", "wx", "wy", "wz", "energy", "external_work", "woken_bodies",
     "response_preparations", "inertia_preparations", "inertia_applications", "current_queries",
@@ -209,6 +228,21 @@ for (let replay = 0; replay < 3; replay += 1) {
   });
   if (previous) assert.deepEqual(rows, previous, "same-target measured replay");
   previous = rows;
+  const momentum = Object.fromEntries([
+    "normalized_linear_error", "normalized_angular_error", "energy_ratio", "cases",
+  ].map((field, i) => {
+    const value = instance.exports.contact_momentum_metric(i);
+    assert(Number.isFinite(value), field);
+    return [field, value];
+  }));
+  assert(momentum.normalized_linear_error <= 1e-10);
+  assert(momentum.normalized_angular_error <= 1e-10);
+  assert(momentum.energy_ratio <= 1 + 1e-10);
+  assert.equal(momentum.cases, 768);
+  if (previousMomentum) assert.deepEqual(momentum, previousMomentum);
+  previousMomentum = momentum;
+  assert(Number.isNaN(instance.exports.contact_momentum_metric(4)));
+  console.log(`CONTACT_MOMENTUM_WASM ${JSON.stringify({ replay, momentum })}`);
   const primitive = Object.fromEntries([
     "peak_overlap", "residual_overlap", "normalized_velocity_error",
     "normalized_momentum_response_error", "energy_ratio", "cases",

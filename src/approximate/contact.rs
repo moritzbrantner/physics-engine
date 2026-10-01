@@ -31,6 +31,49 @@ impl Points {
     fn one(p: Point) -> Self {
         Self::selected(&[p])
     }
+    fn with_speculative(input: &[Point], admission_margin: Scalar) -> Self {
+        // No reduction is needed when every candidate fits. Keep geometric traversal order.
+        if input.len() <= 4 {
+            return Self::selected(input);
+        }
+        let admitted = input
+            .iter()
+            .filter(|p| p.separation <= admission_margin)
+            .count();
+        let mut out = Self {
+            values: [Point::default(); 4],
+            len: admitted.min(4),
+        };
+        // Preserve the ordinary manifold's selection and order before adding future corners.
+        for slot in 0..out.len {
+            let ordinal = if admitted > 4 {
+                slot * admitted / 4
+            } else {
+                slot
+            };
+            if let Some(point) = input
+                .iter()
+                .filter(|p| p.separation <= admission_margin)
+                .nth(ordinal)
+            {
+                out.values[slot] = *point;
+            }
+        }
+        let separated = input.len() - admitted;
+        let extra = (4 - out.len).min(separated);
+        for slot in 0..extra {
+            let ordinal = slot * separated / extra;
+            if let Some(point) = input
+                .iter()
+                .filter(|p| p.separation > admission_margin)
+                .nth(ordinal)
+            {
+                out.values[out.len] = *point;
+                out.len += 1;
+            }
+        }
+        out
+    }
     pub fn len(&self) -> usize {
         self.len
     }
@@ -244,7 +287,10 @@ fn box_manifold(a: &Body, b: &Body, margin: Scalar, work: &mut GeometryStats) ->
     box_points(
         a,
         b,
-        margin,
+        ContactMargins {
+            admission: margin,
+            points: margin,
+        },
         best,
         [a.orientation.axes(), b.orientation.axes()],
         work,
@@ -310,12 +356,87 @@ pub(super) fn box_current_with_frames(
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
+    box_with_point_margin([a, b], margin, margin, frames, work, scratch)
+}
+
+/// Extend an admitted fixed-box manifold to corners reachable during this interval.
+/// The SAT admission margin and normal selection remain unchanged.
+pub(super) fn fixed_box_interval(a: &Body, b: &Body) -> bool {
+    matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_)))
+        && (a.mass == 0.0 || b.mass == 0.0)
+        && [(a, b), (b, a)].into_iter().any(|(moving, fixed)| {
+            fixed.mass == 0.0
+                && moving.movable()
+                && !moving.sleeping
+                && !moving.rotation_locked
+                && moving.angular_velocity != V::ZERO
+        })
+}
+pub(super) fn box_current_interval_with_frames(
+    bodies: [&Body; 2],
+    h: Scalar,
+    margin: Scalar,
+    frames: [[V; 3]; 2],
+    work: &mut GeometryStats,
+    scratch: &mut ClipScratch,
+) -> Option<Manifold> {
+    let [a, b] = bodies;
+    // Translation plus radius * angular travel bounds how far any corner can move.
+    let reach = (b.velocity - a.velocity).length() * h
+        + (a.angular_velocity.length() * a.shape.radius()
+            + b.angular_velocity.length() * b.shape.radius())
+            * h;
+    box_with_point_margin([a, b], margin, margin + reach, frames, work, scratch)
+}
+fn box_with_point_margin(
+    bodies: [&Body; 2],
+    admission_margin: Scalar,
+    point_margin: Scalar,
+    frames: [[V; 3]; 2],
+    work: &mut GeometryStats,
+    scratch: &mut ClipScratch,
+) -> Option<Manifold> {
+    let [a, b] = bodies;
     work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
     let projected_axes = frame_projection_axes(a, b, frames);
-    let manifold = select_axis(a, b, margin, projected_axes, work)
-        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    let manifold = select_axis(a, b, admission_margin, projected_axes, work).and_then(|best| {
+        box_points(
+            a,
+            b,
+            ContactMargins {
+                admission: admission_margin,
+                points: point_margin,
+            },
+            best,
+            frames,
+            work,
+            scratch,
+        )
+    });
     work.manifold_candidates += u64::from(manifold.is_some());
     manifold
+}
+
+pub(super) fn current_interval_counted(
+    a: &Body,
+    b: &Body,
+    h: Scalar,
+    margin: Scalar,
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    if !fixed_box_interval(a, b) {
+        return current_counted(a, b, margin, work);
+    }
+    work.current_queries += 1;
+    work.manifold_refreshes += 1;
+    box_current_interval_with_frames(
+        [a, b],
+        h,
+        margin,
+        [a.orientation.axes(), b.orientation.axes()],
+        work,
+        &mut ClipScratch::default(),
+    )
 }
 
 pub(super) fn box_prepared(
@@ -328,16 +449,33 @@ pub(super) fn box_prepared(
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
     work.specialized_pair_dispatches[primitive::PrimitivePair::BoxBox.index()] += 1;
-    let manifold = select_axis(a, b, margin, projections.axes.iter().copied(), work)
-        .and_then(|best| box_points(a, b, margin, best, frames, work, scratch));
+    let manifold =
+        select_axis(a, b, margin, projections.axes.iter().copied(), work).and_then(|best| {
+            box_points(
+                a,
+                b,
+                ContactMargins {
+                    admission: margin,
+                    points: margin,
+                },
+                best,
+                frames,
+                work,
+                scratch,
+            )
+        });
     work.manifold_candidates += u64::from(manifold.is_some());
     manifold
 }
 
+struct ContactMargins {
+    admission: Scalar,
+    points: Scalar,
+}
 fn box_points(
     a: &Body,
     b: &Body,
-    margin: Scalar,
+    margins: ContactMargins,
     best: (Scalar, V, usize),
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
@@ -392,7 +530,7 @@ fn box_points(
         }
         for &p in &scratch.polygon {
             let sep = (p - ref_center).dot(rn);
-            if sep <= margin {
+            if sep <= margins.points {
                 let projected = p - rn * sep;
                 let (pa, pb) = if swap { (p, projected) } else { (projected, p) };
                 points.push(Point {
@@ -403,7 +541,7 @@ fn box_points(
             }
         }
     }
-    if points.is_empty() {
+    if !points.iter().any(|p| p.separation <= margins.admission) {
         let a_support = box_contact_support(a, n, work);
         let b_support = box_contact_support(b, -n, work);
         let p = (a_support + b_support) * 0.5;
@@ -415,7 +553,11 @@ fn box_points(
     }
     Some(Manifold {
         normal: n,
-        points: Points::selected(points),
+        points: if margins.points > margins.admission {
+            Points::with_speculative(points, margins.admission)
+        } else {
+            Points::selected(points)
+        },
         swept: false,
         time: 0.0,
     })
@@ -711,7 +853,7 @@ pub(super) fn swept(
         return Ok(None);
     };
     Ok(finish_sweep(a, b, dt, time, |aa, bb| {
-        current_counted(aa, bb, margin.max(1e-6), work)
+        current_interval_counted(aa, bb, dt * (1.0 - time), margin.max(1e-6), work)
     }))
 }
 
@@ -764,7 +906,18 @@ pub(super) fn box_swept_with_frames(
     finish_sweep(a, b, dt, time, |aa, bb| {
         work.current_queries += 1;
         work.manifold_refreshes += 1;
-        box_current_with_frames(aa, bb, margin.max(1e-6), frames, work, scratch)
+        if fixed_box_interval(aa, bb) {
+            box_current_interval_with_frames(
+                [aa, bb],
+                dt * (1.0 - time),
+                margin.max(1e-6),
+                frames,
+                work,
+                scratch,
+            )
+        } else {
+            box_current_with_frames(aa, bb, margin.max(1e-6), frames, work, scratch)
+        }
     })
 }
 

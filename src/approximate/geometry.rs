@@ -2,7 +2,8 @@
 //!
 //! Reuse complete current-contact results only for bit-identical poses/shapes/margins. Translations
 //! still run SAT and clipping, but unchanged orientations reuse frames and support projections.
-//! Velocity, timestep and response state are not geometric keys: CCD always runs fresh after a miss.
+//! Retained ordinary geometry has no velocity/timestep key. Moving fixed-box interval manifolds
+//! use fresh motion and never retain pair results; CCD also always runs fresh after a miss.
 use super::{Body, BodyId, Quaternion, Scalar, Shape, SweepFailure, Vector, contact};
 use std::collections::BTreeMap;
 
@@ -149,6 +150,34 @@ impl GeometryCache {
             epoch: self.epoch,
         });
         axes
+    }
+    pub fn query_interval(
+        &mut self,
+        indices: [usize; 2],
+        bodies: [&Body; 2],
+        h: Scalar,
+        margin: Scalar,
+        work: &mut GeometryStats,
+    ) -> Option<contact::Manifold> {
+        let [a, b] = bodies;
+        if !contact::fixed_box_interval(a, b) {
+            return self.query(indices, bodies, margin, work);
+        }
+        // Moving orientation already excludes retained pair results; h/velocity are fresh.
+        let frames = [
+            self.frame(indices[0], a, work),
+            self.frame(indices[1], b, work),
+        ];
+        work.current_queries += 1;
+        work.manifold_refreshes += 1;
+        contact::box_current_interval_with_frames(
+            bodies,
+            h,
+            margin,
+            frames,
+            work,
+            &mut self.clipping,
+        )
     }
     pub fn query(
         &mut self,

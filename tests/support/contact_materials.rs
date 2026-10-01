@@ -361,3 +361,110 @@ pub fn linear_support_direction_and_spin_with_dynamic_endpoints() {
     close(left.angular_velocity.2, -7.5 / 7.0);
     close(right.angular_velocity.2, -7.5 / 7.0);
 }
+
+/// Unforced current contacts, including overlap strictly within the existing slop.
+/// Each shape here has an isotropic analytic inertia, independent of engine helpers.
+pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
+    fn momentum(w: &World) -> (V, V) {
+        w.bodies()
+            .fold((V::ZERO, V::ZERO), |(linear, angular), body| {
+                let p = body.velocity * body.mass;
+                let inertia = match body.shape {
+                    Shape::Box(_) => body.mass * (36.0_f64.powi(2) + 36.0_f64.powi(2)) / 12.0,
+                    Shape::Sphere(radius) => 0.4 * body.mass * radius * radius,
+                    _ => panic!("isotropic fixture"),
+                };
+                (
+                    linear + p,
+                    angular + body.position.cross(p) + body.angular_velocity * inertia,
+                )
+            })
+    }
+    let context = CheckpointContext {
+        build: [0; 32],
+        content: [237; 32],
+    };
+    let cube = Shape::Box(V(18.0, 18.0, 18.0));
+    let ball = Shape::Sphere(18.0);
+    let mut measurements = [0.0_f64; 4];
+    let mut cases = 0_u32;
+    for mass in [1e-6, 1.0, 2.0, 1e6] {
+        for ratio in [1.0, 3.0] {
+            for shapes in [[cube, cube], [ball, ball], [cube, ball], [ball, cube]] {
+                for friction in [0.0, 0.15, 0.6, 1.0] {
+                    for penetration in [0.0, 0.01, 0.015625] {
+                        for ids in [[1, 2], [2, 1]] {
+                            let fixture = || {
+                                let mut w = world(V::ZERO, true);
+                                for i in 0..2 {
+                                    let mut body = Body::new(
+                                        BodyId(ids[i]),
+                                        shapes[i],
+                                        V(0.0, i as f64 * (36.0 - penetration), 0.0),
+                                        mass * if i == 0 { 1.0 } else { ratio },
+                                    );
+                                    body.friction = friction;
+                                    body.sleep_allowed = false;
+                                    if i == 1 {
+                                        body.velocity = V(10.0, -1.0, 0.0);
+                                    }
+                                    w.add_body(body).unwrap();
+                                }
+                                w
+                            };
+                            let mut w = fixture();
+                            let mut replay = fixture();
+                            let before = momentum(&w);
+                            let energy = w.bodies().map(Body::kinetic_energy).sum::<f64>();
+                            for current in [&mut w, &mut replay] {
+                                let report = current.step(1.0 / 240.0).unwrap();
+                                assert_eq!(report.substeps, 1);
+                                assert_eq!(report.swept_contacts, 0);
+                                assert!(report.contact_points > 0 && report.contact_points <= 4);
+                                assert!(report.impulse_iterations <= 8);
+                                assert_eq!(report.position.passes, 0);
+                                assert!(report.retired.is_empty());
+                                close(current.elapsed_seconds(), 1.0 / 240.0);
+                                for body in current.bodies() {
+                                    assert!(body.position.finite());
+                                    assert!(body.orientation.finite());
+                                    assert!(body.velocity.finite());
+                                    assert!(body.angular_velocity.finite());
+                                    assert!(body.kinetic_energy().is_finite());
+                                }
+                            }
+                            assert_eq!(
+                                w.checkpoint(context).unwrap().to_bytes(),
+                                replay.checkpoint(context).unwrap().to_bytes()
+                            );
+                            let after = momentum(&w);
+                            // Normalize by physical mass/length before comparing; a fixed
+                            // absolute momentum tolerance would swallow the light-mass defect.
+                            let linear_error = (after.0 - before.0).length()
+                                / mass
+                                / (1.0 + before.0.length() / mass);
+                            let angular_error = (after.1 - before.1).length()
+                                / (mass * 18.0)
+                                / (1.0 + before.1.length() / (mass * 18.0));
+                            let energy_ratio =
+                                w.bodies().map(Body::kinetic_energy).sum::<f64>() / energy;
+                            assert!(linear_error <= 1e-10, "linear {linear_error}");
+                            assert!(angular_error <= 1e-10, "angular {angular_error}");
+                            assert!(energy_ratio.is_finite() && energy_ratio <= 1.0 + 1e-10);
+                            if friction > 0.0 {
+                                assert!(w.body(BodyId(ids[1])).unwrap().velocity.0 < 10.0 - 1e-8);
+                            }
+                            measurements[0] = measurements[0].max(linear_error);
+                            measurements[1] = measurements[1].max(angular_error);
+                            measurements[2] = measurements[2].max(energy_ratio);
+                            cases += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    measurements[3] = f64::from(cases);
+    println!("CONTACT_MOMENTUM {{\"values\":{measurements:?}}}");
+    measurements
+}

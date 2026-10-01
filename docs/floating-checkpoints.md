@@ -19,6 +19,13 @@ The caller supplies two 32-byte `CheckpointContext` identities. `build` must ide
 
 The dense-contact repair introduces format 2 and algorithm 2. Format 1/algorithm 1 checkpoints are explicitly rejected. The new position-policy bit changes the wire interpretation, and admitted-contact correction changes continuation semantics. The driven/parked contact-admission repair advances algorithm to 3 while retaining format 2: prior algorithm 2 checkpoints are explicitly rejected because a moving external support now wakes an admitted parked dynamic contact in the same call. The first-substep force-on-contact-wake repair advances algorithm to 4: newly awakened bodies now receive gravity/queued force/torque before their same-substep response, and algorithm 3 checkpoints are rejected. The admitted external tangential-contact wake repair advances algorithm to 5: actual contact-point motion now wakes a parked dynamic body before frictional response, and algorithm 4 checkpoints are rejected. Stationary external-support parking and admitted load-bearing support departure advance algorithm to 6; algorithm 5 checkpoints are rejected. The empty-world digest changes for the version headers and checksum, without changing any empty-world trajectory. This is an intentional compatibility boundary, not automatic save migration.
 
+The reciprocal current-contact momentum repair and its fixed-floor interval prerequisite advance the algorithm to 7 while
+retaining wire format 2. Algorithms 1 through 6 are rejected: contact impulses and
+their local warm-start anchors now use a shared point for reciprocal dynamic current
+contacts, changing continuation semantics. Fixed, external, one-way and swept
+response authority remains explicit. The empty-world digest changes only because
+the algorithm header and its checksum change; its physical trajectory is unchanged.
+
 All current shapes, materials and fixed geometry are inline. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
 
 ## Continuation inventory

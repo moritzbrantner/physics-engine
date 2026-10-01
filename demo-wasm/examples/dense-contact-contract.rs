@@ -7,6 +7,8 @@ mod contact_wake_forces;
 mod dense;
 #[path = "../../tests/support/driven_parked_contact.rs"]
 mod driven_parked_contact;
+#[path = "../../tests/support/fixed_contact_interval.rs"]
+mod fixed_contact_interval;
 #[path = "../../tests/support/contact_materials.rs"]
 mod materials;
 #[path = "../../tests/support/moving_support.rs"]
@@ -20,6 +22,9 @@ mod stationary_external_support;
 #[path = "../../tests/support/tangential_contact_wake.rs"]
 mod tangential_contact_wake;
 thread_local! {
+    static FIXED_INTERVAL_RESULTS: std::cell::Cell<Option<[f64; 6]>> = const {
+        std::cell::Cell::new(None)
+    };
     static STATIONARY_RESULTS: std::cell::Cell<Option<[[f64; 21]; 36]>> = const {
         std::cell::Cell::new(None)
     };
@@ -36,6 +41,9 @@ thread_local! {
     static NARROW_RESULTS: std::cell::RefCell<Option<[narrow_support::Measurements; 3]>> = const {
         std::cell::RefCell::new(None)
     };
+    static MOMENTUM_RESULTS: std::cell::Cell<Option<[f64; 4]>> = const {
+        std::cell::Cell::new(None)
+    };
     static PRIMITIVE_RESULTS: std::cell::Cell<Option<[f64; 10]>> = const {
         std::cell::Cell::new(None)
     };
@@ -45,16 +53,38 @@ thread_local! {
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn dense_contact_contract() -> i32 {
+    FIXED_INTERVAL_RESULTS.with(|results| results.set(Some(fixed_contact_interval::run())));
     STATIONARY_RESULTS.with(|results| results.set(Some(stationary_external_support::run())));
     TANGENT_RESULTS.with(|results| results.set(Some(tangential_contact_wake::run())));
     FORCE_RESULTS.with(|results| results.set(Some(contact_wake_forces::run())));
     DRIVEN_RESULTS.with(|results| results.set(Some(driven_parked_contact::run())));
     dense::run();
     materials::run();
+    MOMENTUM_RESULTS.with(|results| {
+        results.set(Some(materials::reciprocal_current_contact_momentum()));
+    });
     NARROW_RESULTS.with(|results| *results.borrow_mut() = Some(narrow_support::run()));
     PRIMITIVE_RESULTS.with(|results| results.set(Some(primitive_contacts::run())));
     MOVING_RESULTS.with(|results| *results.borrow_mut() = Some(moving_support::run()));
     0
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn fixed_contact_interval_metric(field: u32) -> f64 {
+    FIXED_INTERVAL_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|values| values.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn contact_momentum_metric(field: u32) -> f64 {
+    MOMENTUM_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|values| values.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn stationary_support_metric(case: u32, field: u32) -> f64 {
@@ -139,6 +169,7 @@ mod tests {
         super::driven_parked_contact::run();
         super::dense::run();
         super::materials::run();
+        super::materials::reciprocal_current_contact_momentum();
         super::narrow_support::run();
         super::primitive_contacts::run();
         super::moving_support::run();

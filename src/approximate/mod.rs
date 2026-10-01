@@ -970,6 +970,32 @@ impl World {
                 used.clear();
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
                 for point in &m.points {
+                    let mut point = *point;
+                    if !m.swept
+                        && !linear
+                        && a.movable()
+                        && b.movable()
+                        && !a.sleeping
+                        && !b.sleeping
+                        && response == [true, true]
+                    {
+                        // Opposite impulses at separate witnesses create an internal
+                        // friction couple. Reciprocal dynamic current contacts share
+                        // the midpoint along the contact normal. Projecting the witness
+                        // gap avoids feeding tangential reconstruction roundoff into
+                        // resting friction rows; separation still owns the target.
+                        let delta = (b.position - a.position) + point.rb - point.ra;
+                        let gap = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                            // Box clipping projects witnesses along this normal;
+                            // generic primitive support vertices need the full gap.
+                            n * delta.dot(n)
+                        } else {
+                            delta
+                        };
+                        let shift = gap * 0.5;
+                        point.ra += shift;
+                        point.rb -= shift;
+                    }
                     let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
                     let arms = [point.ra, point.rb];
                     let k = effective_mass::<PREPARED>(
@@ -1062,7 +1088,13 @@ impl World {
                         relaxing_normal: false,
                         #[cfg(feature = "experimental-soft-contact")]
                         normal_coefficients: soft.unwrap_or(correction::Coefficients::RIGID),
-                        friction: if linear {
+                        // Additional corners can limit approach while still separated at the
+                        // admitted contact time. They have no frictional load yet.
+                        friction: if linear
+                            || (contact::fixed_box_interval(a, b)
+                                && point.separation + (b.velocity - a.velocity).dot(n) * h * m.time
+                                    > self.config.contact_slop)
+                        {
                             0.0
                         } else {
                             a.friction.max(b.friction)
@@ -1554,9 +1586,9 @@ impl World {
                 // complete pair results only when both orientation dependencies are stable.
                 let current = if CACHED {
                     self.geometry
-                        .query([i, j], [a, b], margin, &mut report.geometry)
+                        .query_interval([i, j], [a, b], h, margin, &mut report.geometry)
                 } else {
-                    contact::current_counted(a, b, margin, &mut report.geometry)
+                    contact::current_interval_counted(a, b, h, margin, &mut report.geometry)
                 };
                 let m = if current.is_some() {
                     current
@@ -1564,9 +1596,12 @@ impl World {
                     let travel = (b.velocity - a.velocity).length() * h;
                     // Retain full-interval discovery after response preparation wakes the
                     // body; the second geometry pass must not discard an admitted sweep.
+                    // A fixed boundary may be crossed below the shape-sized fast threshold.
+                    // The current margin only rules out travel no larger than that margin.
                     if driven_contact_candidate
                         || a.ccd
                         || b.ccd
+                        || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.config.contact_slop)
                         || travel
                             > 0.5
                                 * a.shape
