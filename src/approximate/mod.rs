@@ -981,8 +981,18 @@ impl World {
                     {
                         // Opposite impulses at separate witnesses create an internal
                         // friction couple. Reciprocal dynamic current contacts share
-                        // the midpoint, while separation still owns the normal target.
-                        let shift = ((b.position - a.position) + point.rb - point.ra) * 0.5;
+                        // the midpoint along the contact normal. Projecting the witness
+                        // gap avoids feeding tangential reconstruction roundoff into
+                        // resting friction rows; separation still owns the target.
+                        let delta = (b.position - a.position) + point.rb - point.ra;
+                        let gap = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                            // Box clipping projects witnesses along this normal;
+                            // generic primitive support vertices need the full gap.
+                            n * delta.dot(n)
+                        } else {
+                            delta
+                        };
+                        let shift = gap * 0.5;
                         point.ra += shift;
                         point.rb -= shift;
                     }
