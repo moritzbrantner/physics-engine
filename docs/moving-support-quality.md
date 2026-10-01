@@ -83,6 +83,21 @@ runs these controls alongside dense contacts, materials, primitive pairs and
 narrow supports. Its read-only 19-field getter returns NaN for uninitialized or
 invalid selection and is absent from the production Pages module.
 
+[Recorded evidence](moving-support-quality-2026-10-01.json) identifies clean producer
+`f88e1b8`, with two native matrix runs and three release-WASM repeats. All 16
+fast-tier checks passed. Every trace consumes four seconds; maximum observed
+motion/ballistic error is `3.730349362740526e-13`, penetration is zero and imposed
+horizontal work is 8. Both BodyId orders have matching measurements.
+
+Carry has 960 physical support observations. Departure has 142 unsupported and
+818 supported physical observations, reaches gap `0.44375000000000053`, and lands
+at `y=1.5`, `vy=0`. Its peak kinetic energy is 13, including the instantaneous
+command. Removal has 480 supported and 480 unsupported observations, ending at
+`y=-18.54166666666663`, `vy=-20.00000000000002`. Total solver visits across all three
+worlds are 92,160/78,720/46,080 for Carry/Departure/Removal per BodyId order.
+These are measured results within declared bounds, not future exact-work ratchets
+or stronger cross-platform replay promises.
+
 ```sh
 cargo test --release --locked --test moving_support_quality
 cargo build --manifest-path demo-wasm/Cargo.toml --release --locked \
