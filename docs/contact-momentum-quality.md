@@ -69,6 +69,14 @@ call. The fixture fails without the prerequisite (0.6339107403425608); retaining
 also repairs the separate admitted-contact reproducer. Cached/prepared paths are compared
 with fresh geometry and original response arithmetic using changing intervals.
 
+When an extended clipped polygon exceeds four points, reduction preserves the original
+admitted-point selection and fills only spare slots with separated corners. The original
+SAT/support fallback remains available even when all clipped candidates are separated.
+Polygons that fit retain geometric traversal order. Two finite-floor controls require
+positive upward response and nonincreasing energy; a 2,000-pose check preserves ordinary
+admission, normals and actual/fallback witnesses. The review-found pre-correction case
+had zero response despite its approaching actual corner.
+
 The original seven stack comparisons are retained without fixture or acceptance edits.
 The final candidate's selected mixed/relaxed peak is 0.21862795838047824, peak kinetic
 energy 50400, final energy zero, and natural sleep. All equal/sliding soft controls
@@ -76,6 +84,16 @@ settle, as does the low-friction rigid control. The equal rigid comparison still
 (final energy about 2494.79); this PR does not resolve the existing general settling
 limitation. Raw prior failures and rejected sweep-only/early-friction probes remain
 part of the diagnostic evidence rather than being reclassified as passing results.
+
+[Fresh follow-up evidence](contact-momentum-quality-followup-2026-10-01.json) records
+producer `4389758b5ce139d9a6ab7af68f1f6d5a2911fee7`, both native feature modes,
+three WASM repeats per mode, all seven stack comparisons and retained rejected probes.
+The 64-case peak floor error is 0.0006985640750514222 in production and
+0.0006996034284334485 with optional soft contacts; momentum errors remain below
+5.1e-16. Measurements repeat within their own build/target/feature identity.
+All 16 fast checks, 109 optional solver tests (seven existing ignored diagnostics),
+checkpoint controls and both independent reviews pass. Both diagnostic getters are
+absent from the ordinary production WASM module.
 
 ## Independent acceptance
 

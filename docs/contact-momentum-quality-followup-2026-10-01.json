@@ -1,0 +1,1483 @@
+{
+  "recordedDate": "2026-10-01",
+  "issues": [
+    237,
+    243
+  ],
+  "producerCommit": "4389758b5ce139d9a6ab7af68f1f6d5a2911fee7",
+  "sourceDirty": false,
+  "sourceRevision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "build": {
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "node": "v24.16.0",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "wasm32-unknown-unknown"
+    ],
+    "kernelRevision": "7049e423ef00f5f65e7276281c0845d431ed6300",
+    "nativeMode": "release --locked",
+    "wasmMode": "release --locked --example dense-contact-contract",
+    "featureSets": [
+      [],
+      [
+        "experimental-soft-contact"
+      ]
+    ],
+    "productionDiagnosticModuleSha256": "06236338f64c5976eb8ad84e1b866f1e7daf033de89700c5428ccfc54def9422",
+    "productionModuleSha256": "03307c7219ca8f996e9da6a87e7b594590ba2c0aa5bed57107af6451fc28c775"
+  },
+  "checkpoint": {
+    "format": 2,
+    "algorithm": 7,
+    "rejectedAlgorithms": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      8
+    ],
+    "emptyNativeDigest": "c924619923ef7c9791f45ade050711ea0854d5dc6a065abc47c22fafd4e2cc81",
+    "context": "Private same-process test tags; build tags do not establish consumer portability."
+  },
+  "inputs": {
+    "intervalSource": "tests/support/fixed_contact_interval.rs",
+    "intervalSourceSha256": "e587d4b32bab73b09b0369536cd2d37e558c7ea99556bd204c6c0a5be5768314",
+    "momentumSource": "tests/support/contact_materials.rs",
+    "floorBound": 0.5,
+    "physicalIntervals": [
+      0.004166666666666667,
+      0.0020833333333333333
+    ],
+    "substeps": [
+      1,
+      4
+    ],
+    "negativeControls": [
+      "distant",
+      "sensor",
+      "noncolliding layers"
+    ],
+    "bodyOrders": [
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        1
+      ]
+    ],
+    "casesPerMode": 64,
+    "repeatAndRestore": "Complete checkpoint-byte equality at every call; native run compares two whole fixtures; WASM compares three whole fixtures within each target/feature set.",
+    "finiteFloorRetentionControls": 2,
+    "integerAbiBoundary": "Case/work totals remain integers and convert only to the diagnostic f64 getter ABI."
+  },
+  "native": {
+    "productionInterval": [
+      [
+        0.0006985640750514222,
+        64.0,
+        156.0,
+        16.0,
+        1248.0,
+        929.3433076013198
+      ]
+    ],
+    "softInterval": [
+      [
+        0.0006996034284334485,
+        64.0,
+        156.0,
+        16.0,
+        1248.0,
+        929.3433076013198
+      ]
+    ],
+    "intervalInternalRepeats": 2,
+    "productionMomentum": [
+      {
+        "values": [
+          5.057012078047297e-16,
+          4.731782613072224e-16,
+          0.9975247524752475,
+          768.0
+        ]
+      },
+      {
+        "values": [
+          5.057012078047297e-16,
+          4.731782613072224e-16,
+          0.9975247524752475,
+          768.0
+        ]
+      }
+    ],
+    "intervalFields": [
+      "64-case peak floor error",
+      "interval cases",
+      "contact points",
+      "sweep queries",
+      "primary constraint visits",
+      "minimum finite-floor upward response"
+    ]
+  },
+  "wasm": {
+    "production": [
+      {
+        "contract": "FIXED_CONTACT_INTERVAL_WASM",
+        "replay": 0,
+        "fixedInterval": {
+          "peak_floor": 0.0006985640750514222,
+          "cases": 64,
+          "contact_points": 156,
+          "sweep_queries": 16,
+          "constraint_visits": 1248,
+          "retained_upward_velocity": 929.3433076013198
+        }
+      },
+      {
+        "contract": "CONTACT_MOMENTUM_WASM",
+        "replay": 0,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "contract": "PRIMITIVE_CONTACT_WASM",
+        "replay": 0,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "contract": "NARROW_SUPPORT_WASM",
+        "replay": 0,
+        "rows": [
+          {
+            "case": "Balanced",
+            "ticks": {
+              "peak_penetration": 5.706605183064539e-05,
+              "peak_speed": 0.017843453646455683,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 0.0005199816992768002,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5166666666666666,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 124
+            },
+            "physical_substeps": {
+              "peak_penetration": 6.100546596599088e-05,
+              "peak_speed": 0.022045516149004293,
+              "peak_angular_speed": 0.001185601944626108,
+              "peak_energy": 0.0007896256080338704,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5041666666666661,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 121
+            }
+          },
+          {
+            "case": "OffCenter",
+            "ticks": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 757.1434834586818,
+              "peak_angular_speed": 9.871937742930825,
+              "peak_energy": 594316.5679808124,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.016666666666668,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 244
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 786.8572732550132,
+              "peak_angular_speed": 10.204858081109501,
+              "peak_energy": 640194.6819111797,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.0041666666666644,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 241
+            }
+          },
+          {
+            "case": "Removal",
+            "ticks": {
+              "peak_penetration": 0.0016808885350343417,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.749999999999995,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 304
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.002353653658104804,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.024995181316378248,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.741666666666698,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 299
+            }
+          }
+        ]
+      },
+      {
+        "contract": "FIXED_CONTACT_INTERVAL_WASM",
+        "replay": 1,
+        "fixedInterval": {
+          "peak_floor": 0.0006985640750514222,
+          "cases": 64,
+          "contact_points": 156,
+          "sweep_queries": 16,
+          "constraint_visits": 1248,
+          "retained_upward_velocity": 929.3433076013198
+        }
+      },
+      {
+        "contract": "CONTACT_MOMENTUM_WASM",
+        "replay": 1,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "contract": "PRIMITIVE_CONTACT_WASM",
+        "replay": 1,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "contract": "NARROW_SUPPORT_WASM",
+        "replay": 1,
+        "rows": [
+          {
+            "case": "Balanced",
+            "ticks": {
+              "peak_penetration": 5.706605183064539e-05,
+              "peak_speed": 0.017843453646455683,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 0.0005199816992768002,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5166666666666666,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 124
+            },
+            "physical_substeps": {
+              "peak_penetration": 6.100546596599088e-05,
+              "peak_speed": 0.022045516149004293,
+              "peak_angular_speed": 0.001185601944626108,
+              "peak_energy": 0.0007896256080338704,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5041666666666661,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 121
+            }
+          },
+          {
+            "case": "OffCenter",
+            "ticks": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 757.1434834586818,
+              "peak_angular_speed": 9.871937742930825,
+              "peak_energy": 594316.5679808124,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.016666666666668,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 244
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 786.8572732550132,
+              "peak_angular_speed": 10.204858081109501,
+              "peak_energy": 640194.6819111797,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.0041666666666644,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 241
+            }
+          },
+          {
+            "case": "Removal",
+            "ticks": {
+              "peak_penetration": 0.0016808885350343417,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.749999999999995,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 304
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.002353653658104804,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.024995181316378248,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.741666666666698,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 299
+            }
+          }
+        ]
+      },
+      {
+        "contract": "FIXED_CONTACT_INTERVAL_WASM",
+        "replay": 2,
+        "fixedInterval": {
+          "peak_floor": 0.0006985640750514222,
+          "cases": 64,
+          "contact_points": 156,
+          "sweep_queries": 16,
+          "constraint_visits": 1248,
+          "retained_upward_velocity": 929.3433076013198
+        }
+      },
+      {
+        "contract": "CONTACT_MOMENTUM_WASM",
+        "replay": 2,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "contract": "PRIMITIVE_CONTACT_WASM",
+        "replay": 2,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "contract": "NARROW_SUPPORT_WASM",
+        "replay": 2,
+        "rows": [
+          {
+            "case": "Balanced",
+            "ticks": {
+              "peak_penetration": 5.706605183064539e-05,
+              "peak_speed": 0.017843453646455683,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 0.0005199816992768002,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5166666666666666,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 124
+            },
+            "physical_substeps": {
+              "peak_penetration": 6.100546596599088e-05,
+              "peak_speed": 0.022045516149004293,
+              "peak_angular_speed": 0.001185601944626108,
+              "peak_energy": 0.0007896256080338704,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5041666666666661,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 121
+            }
+          },
+          {
+            "case": "OffCenter",
+            "ticks": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 757.1434834586818,
+              "peak_angular_speed": 9.871937742930825,
+              "peak_energy": 594316.5679808124,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.016666666666668,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 244
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 786.8572732550132,
+              "peak_angular_speed": 10.204858081109501,
+              "peak_energy": 640194.6819111797,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.0041666666666644,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 241
+            }
+          },
+          {
+            "case": "Removal",
+            "ticks": {
+              "peak_penetration": 0.0016808885350343417,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.749999999999995,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 304
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.002353653658104804,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.024995181316378248,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.741666666666698,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 299
+            }
+          }
+        ]
+      }
+    ],
+    "soft": [
+      {
+        "contract": "FIXED_CONTACT_INTERVAL_WASM",
+        "replay": 0,
+        "fixedInterval": {
+          "peak_floor": 0.0006996034284334485,
+          "cases": 64,
+          "contact_points": 156,
+          "sweep_queries": 16,
+          "constraint_visits": 1248,
+          "retained_upward_velocity": 929.3433076013198
+        }
+      },
+      {
+        "contract": "CONTACT_MOMENTUM_WASM",
+        "replay": 0,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "contract": "PRIMITIVE_CONTACT_WASM",
+        "replay": 0,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "contract": "NARROW_SUPPORT_WASM",
+        "replay": 0,
+        "rows": [
+          {
+            "case": "Balanced",
+            "ticks": {
+              "peak_penetration": 5.706605183064539e-05,
+              "peak_speed": 0.017843453646455683,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 0.0005199816992768002,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5166666666666666,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 124
+            },
+            "physical_substeps": {
+              "peak_penetration": 6.100546596599088e-05,
+              "peak_speed": 0.022045516149004293,
+              "peak_angular_speed": 0.001185601944626108,
+              "peak_energy": 0.0007896256080338704,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5041666666666661,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 121
+            }
+          },
+          {
+            "case": "OffCenter",
+            "ticks": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 757.1434834586818,
+              "peak_angular_speed": 9.871937742930825,
+              "peak_energy": 594316.5679808124,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.016666666666668,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 244
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 786.8572732550132,
+              "peak_angular_speed": 10.204858081109501,
+              "peak_energy": 640194.6819111797,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.0041666666666644,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 241
+            }
+          },
+          {
+            "case": "Removal",
+            "ticks": {
+              "peak_penetration": 0.0016808885350343417,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.749999999999995,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 304
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.002353653658104804,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.024995181316378248,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.741666666666698,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 299
+            }
+          }
+        ]
+      },
+      {
+        "contract": "FIXED_CONTACT_INTERVAL_WASM",
+        "replay": 1,
+        "fixedInterval": {
+          "peak_floor": 0.0006996034284334485,
+          "cases": 64,
+          "contact_points": 156,
+          "sweep_queries": 16,
+          "constraint_visits": 1248,
+          "retained_upward_velocity": 929.3433076013198
+        }
+      },
+      {
+        "contract": "CONTACT_MOMENTUM_WASM",
+        "replay": 1,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "contract": "PRIMITIVE_CONTACT_WASM",
+        "replay": 1,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "contract": "NARROW_SUPPORT_WASM",
+        "replay": 1,
+        "rows": [
+          {
+            "case": "Balanced",
+            "ticks": {
+              "peak_penetration": 5.706605183064539e-05,
+              "peak_speed": 0.017843453646455683,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 0.0005199816992768002,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5166666666666666,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 124
+            },
+            "physical_substeps": {
+              "peak_penetration": 6.100546596599088e-05,
+              "peak_speed": 0.022045516149004293,
+              "peak_angular_speed": 0.001185601944626108,
+              "peak_energy": 0.0007896256080338704,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5041666666666661,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 121
+            }
+          },
+          {
+            "case": "OffCenter",
+            "ticks": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 757.1434834586818,
+              "peak_angular_speed": 9.871937742930825,
+              "peak_energy": 594316.5679808124,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.016666666666668,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 244
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 786.8572732550132,
+              "peak_angular_speed": 10.204858081109501,
+              "peak_energy": 640194.6819111797,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.0041666666666644,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 241
+            }
+          },
+          {
+            "case": "Removal",
+            "ticks": {
+              "peak_penetration": 0.0016808885350343417,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.749999999999995,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 304
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.002353653658104804,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.024995181316378248,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.741666666666698,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 299
+            }
+          }
+        ]
+      },
+      {
+        "contract": "FIXED_CONTACT_INTERVAL_WASM",
+        "replay": 2,
+        "fixedInterval": {
+          "peak_floor": 0.0006996034284334485,
+          "cases": 64,
+          "contact_points": 156,
+          "sweep_queries": 16,
+          "constraint_visits": 1248,
+          "retained_upward_velocity": 929.3433076013198
+        }
+      },
+      {
+        "contract": "CONTACT_MOMENTUM_WASM",
+        "replay": 2,
+        "momentum": {
+          "normalized_linear_error": 5.057012078047297e-16,
+          "normalized_angular_error": 4.731782613072224e-16,
+          "energy_ratio": 0.9975247524752475,
+          "cases": 768
+        }
+      },
+      {
+        "contract": "PRIMITIVE_CONTACT_WASM",
+        "replay": 2,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "contract": "NARROW_SUPPORT_WASM",
+        "replay": 2,
+        "rows": [
+          {
+            "case": "Balanced",
+            "ticks": {
+              "peak_penetration": 5.706605183064539e-05,
+              "peak_speed": 0.017843453646455683,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 0.0005199816992768002,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5166666666666666,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 124
+            },
+            "physical_substeps": {
+              "peak_penetration": 6.100546596599088e-05,
+              "peak_speed": 0.022045516149004293,
+              "peak_angular_speed": 0.001185601944626108,
+              "peak_energy": 0.0007896256080338704,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 0,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 0.5041666666666661,
+              "contact_points": 484,
+              "constraint_visits": 1688,
+              "position_tests": 121,
+              "active_substeps": 121
+            }
+          },
+          {
+            "case": "OffCenter",
+            "ticks": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 757.1434834586818,
+              "peak_angular_speed": 9.871937742930825,
+              "peak_energy": 594316.5679808124,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.016666666666668,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 244
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.001742738559045165,
+              "peak_speed": 786.8572732550132,
+              "peak_angular_speed": 10.204858081109501,
+              "peak_energy": 640194.6819111797,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 1,
+              "wake_transitions": 0,
+              "sleeping": 1,
+              "last_sleep_seconds": 1.0041666666666644,
+              "contact_points": 698,
+              "constraint_visits": 2728,
+              "position_tests": 180,
+              "active_substeps": 241
+            }
+          },
+          {
+            "case": "Removal",
+            "ticks": {
+              "peak_penetration": 0.0016808885350343417,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.0009660746780322564,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.749999999999995,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 304
+            },
+            "physical_substeps": {
+              "peak_penetration": 0.002353653658104804,
+              "peak_speed": 840,
+              "peak_angular_speed": 0.024995181316378248,
+              "peak_energy": 705600,
+              "tail_speed": 0,
+              "tail_angular_speed": 0,
+              "support_departure": 1,
+              "sleep_transitions": 2,
+              "wake_transitions": 1,
+              "sleeping": 1,
+              "last_sleep_seconds": 2.741666666666698,
+              "contact_points": 972,
+              "constraint_visits": 2832,
+              "position_tests": 243,
+              "active_substeps": 299
+            }
+          }
+        ]
+      }
+    ],
+    "otherContracts": "The same calls also assert dense/material/moving/parked/force/tangent/stationary contracts. Their raw historical producers remain in their own evidence records; no new bit identity across feature sets or targets is promised."
+  },
+  "originalStackComparisons": {
+    "producerCommit": "4389758b5ce139d9a6ab7af68f1f6d5a2911fee7",
+    "rows": [
+      {
+        "case": "equal",
+        "policy": 0,
+        "peak_floor": 0.16786101297283013,
+        "peak_energy": 49107.901843146916,
+        "final_energy": 2494.7872006226835,
+        "sleeping": false
+      },
+      {
+        "case": "equal",
+        "policy": 1,
+        "peak_floor": 0.05358973925994105,
+        "peak_energy": 56928.68718706514,
+        "final_energy": 0.0,
+        "sleeping": true
+      },
+      {
+        "case": "equal",
+        "policy": 2,
+        "peak_floor": 0.06502937587659194,
+        "peak_energy": 55716.69108997547,
+        "final_energy": 0.0,
+        "sleeping": true
+      },
+      {
+        "case": "mixed",
+        "policy": 2,
+        "peak_floor": 0.21862795838047824,
+        "peak_energy": 50400.0,
+        "final_energy": 0.0,
+        "sleeping": true
+      },
+      {
+        "case": "sliding",
+        "policy": 0,
+        "peak_floor": 0.1024070461498343,
+        "peak_energy": 39600.0,
+        "final_energy": 0.0,
+        "sleeping": true
+      },
+      {
+        "case": "sliding",
+        "policy": 1,
+        "peak_floor": 0.03749482187761909,
+        "peak_energy": 54414.37788711329,
+        "final_energy": 0.0,
+        "sleeping": true
+      },
+      {
+        "case": "sliding",
+        "policy": 2,
+        "peak_floor": 0.03799754279371475,
+        "peak_energy": 51336.86044406519,
+        "final_energy": 0.0,
+        "sleeping": true
+      }
+    ],
+    "inputSource": "src/approximate/correction/tests.rs::tilted_frictional_stacks_keep_finite_state_and_bounded_penetration",
+    "fixtureAndLimitsUnchanged": true
+  },
+  "retainedDiagnostics": [
+    {
+      "name": "original PR failure",
+      "producerCommit": "6fb3e0b672618be1298888cc4bbea6c15a82bce1",
+      "rows": [
+        {
+          "case": "equal",
+          "policy": 0,
+          "peak_floor": 0.19078931237225127,
+          "peak_energy": 49107.901843146916,
+          "final_energy": 1546.3959424650066,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 1,
+          "peak_floor": 0.06562213632890516,
+          "peak_energy": 56822.63096689836,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "equal",
+          "policy": 2,
+          "peak_floor": 0.045197979073105334,
+          "peak_energy": 55568.30323180843,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "mixed",
+          "policy": 2,
+          "peak_floor": 2.0045971396464055,
+          "peak_energy": 1163785.784052498,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 0,
+          "peak_floor": 0.1024070461498343,
+          "peak_energy": 39600.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 1,
+          "peak_floor": 0.03749482187761909,
+          "peak_energy": 54414.37788711329,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 2,
+          "peak_floor": 0.03799754279371475,
+          "peak_energy": 51336.86044406519,
+          "final_energy": 0.0,
+          "sleeping": true
+        }
+      ]
+    },
+    {
+      "name": "current main comparison",
+      "producerCommit": "16833b766629c354a6a5925b991eeb74208a242d",
+      "rows": [
+        {
+          "case": "equal",
+          "policy": 0,
+          "peak_floor": 0.14412008370594911,
+          "peak_energy": 49114.70815287973,
+          "final_energy": 2097.490401850011,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 1,
+          "peak_floor": 0.0639509823638849,
+          "peak_energy": 56814.2197217653,
+          "final_energy": 378.51001347269016,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 2,
+          "peak_floor": 0.07938331608207265,
+          "peak_energy": 55583.590045035344,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "mixed",
+          "policy": 2,
+          "peak_floor": 0.2712953461379717,
+          "peak_energy": 50400.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 0,
+          "peak_floor": 0.10225349491730529,
+          "peak_energy": 39600.0,
+          "final_energy": 75.26737509477708,
+          "sleeping": false
+        },
+        {
+          "case": "sliding",
+          "policy": 1,
+          "peak_floor": 0.03792860693935655,
+          "peak_energy": 52626.823616763664,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 2,
+          "peak_floor": 0.03976189462237662,
+          "peak_energy": 50214.75020185946,
+          "final_energy": 0.0,
+          "sleeping": true
+        }
+      ]
+    },
+    {
+      "name": "sweep-only probe rejected",
+      "state": "Uncommitted one-variable prototype on original PR head; removed",
+      "rows": [
+        {
+          "case": "equal",
+          "policy": 0,
+          "peak_floor": 0.19078931237225127,
+          "peak_energy": 49107.901843146916,
+          "final_energy": 1546.3959424650066,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 1,
+          "peak_floor": 0.06562213632890516,
+          "peak_energy": 56822.63096689836,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "equal",
+          "policy": 2,
+          "peak_floor": 0.045197979073105334,
+          "peak_energy": 55568.30323180843,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "mixed",
+          "policy": 2,
+          "peak_floor": 2.244362604000109,
+          "peak_energy": 1074484.131229354,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 0,
+          "peak_floor": 0.1024070461498343,
+          "peak_energy": 39600.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 1,
+          "peak_floor": 0.03749482187761909,
+          "peak_energy": 54414.37788711329,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 2,
+          "peak_floor": 0.03799754279371475,
+          "peak_energy": 51336.86044406519,
+          "final_energy": 0.0,
+          "sleeping": true
+        }
+      ]
+    },
+    {
+      "name": "early-friction corners probe rejected",
+      "state": "Uncommitted diagnostic prototype after merging main; removed",
+      "rows": [
+        {
+          "case": "equal",
+          "policy": 0,
+          "peak_floor": 0.12968084475072575,
+          "peak_energy": 49107.901843146916,
+          "final_energy": 2420.2288400809266,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 1,
+          "peak_floor": 0.05248299147400917,
+          "peak_energy": 58393.891710479285,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "equal",
+          "policy": 2,
+          "peak_floor": 0.04499248810679323,
+          "peak_energy": 55731.48762323886,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "mixed",
+          "policy": 2,
+          "peak_floor": 0.24602412244189645,
+          "peak_energy": 50400.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 0,
+          "peak_floor": 0.1024070461498343,
+          "peak_energy": 39600.0,
+          "final_energy": 142.29781882829843,
+          "sleeping": false
+        },
+        {
+          "case": "sliding",
+          "policy": 1,
+          "peak_floor": 0.03749482187761909,
+          "peak_energy": 54414.37788711329,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 2,
+          "peak_floor": 0.03799754279371475,
+          "peak_energy": 51336.86044406519,
+          "final_energy": 0.0,
+          "sleeping": true
+        }
+      ]
+    },
+    {
+      "name": "public interval fixture before prerequisite",
+      "state": "Momentum-repaired merged main source, prerequisite temporarily reverted and then restored; production and soft both fail",
+      "peak_floor": 0.6339107403425608
+    },
+    {
+      "name": "admitted-corner isolated failure",
+      "state": "Captured second state without contact history; sweep-only source",
+      "peak_floor": 1.3561561571786847
+    },
+    {
+      "name": "current corners only, swept corners missing",
+      "state": "Uncommitted intermediate prototype; removed",
+      "peak_floor": 0.9692250664074926
+    },
+    {
+      "name": "Review-found dropped admitted finite-floor corner",
+      "producerCommit": "cad5e6bb5c18da486c5d129df626090e2ed3c32d",
+      "state": "Superseded producer; enlarged7point polygon reduced uniformly to4, discarding sole actual contact",
+      "upward_velocity": 0,
+      "control": "tests/support/fixed_contact_interval.rs::finite_floor_retains_actual_contacts"
+    },
+    {
+      "name": "Reordering all admitted points first, including polygons that already fit",
+      "state": "Uncommitted one-variable reduction prototype; rejected in favor of preserving polygon traversal when no reduction is needed",
+      "rows": [
+        {
+          "case": "equal",
+          "policy": 0,
+          "peak_floor": 0.15305911455798546,
+          "peak_energy": 49107.901843146916,
+          "final_energy": 1121.9450455019228,
+          "sleeping": false
+        },
+        {
+          "case": "equal",
+          "policy": 1,
+          "peak_floor": 0.04153561006537425,
+          "peak_energy": 58221.37510398435,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "equal",
+          "policy": 2,
+          "peak_floor": 0.06755944059608594,
+          "peak_energy": 55610.99611102123,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "mixed",
+          "policy": 2,
+          "peak_floor": 0.24155910942928724,
+          "peak_energy": 839126.41248064,
+          "final_energy": 24.360030839952337,
+          "sleeping": false
+        },
+        {
+          "case": "sliding",
+          "policy": 0,
+          "peak_floor": 0.1024070461498343,
+          "peak_energy": 39600.0,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 1,
+          "peak_floor": 0.03749482187761909,
+          "peak_energy": 54414.37788711329,
+          "final_energy": 0.0,
+          "sleeping": true
+        },
+        {
+          "case": "sliding",
+          "policy": 2,
+          "peak_floor": 0.03799754279371475,
+          "peak_energy": 51336.86044406519,
+          "final_energy": 0.0,
+          "sleeping": true
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "fastChecks": 16,
+    "fastStatus": "passed at the final code producer",
+    "softApproximateLibrary": {
+      "passed": 109,
+      "failed": 0,
+      "preexistingIgnored": 7
+    },
+    "checkpointIntegrationTests": 9,
+    "geometryRetentionControls": 2000,
+    "geometryRetentionAssertions": "Ordinary SAT admission and normal unchanged; original admitted witnesses and existing fallback retained in relative order. Both ordinary and fallback cases exercised.",
+    "reviewStandards": "zero remaining",
+    "reviewSpec": "zero remaining after admitted-witness correction",
+    "productionDiagnosticIsolation": "Both getters absent from the ordinary production WASM module",
+    "hosted": "pending; acceptance and ratchet epoch unchanged"
+  },
+  "limitations": [
+    "Fixed-box extra corners use conservative reach and first-order speculative velocity targets; not exact rotational TOI.",
+    "General equal rigid stacks still move; #232/#236 remain open.",
+    "No same-substep elastic ricochet/remaining-interval guarantee is added; #246 remains open.",
+    "Prior failed and adverse probes are retained, not promoted."
+  ]
+}
