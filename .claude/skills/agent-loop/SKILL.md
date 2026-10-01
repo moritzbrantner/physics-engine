@@ -19,13 +19,13 @@ One run = the steps below, in order, then a short report. Keep chat output to th
   - `gh pr list --state open --limit 200 --json number,title,headRefName,author,labels,isDraft,url`
   - `gh issue list --label agent-task --state open --limit 200 --json number,title,labels,body`
   - `gh issue list --state open --limit 200 --json number,title,labels,body` (roadmap issues without `agent-task`)
-- **Stale locks:** an `agent:opus` or `agent:sonnet` issue labelled `in-progress` that has no open PR and no live background agent from this session loses `in-progress` with a one-line comment, so it becomes dispatchable again. Never touch `in-progress` on `agent:sol` issues; report a Sol issue that has been `in-progress` for over 48 hours with no PR or branch push.
+- **Stale locks:** clear `in-progress` on an `agent:opus` or `agent:sonnet` issue only when all of these hold: no open PR references it; the label was added more than 6 hours ago (issue timeline); the issue's branch has no push in the last 6 hours, or does not exist; and no background agent from this session is working on it. Another session's agent may be invisible, so age and branch activity are the evidence. Leave a one-line comment when clearing, so the issue becomes dispatchable again. Never touch `in-progress` on `agent:sol` issues; report a Sol issue that has been `in-progress` for over 48 hours with no PR or branch push.
 
 ## 1. Review open PRs
 
 For each open, non-draft PR that closes an `agent-task` issue:
 
-1. **CI:** `gh pr checks <n>`. If pending, skip it this run. If a check failed, treat it as a "changes needed" verdict: comment the failing check and log excerpt, then re-dispatch the owning agent with that list as in the verdict below (for Sol, leave the comment; Sol's next run fixes its own PRs first), and stop on this PR.
+1. **CI:** `gh pr checks <n>`. If pending, skip it this run. A check that concluded `cancelled` (for example superseded by a concurrency group) is not a failure: re-run it (`gh run rerun <run-id>`) and treat the PR as pending. Only `failure` or `timed_out` count as red CI. If a check failed, treat it as a "changes needed" verdict: comment the failing check and log excerpt, then re-dispatch the owning agent with that list as in the verdict below (for Sol, leave the comment; Sol's next run fixes its own PRs first), and stop on this PR.
 2. **Codex:** read the review comments and threads from `chatgpt-codex-connector` (`gh api repos/{owner}/{repo}/pulls/<n>/comments`, `.../reviews`, and the issue comments). Require a completed connector review covering the current head commit; the review-summary issue comment may record completion even when there are no findings. Skip this PR while that review is absent or running. Every finding must be fixed or answered in the thread. If the head changed after the completed review, comment `@codex review` when no current-head review is running and skip until it completes.
 3. **Spec:** compare the diff with the issue's Decisions, Acceptance and Out of scope:
    - public signatures and checkpoint format/algorithm versions match exactly, with at most one bump each;
@@ -47,8 +47,8 @@ For each `spec:draft` issue (often drafted in a ChatGPT chat):
 
 - Check it against the current code on `origin/main`: public API names, module paths, checkpoint format/algorithm versions, ratchet history, capability ledger, open parallel tasks.
 - Check it against `docs/AGENT_TASKS.md`: sizing, one version bump, the implementer label, every section present.
-- If you can complete it by deciding things yourself, edit the body (`gh issue edit <n> --body-file …`), summarise what you changed in a comment, and swap `spec:draft` for `spec:ready`.
-- If a decision belongs to the owner (scope, a public contract a consumer depends on, numerical policy, authority boundaries), ask in a comment and label it `spec:needs-input`. Re-check those issues for answers on every run.
+- If you can complete it by deciding things yourself, edit the body (`gh issue edit <n> --body-file …`), summarise what you changed in a comment, and swap `spec:draft` for `spec:ready` (exactly one `spec:*` label remains).
+- If a decision belongs to the owner (scope, a public contract a consumer depends on, numerical policy, authority boundaries), ask in a comment and swap `spec:draft` for `spec:needs-input` (do not add it alongside). Re-check every `spec:needs-input` issue for answers on every run; when answered, apply the answer and swap `spec:needs-input` for `spec:ready`.
 
 ## 3. Refresh and fill the queues
 
