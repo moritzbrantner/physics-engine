@@ -2,16 +2,17 @@ use physics_engine::{
     BodyId, RigidBody, Vec3i, World as LegacyWorld, WorldConfig,
     approximate::{Body, Config, Convergence, Shape, Vector, World as FloatingWorld},
 };
+use physics_engine::{approximate::Real, numeric::Scalar};
 
-const TICKS_PER_SECOND: f64 = 60.0;
-const POSITION_UNITS_PER_DISTANCE_UNIT: f64 = 1.0;
-const EPSILON: f64 = 1e-9;
+const TICKS_PER_SECOND: Real = 60.0;
+const POSITION_UNITS_PER_DISTANCE_UNIT: Real = 1.0;
+const EPSILON: Real = 1e-9;
 
 fn position_to_floating(value: Vec3i) -> Vector {
     Vector(
-        f64::from(value.x) / POSITION_UNITS_PER_DISTANCE_UNIT,
-        f64::from(value.y) / POSITION_UNITS_PER_DISTANCE_UNIT,
-        f64::from(value.z) / POSITION_UNITS_PER_DISTANCE_UNIT,
+        value.x as Real / POSITION_UNITS_PER_DISTANCE_UNIT,
+        value.y as Real / POSITION_UNITS_PER_DISTANCE_UNIT,
+        value.z as Real / POSITION_UNITS_PER_DISTANCE_UNIT,
     )
 }
 
@@ -77,7 +78,7 @@ fn one_substep_floating_integration_preserves_the_legacy_tick_conversion_boundar
     for _ in 0..4 {
         legacy.step(1).expect("legacy step");
         floating
-            .step(1.0 / TICKS_PER_SECOND)
+            .step(1.0 / TICKS_PER_SECOND as Scalar)
             .expect("floating step");
 
         let legacy_body = legacy.body(id).expect("legacy body remains");

@@ -12,7 +12,11 @@ use super::{
 // values use `Real` at native width; elapsed/prior-substep time is always f64.
 const MAGIC_F64: &[u8; 8] = b"PEFLOAT\0";
 const MAGIC_F32: &[u8; 8] = b"PEFLT32\0";
-const MAGIC: &[u8; 8] = if REAL_BITS == 32 { MAGIC_F32 } else { MAGIC_F64 };
+const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
+    MAGIC_F32
+} else {
+    MAGIC_F64
+};
 const FORMAT: u32 = 2;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 7;

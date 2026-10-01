@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use super::{
-    Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Quaternion, Report, Real, Vector,
+    Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Quaternion, Real, Report, Vector,
     World,
 };
 

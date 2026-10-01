@@ -3,7 +3,8 @@ use physics_engine::{
     BodyId,
     approximate::{Body, CheckpointContext, Config, Quaternion, Shape, Vector as V, World},
 };
-const H: f64 = 1.0 / 240.0;
+use physics_engine::{approximate::Real, numeric::Scalar};
+const H: Real = 1.0 / 240.0;
 const COMMAND_STEP: u32 = 480;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,13 +60,13 @@ fn command(w: &mut World, case: Case, ids: [u64; 2], m: &mut Metrics) {
 
 #[derive(Debug, Default, PartialEq)]
 struct Metrics {
-    peak_penetration: f64,
-    peak_speed: f64,
-    peak_energy: f64,
-    external_work: f64,
-    max_motion_error: f64,
-    peak_departure_gap: f64,
-    max_ballistic_error: f64,
+    peak_penetration: Real,
+    peak_speed: Real,
+    peak_energy: Real,
+    external_work: Real,
+    max_motion_error: Real,
+    peak_departure_gap: Real,
+    max_ballistic_error: Real,
     support_samples: u64,
     departure_samples: u64,
     contact_points: u64,
@@ -75,14 +76,15 @@ struct Metrics {
     wake_transitions: u64,
     last_velocity: V,
     last_sleeping: bool,
-    final_y: f64,
-    final_vy: f64,
+    final_y: Real,
+    final_vy: Real,
 }
 
 fn advance(w: &mut World, substeps: u32, m: &mut Metrics) {
     let before = w.elapsed_seconds();
-    let dt = H * f64::from(substeps);
-    let r = w.step(dt).unwrap();
+    let dt = H * substeps as Real;
+    let r = w.step(dt as Scalar).unwrap();
+    let dt = dt as Scalar;
     assert!((w.elapsed_seconds() - before - dt).abs() <= 16.0 * f64::EPSILON * (before.abs() + dt));
     assert_eq!(r.substeps, substeps);
     assert!(r.impulse_iterations <= 8 * u64::from(substeps));
@@ -102,14 +104,14 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
     assert!(rider.position.finite() && rider.velocity.finite());
     assert_eq!(rider.orientation, Quaternion::IDENTITY);
     assert_eq!(rider.angular_velocity, V::ZERO);
-    let n = f64::from(step);
+    let n = step as Real;
     let accelerated = n.min(80.0);
     let expected_x = 3.0 * H * H * accelerated * (accelerated + 1.0) + 2.0 * H * (n - accelerated);
     let expected_vx = (6.0 * H * n).min(2.0);
     let mut expected_y = 1.5;
     let mut expected_vy = 0.0;
     if step > COMMAND_STEP && case != Case::Carry {
-        let flight = f64::from(step - COMMAND_STEP);
+        let flight = (step - COMMAND_STEP) as Real;
         let vy = if case == Case::Departure { 3.0 } else { 0.0 };
         expected_y += vy * flight * H - 5.0 * H * H * flight * (flight + 1.0);
         expected_vy = vy - 10.0 * H * flight;
@@ -213,11 +215,11 @@ pub struct Measurements {
     ticks: Metrics,
     physical: Metrics,
     total_visits: u64,
-    elapsed: [f64; 2],
+    elapsed: [Real; 2],
 }
 impl Measurements {
     /// Counts remain integers internally and are below 2^53 in this bounded fixture.
-    pub fn values(&self, cadence: u32) -> Option<[f64; 19]> {
+    pub fn values(&self, cadence: u32) -> Option<[Real; 19]> {
         let m = match cadence {
             0 => &self.ticks,
             1 => &self.physical,
@@ -231,17 +233,17 @@ impl Measurements {
             m.max_motion_error,
             m.peak_departure_gap,
             m.max_ballistic_error,
-            m.support_samples as f64,
-            m.departure_samples as f64,
-            m.contact_points as f64,
-            m.constraint_visits as f64,
-            m.woken_bodies as f64,
-            m.sleep_transitions as f64,
-            m.wake_transitions as f64,
+            m.support_samples as Real,
+            m.departure_samples as Real,
+            m.contact_points as Real,
+            m.constraint_visits as Real,
+            m.woken_bodies as Real,
+            m.sleep_transitions as Real,
+            m.wake_transitions as Real,
             m.final_y,
             m.final_vy,
-            f64::from(u8::from(m.last_sleeping)),
-            self.total_visits as f64,
+            Real::from(u8::from(m.last_sleeping)),
+            self.total_visits as Real,
             self.elapsed[cadence as usize],
         ])
     }
@@ -310,7 +312,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> Measurements {
         ticks: tick_metrics,
         physical,
         total_visits,
-        elapsed: [ticks.elapsed_seconds(), w.elapsed_seconds()],
+        elapsed: [ticks.elapsed_seconds() as Real, w.elapsed_seconds() as Real],
     };
     println!(
         "MOVING_SUPPORT {{\"case\":\"{case:?}\",\"ids\":{ids:?},\"ticks\":{:?},\"physical_substeps\":{:?}}}",

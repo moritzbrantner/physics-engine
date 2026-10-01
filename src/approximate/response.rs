@@ -1,5 +1,5 @@
 //! Substep-local response coefficients. This caches division/shape work, not body motion.
-use super::{Body, Report, Real, Vector};
+use super::{Body, Real, Report, Vector};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PreparedResponse {

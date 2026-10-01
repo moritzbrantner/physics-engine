@@ -5,7 +5,8 @@ use physics_engine::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
     },
 };
-const H: f64 = 1.0 / 240.0;
+use physics_engine::{approximate::Real, numeric::Scalar};
+const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
     content: [253; 32],
@@ -84,20 +85,20 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> World {
     );
     w
 }
-fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> f64 {
+fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     let b = w.body(BodyId(ids[1])).unwrap();
-    let t = H * f64::from(n);
+    let t = H * n as Real;
     let double = matches!(case, Case::RepeatedRoots);
     let removed = matches!(case, Case::RemovedSupport);
     let z = if double { 3.0 } else { 0.0 };
     let expected_v = V(3.0, if removed { -10.0 * t } else { 0.0 }, z);
     let expected_y = if removed {
-        1.0 - 5.0 * H * H * f64::from(n) * f64::from(n + 1)
+        1.0 - 5.0 * H * H * n as Real * (n + 1) as Real
     } else {
         1.0
     };
     let diagonal = if double {
-        std::f64::consts::FRAC_1_SQRT_2
+        std::f64::consts::FRAC_1_SQRT_2 as Real
     } else {
         1.0
     };
@@ -137,7 +138,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> f64 {
     }
     error
 }
-fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [f64; 17] {
+fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 17] {
     let mut w = fixture(case, ids, substeps);
     let mut repeated = fixture(case, ids, substeps);
     let bytes = w.checkpoint(CONTEXT).unwrap().to_bytes();
@@ -145,13 +146,13 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [f64; 17] {
         .unwrap()
         .restore();
     let before = w.elapsed_seconds();
-    let dt = H * f64::from(substeps);
+    let dt = H * substeps as Real;
     let mut first = None;
-    let mut max_error: f64 = 0.0;
+    let mut max_error: Real = 0.0;
     for call in 1..=9 {
-        let report = w.step(dt).unwrap();
-        repeated.step(dt).unwrap();
-        restored.step(dt).unwrap();
+        let report = w.step(dt as Scalar).unwrap();
+        repeated.step(dt as Scalar).unwrap();
+        restored.step(dt as Scalar).unwrap();
         for other in [&repeated, &restored] {
             assert_eq!(
                 w.checkpoint(CONTEXT).unwrap().to_bytes(),
@@ -183,7 +184,8 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [f64; 17] {
                 };
             assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + 1e-10);
             assert!(
-                (w.elapsed_seconds() - before - dt).abs() <= 16.0 * f64::EPSILON * (before + dt)
+                (w.elapsed_seconds() - before - dt as Scalar).abs()
+                    <= 16.0 * f64::EPSILON * (before + dt as Scalar)
             );
             first = Some([
                 b.velocity.0,
@@ -192,21 +194,21 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [f64; 17] {
                 b.angular_velocity.length(),
                 energy,
                 work,
-                report.woken_bodies as f64,
-                report.response_preparations as f64,
-                report.inertia_preparations as f64,
-                report.inertia_applications as f64,
-                report.geometry.current_queries as f64,
-                report.geometry.sweep_queries as f64,
-                report.contact_points as f64,
-                report.convergence.constraint_visits as f64,
-                w.elapsed_seconds() - before,
+                report.woken_bodies as Real,
+                report.response_preparations as Real,
+                report.inertia_preparations as Real,
+                report.inertia_applications as Real,
+                report.geometry.current_queries as Real,
+                report.geometry.sweep_queries as Real,
+                report.contact_points as Real,
+                report.convergence.constraint_visits as Real,
+                (w.elapsed_seconds() - before) as Real,
                 0.0,
-                f64::from(u8::from(w.body(BodyId(30)).unwrap().is_sleeping())),
+                Real::from(u8::from(w.body(BodyId(30)).unwrap().is_sleeping())),
             ]);
         }
     }
-    assert!((w.elapsed_seconds() - before - 9.0 * dt).abs() <= 1e-12);
+    assert!((w.elapsed_seconds() - before - 9.0 * dt as Scalar).abs() <= 1e-12);
     let mut values = first.unwrap();
     values[15] = max_error;
     println!(
@@ -214,7 +216,7 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [f64; 17] {
     );
     values
 }
-pub fn run() -> [[f64; 17]; 16] {
+pub fn run() -> [[Real; 17]; 16] {
     std::array::from_fn(|index| {
         run_case(
             [

@@ -1,3 +1,4 @@
+use physics_engine::approximate::Real;
 use physics_engine::{
     BodyId,
     approximate::{Body, Config, Quaternion, Shape, Vector as V, World},
@@ -9,7 +10,7 @@ fn world(g: V) -> World {
     })
     .unwrap()
 }
-fn cuboid(id: u64, p: V, h: V, m: f64) -> Body {
+fn cuboid(id: u64, p: V, h: V, m: Real) -> Body {
     Body::new(BodyId(id), Shape::Box(h), p, m)
 }
 #[test]
@@ -41,7 +42,7 @@ fn invalid_values_are_rejected_without_changing_state() {
     let b = w.body(BodyId(1)).unwrap().clone();
     assert!(w.step(f64::NAN).is_err());
     assert!(
-        w.apply_impulse(BodyId(1), V(f64::INFINITY, 0.0, 0.0), V::ZERO)
+        w.apply_impulse(BodyId(1), V(Real::INFINITY, 0.0, 0.0), V::ZERO)
             .is_err()
     );
     assert_eq!(w.body(BodyId(1)), Some(&b));
@@ -116,9 +117,9 @@ fn touching_thirty_two_box_tower_settles_and_misses_do_not_wake_it() {
                 let b = cuboid(
                     id,
                     V(
-                        -54.0 + col as f64 * 36.0,
-                        18.0 + level as f64 * 36.0,
-                        82.0 + depth as f64 * 36.0,
+                        -54.0 + col as Real * 36.0,
+                        18.0 + level as Real * 36.0,
+                        82.0 + depth as Real * 36.0,
                     ),
                     V(18.0, 18.0, 18.0),
                     2.0,

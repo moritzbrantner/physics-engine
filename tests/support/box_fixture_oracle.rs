@@ -2,10 +2,11 @@
 //! Computes overlap depth from observed f64 Body poses, outside production manifolds.
 //! Compiled only through integration tests and diagnostic examples. A reusable kernel
 //! extraction belongs in rust-kernels with its own numerical contract.
+use physics_engine::approximate::Real;
 use physics_engine::approximate::{Body, Shape, Vector as V};
 
 // Independent geometric screening, not the engine's clipped response manifold.
-pub fn box_overlap_depth(a: &Body, b: &Body) -> f64 {
+pub fn box_overlap_depth(a: &Body, b: &Body) -> Real {
     let Shape::Box(ha) = a.shape else {
         panic!("box fixture")
     };
@@ -15,7 +16,7 @@ pub fn box_overlap_depth(a: &Body, b: &Body) -> f64 {
     let aa = a.orientation.axes();
     let bb = b.orientation.axes();
     let delta = b.position - a.position;
-    let mut depth = f64::INFINITY;
+    let mut depth = Real::INFINITY;
     for axis in aa
         .into_iter()
         .chain(bb)

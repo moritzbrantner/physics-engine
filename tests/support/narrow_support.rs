@@ -1,12 +1,13 @@
 //! Public physical controls; all geometry is observed independently of engine manifolds.
 use super::box_fixture_oracle;
+use physics_engine::{approximate::Real, numeric::Scalar};
 
 use physics_engine::{
     BodyId,
     approximate::{Body, CheckpointContext, Config, PositionCorrection, Shape, Vector as V, World},
 };
 
-const DT: f64 = 1.0 / 60.0;
+const DT: Real = 1.0 / 60.0;
 const TICKS: usize = 600;
 const BOX: BodyId = BodyId(10);
 const SUPPORT: BodyId = BodyId(2);
@@ -47,17 +48,17 @@ fn fixture(case: Case, substeps: u8) -> World {
 
 #[derive(Debug, Default, PartialEq)]
 struct Metrics {
-    peak_penetration: f64,
-    peak_speed: f64,
-    peak_angular_speed: f64,
-    peak_energy: f64,
-    tail_speed: f64,
-    tail_angular_speed: f64,
+    peak_penetration: Real,
+    peak_speed: Real,
+    peak_angular_speed: Real,
+    peak_energy: Real,
+    tail_speed: Real,
+    tail_angular_speed: Real,
     support_departure: bool,
     sleep_transitions: u64,
     wake_transitions: u64,
     sleeping: bool,
-    last_sleep_seconds: f64,
+    last_sleep_seconds: Real,
     contact_points: u64,
     constraint_visits: u64,
     position_tests: u64,
@@ -73,7 +74,7 @@ fn observe(world: &World, case: Case, tail: bool, metrics: &mut Metrics) {
     if body.is_sleeping() != metrics.sleeping {
         if body.is_sleeping() {
             metrics.sleep_transitions += 1;
-            metrics.last_sleep_seconds = world.elapsed_seconds();
+            metrics.last_sleep_seconds = world.elapsed_seconds() as Real;
         } else {
             metrics.wake_transitions += 1;
         }
@@ -102,9 +103,10 @@ fn observe(world: &World, case: Case, tail: bool, metrics: &mut Metrics) {
     }
 }
 
-fn advance(world: &mut World, dt: f64, maximum_substeps: u32, metrics: &mut Metrics) {
+fn advance(world: &mut World, dt: Real, maximum_substeps: u32, metrics: &mut Metrics) {
     let before = world.elapsed_seconds();
-    let report = world.step(dt).unwrap();
+    let report = world.step(dt as Scalar).unwrap();
+    let dt = dt as Scalar;
     let tolerance = 16.0 * f64::EPSILON * (before.abs() + dt);
     assert!((world.elapsed_seconds() - before - dt).abs() <= tolerance);
     assert!(report.substeps <= maximum_substeps);
@@ -222,7 +224,7 @@ pub struct Measurements {
 impl Measurements {
     /// Diagnostic bridge only. The bounded ten-second fixture keeps integer counters
     /// below 2^53, so their f64 transport is exact. No physics state crosses this seam.
-    pub fn values(&self, cadence: u32) -> Option<[f64; 15]> {
+    pub fn values(&self, cadence: u32) -> Option<[Real; 15]> {
         let m = match cadence {
             0 => &self.ticks,
             1 => &self.substeps,
@@ -235,15 +237,15 @@ impl Measurements {
             m.peak_energy,
             m.tail_speed,
             m.tail_angular_speed,
-            f64::from(m.support_departure),
-            m.sleep_transitions as f64,
-            m.wake_transitions as f64,
-            f64::from(m.sleeping),
+            Real::from(u8::from(m.support_departure)),
+            m.sleep_transitions as Real,
+            m.wake_transitions as Real,
+            Real::from(u8::from(m.sleeping)),
             m.last_sleep_seconds,
-            m.contact_points as f64,
-            m.constraint_visits as f64,
-            m.position_tests as f64,
-            m.active_substeps as f64,
+            m.contact_points as Real,
+            m.constraint_visits as Real,
+            m.position_tests as Real,
+            m.active_substeps as Real,
         ])
     }
 }

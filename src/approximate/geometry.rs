@@ -4,9 +4,7 @@
 //! still run SAT and clipping, but unchanged orientations reuse frames and support projections.
 //! Retained ordinary geometry has no velocity/timestep key. Moving fixed-box interval manifolds
 //! use fresh motion and never retain pair results; CCD also always runs fresh after a miss.
-use super::{
-    Body, BodyId, Quaternion, Real, Shape, SweepFailure, Vector, contact, primitive,
-};
+use super::{Body, BodyId, Quaternion, Real, Shape, SweepFailure, Vector, contact, primitive};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

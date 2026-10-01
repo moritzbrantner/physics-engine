@@ -1,5 +1,5 @@
 //! Bounded velocity solving with a projected fixed-point residual, never a wall-clock budget.
-use super::{Body, Constraint, PreparedResponse, Report, Real, apply, contact_velocity};
+use super::{Body, Constraint, PreparedResponse, Real, Report, apply, contact_velocity};
 
 /// Absolute scene-unit tolerances plus a relative per-contact scale. Zero selects exact checks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -26,13 +26,7 @@ impl Convergence {
             .all(|x| x.is_finite() && x >= 0.0)
             && self.relative <= 0.01
     }
-    fn small(
-        self,
-        delta: Real,
-        mass: Real,
-        impulse_scale: Real,
-        velocity_scale: Real,
-    ) -> bool {
+    fn small(self, delta: Real, mass: Real, impulse_scale: Real, velocity_scale: Real) -> bool {
         let impulse_limit = self.absolute_impulse + self.relative * impulse_scale;
         let velocity_limit = self.absolute_velocity + self.relative * velocity_scale;
         delta.is_finite()

@@ -3,10 +3,11 @@ use physics_engine::{
     BodyId,
     approximate::{Body, CheckpointContext, Config, Error, Shape, Vector as V, World},
 };
+use physics_engine::{approximate::Real, numeric::Scalar};
 
-const DT: f64 = 0.01;
+const DT: Real = 0.01;
 
-fn close(actual: f64, expected: f64) {
+fn close(actual: Real, expected: Real) {
     // Velocity controls are O(1) scene units/s; impulse/energy controls below are
     // normalized by their own physical scales before crossing this comparison seam.
     let tolerance = 1e-11 * (1.0 + expected.abs());
@@ -27,7 +28,7 @@ fn world(gravity: V, warm_start: bool) -> World {
     .unwrap()
 }
 
-fn sphere(id: u64, position: V, mass: f64, velocity: V) -> Body {
+fn sphere(id: u64, position: V, mass: Real, velocity: V) -> Body {
     let mut body = Body::new(BodyId(id), Shape::Sphere(1.0), position, mass);
     body.velocity = velocity;
     body.friction = 0.0;
@@ -38,9 +39,10 @@ fn sphere(id: u64, position: V, mass: f64, velocity: V) -> Body {
 
 fn step(world: &mut World) {
     let before = world.elapsed_seconds();
-    let report = world.step(DT).unwrap();
-    let time_budget = 16.0 * f64::EPSILON * (before.abs() + DT);
-    assert!((world.elapsed_seconds() - before - DT).abs() <= time_budget);
+    let report = world.step(DT as Scalar).unwrap();
+    let dt = DT as Scalar;
+    let time_budget = 16.0 * f64::EPSILON * (before.abs() + dt);
+    assert!((world.elapsed_seconds() - before - dt).abs() <= time_budget);
     assert_eq!(report.substeps, 1);
     assert!(report.contact_points > 0);
     assert!(report.impulse_iterations <= 8);
@@ -133,13 +135,13 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
         w.set_velocity(BodyId(1), -V::X * 2.0).unwrap();
         w.set_velocity(BodyId(2), V::X * 2.0).unwrap();
         for _ in 0..3 {
-            w.step(DT).unwrap();
+            w.step(DT as Scalar).unwrap();
         }
         w.set_velocity(BodyId(1), V::X * 2.0).unwrap();
         w.set_velocity(BodyId(2), -V::X * 2.0).unwrap();
-        w.step(DT).unwrap();
-        w.step(DT).unwrap();
-        w.step(DT).unwrap();
+        w.step(DT as Scalar).unwrap();
+        w.step(DT as Scalar).unwrap();
+        w.step(DT as Scalar).unwrap();
         step(&mut w);
         close(w.body(BodyId(1)).unwrap().velocity.0, -2.0);
         close(w.body(BodyId(2)).unwrap().velocity.0, 2.0);
@@ -163,8 +165,8 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
 }
 
 fn sliding_sphere(
-    mass: f64,
-    friction: [f64; 2],
+    mass: Real,
+    friction: [Real; 2],
     velocity: V,
     locked: bool,
     linear: bool,
@@ -233,7 +235,7 @@ pub fn invalid_materials_and_mass_leave_checkpoint_unchanged() {
         content: [1; 32],
     };
     let before = w.checkpoint(context).unwrap().to_bytes();
-    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01] {
+    for value in [Real::NAN, Real::INFINITY, Real::NEG_INFINITY, -0.01] {
         for field in 0..3 {
             let mut bad = sphere(2, V::X * 10.0, 1.0, V::ZERO);
             match field {
@@ -296,7 +298,7 @@ pub fn penetration_bias_and_same_target_replay() {
         );
         let mut history = vec![w.checkpoint(context).unwrap().to_bytes()];
         for _ in 0..16 {
-            w.step(DT).unwrap();
+            w.step(DT as Scalar).unwrap();
             history.push(w.checkpoint(context).unwrap().to_bytes());
         }
         history
@@ -364,13 +366,15 @@ pub fn linear_support_direction_and_spin_with_dynamic_endpoints() {
 
 /// Unforced current contacts, including overlap strictly within the existing slop.
 /// Each shape here has an isotropic analytic inertia, independent of engine helpers.
-pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
+pub fn reciprocal_current_contact_momentum() -> [Real; 4] {
     fn momentum(w: &World) -> (V, V) {
         w.bodies()
             .fold((V::ZERO, V::ZERO), |(linear, angular), body| {
                 let p = body.velocity * body.mass;
                 let inertia = match body.shape {
-                    Shape::Box(_) => body.mass * (36.0_f64.powi(2) + 36.0_f64.powi(2)) / 12.0,
+                    Shape::Box(_) => {
+                        body.mass * ((36.0 as Real).powi(2) + (36.0 as Real).powi(2)) / 12.0
+                    }
                     Shape::Sphere(radius) => 0.4 * body.mass * radius * radius,
                     _ => panic!("isotropic fixture"),
                 };
@@ -386,7 +390,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
     };
     let cube = Shape::Box(V(18.0, 18.0, 18.0));
     let ball = Shape::Sphere(18.0);
-    let mut measurements = [0.0_f64; 4];
+    let mut measurements = [(0.0 as Real); 4];
     let mut cases = 0_u32;
     for mass in [1e-6, 1.0, 2.0, 1e6] {
         for ratio in [1.0, 3.0] {
@@ -400,7 +404,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
                                     let mut body = Body::new(
                                         BodyId(ids[i]),
                                         shapes[i],
-                                        V(0.0, i as f64 * (36.0 - penetration), 0.0),
+                                        V(0.0, i as Real * (36.0 - penetration), 0.0),
                                         mass * if i == 0 { 1.0 } else { ratio },
                                     );
                                     body.friction = friction;
@@ -415,7 +419,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
                             let mut w = fixture();
                             let mut replay = fixture();
                             let before = momentum(&w);
-                            let energy = w.bodies().map(Body::kinetic_energy).sum::<f64>();
+                            let energy = w.bodies().map(Body::kinetic_energy).sum::<Real>();
                             for current in [&mut w, &mut replay] {
                                 let report = current.step(1.0 / 240.0).unwrap();
                                 assert_eq!(report.substeps, 1);
@@ -424,7 +428,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
                                 assert!(report.impulse_iterations <= 8);
                                 assert_eq!(report.position.passes, 0);
                                 assert!(report.retired.is_empty());
-                                close(current.elapsed_seconds(), 1.0 / 240.0);
+                                close(current.elapsed_seconds() as Real, 1.0 / 240.0);
                                 for body in current.bodies() {
                                     assert!(body.position.finite());
                                     assert!(body.orientation.finite());
@@ -447,7 +451,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
                                 / (mass * 18.0)
                                 / (1.0 + before.1.length() / (mass * 18.0));
                             let energy_ratio =
-                                w.bodies().map(Body::kinetic_energy).sum::<f64>() / energy;
+                                w.bodies().map(Body::kinetic_energy).sum::<Real>() / energy;
                             assert!(linear_error <= 1e-10, "linear {linear_error}");
                             assert!(angular_error <= 1e-10, "angular {angular_error}");
                             assert!(energy_ratio.is_finite() && energy_ratio <= 1.0 + 1e-10);
@@ -464,7 +468,7 @@ pub fn reciprocal_current_contact_momentum() -> [f64; 4] {
             }
         }
     }
-    measurements[3] = f64::from(cases);
+    measurements[3] = cases as Real;
     println!("CONTACT_MOMENTUM {{\"values\":{measurements:?}}}");
     measurements
 }

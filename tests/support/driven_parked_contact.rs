@@ -5,7 +5,8 @@ use physics_engine::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
     },
 };
-const H: f64 = 1.0 / 240.0;
+use physics_engine::{approximate::Real, numeric::Scalar};
+const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
     content: [250; 32],
@@ -30,14 +31,14 @@ impl Case {
             Self::Current | Self::SlowCurrent | Self::Swept | Self::SweptOutsideSlop
         )
     }
-    fn interval(self) -> f64 {
+    fn interval(self) -> Real {
         if matches!(self, Self::Current | Self::SweptOutsideSlop) {
             1.0 / 60.0
         } else {
             H
         }
     }
-    fn speed(self) -> f64 {
+    fn speed(self) -> Real {
         match self {
             Self::SlowCurrent => 0.25,
             Self::Stationary => 0.0,
@@ -107,7 +108,7 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
     );
     w
 }
-fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
+fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
     let mut w = fixture(case, ids);
     let mut repeated = fixture(case, ids);
     let bytes = w.checkpoint(CONTEXT).unwrap().to_bytes();
@@ -116,16 +117,19 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
         .restore();
     let h = case.interval();
     let before = w.elapsed_seconds();
-    let report = w.step(h).unwrap();
-    repeated.step(h).unwrap();
-    restored.step(h).unwrap();
+    let report = w.step(h as Scalar).unwrap();
+    repeated.step(h as Scalar).unwrap();
+    restored.step(h as Scalar).unwrap();
     for other in [&repeated, &restored] {
         assert_eq!(
             w.checkpoint(CONTEXT).unwrap().to_bytes(),
             other.checkpoint(CONTEXT).unwrap().to_bytes()
         );
     }
-    assert!((w.elapsed_seconds() - before - h).abs() <= 16.0 * f64::EPSILON * (before + h));
+    assert!(
+        (w.elapsed_seconds() - before - h as Scalar).abs()
+            <= 16.0 * f64::EPSILON * (before + h as Scalar)
+    );
     assert_eq!(report.substeps, 1);
     assert!(report.impulse_iterations <= 8);
     assert!(report.convergence.constraint_visits <= 8 * report.contact_points);
@@ -196,25 +200,25 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
         rider.velocity.1,
         energy,
         external_work,
-        report.woken_bodies as f64,
-        report.response_preparations as f64,
-        report.inertia_preparations as f64,
-        report.inertia_applications as f64,
-        report.pair_tests as f64,
-        report.narrow_tests as f64,
-        report.geometry.current_queries as f64,
-        report.geometry.sweep_queries as f64,
-        report.contact_points as f64,
-        report.convergence.constraint_visits as f64,
-        report.swept_contacts as f64,
-        f64::from(u8::from(rider.is_sleeping())),
-        f64::from(u8::from(neighbor.is_sleeping())),
-        w.elapsed_seconds() - before,
+        report.woken_bodies as Real,
+        report.response_preparations as Real,
+        report.inertia_preparations as Real,
+        report.inertia_applications as Real,
+        report.pair_tests as Real,
+        report.narrow_tests as Real,
+        report.geometry.current_queries as Real,
+        report.geometry.sweep_queries as Real,
+        report.contact_points as Real,
+        report.convergence.constraint_visits as Real,
+        report.swept_contacts as Real,
+        Real::from(u8::from(rider.is_sleeping())),
+        Real::from(u8::from(neighbor.is_sleeping())),
+        (w.elapsed_seconds() - before) as Real,
     ];
     // Compare complete continuation history, not only the observed first-call state.
     for _ in 0..8 {
         for world in [&mut w, &mut repeated, &mut restored] {
-            world.step(H).unwrap();
+            world.step(H as Scalar).unwrap();
         }
         for other in [&repeated, &restored] {
             assert_eq!(
@@ -226,7 +230,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     println!("DRIVEN_PARKED {{\"case\":\"{case:?}\",\"ids\":{ids:?},\"values\":{values:?}}}");
     values
 }
-pub fn run() -> [[f64; 18]; 20] {
+pub fn run() -> [[Real; 18]; 20] {
     std::array::from_fn(|index| {
         run_case(
             [

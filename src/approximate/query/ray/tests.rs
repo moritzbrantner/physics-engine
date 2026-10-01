@@ -116,7 +116,7 @@ fn filters_lifecycle_and_invalid_requests_cannot_reuse_stale_results() {
     assert_eq!(hits[0].feature, RayFeature::WedgeFace(1));
     for cast in [
         RayCast::new(V::ZERO, V::ZERO),
-        RayCast::new(V(f64::NAN, 0.0, 0.0), V::X),
+        RayCast::new(V(Real::NAN, 0.0, 0.0), V::X),
         RayCast::new(V(1e12, 0.0, 0.0), V::X),
     ] {
         let error = w.cast_ray(cast, filter, &mut hits).unwrap_err();
@@ -138,7 +138,7 @@ fn partial_work_and_hits_are_reported_when_support_velocity_fails() {
     w.add_body(Body::new(BodyId(2), Shape::Sphere(2.0), V::ZERO, 0.0))
         .unwrap();
     // Deliberately corrupt otherwise validated state to test the numerical error boundary.
-    w.bodies[1].angular_velocity = V(0.0, f64::MAX, 0.0);
+    w.bodies[1].angular_velocity = V(0.0, Real::MAX, 0.0);
     let mut hits = Vec::new();
     let error = w
         .cast_ray(

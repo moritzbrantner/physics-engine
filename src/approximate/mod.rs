@@ -35,6 +35,10 @@ use std::f64::consts as real_consts;
 /// Bit width of [`Real`] in this build (32 or 64).
 pub const REAL_BITS: u32 = (size_of::<Real>() * 8) as u32;
 
+/// Rounding allowance, in units of `Real::EPSILON`, for re-checking a swept impact after
+/// conservative narrowing. Zero in the f64 build, where narrowing is the identity.
+const NARROWING_ULPS: Real = if REAL_BITS == 64 { 0.0 } else { 16.0 };
+
 /// Narrows f64 time to the solver scalar once per substep (identity in the f64 build).
 #[allow(clippy::unnecessary_cast)]
 fn narrow_time(seconds: Scalar) -> Real {

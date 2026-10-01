@@ -1,7 +1,7 @@
 //! Opt-in soft normal constraints and frozen-contact velocity relaxation.
 //! Based on the mass-independent soft-constraint formulation described in
 //! https://box2d.org/posts/2024/02/solver2d/. The default solver remains Baumgarte.
-use super::{Constraint, Convergence, Report, Real, Vector, World, convergence};
+use super::{Constraint, Convergence, Real, Report, Vector, World, convergence};
 
 /// Experimental correction policy. It does not change global damping or sleeping thresholds.
 #[derive(Clone, Copy, Debug, PartialEq)]

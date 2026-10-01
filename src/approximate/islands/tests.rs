@@ -1,14 +1,14 @@
 use super::*;
 use crate::{
     BodyId, CollisionLayers3d,
-    approximate::{Config, Shape, Vector as V, World},
+    approximate::{Config, Real, Shape, Vector as V, World},
 };
 
-fn body(id: u64, mass: f64) -> Body {
+fn body(id: u64, mass: Real) -> Body {
     Body::new(
         BodyId(id),
         Shape::Sphere(1.0),
-        V(id as f64 * 4.0, 1.0, 0.0),
+        V(id as Real * 4.0, 1.0, 0.0),
         mass,
     )
 }
@@ -72,7 +72,7 @@ fn execute(
     }
     r
 }
-fn impulse_state(rows: &[Constraint]) -> Vec<(f64, [f64; 2])> {
+fn impulse_state(rows: &[Constraint]) -> Vec<(Real, [Real; 2])> {
     rows.iter()
         .map(|c| (c.normal_impulse, c.tangent_impulse))
         .collect()
@@ -311,7 +311,11 @@ fn mixed_world(scope: ConvergenceScope, easy: usize, sleeping: bool) -> World {
                 let mut b = Body::new(
                     BodyId(id),
                     Shape::Box(V(18.0, 18.0, 18.0)),
-                    V(x as f64 * 36.0, 18.0 + level as f64 * 36.0, z as f64 * 36.0),
+                    V(
+                        x as Real * 36.0,
+                        18.0 + level as Real * 36.0,
+                        z as Real * 36.0,
+                    ),
                     2.0,
                 );
                 b.friction = 1.0;
@@ -324,7 +328,11 @@ fn mixed_world(scope: ConvergenceScope, easy: usize, sleeping: bool) -> World {
         let mut b = Body::new(
             BodyId(100 + n as u64),
             Shape::Box(V(18.0, 18.0, 18.0)),
-            V(500.0 + (n % 16) as f64 * 80.0, 18.0, (n / 16) as f64 * 80.0),
+            V(
+                500.0 + (n % 16) as Real * 80.0,
+                18.0,
+                (n / 16) as Real * 80.0,
+            ),
             2.0,
         );
         b.friction = 1.0;
@@ -334,7 +342,7 @@ fn mixed_world(scope: ConvergenceScope, easy: usize, sleeping: bool) -> World {
     w
 }
 
-fn within(a: V, b: V, limit: f64) {
+fn within(a: V, b: V, limit: Real) {
     assert!((a - b).length() <= limit, "{a:?} vs {b:?}");
 }
 #[test]
@@ -548,7 +556,7 @@ fn globally_converged_or_tiny_budgets_do_not_pay_for_partitioning() {
         }
         for id in 1..33 {
             let mut b = body(id, 1.0);
-            b.position = V(id as f64 * 5.0, 1.0, 0.0);
+            b.position = V(id as Real * 5.0, 1.0, 0.0);
             b.sleep_allowed = false;
             w.add_body(b).unwrap();
         }

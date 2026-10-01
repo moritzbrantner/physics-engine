@@ -2,12 +2,13 @@ use physics_engine::{
     BodyId,
     approximate::{Body, Config, Error, Shape, Vector, World},
 };
+use physics_engine::{approximate::Real, numeric::Scalar};
 
 fn bodies(world: &World) -> Vec<Body> {
     world.bodies().cloned().collect()
 }
 
-fn failing_body(id: u64, position: f64, speed: f64) -> Body {
+fn failing_body(id: u64, position: Real, speed: Real) -> Body {
     let mut body = Body::new(
         BodyId(id),
         Shape::Sphere(0.1),
@@ -187,7 +188,7 @@ fn sleeping_world(count: u64) -> World {
             .add_body(Body::new(
                 BodyId(index + 1),
                 Shape::Box(Vector(0.5, 0.5, 0.5)),
-                Vector(index as f64 * 3.0, 0.5, 0.0),
+                Vector(index as Real * 3.0, 0.5, 0.0),
                 1.0,
             ))
             .unwrap();
@@ -237,8 +238,8 @@ fn failed_wake_restores_sleep_timers_warm_starts_and_changed_timestep_continuati
     reference.remove_body(BodyId(99)).unwrap();
     for tick in 0..100 {
         let dt = if tick % 2 == 0 { 0.02 } else { 0.01 };
-        let actual = world.step(dt).unwrap();
-        let expected = reference.step(dt).unwrap();
+        let actual = world.step(dt as Scalar).unwrap();
+        let expected = reference.step(dt as Scalar).unwrap();
         assert_eq!(bodies(&world), bodies(&reference), "tick {tick}");
         assert_eq!(actual.retired, expected.retired);
         assert_eq!(actual.woken_bodies, expected.woken_bodies);
@@ -280,7 +281,7 @@ fn quiet_and_invalid_attempts_do_no_journaling_and_scratch_release_preserves_con
     assert_eq!(world.elapsed_seconds(), time + 0.03);
     let report = format!("{:?}", world.last_report);
     for dt in [f64::NAN, -0.1, 0.1001, f64::from_bits(1)] {
-        assert!(matches!(world.step(dt), Err(Error::InvalidInput)));
+        assert!(matches!(world.step(dt as Scalar), Err(Error::InvalidInput)));
         assert_eq!(bodies(&world), before);
         assert_eq!(format!("{:?}", world.last_report), report);
         assert_eq!(world.last_step_transaction().journaled_bodies, 0);

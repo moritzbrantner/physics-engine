@@ -1,4 +1,5 @@
 //! Capsule row work must reach public world/query reports on native and WASM.
+use physics_engine::approximate::Real;
 use physics_engine::{
     BodyId,
     approximate::{
@@ -166,7 +167,7 @@ pub fn failed_capsule_step_retains_discarded_distance_work() {
         ))
         .unwrap();
     world.step(0.01).unwrap();
-    world.add_force(BodyId(2), V(f64::MAX, 0.0, 0.0)).unwrap();
+    world.add_force(BodyId(2), V(Real::MAX, 0.0, 0.0)).unwrap();
     let before = world.checkpoint(context()).unwrap().to_bytes();
     let prior_report = format!("{:?}", world.last_report);
     for _ in 0..3 {

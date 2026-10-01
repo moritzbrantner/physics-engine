@@ -1,4 +1,4 @@
-use super::{Body, Shape, Vector as V, geometry::GeometryStats, Real, primitive};
+use super::{Body, Real, Shape, Vector as V, geometry::GeometryStats, primitive};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
@@ -852,8 +852,9 @@ pub(super) fn swept(
     let Some(time) = time else {
         return Ok(None);
     };
+    let admission = impact_margin(a, b, dt, margin);
     Ok(finish_sweep(a, b, dt, time, |aa, bb| {
-        current_interval_counted(aa, bb, dt * (1.0 - time), margin.max(1e-6), work)
+        current_interval_counted(aa, bb, dt * (1.0 - time), admission, work)
     }))
 }
 
@@ -903,6 +904,7 @@ pub(super) fn box_swept_with_frames(
 ) -> Option<Manifold> {
     work.sweep_queries += 1;
     let time = box_sweep_time(a, b, dt, frame_projection_axes(a, b, frames))?;
+    let admission = impact_margin(a, b, dt, margin);
     finish_sweep(a, b, dt, time, |aa, bb| {
         work.current_queries += 1;
         work.manifold_refreshes += 1;
@@ -910,15 +912,33 @@ pub(super) fn box_swept_with_frames(
             box_current_interval_with_frames(
                 [aa, bb],
                 dt * (1.0 - time),
-                margin.max(1e-6),
+                admission,
                 frames,
                 work,
                 scratch,
             )
         } else {
-            box_current_with_frames(aa, bb, margin.max(1e-6), frames, work, scratch)
+            box_current_with_frames(aa, bb, admission, frames, work, scratch)
         }
     })
+}
+
+/// Admission margin for the current query at a swept impact pose.
+///
+/// With f32 state, the impact time rounds earlier and the advanced poses round to `Real`, so
+/// the surfaces can sit a few ulps beyond the sweep's own target. The allowance covers only
+/// that rounding, scaled by the pose and travel magnitudes. It is exactly zero in the default
+/// f64 build ([`super::NARROWING_ULPS`]), which keeps `margin.max(1e-6)` bit for bit.
+fn impact_margin(a: &Body, b: &Body, dt: Real, margin: Real) -> Real {
+    let scale = a
+        .position
+        .abs()
+        .max_component()
+        .max(b.position.abs().max_component())
+        + ((b.velocity - a.velocity) * dt).abs().max_component()
+        + a.shape.radius()
+        + b.shape.radius();
+    margin.max(1e-6) + super::NARROWING_ULPS * Real::EPSILON * (1.0 + scale)
 }
 
 fn finish_sweep(

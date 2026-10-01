@@ -1,4 +1,5 @@
 //! Explicit product work/cost; no capture/encoding is part of ordinary stepping.
+use physics_engine::approximate::Real;
 use std::time::Instant;
 
 use physics_engine::{
@@ -40,7 +41,7 @@ fn fixture(kind: &str, count: u64) -> World {
         let mut b = Body::new(
             BodyId(id),
             Shape::Box(V(0.5, 0.5, 0.5)),
-            V(id as f64 * 3.0, if supported { 0.5 } else { 10.0 }, 0.0),
+            V(id as Real * 3.0, if supported { 0.5 } else { 10.0 }, 0.0),
             1.0,
         );
         if !supported {

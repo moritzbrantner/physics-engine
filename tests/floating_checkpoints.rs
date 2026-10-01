@@ -5,6 +5,7 @@ use physics_engine::{
         ConvergenceScope, PositionCorrection, Quaternion, Report, Shape, Vector as V, World,
     },
 };
+use physics_engine::{approximate::Real, numeric::Scalar};
 use sha2::{Digest, Sha256};
 
 const CONTEXT: CheckpointContext = CheckpointContext {
@@ -63,7 +64,7 @@ fn fixture(config: Config) -> World {
         let mut b = Body::new(
             BodyId(id),
             Shape::Box(V(0.5, 0.5, 0.5)),
-            V(id as f64 * 3.0, 0.5, 0.0),
+            V(id as Real * 3.0, 0.5, 0.0),
             1.0,
         );
         b.rotation_locked = true;
@@ -181,8 +182,8 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
                 continued = restore(&saved);
             }
             let dt = [0.01, 0.02, 0.005, 0.0][tick % 4];
-            let expected = uninterrupted.step(dt).unwrap();
-            let actual = continued.step(dt).unwrap();
+            let expected = uninterrupted.step(dt as Scalar).unwrap();
+            let actual = continued.step(dt as Scalar).unwrap();
             assert_eq!(semantic(&actual), semantic(&expected), "tick {tick}");
             same(&continued, &uninterrupted);
         }
@@ -327,8 +328,8 @@ fn experimental_policy_and_warm_history_are_preserved_explicitly() {
     let mut actual = restore(&saved);
     for tick in 0..40 {
         let dt = if tick % 2 == 0 { 0.01 } else { 0.02 };
-        let a = actual.step(dt).unwrap();
-        let e = expected.step(dt).unwrap();
+        let a = actual.step(dt as Scalar).unwrap();
+        let e = expected.step(dt as Scalar).unwrap();
         assert_eq!(a.correction.softened_points, e.correction.softened_points);
         assert_eq!(semantic(&a), semantic(&e));
         same(&actual, &expected);
@@ -351,7 +352,7 @@ fn simple() -> World {
         w.add_body(Body::new(
             BodyId(id),
             Shape::Sphere(0.5),
-            V(id as f64 * 3.0, 0.0, 0.0),
+            V(id as Real * 3.0, 0.0, 0.0),
             1.0,
         ))
         .unwrap();
@@ -435,16 +436,16 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
     let b = body_start();
     let c = config_start();
     for (offset, invalid) in [
-        (b + 8, f64::NAN),
+        (b + 8, Real::NAN),
         (b + 32, 1e12),
-        (b + 56, f64::INFINITY),
-        (b + 56, f64::MAX),
+        (b + 56, Real::INFINITY),
+        (b + 56, Real::MAX),
         (b + 80, 2.1),
         (b + 121, -1.0),
         (b + 129, 11.0),
         (b + 137, 1.1),
         (b + 156, -0.1),
-        (b + 164, f64::NAN),
+        (b + 164, Real::NAN),
         (c + 27, -0.1),
     ] {
         let mut bad = saved.clone();
@@ -532,10 +533,10 @@ fn warm_start_endpoints_points_and_resource_budgets_are_validated() {
     let saved = checkpoint.to_bytes();
     let pair = body_start() + 2 * 276 + 8;
     for (offset, value) in [
-        (pair + 72, f64::NAN),
+        (pair + 72, Real::NAN),
         (pair + 72, 65.0),
         (pair + 96, -0.1),
-        (pair + 104, f64::INFINITY),
+        (pair + 104, Real::INFINITY),
     ] {
         let mut bad = saved.clone();
         bad[offset..offset + 8].copy_from_slice(&value.to_bits().to_le_bytes());
@@ -606,7 +607,7 @@ fn format_two_algorithm_seven_empty_world_wire_fixture_is_stable() {
 fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step() {
     let mut world = simple();
     world
-        .add_force(BodyId(1), V(f64::MAX / 2.0, 0.0, 0.0))
+        .add_force(BodyId(1), V(Real::MAX / 2.0, 0.0, 0.0))
         .unwrap();
     let saved = bytes(&world);
     let mut restored = restore(&saved);
@@ -619,7 +620,7 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
 
     let mut zero_orientation = simple();
     let mut legacy = Body::new(BodyId(u64::MAX), Shape::Sphere(0.5), V(0.0, 0.0, 10.0), 1.0);
-    legacy.orientation = Quaternion(f64::MAX, 0.0, 0.0, 0.0);
+    legacy.orientation = Quaternion(Real::MAX, 0.0, 0.0, 0.0);
     zero_orientation.add_body(legacy).unwrap();
     let saved = bytes(&zero_orientation);
     let mut restored = restore(&saved);
@@ -653,7 +654,7 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
     let mut body = Body::new(BodyId(u64::MAX), Shape::Sphere(0.5), V::ZERO, 1.0);
     // This compatibility input is accepted by the existing body construction API;
     // a physical checkpoint must reject it rather than serialize NaN authority.
-    body.linear_support = Some(V(f64::NAN, 0.0, 0.0));
+    body.linear_support = Some(V(Real::NAN, 0.0, 0.0));
     invalid.add_body(body).unwrap();
     assert_eq!(
         invalid.checkpoint(CONTEXT).unwrap_err(),

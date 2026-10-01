@@ -1,3 +1,4 @@
+use physics_engine::approximate::Real;
 use physics_engine::{
     BodyId,
     approximate::{Body, CheckpointContext, Config, Error, Shape, SweepFailure, Vector, World},
@@ -32,7 +33,7 @@ fn computed_nonfinite_sweep_input_returns_an_atomic_error_instead_of_panicking()
         .unwrap();
     world.step(0.01).unwrap();
     world
-        .add_force(BodyId(1), Vector(f64::MAX, 0.0, 0.0))
+        .add_force(BodyId(1), Vector(Real::MAX, 0.0, 0.0))
         .unwrap();
     world
         .apply_impulse(BodyId(2), Vector(1.0, 0.0, 0.0), Vector(20.0, 0.0, 0.0))
@@ -71,7 +72,7 @@ fn computed_nonfinite_sweep_input_returns_an_atomic_error_instead_of_panicking()
     // impulse must still apply once, exactly as in a world that never attempted the failed step.
     for world in [&mut world, &mut control] {
         world
-            .add_force(BodyId(1), Vector(-f64::MAX, 0.0, 0.0))
+            .add_force(BodyId(1), Vector(-Real::MAX, 0.0, 0.0))
             .unwrap();
     }
     for _ in 0..16 {
@@ -107,7 +108,7 @@ fn finite_velocities_with_overflowing_relative_motion_fail_without_admitting_con
         world
             .apply_impulse(
                 BodyId(id),
-                Vector(if id == 1 { f64::MAX } else { -f64::MAX }, 0.0, 0.0),
+                Vector(if id == 1 { Real::MAX } else { -Real::MAX }, 0.0, 0.0),
                 position,
             )
             .unwrap();

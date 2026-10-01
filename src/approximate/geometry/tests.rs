@@ -12,7 +12,7 @@ fn interval_points_preserve_ordinary_admission_witnesses_and_fallbacks() {
     let mut seed = 243_u64;
     let mut value = || {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        (seed >> 32) as f64 / u32::MAX as f64 * 2.0 - 1.0
+        (seed >> 32) as Real / u32::MAX as Real * 2.0 - 1.0
     };
     let (mut admitted, mut fallbacks) = (0_u32, 0_u32);
     for _ in 0..2000 {
@@ -82,7 +82,7 @@ fn fixed_interval_contacts_match_fresh_geometry_and_response() {
             Vector(0.0, 1.19, 0.0),
             2.0,
         );
-        body.orientation = Quaternion(0.0, 0.0, 0.1_f64.sin(), 0.1_f64.cos());
+        body.orientation = Quaternion(0.0, 0.0, (0.1 as Real).sin(), (0.1 as Real).cos());
         body.velocity = Vector(-3.0, -10.0, 0.0);
         body.angular_velocity = Vector(1.0, 0.0, 3.0);
         world.add_body(body).unwrap();
@@ -123,11 +123,11 @@ fn pair() -> [Body; 2] {
 fn bits(m: &Option<contact::Manifold>) -> Option<(Vec<u64>, bool)> {
     m.as_ref().map(|m| {
         let mut out = vector_bits(m.normal).to_vec();
-        out.push(m.time.to_bits());
+        out.push(super::bits(m.time));
         for p in &m.points {
             out.extend(vector_bits(p.ra));
             out.extend(vector_bits(p.rb));
-            out.push(p.separation.to_bits());
+            out.push(super::bits(p.separation));
         }
         (out, m.swept)
     })
@@ -340,7 +340,7 @@ fn prepared_axes_match_uncached_geometry_through_tumbling_sliding_and_edge_trans
     let mut seed = 7_u64;
     let mut value = || {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        (seed >> 32) as f64 / u32::MAX as f64 * 2.0 - 1.0
+        (seed >> 32) as Real / u32::MAX as Real * 2.0 - 1.0
     };
     for tick in 0..600 {
         b[0].orientation = Quaternion(value(), value(), value(), value()).normalized();
@@ -383,8 +383,8 @@ fn cached_and_uncached_worlds_preserve_complete_motion_and_contact_impulses() {
                 let mut b = Body::new(
                     BodyId(10 + i),
                     Shape::Box(Vector(2.0, 2.0, 2.0)),
-                    Vector(0.0, 2.0 + 4.0 * i as f64, 0.0),
-                    2.0 + i as f64,
+                    Vector(0.0, 2.0 + 4.0 * i as Real, 0.0),
+                    2.0 + i as Real,
                 );
                 b.rotation_locked = locked;
                 candidate.add_body(b).unwrap();
@@ -454,10 +454,10 @@ fn rotating_pairs_share_frames_without_retaining_pair_payloads() {
             let mut b = Body::new(
                 BodyId(i + 1),
                 Shape::Box(Vector(3.0, 1.0, 2.0)),
-                Vector(i as f64, 0.0, 0.0),
+                Vector(i as Real, 0.0, 0.0),
                 2.0,
             );
-            b.orientation = Quaternion(0.1 * i as f64, 0.2, 0.3, 0.9).normalized();
+            b.orientation = Quaternion(0.1 * i as Real, 0.2, 0.3, 0.9).normalized();
             b
         })
         .collect::<Vec<_>>();
@@ -525,7 +525,7 @@ fn rotating_frame_and_sweep_reuse_matches_uncached_oracle() {
     let mut seed = 911_u64;
     let mut value = || {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        (seed >> 32) as f64 / u32::MAX as f64 * 2.0 - 1.0
+        (seed >> 32) as Real / u32::MAX as Real * 2.0 - 1.0
     };
     let mut contacts = 0;
     let mut misses = 0;

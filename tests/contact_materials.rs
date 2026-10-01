@@ -1,3 +1,4 @@
+use physics_engine::approximate::Real;
 #[path = "support/contact_materials.rs"]
 mod contract;
 
@@ -47,7 +48,7 @@ fn rotated_reciprocal_contacts_preserve_momentum() {
                         let mut b = Body::new(
                             BodyId(id),
                             Shape::Box(V(18.0, 18.0, 18.0)),
-                            origin + q.rotate(V(0.0, i as f64 * 35.99, 0.0)),
+                            origin + q.rotate(V(0.0, i as Real * 35.99, 0.0)),
                             2.0,
                         );
                         b.orientation = q;
@@ -63,7 +64,7 @@ fn rotated_reciprocal_contacts_preserve_momentum() {
                 let mut w = fixture();
                 let mut repeat = fixture();
                 let before = momentum(&w);
-                let energy = w.bodies().map(Body::kinetic_energy).sum::<f64>();
+                let energy = w.bodies().map(Body::kinetic_energy).sum::<Real>();
                 let r = w.step(1.0 / 240.0).unwrap();
                 repeat.step(1.0 / 240.0).unwrap();
                 assert!(r.contact_points > 0 && r.contact_points <= 4);
@@ -73,7 +74,7 @@ fn rotated_reciprocal_contacts_preserve_momentum() {
                 assert!((after.0 - before.0).length() / (1.0 + before.0.length()) <= 1e-10);
                 assert!((after.1 - before.1).length() / (36.0 + before.1.length()) <= 1e-10);
                 assert!(
-                    w.bodies().map(Body::kinetic_energy).sum::<f64>() <= energy * (1.0 + 1e-10)
+                    w.bodies().map(Body::kinetic_energy).sum::<Real>() <= energy * (1.0 + 1e-10)
                 );
                 assert_eq!(
                     w.bodies().collect::<Vec<_>>(),

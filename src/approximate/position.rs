@@ -336,7 +336,7 @@ mod tests {
             ..Config::default()
         })
         .unwrap();
-        let q = Quaternion(0.0, 0.0, (0.25_f64).sin(), (0.25_f64).cos());
+        let q = Quaternion(0.0, 0.0, (0.25 as Real).sin(), (0.25 as Real).cos());
         let mut fixed = Body::new(
             BodyId(1),
             Shape::Box(Vector(30.0, 1.0, 30.0)),

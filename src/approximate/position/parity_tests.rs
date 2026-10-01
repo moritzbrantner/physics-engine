@@ -5,7 +5,7 @@ use crate::{
     approximate::{Config, Quaternion},
 };
 
-pub(super) fn reference(w: &mut World, h: f64, report: &mut PositionReport) -> Result<(), Error> {
+pub(super) fn reference(w: &mut World, h: Real, report: &mut PositionReport) -> Result<(), Error> {
     for _ in 0..w.config.fixed_position_iterations {
         report.passes += 1;
         let mut changed = false;
@@ -40,7 +40,7 @@ pub(super) fn reference(w: &mut World, h: f64, report: &mut PositionReport) -> R
                 let depth = (&m.points)
                     .into_iter()
                     .map(|p| -p.separation)
-                    .fold(0.0, f64::max);
+                    .fold(0.0, Real::max);
                 let distance = (depth - w.config.contact_slop).max(0.0);
                 if distance <= 0.0 {
                     continue;
@@ -67,15 +67,19 @@ pub(super) fn reference(w: &mut World, h: f64, report: &mut PositionReport) -> R
     Ok(())
 }
 
+/// Exact bits in both builds; widening keeps distinct values distinct.
+fn real_bits(x: Real) -> u64 {
+    crate::approximate::primitive::widen(x).to_bits()
+}
 fn vector_bits(v: Vector) -> [u64; 3] {
-    [v.0.to_bits(), v.1.to_bits(), v.2.to_bits()]
+    [real_bits(v.0), real_bits(v.1), real_bits(v.2)]
 }
 fn body_bits(b: &Body) -> Vec<u64> {
     let mut values = vec![
-        b.mass.to_bits(),
-        b.friction.to_bits(),
-        b.restitution.to_bits(),
-        b.quiet_time.to_bits(),
+        real_bits(b.mass),
+        real_bits(b.friction),
+        real_bits(b.restitution),
+        real_bits(b.quiet_time),
     ];
     for v in [
         b.position,
@@ -92,10 +96,10 @@ fn body_bits(b: &Body) -> Vec<u64> {
         values.extend(vector_bits(v));
     }
     values.extend([
-        b.orientation.0.to_bits(),
-        b.orientation.1.to_bits(),
-        b.orientation.2.to_bits(),
-        b.orientation.3.to_bits(),
+        real_bits(b.orientation.0),
+        real_bits(b.orientation.1),
+        real_bits(b.orientation.2),
+        real_bits(b.orientation.3),
     ]);
     values
 }
@@ -110,14 +114,14 @@ fn same(a: &World, b: &World, ar: &PositionReport, br: &PositionReport) {
             ar.bounds_tests,
             ar.contact_tests,
             ar.corrections,
-            ar.max_distance.to_bits()
+            real_bits(ar.max_distance)
         ),
         (
             br.passes,
             br.bounds_tests,
             br.contact_tests,
             br.corrections,
-            br.max_distance.to_bits()
+            real_bits(br.max_distance)
         )
     );
     assert_eq!(a.elapsed.to_bits(), b.elapsed.to_bits());
@@ -152,11 +156,11 @@ fn world() -> World {
     .unwrap();
     w
 }
-fn random(seed: &mut u64) -> f64 {
+fn random(seed: &mut u64) -> Real {
     *seed = seed
         .wrapping_mul(6364136223846793005)
         .wrapping_add(1442695040888963407);
-    ((*seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+    ((*seed >> 11) as Real / (1u64 << 53) as Real) * 2.0 - 1.0
 }
 #[test]
 fn prepared_position_matches_original_scan_over_rotated_shapes_and_filters() {
@@ -283,7 +287,7 @@ fn complete_steps_preserve_rotation_impulses_contacts_sleep_and_projectile_retir
         let mut b = Body::new(
             BodyId(20 + id),
             Shape::Box(Vector(2.0, 1.0, 1.0)),
-            Vector(0.0, 1.0 + 2.0 * id as f64, 0.0),
+            Vector(0.0, 1.0 + 2.0 * id as Real, 0.0),
             3.0,
         );
         b.orientation = Quaternion(0.0, 0.0, 0.03, 1.0).normalized();
@@ -331,7 +335,7 @@ fn complete_steps_preserve_rotation_impulses_contacts_sleep_and_projectile_retir
                 ] {
                     assert_eq!(vector_bits(av), vector_bits(bv));
                 }
-                assert_eq!(ap.impulse.to_bits(), bp.impulse.to_bits());
+                assert_eq!(real_bits(ap.impulse), real_bits(bp.impulse));
             }
         }
     }
@@ -345,7 +349,7 @@ fn warmed_position_work_ignores_sleeping_bodies_and_reuses_fixed_frames() {
             let mut b = Body::new(
                 BodyId(100 + id),
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
-                Vector(100.0 + id as f64 * 3.0, 1.0, 0.0),
+                Vector(100.0 + id as Real * 3.0, 1.0, 0.0),
                 1.0,
             );
             b.sleeping = true;
@@ -427,7 +431,7 @@ fn position_preparation_scaling_benchmark() {
             let mut b = Body::new(
                 BodyId(100 + id),
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
-                Vector(100.0 + id as f64 * 3.0, 1.0, 0.0),
+                Vector(100.0 + id as Real * 3.0, 1.0, 0.0),
                 1.0,
             );
             b.sleeping = true;
@@ -437,7 +441,7 @@ fn position_preparation_scaling_benchmark() {
             w.add_body(Body::new(
                 BodyId(1000 + id),
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
-                Vector((id % 8) as f64 * 3.0, 0.99, (id / 8) as f64 * 3.0),
+                Vector((id % 8) as Real * 3.0, 0.99, (id / 8) as Real * 3.0),
                 1.0,
             ))
             .unwrap();
