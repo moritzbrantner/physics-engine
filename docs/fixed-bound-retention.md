@@ -124,9 +124,12 @@ baseline/candidate block order and retain every printed row. Only `step(1)` is
 timed; commands, exports and validation are outside the clock. Trace writing
 between calls may still affect timings.
 
-All 16 fast checks passed at the initial producer. Final focused native controls,
-release-WASM repeats and locked all-target clippy pass after the review fixes;
-hosted PR gates cover the complete final change. Solver limits, thresholds,
+All 16 fast checks passed at both the initial producer and `b82e3c9`. The latter
+loads shared report normalization once per diagnostic driver after hosted demo
+lint caught duplicate module loading. Production calculations and timing loops
+are unchanged. Final focused native controls, release-WASM repeats and locked
+root/demo all-target clippy pass after the review fixes; hosted PR gates cover
+the complete final change. Solver limits, thresholds,
 performance epoch and diagnostic-only exact-reference policy are unchanged.
 All-N staging/sorting, broad-phase traversal and consumer scans remain. #190
 retains consumer adoption and wider locality evidence.

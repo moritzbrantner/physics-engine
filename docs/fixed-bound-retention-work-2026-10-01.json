@@ -12,7 +12,7 @@
   "native_target": "x86_64-unknown-linux-gnu",
   "wasm_target": "wasm32-unknown-unknown",
   "node": "v24.16.0",
-  "wasm_sha256": "4d31ec58589d39ad60be9f397d182fa95eb783dbfd8d1c51320833d5b4d5a2c4",
+  "wasm_sha256": "389edf77715fa3f19b66097292abec6861111557831b56c5a9dd0b77619756eb",
   "candidate_benchmark_sha256": "147f081fcfe1c7e7498f0dbbaa94bf1d5c9622f8e72d16852bb04355e9749667",
   "baseline_benchmark_sha256": "ed77062d79152db245ee30b3921feb49906b6e8a328207e6c437bf49f0feda47",
   "protocol": {
@@ -6382,12 +6382,17 @@
       "native lifecycle/staging/ricochet controls",
       "release native contract two equal repeats",
       "release WASM three equal same-target repeats",
-      "root all-target locked clippy -D warnings"
+      "root all-target locked clippy -D warnings",
+      "demo all-target locked clippy -D warnings after shared module-loading repair"
     ],
     "independent_final_code_review": {
       "standards_documented_violations": 0,
       "standards_heuristic_findings": 0,
       "spec_findings": 0
-    }
-  }
+    },
+    "final_fast_producer": "b82e3c98933ab7911e8c989d94e123c8d35c18eb",
+    "final_fast_checks_passed": 16
+  },
+  "final_contract_code_producer": "b82e3c98933ab7911e8c989d94e123c8d35c18eb",
+  "final_contract_followup": "Load shared report normalization once per diagnostic driver; production math and timing loops unchanged"
 }
