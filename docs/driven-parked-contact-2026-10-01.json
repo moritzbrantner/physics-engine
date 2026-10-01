@@ -2,7 +2,7 @@
   "schema_version": 1,
   "issue": 250,
   "baseline_commit": "29fc619dd69a588911baaf8601e5832449b776fe",
-  "producer_commit": "57dc954bd5c6d5a40e61b2eef164e1e2a8295f48",
+  "producer_commit": "c1d64fa33e4a1e044b490d81c158f44cff856044",
   "convention_source_revision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
   "predeclared_inputs": "https://github.com/moritzbrantner/physics-engine/issues/250",
   "causal_probes": "https://github.com/moritzbrantner/physics-engine/issues/250#issuecomment-5923959156",
@@ -160,6 +160,56 @@
           "sleeping": 0.0,
           "independent_sleeping": 1.0,
           "elapsed": 0.004166666666666652
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            1,
+            10
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1.0,
+          "response_preparations": 1.0,
+          "inertia_preparations": 1.0,
+          "inertia_applications": 16.0,
+          "pair_tests": 8.0,
+          "narrow_tests": 3.0,
+          "current_queries": 5.0,
+          "sweep_queries": 2.0,
+          "contact_points": 2.0,
+          "constraint_visits": 4.0,
+          "swept_contacts": 1.0,
+          "sleeping": 0.0,
+          "independent_sleeping": 1.0,
+          "elapsed": 0.01666666666666672
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            10,
+            1
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1.0,
+          "response_preparations": 1.0,
+          "inertia_preparations": 1.0,
+          "inertia_applications": 16.0,
+          "pair_tests": 8.0,
+          "narrow_tests": 3.0,
+          "current_queries": 5.0,
+          "sweep_queries": 2.0,
+          "contact_points": 2.0,
+          "constraint_visits": 4.0,
+          "swept_contacts": 1.0,
+          "sleeping": 0.0,
+          "independent_sleeping": 1.0,
+          "elapsed": 0.01666666666666672
         },
         {
           "case": "SkinMiss",
@@ -612,6 +662,56 @@
           "sleeping": 0.0,
           "independent_sleeping": 1.0,
           "elapsed": 0.004166666666666652
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            1,
+            10
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1.0,
+          "response_preparations": 1.0,
+          "inertia_preparations": 1.0,
+          "inertia_applications": 16.0,
+          "pair_tests": 8.0,
+          "narrow_tests": 3.0,
+          "current_queries": 5.0,
+          "sweep_queries": 2.0,
+          "contact_points": 2.0,
+          "constraint_visits": 4.0,
+          "swept_contacts": 1.0,
+          "sleeping": 0.0,
+          "independent_sleeping": 1.0,
+          "elapsed": 0.01666666666666672
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            10,
+            1
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1.0,
+          "response_preparations": 1.0,
+          "inertia_preparations": 1.0,
+          "inertia_applications": 16.0,
+          "pair_tests": 8.0,
+          "narrow_tests": 3.0,
+          "current_queries": 5.0,
+          "sweep_queries": 2.0,
+          "contact_points": 2.0,
+          "constraint_visits": 4.0,
+          "swept_contacts": 1.0,
+          "sleeping": 0.0,
+          "independent_sleeping": 1.0,
+          "elapsed": 0.01666666666666672
         },
         {
           "case": "SkinMiss",
@@ -1071,6 +1171,56 @@
           "elapsed": 0.004166666666666652
         },
         {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            1,
+            10
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1,
+          "response_preparations": 1,
+          "inertia_preparations": 1,
+          "inertia_applications": 16,
+          "pair_tests": 8,
+          "narrow_tests": 3,
+          "current_queries": 5,
+          "sweep_queries": 2,
+          "contact_points": 2,
+          "constraint_visits": 4,
+          "swept_contacts": 1,
+          "sleeping": 0,
+          "independent_sleeping": 1,
+          "elapsed": 0.01666666666666672
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            10,
+            1
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1,
+          "response_preparations": 1,
+          "inertia_preparations": 1,
+          "inertia_applications": 16,
+          "pair_tests": 8,
+          "narrow_tests": 3,
+          "current_queries": 5,
+          "sweep_queries": 2,
+          "contact_points": 2,
+          "constraint_visits": 4,
+          "swept_contacts": 1,
+          "sleeping": 0,
+          "independent_sleeping": 1,
+          "elapsed": 0.01666666666666672
+        },
+        {
           "case": "SkinMiss",
           "ids": [
             1,
@@ -1523,6 +1673,56 @@
           "elapsed": 0.004166666666666652
         },
         {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            1,
+            10
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1,
+          "response_preparations": 1,
+          "inertia_preparations": 1,
+          "inertia_applications": 16,
+          "pair_tests": 8,
+          "narrow_tests": 3,
+          "current_queries": 5,
+          "sweep_queries": 2,
+          "contact_points": 2,
+          "constraint_visits": 4,
+          "swept_contacts": 1,
+          "sleeping": 0,
+          "independent_sleeping": 1,
+          "elapsed": 0.01666666666666672
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            10,
+            1
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1,
+          "response_preparations": 1,
+          "inertia_preparations": 1,
+          "inertia_applications": 16,
+          "pair_tests": 8,
+          "narrow_tests": 3,
+          "current_queries": 5,
+          "sweep_queries": 2,
+          "contact_points": 2,
+          "constraint_visits": 4,
+          "swept_contacts": 1,
+          "sleeping": 0,
+          "independent_sleeping": 1,
+          "elapsed": 0.01666666666666672
+        },
+        {
           "case": "SkinMiss",
           "ids": [
             1,
@@ -1973,6 +2173,56 @@
           "sleeping": 0,
           "independent_sleeping": 1,
           "elapsed": 0.004166666666666652
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            1,
+            10
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1,
+          "response_preparations": 1,
+          "inertia_preparations": 1,
+          "inertia_applications": 16,
+          "pair_tests": 8,
+          "narrow_tests": 3,
+          "current_queries": 5,
+          "sweep_queries": 2,
+          "contact_points": 2,
+          "constraint_visits": 4,
+          "swept_contacts": 1,
+          "sleeping": 0,
+          "independent_sleeping": 1,
+          "elapsed": 0.01666666666666672
+        },
+        {
+          "case": "SweptOutsideSlop",
+          "ids": [
+            10,
+            1
+          ],
+          "rider_y": 1.0250000000000001,
+          "rider_vy": 1.5000000000000053,
+          "energy": 2.250000000000016,
+          "external_work": 9.000000000000032,
+          "woken_bodies": 1,
+          "response_preparations": 1,
+          "inertia_preparations": 1,
+          "inertia_applications": 16,
+          "pair_tests": 8,
+          "narrow_tests": 3,
+          "current_queries": 5,
+          "sweep_queries": 2,
+          "contact_points": 2,
+          "constraint_visits": 4,
+          "swept_contacts": 1,
+          "sleeping": 0,
+          "independent_sleeping": 1,
+          "elapsed": 0.01666666666666672
         },
         {
           "case": "SkinMiss",
@@ -2286,5 +2536,7 @@
     "cargo test --release --locked --test driven_parked_contact -- --nocapture",
     "cargo build --manifest-path demo-wasm/Cargo.toml --release --locked --target wasm32-unknown-unknown --example dense-contact-contract",
     "node scripts/test-dense-contact-wasm.mjs demo-wasm/target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm"
-  ]
+  ],
+  "post_wake_regression": "https://github.com/moritzbrantner/physics-engine/issues/250#issuecomment-5924057268",
+  "prior_incomplete_evidence": "https://github.com/moritzbrantner/physics-engine/blob/a2d2e904310f13641ce22c8b6ac403bfa35b6b58/docs/driven-parked-contact-2026-10-01.json"
 }

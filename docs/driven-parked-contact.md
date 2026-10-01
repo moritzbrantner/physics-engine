@@ -7,9 +7,9 @@ pair filter previously skipped their geometry entirely. Allowing the pair alone
 also wakes a positive-gap interval miss through contact slop, and leaves genuine
 slow inward motion rejected by the sleep-speed cutoff.
 
-Moving external/parked pairs now query the actual current surface with zero margin
-and, after a miss, sweep the complete requested translation interval regardless of
-the automatic travel threshold. Sensors and collision layers still filter first.
+Parked/external pairs now query the actual current surface with zero margin.
+After a miss, moving external/dynamic pairs sweep the complete requested translation
+interval regardless of the automatic travel threshold, including the post-wake pass. Sensors and collision layers still filter first.
 Only admitted geometry reaches wake traversal. Inward external normal motion does
 not need to exceed the sleep-speed threshold. Existing wake traversal restores the
 real dynamic response and prepares mass/inertia before contact impulses, then
@@ -17,7 +17,11 @@ regenerates response contacts with ordinary solver slop. Fixed and external bodi
 remain nonresponders and do not bridge separate dynamic islands.
 
 The [causal probes](https://github.com/moritzbrantner/physics-engine/issues/250#issuecomment-5923959156)
-retain each intermediate adverse result. No geometry authority, extra solver
+retain each intermediate adverse result. The initial18-case matrix missed an outside-slop crossing: the first sweep woke
+the rider but the post-wake pass dropped the contact. The additional
+[red/green regression](https://github.com/moritzbrantner/physics-engine/issues/250#issuecomment-5924057268)
+and both ID orders now require preserved swept response. Prior incomplete
+measurements remain linked in the raw report. No geometry authority, extra solver
 passes, frame-end overlap substitute or forced sleep/wake was introduced.
 
 ## Inputs and independent bounds
@@ -40,6 +44,7 @@ The rider has free rotation and retains default friction/material properties.
 | Current | `(0,-.5,0)` / 3 | `1/60` | Wake; `y=1.05`, `vy=3` |
 | SlowCurrent | `(0,-.5,0)` / .25 | `1/240` | Wake; `y=1+.25/240`, `vy=.25` |
 | Swept | `(0,-.505,0)` / 3 | `1/240` | Actual crossing; wake and normal response |
+| SweptOutsideSlop | `(0,-.525,0)` / 3 | `1/60` | Gap .025 exceeds slop; retain the sweep through post-wake response |
 | SkinMiss | `(0,-.515,0)` / 3 | `1/240` | Gap .015 exceeds travel .0125; stay parked |
 | BroadMiss | `(4.9,-.5,4.9)` / 3 | `1/240` | Bounding-box candidate misses sphere/box corner; stay parked |
 | Stationary | `(0,-.5,0)` / 0 | `1/240` | Stay parked |
@@ -65,8 +70,8 @@ The slow case records energy.0625 and work.125. External position and velocity
 must retain their prescribed motion; impulses cannot change the driver.
 
 Swept admission proves contact discovery, wake, restored response and bounded
-penetration/energy. Its existing speculative response records `vy≈1.8` and
-`y=1.0075`; this is not an elastic impact or remaining-time accuracy reference.
+penetration/energy. Its existing speculative response records `vy≈1.8`, `y=1.0075` for Swept and `vy≈1.5`, `y=1.025`
+for SweptOutsideSlop; this is not an elastic impact or remaining-time accuracy reference.
 Issue [#246](https://github.com/moritzbrantner/physics-engine/issues/246) retains
 that separate limitation. Natural parking on external supports and complete
 frictional/rotating restart remain [#251](https://github.com/moritzbrantner/physics-engine/issues/251).
@@ -84,8 +89,8 @@ portable save identity. Checkpoint algorithm advances from2 to3 because wake
 continuation changes; format2 retains its layout and prior algorithms are rejected.
 
 [Raw measurements](driven-parked-contact-2026-10-01.json) identify producer
-`57dc954bd5c6d5a40e61b2eef164e1e2a8295f48` and resolved convention revision
-`e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`. All18 cases repeat identically twice
+`c1d64fa33e4a1e044b490d81c158f44cff856044` and resolved convention revision
+`e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`. All20 cases repeat identically twice
 in native release and three times in release WASM within each build/target.
 Cross-target bit replay is not promised. The dedicated diagnostic example is
 absent from the production Pages module; Pages already executes its acceptance
@@ -98,8 +103,10 @@ wall-time or total-driver-work claim. Both near-miss controls record one current
 query and one swept query, with zero response work. Current controls record three
 current queries, two admitted points and four constraint visits; Swept records
 four current queries plus one sweep, two admitted points and four visits.
+SweptOutsideSlop records five current queries plus two sweeps: both admission and
+post-wake passes retain full-interval discovery, with one swept response contact.
 `swept_contacts` counts the regenerated response rows, not discarded admission
-probes: Swept records zero in that field after regeneration uses ordinary slop.
+probes: the within-slop Swept case records zero in that field after regeneration uses ordinary slop.
 `geometry.sweep_queries` retains the actual first-pass swept work.
 
 ```sh
