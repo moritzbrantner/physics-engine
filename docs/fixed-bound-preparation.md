@@ -115,10 +115,10 @@ Toolchain: rustc 1.98.0, native `x86_64-unknown-linux-gnu`, release WASM
 `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
 
 ```sh
-cargo test --release --test fixed_bound_measurement -- --nocapture
-cargo test --release --test translational_maintenance_benchmark fixed_heavy_consumer_workload_measurement -- --ignored --nocapture
-cargo test --release --lib fixed_heavy_bound_preparation_stage -- --ignored --nocapture
-cargo build --release --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --example translational-maintenance-contract
+cargo test --locked --release --test fixed_bound_measurement -- --nocapture
+cargo test --locked --release --test translational_maintenance_benchmark fixed_heavy_consumer_workload_measurement -- --ignored --nocapture
+cargo test --locked --release --lib fixed_heavy_bound_preparation_stage -- --ignored --nocapture
+cargo build --locked --release --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --example translational-maintenance-contract
 node scripts/test-translational-maintenance-wasm.mjs demo-wasm/target/wasm32-unknown-unknown/release/examples/translational_maintenance_contract.wasm
 ```
 
