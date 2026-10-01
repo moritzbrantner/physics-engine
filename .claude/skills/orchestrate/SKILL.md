@@ -1,15 +1,15 @@
 ---
-name: agent-loop
-description: Run one iteration of the physics-engine multi-agent loop — review and merge open agent PRs, promote drafted issues to ready specs, queue the next roadmap slices (consumer-blocking first), implement Opus tasks, dispatch Sonnet tasks and keep a backlog for Sol, which runs separately and occasionally. Use when the user says "start/run the loop" or invokes /agent-loop; wrap in /loop for continuous pacing.
+name: orchestrate
+description: Orchestrate the physics-engine agents for one pass — review and merge open agent PRs, promote drafted issues to ready specs, queue the next roadmap slices (consumer-blocking first), implement Opus tasks, dispatch Sonnet tasks and keep a backlog for Sol, which runs separately and occasionally. Use when the user says "start/run the loop", "orchestrate" or invokes /orchestrate; run it under /goal for continuous work (or /loop for timer-paced runs).
 ---
 
-# Agent loop
+# Orchestrate
 
-You are the loop driver (Claude Opus). The contract for issues, labels and roles is `docs/AGENT_TASKS.md`; the rules every implementer follows are `AGENTS.md`. Read both at the start of every run, and the roadmap issue #191 plus `README.md` before writing a new spec.
+You are the orchestrator (Claude Opus). The contract for issues, labels and roles is `docs/AGENT_TASKS.md`; the rules every implementer follows are `AGENTS.md`. Read both at the start of every run, and the roadmap issue #191 plus `README.md` before writing a new spec.
 
-**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the engine moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. If Sol does run at the same time, the `agent:*` label partitions issues, so the loop driver (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task. Never touch `in-progress` on an `agent:sol` issue or push to a Sol branch.
+**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the engine moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. If Sol does run at the same time, the `agent:*` label partitions issues, so the orchestrator (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task. Never touch `in-progress` on an `agent:sol` issue or push to a Sol branch.
 
-One run = the steps below, in order, then a short report. Keep chat output to the report; put spec content into issues and review content into PR comments.
+One pass = the steps below, in order, then a short report. Keep chat output to the report; put spec content into issues and review content into PR comments.
 
 ## 0. Baseline
 
@@ -93,7 +93,20 @@ End with a compact table: each PR (merged / changes requested / waiting for CI o
 
 ## Pacing
 
-- A single invocation does one run.
-- For continuous operation the user runs `/loop /agent-loop`. Schedule the next wakeup around 1800 s while PRs wait on CI or Codex. While an unstarted Sol task blocks queued work, also schedule a wakeup no later than its 24-hour reassignment deadline (the clamp is 3600 s, so keep waking hourly until then).
-- Stop the loop when no Opus or Sonnet work is in flight or startable and no roadmap slices remain for them. A non-empty Sol backlog alone is not a reason to keep looping, but a Sol task that blocks queued work or a consumer is.
-- A finished background Sonnet or Opus agent re-invokes you; continue from step 1 for its PR.
+Preferred: run `/orchestrate` under `/goal`, for example:
+
+```
+/goal Run /orchestrate until every startable Opus and Sonnet task is merged and nothing is in flight, or every remaining item is blocked on an owner decision, a consumer or sibling repo or Sol, and that blocker is reported.
+```
+
+`/goal` keeps the session working until its condition holds. So:
+- **No timers.** Run one loop iteration after another without `ScheduleWakeup`.
+- **Never wait idle.** While a PR waits on CI or Codex, do the next useful step: promote a draft, write the next spec, or review another PR. When nothing else is left, block on the event in the foreground with a bounded command, then continue from step 1 for that PR. Use `gh pr checks <n> --watch --interval 60` for CI, or a short poll of the Codex summary comment for the current head, with a Bash timeout of up to 10 minutes.
+- **Implementing Opus tasks.** Opus tasks may be implemented directly in this session in a worktree, rather than in a background agent, when nothing else needs the orchestrator meanwhile. Sonnet tasks stay background agents; a finished one re-invokes you, and you continue from step 1 for its PR.
+- **Ending a goal.** A goal is met only when the condition above holds. End with the step 5 report and its "For you" list. If the only remaining blocker is an owner decision, ask it (`spec:needs-input` comment plus the report) and stop rather than spin.
+
+Alternative: `/loop /orchestrate`, one run per invocation.
+- **Wakeups.** Schedule the next wakeup around 1800 s while PRs wait on CI or Codex. While an unstarted Sol task blocks queued work, keep waking hourly until its 24-hour reassignment deadline.
+- **Stopping.** Stop when no Opus or Sonnet work is in flight or startable and no roadmap slices remain for them.
+
+Either way, a non-empty Sol backlog alone is not a reason to keep going, but a Sol task that blocks queued work or a consumer is.

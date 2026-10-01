@@ -8,8 +8,8 @@ The source of next steps is the roadmap issue #191 and its open child issues (PE
 
 | Agent | Does |
 | --- | --- |
-| Claude Opus | Runs the loop (`/agent-loop`). Turns drafts into ready specs, writes new specs from the roadmap, reviews PRs against their spec and merges them. Implements critical-path and cross-cutting engine work itself (`agent:opus`): anything a consumer repository is blocked on, public API and world-contract changes, checkpoint format/algorithm changes. |
-| ChatGPT Sol | Implements narrow, technically deep `agent:sol` tasks via the Codex `implementer-loop` skill. The spec should settle the API surface, solver semantics, versions and scope so Sol can spend depth on correctness rather than redesigning adjacent systems. Typical work: contact-quality controls, primitive collider kernels, measured maintenance slices. Runs occasionally, separately from `/agent-loop`, through a backlog of up to three tasks that nothing else waits on. |
+| Claude Opus | Orchestrates (`/orchestrate`). Turns drafts into ready specs, writes new specs from the roadmap, reviews PRs against their spec and merges them. Implements critical-path and cross-cutting engine work itself (`agent:opus`): anything a consumer repository is blocked on, public API and world-contract changes, checkpoint format/algorithm changes. |
+| ChatGPT Sol | Implements narrow, technically deep `agent:sol` tasks via the Codex `implementer-loop` skill. The spec should settle the API surface, solver semantics, versions and scope so Sol can spend depth on correctness rather than redesigning adjacent systems. Typical work: contact-quality controls, primitive collider kernels, measured maintenance slices. Runs occasionally, separately from `/orchestrate`, through a backlog of up to three tasks that nothing else waits on. |
 | Claude Sonnet | Implements `agent:sonnet` tasks: Pages scenario UI (`site/`), docs, and mechanical follow-ups. |
 | GitHub Actions | The full deterministic gate on every PR (`validate.yml`: fast tier, long replays, performance ratchet, Pages build with WASM contract tests; `performance-evidence.yml`: advisory evidence for path-matched PRs). |
 | Codex review | Reviews each PR automatically when it is opened or marked ready; `@codex review` re-triggers it. |
@@ -21,7 +21,7 @@ The source of next steps is the roadmap issue #191 and its open child issues (PE
 - `spec:ready`: checked and implementable.
 - `spec:needs-input`: blocked on a question for the owner, asked in a comment.
 - `agent:opus`, `agent:sol`, `agent:sonnet`: the intended implementer.
-- `in-progress`: an implementer has started; the PR will reference the issue. The `agent:*` label partitions issues, so the loop driver (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task.
+- `in-progress`: an implementer has started; the PR will reference the issue. The `agent:*` label partitions issues, so the orchestrator (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task.
 
 ## Picking up a task (implementers)
 
@@ -29,15 +29,15 @@ When asked to "pick up work", take the oldest open issue labeled `spec:ready` pl
 
 ## Implementer loop
 
-An implementer run (Codex: the `implementer-loop` skill in `.agents/skills/`; Sonnet: dispatched by `/agent-loop`) takes exactly one action, in this priority order, then reports and exits.
+An implementer run (Codex: the `implementer-loop` skill in `.agents/skills/`; Sonnet: dispatched by `/orchestrate`) takes exactly one action, in this priority order, then reports and exits.
 
 1. **Fix your own open PR.** A PR of yours (its issue carries your `agent:*` label) needs work when:
    - a CI check failed;
    - a Codex review finding is neither fixed nor answered;
-   - the loop driver posted a "changes needed" comment newer than your last push.
+   - the orchestrator posted a "changes needed" comment newer than your last push.
 
    Fix it on the same branch, push, and reply to each finding. After substantial fixes, comment `@codex review`. After three failed attempts on the same failure, comment what blocks you on the PR and stop touching it.
-2. **Otherwise, wait if your PR is still in review.** If a PR of yours is open and only waiting on CI, Codex or the loop driver's merge, do nothing. One task in flight per implementer.
+2. **Otherwise, wait if your PR is still in review.** If a PR of yours is open and only waiting on CI, Codex or the orchestrator's merge, do nothing. One task in flight per implementer.
 3. **Otherwise, start the next task** per "Picking up a task". Work in a fresh worktree from `origin/main`. Commit in small steps. Run the focused checks plus what the issue lists that CI does not run. Push, then open the PR with `Closes #N`. Wait for CI and the first Codex review, and handle them as in step 1 within the same run.
 4. **Otherwise, exit.** Do not invent work: no new issues, no tooling, CI or cleanup tasks.
 
@@ -83,4 +83,4 @@ To hash out an issue in a chat (e.g. ChatGPT) and have it filed, paste this into
 
 > You are helping me specify a task for the `moritzbrantner/physics-engine` repository. Before proposing anything, read `AGENTS.md`, `docs/AGENT_TASKS.md`, `README.md`, the roadmap issue #191 and the docs relevant to the topic (`docs/world-api-contract.md` for any public API change, `docs/floating-checkpoints.md` for any checkpoint change, `docs/numerics.md` for numerical policy). Discuss the task with me first: challenge scope that is too large for one PR, ask about decisions that would change public APIs, checkpoint versions or authority, and propose concrete numbers. When I say "file it", create a GitHub issue in `moritzbrantner/physics-engine` with the title and body sections exactly as in `docs/AGENT_TASKS.md` "Writing an issue", and the labels `agent-task`, `spec:draft` and the `agent:*` label we agreed on. Never label it `spec:ready`; Claude checks drafts against the code first. If you cannot create issues, output the title and the body as a Markdown code block instead.
 
-If the chat cannot create issues, open a new issue with the "Agent task" template and paste the body. The next `/agent-loop` run checks the draft against the code, completes or corrects it, and flips it to `spec:ready` (or asks its questions under `spec:needs-input`).
+If the chat cannot create issues, open a new issue with the "Agent task" template and paste the body. The next `/orchestrate` run checks the draft against the code, completes or corrects it, and flips it to `spec:ready` (or asks its questions under `spec:needs-input`).
