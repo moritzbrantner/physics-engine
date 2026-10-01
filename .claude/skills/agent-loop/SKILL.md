@@ -7,7 +7,7 @@ description: Run one iteration of the physics-engine multi-agent loop — review
 
 You are the loop driver (Claude Opus). The contract for issues, labels and roles is `docs/AGENT_TASKS.md`; the rules every implementer follows are `AGENTS.md`. Read both at the start of every run, and the roadmap issue #191 plus `README.md` before writing a new spec.
 
-**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the engine moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. If Sol does run at the same time, the `in-progress` label is the lock; never touch an `in-progress` Sol issue or push to a Sol branch.
+**Sol is offline by default.** The user runs Sol's Codex loop occasionally and never needs to run it alongside this one. Never wait for Sol: keep the engine moving with Opus and Sonnet, and treat `agent:sol` issues as a backlog Sol works through whenever it is started. If Sol does run at the same time, the `agent:*` label partitions issues, so the loop driver (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task. Never touch `in-progress` on an `agent:sol` issue or push to a Sol branch.
 
 One run = the steps below, in order, then a short report. Keep chat output to the report; put spec content into issues and review content into PR comments.
 
@@ -16,15 +16,16 @@ One run = the steps below, in order, then a short report. Keep chat output to th
 - `git fetch` and work from `origin/main`. Never edit the user's checked-out branch; use a worktree for any change you make yourself.
 - Make sure the labels in `docs/AGENT_TASKS.md` exist (`gh label create … || true`).
 - Collect state:
-  - `gh pr list --state open --json number,title,headRefName,author,labels,isDraft,url`
-  - `gh issue list --label agent-task --state open --json number,title,labels,body`
-  - `gh issue list --state open --limit 100 --json number,title,labels,body` (roadmap issues without `agent-task`)
+  - `gh pr list --state open --limit 200 --json number,title,headRefName,author,labels,isDraft,url`
+  - `gh issue list --label agent-task --state open --limit 200 --json number,title,labels,body`
+  - `gh issue list --state open --limit 200 --json number,title,labels,body` (roadmap issues without `agent-task`)
+- **Stale locks:** an `agent:opus` or `agent:sonnet` issue labelled `in-progress` that has no open PR and no live background agent from this session loses `in-progress` with a one-line comment, so it becomes dispatchable again. Never touch `in-progress` on `agent:sol` issues; report a Sol issue that has been `in-progress` for over 48 hours with no PR or branch push.
 
 ## 1. Review open PRs
 
 For each open, non-draft PR that closes an `agent-task` issue:
 
-1. **CI:** `gh pr checks <n>`. If pending, skip it this run. If red, comment the failing check and log excerpt, then stop on this PR.
+1. **CI:** `gh pr checks <n>`. If pending, skip it this run. If a check failed, treat it as a "changes needed" verdict: comment the failing check and log excerpt, then re-dispatch the owning agent with that list as in the verdict below (for Sol, leave the comment; Sol's next run fixes its own PRs first), and stop on this PR.
 2. **Codex:** read the review comments and threads from `chatgpt-codex-connector` (`gh api repos/{owner}/{repo}/pulls/<n>/comments`, `.../reviews`, and the issue comments). Require a completed connector review covering the current head commit; the review-summary issue comment may record completion even when there are no findings. Skip this PR while that review is absent or running. Every finding must be fixed or answered in the thread. If the head changed after the completed review, comment `@codex review` when no current-head review is running and skip until it completes.
 3. **Spec:** compare the diff with the issue's Decisions, Acceptance and Out of scope:
    - public signatures and checkpoint format/algorithm versions match exactly, with at most one bump each;
@@ -35,7 +36,7 @@ For each open, non-draft PR that closes an `agent-task` issue:
 
    Also check the `AGENTS.md` rules (authority boundary with `rust-kernels` and consumers, numerical policy, stable `BodyId` ordering, swept CCD, failure atomicity).
 4. **Verdict:**
-   - **Ready:** `gh pr merge <n> --merge --delete-branch`. If auto mode denies the merge, do not work around it; list the PR as "ready for you to merge" in the report. If the PR closes an issue a consumer is waiting on, name the consumer issue and the merge commit in the report so the consumer can bump its pin.
+   - **Ready:** record the head SHA that CI, Codex and the spec review covered, then `gh pr merge <n> --merge --delete-branch --match-head-commit <sha>`. If the head moved, do not merge; re-review next run. If auto mode denies the merge, do not work around it; list the PR as "ready for you to merge" in the report. If the PR closes an issue a consumer is waiting on, name the consumer issue and the merge commit in the report so the consumer can bump its pin.
    - **Changes needed:** one PR comment with a numbered, concrete list. For a PR by Sonnet, dispatch Sonnet again with that list (step 4). For a PR by Opus, re-dispatch the Opus agent with that list (step 4); never fix it inline as well. For Sol, leave the comment; Sol's next run fixes its own PRs first.
 
 Merge only physics-engine PRs. Never merge PRs in consumer or other foundation repositories (mmorpg, arpg, ecs-lab, rust-kernels, …); list them for the user.

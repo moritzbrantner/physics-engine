@@ -21,7 +21,7 @@ The source of next steps is the roadmap issue #191 and its open child issues (PE
 - `spec:ready`: checked and implementable.
 - `spec:needs-input`: blocked on a question for the owner, asked in a comment.
 - `agent:opus`, `agent:sol`, `agent:sonnet`: the intended implementer.
-- `in-progress`: an implementer has started; the PR will reference the issue.
+- `in-progress`: an implementer has started; the PR will reference the issue. The `agent:*` label partitions issues, so the loop driver (Opus/Sonnet) and Sol never pick up the same issue; `in-progress` only marks a started task.
 
 ## Picking up a task (implementers)
 
