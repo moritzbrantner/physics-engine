@@ -192,5 +192,11 @@ dynamic preparation counts on 261 fixed boxes from committed consumer geometry,
 with supported and sparse dynamic populations. Complete baseline/candidate
 body/event traces match. Raw whole-call and isolated-stage timings are retained,
 including slower instrumented active-case medians. This completes #247's
-measurement prerequisite; #228 remains open for dependency-valid retention and
-fresh cache evidence, and #190 retains consumer adoption.
+measurement prerequisite; #228's separate retention evidence follows below, and
+#190 retains consumer adoption.
+
+[Fixed-bound retention](fixed-bound-retention.md) follows that prerequisite with
+per-body dependency invalidation, native/WASM lifecycle and exhaustive mutation
+controls, complete trace parity and raw repeated whole-call observations. It
+reduces fixed preparations while retaining 29,232 additional bytes on the recorded
+fixed-heavy inputs. All-N staging/sorting and consumer scans remain.

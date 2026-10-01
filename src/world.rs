@@ -48,7 +48,7 @@ pub struct TranslationalStepWork {
     pub dynamic_sweep_bound_preparations: usize,
     /// Fixed bound reads that avoided preparation; dynamic sweeps are never reused.
     pub fixed_sweep_bound_reuses: usize,
-    /// Cached entries invalidated by mutations since the previous attempted step.
+    /// Cached entries invalidated by mutations since the previous positive-tick step attempt.
     pub fixed_bound_invalidations: usize,
     /// Retained fixed-cache vector payload during an active call, excluding allocator overhead.
     pub fixed_bound_cache_capacity_bytes: usize,

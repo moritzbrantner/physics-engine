@@ -1,9 +1,11 @@
 # Fixed-bound preparation measurement
 
 Issue #247 measures the prerequisite for #228 on the compatibility translational
-`World`. It adds counters, frozen numeric inputs and diagnostic controls. Fixed
-bounds are still prepared on every actual query. Staging, sorting, traversal,
-response and commit retain their existing behavior.
+`World`. It adds counters, frozen numeric inputs and diagnostic controls. At the
+recorded producer, fixed bounds are prepared on every actual query. Subsequent
+[fixed-bound retention](fixed-bound-retention.md) records #228's implementation
+and its separate evidence. Staging, sorting, traversal, response and commit retain
+their existing behavior.
 
 ## Inputs and provenance
 
@@ -100,9 +102,10 @@ passes through the indicated body population. Zero horizon and one tick
 
 These batches exclude staging, sorting, response and commit. They establish
 repeated fixed preparation work and its isolated cost, without predicting cache
-lookup/invalidation cost or assigning a whole-call percentage. #228 remains open
+lookup/invalidation cost or assigning a whole-call percentage. This observation left #228 open
 for dependency-valid retention, its mutation parity and a fresh whole-call
-comparison. #190 retains the separate consumer-adoption decision.
+comparison, now recorded in the linked retention evidence. #190 retains the
+separate consumer-adoption decision.
 
 ## Reproduction and verification
 
