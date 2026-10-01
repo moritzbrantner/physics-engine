@@ -66,6 +66,17 @@ absent from the production Pages module. The WASM runner requires three identica
 repeats and validates uninitialized/out-of-range NaN results. Existing dense,
 material and narrow-support controls still execute in that driver.
 
+[Recorded evidence](primitive-contact-quality-2026-10-01.json) identifies clean
+producer `9a01302`. Both native repeats and all three release-WASM repeats report
+384 cases, 8,192 continuous-contact observations, zero normalized velocity and
+momentum-response errors, maximum energy ratio 1, and peak/residual overlap
+`0.010000000000010445`. Total solver visits across all three worlds are 259,008.
+Every observed interval is `0.26666666666666694` seconds, within the declared
+time tolerance. Matching measurements across these two builds are observations,
+not a stronger cross-target replay contract.
+All 16 fast-tier checks passed, including the existing instrumentation-neutrality
+and native replay controls.
+
 ```sh
 cargo test --release --locked --test primitive_contact_quality
 cargo build --manifest-path demo-wasm/Cargo.toml --release --locked \
