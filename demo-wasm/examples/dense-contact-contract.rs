@@ -7,10 +7,15 @@ mod dense;
 mod materials;
 #[path = "../../tests/support/narrow_support.rs"]
 mod narrow_support;
+#[path = "../../tests/support/primitive_contacts.rs"]
+mod primitive_contacts;
 thread_local! {
     // Read-only acceptance measurements; this example is absent from production Pages.
     static NARROW_RESULTS: std::cell::RefCell<Option<[narrow_support::Measurements; 3]>> = const {
         std::cell::RefCell::new(None)
+    };
+    static PRIMITIVE_RESULTS: std::cell::Cell<Option<[f64; 10]>> = const {
+        std::cell::Cell::new(None)
     };
 }
 #[unsafe(no_mangle)]
@@ -18,7 +23,17 @@ pub extern "C" fn dense_contact_contract() -> i32 {
     dense::run();
     materials::run();
     NARROW_RESULTS.with(|results| *results.borrow_mut() = Some(narrow_support::run()));
+    PRIMITIVE_RESULTS.with(|results| results.set(Some(primitive_contacts::run())));
     0
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn primitive_contact_metric(field: u32) -> f64 {
+    PRIMITIVE_RESULTS.with(|results| {
+        results
+            .get()
+            .and_then(|values| values.get(field as usize).copied())
+            .unwrap_or(f64::NAN)
+    })
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn narrow_support_metric(case: u32, cadence: u32, field: u32) -> f64 {
@@ -39,5 +54,6 @@ mod tests {
         super::dense::run();
         super::materials::run();
         super::narrow_support::run();
+        super::primitive_contacts::run();
     }
 }

@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "issue": 241,
+  "producer_commit": "9a0130264447c915ffd6d47cb0abda01bfc81c1d",
+  "convention_source_revision": "e6acb5310afaf15c0cba24f87108f5f4ad1bedc3",
+  "predeclared_inputs": "https://github.com/moritzbrantner/physics-engine/issues/241#issuecomment-5921980308",
+  "scope": "Axial identity-oriented rotation-locked current-contact reference subset only. General free rotation/friction/CCD and moving support acceptance remain partial.",
+  "native": {
+    "passed": true,
+    "repeats": [
+      {
+        "peak_overlap": 0.010000000000010445,
+        "residual_overlap": 0.010000000000010445,
+        "normalized_velocity_error": 0.0,
+        "normalized_momentum_response_error": 0.0,
+        "energy_ratio": 1.0,
+        "cases": 384.0,
+        "continuous_contact_samples": 8192.0,
+        "constraint_visits": 259008.0,
+        "min_elapsed": 0.26666666666666694,
+        "max_elapsed": 0.26666666666666694
+      },
+      {
+        "peak_overlap": 0.010000000000010445,
+        "residual_overlap": 0.010000000000010445,
+        "normalized_velocity_error": 0.0,
+        "normalized_momentum_response_error": 0.0,
+        "energy_ratio": 1.0,
+        "cases": 384.0,
+        "continuous_contact_samples": 8192.0,
+        "constraint_visits": 259008.0,
+        "min_elapsed": 0.26666666666666694,
+        "max_elapsed": 0.26666666666666694
+      }
+    ]
+  },
+  "wasm": {
+    "passed": true,
+    "repeats": [
+      {
+        "replay": 0,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "replay": 1,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      },
+      {
+        "replay": 2,
+        "primitive": {
+          "peak_overlap": 0.010000000000010445,
+          "residual_overlap": 0.010000000000010445,
+          "normalized_velocity_error": 0,
+          "normalized_momentum_response_error": 0,
+          "energy_ratio": 1,
+          "cases": 384,
+          "continuous_contact_samples": 8192,
+          "constraint_visits": 259008,
+          "min_elapsed": 0.26666666666666694,
+          "max_elapsed": 0.26666666666666694
+        }
+      }
+    ],
+    "build": "release wasm32-unknown-unknown diagnostic dense-contact-contract"
+  },
+  "work_scope": "constraint_visits includes all three worlds (observed physical-substep world, independent replay, and four-substep cadence probe); continuous_contact_samples includes only the observed physical-substep world.",
+  "fast_tier": {
+    "passed": true,
+    "checks": 16
+  }
+}
