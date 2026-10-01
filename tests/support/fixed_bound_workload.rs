@@ -73,23 +73,26 @@ impl Input {
     }
 }
 
-fn accumulate_control_work(totals: &mut [u64; 4], work: physics_engine::TranslationalStepWork) {
+fn accumulate_control_work(totals: &mut [u64; 5], work: physics_engine::TranslationalStepWork) {
     for (sum, value) in totals.iter_mut().zip([
         work.fixed_sweep_bound_preparations,
         work.dynamic_sweep_bound_preparations,
         work.broad_phase_queries,
         work.staged_bodies,
+        work.fixed_sweep_bound_reuses,
     ]) {
         *sum += value as u64;
     }
 }
 
-pub fn run() -> [f64; 12] {
+pub fn run() -> [f64; 15] {
     let input = input();
     let count = 8;
     let mut world = input.world(count, input.gravity);
     let mut totals = [0_u64; 7];
-    let mut all_work = [0_u64; 4];
+    let mut all_work = [0_u64; 5];
+    let mut fixed_reuses = 0_u64;
+    let mut fixed_cache_payload = 0;
     for tick in 0..24 {
         let command = Vec3i::new(if tick % 2 == 0 { 1 } else { -1 }, 0, 0);
         world.set_velocity(BodyId(DYNAMIC_BASE), command).unwrap();
@@ -114,7 +117,7 @@ pub fn run() -> [f64; 12] {
         }
         let work = report.stats.work;
         assert_eq!(
-            work.fixed_sweep_bound_preparations,
+            work.fixed_sweep_bound_preparations + work.fixed_sweep_bound_reuses,
             FIXED_COUNT * work.broad_phase_queries
         );
         assert_eq!(
@@ -126,6 +129,12 @@ pub fn run() -> [f64; 12] {
             work.sweep_bound_preparations
         );
         assert!(work.broad_phase_queries > 0);
+        assert_eq!(
+            work.fixed_sweep_bound_preparations,
+            if tick == 0 { FIXED_COUNT } else { 0 }
+        );
+        fixed_reuses += work.fixed_sweep_bound_reuses as u64;
+        fixed_cache_payload = work.fixed_bound_cache_capacity_bytes;
         for (sum, value) in totals.iter_mut().zip([
             work.fixed_sweep_bound_preparations,
             work.dynamic_sweep_bound_preparations,
@@ -149,15 +158,18 @@ pub fn run() -> [f64; 12] {
     assert_eq!(no_op.sweep_bound_preparations, 0);
     assert_eq!(no_op.fixed_sweep_bound_preparations, 0);
     assert_eq!(no_op.dynamic_sweep_bound_preparations, 0);
-    let mut values = [0.0; 12];
+    let mut values = [0.0; 15];
     // Read-only transport: the bounded populations, calls and event/pass ceilings
     // keep every observed integer counter below 2^53. These are not physics state.
     for (value, sum) in values[..7].iter_mut().zip(totals) {
         *value = sum as f64;
     }
     values[7] = world.retained_step_scratch_bytes() as f64;
-    for (value, sum) in values[8..].iter_mut().zip(all_work) {
+    for (value, sum) in values[8..12].iter_mut().zip(all_work) {
         *value = sum as f64;
     }
+    values[12] = fixed_reuses as f64;
+    values[13] = all_work[4] as f64;
+    values[14] = fixed_cache_payload as f64;
     values
 }

@@ -11,11 +11,17 @@ use std::{
 #[path = "support/fixed_bound_workload.rs"]
 mod fixed_bound_workload;
 
-fn preparation_split(work: &physics_engine::TranslationalStepWork) -> [Option<usize>; 2] {
+fn preparation_split(work: &physics_engine::TranslationalStepWork) -> [Option<usize>; 4] {
     [
         Some(work.fixed_sweep_bound_preparations),
         Some(work.dynamic_sweep_bound_preparations),
+        Some(work.fixed_sweep_bound_reuses),
+        Some(work.fixed_bound_invalidations),
     ]
+}
+
+fn fixed_cache_bytes(work: &physics_engine::TranslationalStepWork) -> usize {
+    work.fixed_bound_cache_capacity_bytes
 }
 
 #[test]
@@ -44,6 +50,9 @@ fn fixed_heavy_consumer_workload_measurement() {
             let mut totals = [0_usize; 7];
             let mut fixed = Some(0_usize);
             let mut dynamic = Some(0_usize);
+            let mut reused = Some(0_usize);
+            let mut invalidated = Some(0_usize);
+            let mut peak_fixed_cache = 0;
             let mut peak_payload = 0;
             let mut trace = std::env::var_os("FIXED_BOUND_TRACE_DIR").map(|root| {
                 std::fs::File::create(
@@ -85,8 +94,13 @@ fn fixed_heavy_consumer_workload_measurement() {
                 let split = preparation_split(&work);
                 fixed = fixed.zip(split[0]).map(|(sum, n)| sum + n);
                 dynamic = dynamic.zip(split[1]).map(|(sum, n)| sum + n);
+                reused = reused.zip(split[2]).map(|(sum, n)| sum + n);
+                invalidated = invalidated.zip(split[3]).map(|(sum, n)| sum + n);
+                peak_fixed_cache = peak_fixed_cache.max(fixed_cache_bytes(&work));
                 peak_payload = peak_payload.max(
-                    work.staged_state_capacity_bytes + work.candidate_buffer_peak_capacity_bytes,
+                    work.staged_state_capacity_bytes
+                        + work.candidate_buffer_peak_capacity_bytes
+                        + fixed_cache_bytes(&work),
                 );
                 for (sum, n) in totals.iter_mut().zip([
                     work.broad_phase_queries,
@@ -105,7 +119,7 @@ fn fixed_heavy_consumer_workload_measurement() {
             previous = Some(checksum);
             println!(
                 "FIXED_BOUND_WORKLOAD {}",
-                serde_json::json!({"mode":mode,"dynamic_bodies":count,"fixed_bodies":261,"moving":moving,"trial":trial,"ticks":120,"state_event_checksum":format!("{checksum:016x}"),"total_ms":times.iter().sum::<f64>(),"raw_ms":times,"queries":totals[0],"bound_preparations":totals[1],"staged_bodies":totals[2],"active_bound_checks":totals[3],"fixed_pair_rejections":totals[4],"contact_resolutions":totals[5],"collision_events":totals[6],"fixed_preparations":fixed,"dynamic_preparations":dynamic,"peak_active_vector_payload_bytes":peak_payload,"retained_vector_payload_bytes":world.retained_step_scratch_bytes()})
+                serde_json::json!({"mode":mode,"dynamic_bodies":count,"fixed_bodies":261,"moving":moving,"trial":trial,"ticks":120,"state_event_checksum":format!("{checksum:016x}"),"total_ms":times.iter().sum::<f64>(),"raw_ms":times,"queries":totals[0],"bound_preparations":totals[1],"staged_bodies":totals[2],"active_bound_checks":totals[3],"fixed_pair_rejections":totals[4],"contact_resolutions":totals[5],"collision_events":totals[6],"fixed_preparations":fixed,"dynamic_preparations":dynamic,"fixed_reuses":reused,"fixed_invalidations":invalidated,"peak_fixed_cache_payload_bytes":peak_fixed_cache,"peak_active_vector_payload_bytes":peak_payload,"retained_vector_payload_bytes":world.retained_step_scratch_bytes()})
             );
         }
     }

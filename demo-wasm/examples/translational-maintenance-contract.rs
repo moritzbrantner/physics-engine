@@ -3,11 +3,13 @@
 mod broad_phase;
 #[path = "../../tests/support/fixed_bound_workload.rs"]
 mod fixed_bound_workload;
+#[path = "../../tests/support/translational_fixed_bounds.rs"]
+mod fixed_bounds;
 #[path = "../../tests/support/translational_staging.rs"]
 mod staging;
 
 thread_local! {
-    static FIXED_RESULTS: std::cell::Cell<Option<[f64; 12]>> = const {
+    static FIXED_RESULTS: std::cell::Cell<Option<[f64; 15]>> = const {
         std::cell::Cell::new(None)
     };
 }
@@ -16,6 +18,7 @@ thread_local! {
 pub extern "C" fn translational_maintenance_contract() -> i32 {
     staging::run();
     broad_phase::run();
+    fixed_bounds::run();
     FIXED_RESULTS.with(|results| results.set(Some(fixed_bound_workload::run())));
     0
 }
@@ -36,6 +39,7 @@ mod tests {
     fn native_translational_maintenance_contract() {
         super::staging::run();
         super::broad_phase::run();
+        super::fixed_bounds::run();
         super::fixed_bound_workload::run();
     }
 }

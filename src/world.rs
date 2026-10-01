@@ -46,6 +46,12 @@ pub struct TranslationalStepWork {
     pub fixed_sweep_bound_preparations: usize,
     /// Actual bound preparations for BodyKind::Dynamic, across every query in this call.
     pub dynamic_sweep_bound_preparations: usize,
+    /// Fixed bound reads that avoided preparation; dynamic sweeps are never reused.
+    pub fixed_sweep_bound_reuses: usize,
+    /// Cached entries invalidated by mutations since the previous attempted step.
+    pub fixed_bound_invalidations: usize,
+    /// Retained fixed-cache vector payload during an active call, excluding allocator overhead.
+    pub fixed_bound_cache_capacity_bytes: usize,
     pub broad_phase_sorts: usize,
     pub broad_phase_pair_sorts: usize,
     /// Entry, active-index and candidate-pair vector capacity increases across all queries.
@@ -192,6 +198,13 @@ impl World {
             .get_mut(&body.id)
             .ok_or(PhysicsError::MissingBody(body.id))?;
         if *previous != body {
+            if previous.kind == BodyKind::Fixed
+                && (body.kind != BodyKind::Fixed
+                    || previous.position != body.position
+                    || previous.half_extents != body.half_extents)
+            {
+                self.broad_phase.fixed_bounds.invalidate(body.id);
+            }
             self.dynamic_body_count -= usize::from(previous.kind == BodyKind::Dynamic);
             self.dynamic_body_count += usize::from(body.kind == BodyKind::Dynamic);
             *previous = body;
@@ -203,6 +216,7 @@ impl World {
     pub fn remove_body(&mut self, id: BodyId) -> Option<RigidBody> {
         let removed = self.bodies.remove(&id);
         if let Some(body) = &removed {
+            self.broad_phase.fixed_bounds.invalidate(id);
             self.dynamic_body_count -= usize::from(body.kind == BodyKind::Dynamic);
             self.stationary_step_is_no_op = false;
         }
@@ -239,6 +253,9 @@ impl World {
             .get_mut(&id)
             .ok_or(PhysicsError::MissingBody(id))?;
         if body.position != position {
+            if body.kind == BodyKind::Fixed {
+                self.broad_phase.fixed_bounds.invalidate(id);
+            }
             body.position = position;
             self.stationary_step_is_no_op = false;
         }
@@ -280,6 +297,9 @@ impl World {
                 body_count: self.bodies.len(),
                 work: TranslationalStepWork {
                     dynamic_bodies: self.dynamic_body_count,
+                    fixed_bound_invalidations: std::mem::take(
+                        &mut self.broad_phase.fixed_bounds.pending_invalidations,
+                    ),
                     ..TranslationalStepWork::default()
                 },
                 ..StepStats::default()
@@ -305,6 +325,7 @@ impl World {
     pub fn retained_step_scratch_bytes(&self) -> usize {
         self.staged_states.capacity() * std::mem::size_of::<BodyState>()
             + self.broad_phase.capacity_bytes()
+            + self.broad_phase.fixed_bounds.capacity_bytes()
     }
 
     /// Releases disposable step capacity without changing bodies, stationary evidence or replay.
@@ -322,6 +343,13 @@ impl World {
         mut report: StepReport,
     ) -> Result<StepReport, PhysicsError> {
         debug_assert!(states.is_empty());
+        let fixed_count = self.bodies.len() - self.dynamic_body_count;
+        broad_phase
+            .fixed_bounds
+            .entries
+            .reserve_exact(fixed_count - broad_phase.fixed_bounds.entries.len());
+        report.stats.work.fixed_bound_cache_capacity_bytes =
+            broad_phase.fixed_bounds.capacity_bytes();
         let previous_capacity = states.capacity();
         states.reserve_exact(self.bodies.len());
         states.extend(self.bodies.values().cloned().map(BodyState::new));
@@ -544,6 +572,77 @@ struct BroadPhaseScratch {
     entries: Vec<BroadPhaseBounds>,
     active: Vec<usize>,
     pairs: Vec<(usize, usize)>,
+    fixed_bounds: FixedBoundCache,
+}
+
+// Derived geometry only. World mutations discard affected IDs before any query;
+// fixed bodies never move during stepping. Entries follow canonical BodyId order,
+// while the query supplies its current body index after admission/removal.
+#[derive(Clone, Debug, Default)]
+struct FixedBoundCache {
+    entries: Vec<FixedBounds>,
+    pending_invalidations: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FixedBounds {
+    id: BodyId,
+    min: [i128; 3],
+    max: [i128; 3],
+}
+
+impl FixedBoundCache {
+    fn invalidate(&mut self, id: BodyId) {
+        if let Ok(index) = self.entries.binary_search_by_key(&id, |entry| entry.id) {
+            self.entries.remove(index);
+            self.pending_invalidations += 1;
+        }
+    }
+
+    fn capacity_bytes(&self) -> usize {
+        self.entries.capacity() * std::mem::size_of::<FixedBounds>()
+    }
+
+    fn bounds(
+        &mut self,
+        fixed_index: usize,
+        body_index: usize,
+        state: &BodyState,
+        work: &mut TranslationalStepWork,
+    ) -> BroadPhaseBounds {
+        debug_assert_eq!(state.body.kind, BodyKind::Fixed);
+        debug_assert_eq!(state.body.velocity, Vec3i::ZERO);
+        if self
+            .entries
+            .get(fixed_index)
+            .is_some_and(|entry| entry.id == state.body.id)
+        {
+            work.fixed_sweep_bound_reuses += 1;
+        } else {
+            debug_assert!(
+                self.entries
+                    .get(fixed_index)
+                    .is_none_or(|entry| entry.id > state.body.id)
+            );
+            let bounds = swept_bounds(body_index, state, 0);
+            self.entries.insert(
+                fixed_index,
+                FixedBounds {
+                    id: state.body.id,
+                    min: bounds.min,
+                    max: bounds.max,
+                },
+            );
+            work.fixed_sweep_bound_preparations += 1;
+            work.sweep_bound_preparations += 1;
+        }
+        let entry = self.entries[fixed_index];
+        BroadPhaseBounds {
+            body_index,
+            min: entry.min,
+            max: entry.max,
+        }
+    }
 }
 
 impl BroadPhaseScratch {
@@ -618,26 +717,41 @@ fn broad_phase_pairs(
     work: &mut TranslationalStepWork,
 ) -> usize {
     work.broad_phase_queries += 1;
-    work.sweep_bound_preparations += states.len();
     work.broad_phase_sorts += 1;
     scratch.clear();
     let previous_capacity = scratch.entries.capacity();
     scratch.entries.reserve_exact(states.len());
     work.broad_phase_capacity_growths +=
         usize::from(scratch.entries.capacity() > previous_capacity);
-    scratch
-        .entries
-        .extend(states.iter().enumerate().map(|(body_index, state)| {
-            match state.body.kind {
-                BodyKind::Fixed => work.fixed_sweep_bound_preparations += 1,
-                BodyKind::Dynamic => work.dynamic_sweep_bound_preparations += 1,
-            }
-            swept_bounds(body_index, state, horizon_subticks)
-        }));
+    let mut fixed_index = 0;
+    let BroadPhaseScratch {
+        entries,
+        fixed_bounds,
+        ..
+    } = scratch;
+    entries.extend(
+        states
+            .iter()
+            .enumerate()
+            .map(|(body_index, state)| match state.body.kind {
+                BodyKind::Fixed => {
+                    let bounds = fixed_bounds.bounds(fixed_index, body_index, state, work);
+                    fixed_index += 1;
+                    bounds
+                }
+                BodyKind::Dynamic => {
+                    work.dynamic_sweep_bound_preparations += 1;
+                    work.sweep_bound_preparations += 1;
+                    swept_bounds(body_index, state, horizon_subticks)
+                }
+            }),
+    );
+    work.fixed_bound_cache_capacity_bytes = fixed_bounds.capacity_bytes();
     let BroadPhaseScratch {
         entries,
         active,
         pairs,
+        ..
     } = scratch;
     entries.sort_by(|left, right| {
         left.min[0]
@@ -1418,6 +1532,74 @@ mod maintenance_tests {
             oracle.add_body(replacement).unwrap();
             step_matches(&mut candidate, &mut oracle, 2);
             assert_eq!(candidate.body(id), oracle.body(id));
+        }
+    }
+
+    #[test]
+    fn fixed_bound_mutations_match_exhaustive_impacts_and_recontacts() {
+        let half = Vec3i::new(1, 10, 10);
+        let elastic = Material::new(MATERIAL_SCALE);
+        let (mut candidate, mut oracle) = worlds(
+            WorldConfig {
+                gravity: Vec3i::ZERO,
+                ..WorldConfig::default()
+            },
+            vec![
+                RigidBody::fixed(BodyId(20), Vec3i::new(100, 0, 0), half).with_material(elastic),
+                RigidBody::dynamic(
+                    BodyId(30),
+                    Vec3i::ZERO,
+                    Vec3i::new(1, 0, 0),
+                    Vec3i::new(1, 1, 1),
+                )
+                .with_material(elastic),
+                RigidBody::fixed(BodyId(40), Vec3i::new(-100, 0, 0), half).with_material(elastic),
+            ],
+        );
+        step_matches(&mut candidate, &mut oracle, 1);
+        for round in 0..12 {
+            let center = candidate.body(BodyId(30)).unwrap().position();
+            let replacement = RigidBody::fixed(
+                BodyId(20),
+                Vec3i::new(center.x + 10, center.y, center.z),
+                Vec3i::new(1 + round % 3, 10, 10),
+            )
+            .with_material(elastic);
+            if round % 3 == 0 {
+                assert_eq!(
+                    candidate.remove_body(BodyId(20)),
+                    oracle.remove_body(BodyId(20))
+                );
+                candidate.add_body(replacement.clone()).unwrap();
+                oracle.add_body(replacement).unwrap();
+            } else {
+                candidate.replace_body(replacement.clone()).unwrap();
+                oracle.replace_body(replacement).unwrap();
+            }
+            let behind = Vec3i::new(center.x - 10, center.y, center.z);
+            candidate.set_position(BodyId(40), behind).unwrap();
+            oracle.set_position(BodyId(40), behind).unwrap();
+            let unrelated = RigidBody::fixed(BodyId(5), Vec3i::new(-1000, 100, 0), half);
+            candidate.add_body(unrelated.clone()).unwrap();
+            oracle.add_body(unrelated).unwrap();
+            let velocity = Vec3i::new(if round % 2 == 0 { 60 } else { -60 }, 0, 0);
+            candidate.set_velocity(BodyId(30), velocity).unwrap();
+            oracle.set_velocity(BodyId(30), velocity).unwrap();
+            step_matches(&mut candidate, &mut oracle, 1 + round % 2);
+            assert_eq!(
+                candidate.remove_body(BodyId(5)),
+                oracle.remove_body(BodyId(5))
+            );
+            let replacement = RigidBody::dynamic(
+                BodyId(20),
+                candidate.body(BodyId(20)).unwrap().position(),
+                Vec3i::ZERO,
+                half,
+            )
+            .with_material(elastic);
+            candidate.replace_body(replacement.clone()).unwrap();
+            oracle.replace_body(replacement).unwrap();
+            step_matches(&mut candidate, &mut oracle, 1);
         }
     }
 
