@@ -13,12 +13,12 @@ fn config(relax: u8) -> Config {
         ..Config::default()
     }
 }
-fn body(id: u64, p: Vector, mass: Scalar) -> Body {
+fn body(id: u64, p: Vector, mass: Real) -> Body {
     Body::new(BodyId(id), Shape::Box(Vector(1.0, 1.0, 1.0)), p, mass)
 }
 #[test]
 fn correction_input_and_underflow_are_rejected_before_mutation() {
-    for value in [Scalar::NAN, Scalar::INFINITY, -1.0] {
+    for value in [Real::NAN, Real::INFINITY, -1.0] {
         for property in 0..2 {
             let mut s = SoftContact::default();
             if property == 0 {
@@ -67,7 +67,7 @@ fn correction_input_and_underflow_are_rejected_before_mutation() {
     w.apply_impulse(BodyId(1), Vector::X, Vector::ZERO).unwrap();
     let before = w.body(BodyId(1)).unwrap().clone();
     assert!(matches!(
-        w.step(Scalar::from_bits(1)),
+        w.step(Real::from_bits(1)),
         Err(Error::InvalidInput)
     ));
     assert_eq!(w.body(BodyId(1)), Some(&before));
@@ -144,7 +144,7 @@ fn bias_relaxation_removes_separation_energy_without_integrating_twice() {
     let mut relaxed = fixture(2);
     soft.step(1.0 / 240.0).unwrap();
     let r = relaxed.step(1.0 / 240.0).unwrap();
-    let energy = |w: &World| w.bodies().map(Body::kinetic_energy).sum::<Scalar>();
+    let energy = |w: &World| w.bodies().map(Body::kinetic_energy).sum::<Real>();
     assert!(energy(&soft) > 0.01);
     assert!(energy(&relaxed) < energy(&soft) * 1e-8);
     for id in [BodyId(1), BodyId(2)] {
@@ -383,8 +383,8 @@ fn tilted_frictional_stacks_keep_finite_state_and_bounded_penetration() {
                 }
                 w.add_body(b).unwrap();
             }
-            let mut peak: Scalar = 0.0;
-            let mut maximum_energy: Scalar = 0.0;
+            let mut peak: Real = 0.0;
+            let mut maximum_energy: Real = 0.0;
             for t in 0..1200 {
                 if t == 240 {
                     let point = w.body(BodyId(13)).unwrap().position + Vector(0.0, 8.0, 0.0);
@@ -402,7 +402,7 @@ fn tilted_frictional_stacks_keep_finite_state_and_bounded_penetration() {
             }
             eprintln!(
                 "stability: {name}, policy={policy}, peak_floor={peak}, peak_energy={maximum_energy}, final_energy={}, sleeping={}",
-                w.bodies().map(Body::kinetic_energy).sum::<Scalar>(),
+                w.bodies().map(Body::kinetic_energy).sum::<Real>(),
                 w.is_quiescent()
             );
             if peak > 0.5 {

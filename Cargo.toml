@@ -20,6 +20,11 @@ default = ["performance-counters"]
 performance-counters = []
 # Diagnostic legacy replay only. Never required by the default or Pages build.
 exact-reference = []
+# Whole-build choice (non-additive by design): the floating solver (`approximate::World`)
+# stores physical state as f32 instead of f64. Legacy worlds and time composition stay f64.
+# Checkpoints from one width are rejected by the other. Incompatible with `exact-reference`.
+# See docs/numerics.md for the supported f32 precision envelope.
+f32-physics = []
 # Diagnostic correction study only; no optional state/branches in production builds.
 experimental-soft-contact = []
 

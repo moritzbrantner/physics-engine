@@ -1,9 +1,9 @@
 //! Substep-local response coefficients. This caches division/shape work, not body motion.
-use super::{Body, Report, Scalar, Vector};
+use super::{Body, Real, Report, Vector};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PreparedResponse {
-    pub inverse_mass: Scalar,
+    pub inverse_mass: Real,
     local_inverse_inertia: Vector,
     spin: bool,
 }

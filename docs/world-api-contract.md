@@ -26,6 +26,8 @@ replacement for an older one.
 
 A dependency update does not move a consumer between these worlds.
 
+`approximate::World` state uses `approximate::Real`, `f64` by default. Game consumers can build it with f32 physical state by enabling the whole-build Cargo feature `f32-physics` (the production game target; f64 stays the reference). Time arguments and elapsed time stay `f64`; checkpoints are width-specific and the other width is rejected with `CheckpointError::ScalarWidthMismatch`. Supported f32 inputs are limited to the precision envelope in [numerics](numerics.md#f32-floating-physics-build) (|position| ≤ 16384, speed ≤ 4000 units/s, shapes ≥ 0.25 units). The default build's signatures are unchanged except the additive `Real`/`REAL_BITS` and the new error variant.
+
 `PhysicsWorld3dKernel` exposes the rotating parked-sleep kernel without the public wrapper's retained
 fixed-geometry preparation. It uses the same collision/wake semantics and does not add a new solver or
 stronger recovery guarantee. The historical internal `EcsRotatingWorld3d` name is not an ECS storage

@@ -2,7 +2,7 @@ use super::*;
 use crate::approximate::{Config, Quaternion, Shape, World};
 use std::collections::BTreeSet;
 
-fn body(id: u64, position: Vector, mass: f64) -> Body {
+fn body(id: u64, position: Vector, mass: Real) -> Body {
     Body::new(
         BodyId(id),
         Shape::Box(Vector(1.0, 1.0, 1.0)),
@@ -71,7 +71,7 @@ fn graph_fixture() -> World {
     for id in [30, 21, 1, 11, 20, 10] {
         let mut b = body(
             id,
-            Vector(id as f64 * 10.0, 0.0, 0.0),
+            Vector(id as Real * 10.0, 0.0, 0.0),
             if id == 1 { 0.0 } else { 1.0 },
         );
         b.external = id == 30;
@@ -178,7 +178,7 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
     check_activity(&mut w);
     assert!(w.is_quiescent());
 }
-fn check_bounds(w: &mut World, h: Scalar) {
+fn check_bounds(w: &mut World, h: Real) {
     let mut out = Vec::new();
     w.manifolds::<true>(h, &mut super::super::Report::default(), &mut out)
         .unwrap();
@@ -199,7 +199,7 @@ fn check_bounds(w: &mut World, h: Scalar) {
             // using this formula comparison as geometric correctness evidence.
             let pad = Vector(angular, angular, angular)
                 + Vector(1.0, 1.0, 1.0)
-                    * (w.config.contact_slop + 8.0 * Scalar::EPSILON * delta.abs().max_component());
+                    * (w.config.contact_slop + 8.0 * Real::EPSILON * delta.abs().max_component());
             (i, lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
         })
         .collect::<Vec<_>>();
@@ -253,9 +253,9 @@ fn tower_pair() -> World {
                         BodyId(id),
                         Shape::Box(Vector(18.0, 18.0, 18.0)),
                         Vector(
-                            tower as f64 * 400.0 - 54.0 + col as f64 * 36.0,
-                            18.0 + level as f64 * 36.0,
-                            82.0 + row as f64 * 36.0,
+                            tower as Real * 400.0 - 54.0 + col as Real * 36.0,
+                            18.0 + level as Real * 36.0,
+                            82.0 + row as Real * 36.0,
                         ),
                         2.0,
                     );
@@ -354,7 +354,7 @@ fn sleeping_neighborhood(count: u64) -> World {
     .unwrap();
     // Seed an already sleeping contact graph, then prove per-step traversal does not touch it.
     for id in 1..=count {
-        let mut b = body(id, Vector(0.0, id as f64 * 2.0, 0.0), 1.0);
+        let mut b = body(id, Vector(0.0, id as Real * 2.0, 0.0), 1.0);
         b.sleeping = true;
         w.add_body(b).unwrap();
         if id > 1 {

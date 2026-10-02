@@ -1,8 +1,19 @@
 //! Minimized broad-phase rejection: narrow phase admits this rotated corner contact.
 use physics_engine::{
     BodyId,
-    approximate::{Body, Config, Quaternion, Shape, Vector as V, World},
+    approximate::{Body, Config, Quaternion, REAL_BITS, Real, Shape, Vector as V, World},
 };
+
+/// The f64 build keeps the original sub-ulp fixture (radius 1e-6 at |x| near 11). With f32
+/// state an ulp there is ~1e-6, so the sphere uses a resolvable radius and the contact inset
+/// and separated gap are a few ulps; the rounded corner can differ from the kernel's by ulps.
+fn fixture() -> (Real, usize, Real) {
+    if REAL_BITS == 64 {
+        (1e-6, 1, 1e-14)
+    } else {
+        (1e-3, 8, 4e-5)
+    }
+}
 
 #[cfg_attr(test, test)]
 pub fn rotated_corner_contact_survives_sub_ulp_contact_slop() {
@@ -20,12 +31,15 @@ pub fn rotated_corner_contact_survives_sub_ulp_contact_slop() {
         0.0,
     );
     fixed.orientation = Quaternion(0.2, 0.3, 0.1, 0.9).normalized();
+    let (radius, inset, gap) = fixture();
     let corner = fixed.position + fixed.orientation.rotate(V(-1.0, -2.0, 3.0));
-    let mut center = corner - V::Y * 1e-6;
-    center.1 = center.1.next_up();
+    let mut center = corner - V::Y * radius;
+    for _ in 0..inset {
+        center.1 = center.1.next_up();
+    }
     world.add_body(fixed).unwrap();
     world
-        .add_body(Body::new(BodyId(2), Shape::Sphere(1e-6), center, 1.0))
+        .add_body(Body::new(BodyId(2), Shape::Sphere(radius), center, 1.0))
         .unwrap();
     let report = world.step(1.0 / 60.0).unwrap();
     assert!(
@@ -38,9 +52,9 @@ pub fn rotated_corner_contact_survives_sub_ulp_contact_slop() {
     // The numerical guard also admits a nearby separated candidate. Its narrow-phase
     // result must remain a miss: bound padding is not physical contact slop.
     world.remove_body(BodyId(2)).unwrap();
-    let separated = center - V::Y * 1e-14;
+    let separated = center - V::Y * gap;
     world
-        .add_body(Body::new(BodyId(2), Shape::Sphere(1e-6), separated, 1.0))
+        .add_body(Body::new(BodyId(2), Shape::Sphere(radius), separated, 1.0))
         .unwrap();
     let report = world.step(1.0 / 60.0).unwrap();
     assert!(report.narrow_tests > 0);

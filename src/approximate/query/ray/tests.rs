@@ -116,7 +116,7 @@ fn filters_lifecycle_and_invalid_requests_cannot_reuse_stale_results() {
     assert_eq!(hits[0].feature, RayFeature::WedgeFace(1));
     for cast in [
         RayCast::new(V::ZERO, V::ZERO),
-        RayCast::new(V(f64::NAN, 0.0, 0.0), V::X),
+        RayCast::new(V(Real::NAN, 0.0, 0.0), V::X),
         RayCast::new(V(1e12, 0.0, 0.0), V::X),
     ] {
         let error = w.cast_ray(cast, filter, &mut hits).unwrap_err();
@@ -138,7 +138,7 @@ fn partial_work_and_hits_are_reported_when_support_velocity_fails() {
     w.add_body(Body::new(BodyId(2), Shape::Sphere(2.0), V::ZERO, 0.0))
         .unwrap();
     // Deliberately corrupt otherwise validated state to test the numerical error boundary.
-    w.bodies[1].angular_velocity = V(0.0, f64::MAX, 0.0);
+    w.bodies[1].angular_velocity = V(0.0, Real::MAX, 0.0);
     let mut hits = Vec::new();
     let error = w
         .cast_ray(
@@ -165,7 +165,7 @@ fn seeded_pruned_rays_match_exhaustive_rotated_geometry() {
     let mut seed = 0x194_0930_u64;
     let mut next = || {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        (seed >> 32) as Scalar / u32::MAX as Scalar * 40.0 - 20.0
+        (seed >> 32) as Real / u32::MAX as Real * 40.0 - 20.0
     };
     let mut pruned = Vec::new();
     let mut exhaustive = Vec::new();
@@ -208,7 +208,7 @@ fn sparse_work_is_bounded_and_warmed_output_retains_capacity() {
         w.add_body(Body::new(
             BodyId(id),
             Shape::Sphere(0.5),
-            V(0.0, id as Scalar * 4.0, 0.0),
+            V(0.0, id as Real * 4.0, 0.0),
             0.0,
         ))
         .unwrap();
@@ -244,9 +244,9 @@ fn paired_ray_workload_evidence() {
             let mut w = world();
             for id in 0..count {
                 let position = if scenario == "crowded_hit" {
-                    V(id as Scalar * 2.0, 0.0, 0.0)
+                    V(id as Real * 2.0, 0.0, 0.0)
                 } else {
-                    V(0.0, id as Scalar * 4.0, 0.0)
+                    V(0.0, id as Real * 4.0, 0.0)
                 };
                 w.add_body(Body::new(BodyId(id), shape, position, 0.0))
                     .unwrap();

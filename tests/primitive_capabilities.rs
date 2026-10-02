@@ -1,4 +1,5 @@
 //! Published capability claims must match real public calls on native and WASM.
+use physics_engine::approximate::Real;
 use std::collections::BTreeSet;
 
 use physics_engine::{
@@ -79,7 +80,7 @@ pub fn advertised_shape_queries_and_mass_cross_the_public_api() {
         let mut world = world();
         let mut body = Body::new(BodyId(1), shape, V::ZERO, 1.0);
         body.rotation_locked = name == "wedge";
-        body.orientation = Quaternion(0.0, 0.0, 0.3_f64.sin(), 0.3_f64.cos());
+        body.orientation = Quaternion(0.0, 0.0, (0.3 as Real).sin(), (0.3 as Real).cos());
         world.add_body(body).unwrap();
         world.add_force(BodyId(1), V::X).unwrap();
         let context = CheckpointContext {
@@ -117,7 +118,7 @@ pub fn advertised_shape_queries_and_mass_cross_the_public_api() {
             )
             .unwrap();
         assert_eq!(rays.len(), 1);
-        assert!((rays[0].normal.length() - 1.0).abs() < 1e-12);
+        assert!((rays[0].normal.length() - 1.0).abs() <= (1e-12 as Real).max(4.0 * Real::EPSILON));
         assert_eq!(world.checkpoint(context).unwrap().to_bytes(), before);
     }
 }
@@ -193,8 +194,8 @@ pub fn restrictions_and_validation_remain_explicit() {
     assert_eq!(data["referenceAcceptance"], "partial");
     let validation = &data["validation"];
     assert_eq!(validation["finiteValuesRequired"], true);
-    let minimum = validation["positiveDimensionMinimum"].as_f64().unwrap();
-    let maximum = validation["dimensionMaximumExclusive"].as_f64().unwrap();
+    let minimum = validation["positiveDimensionMinimum"].as_f64().unwrap() as Real;
+    let maximum = validation["dimensionMaximumExclusive"].as_f64().unwrap() as Real;
     for name in ["sphere", "box", "capsule", "wedge"] {
         let row = data["shapes"]
             .as_array()
@@ -226,7 +227,7 @@ pub fn restrictions_and_validation_remain_explicit() {
             moving.rotation_locked = true;
         }
         world.add_body(moving).unwrap();
-        for dimension in [0.0, minimum * 0.5, -1.0, f64::NAN, f64::INFINITY, maximum] {
+        for dimension in [0.0, minimum * 0.5, -1.0, Real::NAN, Real::INFINITY, maximum] {
             let shape = match shape(name) {
                 Shape::Sphere(_) => Shape::Sphere(dimension),
                 Shape::Box(_) => Shape::Box(V(dimension, minimum, minimum)),
@@ -244,22 +245,22 @@ pub fn restrictions_and_validation_remain_explicit() {
         .add_body(Body::new(
             BodyId(1),
             Shape::capsule(
-                validation["capsuleHalfSegmentMinimum"].as_f64().unwrap(),
+                validation["capsuleHalfSegmentMinimum"].as_f64().unwrap() as Real,
                 minimum,
             ),
             V::ZERO,
-            validation["positiveMassMinimum"].as_f64().unwrap(),
+            validation["positiveMassMinimum"].as_f64().unwrap() as Real,
         ))
         .unwrap();
     assert_eq!(validation["fixedMass"], 0.0);
-    let mass_maximum = validation["massMaximumExclusive"].as_f64().unwrap();
-    for mass in [-1.0, f64::NAN, f64::INFINITY, mass_maximum] {
+    let mass_maximum = validation["massMaximumExclusive"].as_f64().unwrap() as Real;
+    for mass in [-1.0, Real::NAN, Real::INFINITY, mass_maximum] {
         assert_eq!(
             world.add_body(Body::new(BodyId(3), Shape::Sphere(1.0), V::ZERO, mass)),
             Err(Error::InvalidInput)
         );
     }
-    for half in [-1.0, f64::NAN, maximum] {
+    for half in [-1.0, Real::NAN, maximum] {
         assert_eq!(
             world.add_body(Body::new(
                 BodyId(2),

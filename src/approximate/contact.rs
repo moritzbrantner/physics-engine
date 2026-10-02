@@ -1,10 +1,10 @@
-use super::{Body, Shape, Vector as V, geometry::GeometryStats, numeric::Scalar, primitive};
+use super::{Body, Real, Shape, Vector as V, geometry::GeometryStats, primitive};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
     pub ra: V,
     pub rb: V,
-    pub separation: Scalar,
+    pub separation: Real,
 }
 /// A generated manifold already has at most four points. Keep that bounded result inline,
 /// so copying a cache hit into solver scratch never allocates another point vector.
@@ -31,7 +31,7 @@ impl Points {
     fn one(p: Point) -> Self {
         Self::selected(&[p])
     }
-    fn with_speculative(input: &[Point], admission_margin: Scalar) -> Self {
+    fn with_speculative(input: &[Point], admission_margin: Real) -> Self {
         // No reduction is needed when every candidate fits. Keep geometric traversal order.
         if input.len() <= 4 {
             return Self::selected(input);
@@ -106,7 +106,7 @@ pub(super) struct Manifold {
     pub points: Points,
     pub swept: bool,
     /// First translation-only time of contact in [0, 1] of this substep.
-    pub time: Scalar,
+    pub time: Real,
 }
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
@@ -116,11 +116,11 @@ pub(super) fn bounds(b: &Body) -> (V, V) {
     // Match the ray-pruning error budget using pose/extent magnitude; this only widens
     // candidate bounds and never changes narrow-phase geometry or physical correction.
     let rounding =
-        64.0 * Scalar::EPSILON * (1.0 + b.position.abs().max_component() + e.max_component());
+        64.0 * Real::EPSILON * (1.0 + b.position.abs().max_component() + e.max_component());
     let pad = V(rounding, rounding, rounding);
     (b.position - e - pad, b.position + e + pad)
 }
-fn radius(b: &Body, n: V) -> Scalar {
+fn radius(b: &Body, n: V) -> Real {
     match b.shape {
         Shape::Sphere(r) => r,
         Shape::Capsule {
@@ -164,7 +164,7 @@ impl ClipScratch {
             + self.points.capacity() * std::mem::size_of::<Point>()
     }
 }
-fn clip_into(input: &[V], n: V, limit: Scalar, out: &mut Vec<V>) {
+fn clip_into(input: &[V], n: V, limit: Real, out: &mut Vec<V>) {
     out.clear();
     if input.is_empty() {
         return;
@@ -203,7 +203,7 @@ fn box_contact_support(b: &Body, n: V, work: &mut GeometryStats) -> V {
 /// Shape/orientation-dependent support projections. Centers are deliberately not cached here.
 #[derive(Clone, Debug, Default)]
 pub(super) struct BoxProjections {
-    axes: Vec<(V, usize, Scalar, Scalar)>,
+    axes: Vec<(V, usize, Real, Real)>,
 }
 impl BoxProjections {
     pub fn refresh(&mut self, a: &Body, b: &Body, aa: [V; 3], bb: [V; 3]) {
@@ -234,20 +234,20 @@ impl BoxProjections {
         }
     }
     pub fn retained_bytes(&self) -> usize {
-        self.axes.capacity() * std::mem::size_of::<(V, usize, Scalar, Scalar)>()
+        self.axes.capacity() * std::mem::size_of::<(V, usize, Real, Real)>()
     }
 }
 
 fn select_axis(
     a: &Body,
     b: &Body,
-    margin: Scalar,
-    axes: impl IntoIterator<Item = (V, usize, Scalar, Scalar)>,
+    margin: Real,
+    axes: impl IntoIterator<Item = (V, usize, Real, Real)>,
     work: &mut GeometryStats,
-) -> Option<(Scalar, V, usize)> {
+) -> Option<(Real, V, usize)> {
     work.sat_queries += 1;
     let d = b.position - a.position;
-    let mut best = (-Scalar::INFINITY, V::X, 0);
+    let mut best = (-Real::INFINITY, V::X, 0);
     for (axis, feature, ar, br) in axes {
         work.sat_axes_tested += 1;
         let projected = d.dot(axis);
@@ -274,7 +274,7 @@ fn select_axis(
     Some(best)
 }
 
-fn box_manifold(a: &Body, b: &Body, margin: Scalar, work: &mut GeometryStats) -> Option<Manifold> {
+fn box_manifold(a: &Body, b: &Body, margin: Real, work: &mut GeometryStats) -> Option<Manifold> {
     let best = select_axis(
         a,
         b,
@@ -306,7 +306,7 @@ struct FrameProjections {
     next_axis: usize,
 }
 impl Iterator for FrameProjections {
-    type Item = (V, usize, Scalar, Scalar);
+    type Item = (V, usize, Real, Real);
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -351,7 +351,7 @@ fn frame_projection_axes(a: &Body, b: &Body, frames: [[V; 3]; 2]) -> FrameProjec
 pub(super) fn box_current_with_frames(
     a: &Body,
     b: &Body,
-    margin: Scalar,
+    margin: Real,
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
@@ -374,8 +374,8 @@ pub(super) fn fixed_box_interval(a: &Body, b: &Body) -> bool {
 }
 pub(super) fn box_current_interval_with_frames(
     bodies: [&Body; 2],
-    h: Scalar,
-    margin: Scalar,
+    h: Real,
+    margin: Real,
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
@@ -390,8 +390,8 @@ pub(super) fn box_current_interval_with_frames(
 }
 fn box_with_point_margin(
     bodies: [&Body; 2],
-    admission_margin: Scalar,
-    point_margin: Scalar,
+    admission_margin: Real,
+    point_margin: Real,
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
@@ -420,8 +420,8 @@ fn box_with_point_margin(
 pub(super) fn current_interval_counted(
     a: &Body,
     b: &Body,
-    h: Scalar,
-    margin: Scalar,
+    h: Real,
+    margin: Real,
     work: &mut GeometryStats,
 ) -> Option<Manifold> {
     if !fixed_box_interval(a, b) {
@@ -442,7 +442,7 @@ pub(super) fn current_interval_counted(
 pub(super) fn box_prepared(
     a: &Body,
     b: &Body,
-    margin: Scalar,
+    margin: Real,
     projections: &BoxProjections,
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
@@ -469,14 +469,14 @@ pub(super) fn box_prepared(
 }
 
 struct ContactMargins {
-    admission: Scalar,
-    points: Scalar,
+    admission: Real,
+    points: Real,
 }
 fn box_points(
     a: &Body,
     b: &Body,
     margins: ContactMargins,
-    best: (Scalar, V, usize),
+    best: (Real, V, usize),
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
@@ -562,7 +562,7 @@ fn box_points(
         time: 0.0,
     })
 }
-fn sphere_box(s: &Body, b: &Body, r: Scalar, margin: Scalar) -> Option<Manifold> {
+fn sphere_box(s: &Body, b: &Body, r: Real, margin: Real) -> Option<Manifold> {
     let Shape::Box(h) = b.shape else {
         unreachable!()
     };
@@ -606,7 +606,7 @@ fn sphere_box(s: &Body, b: &Body, r: Scalar, margin: Scalar) -> Option<Manifold>
     })
 }
 
-fn sphere_sphere(a: &Body, b: &Body, ra: Scalar, rb: Scalar, margin: Scalar) -> Option<Manifold> {
+fn sphere_sphere(a: &Body, b: &Body, ra: Real, rb: Real, margin: Real) -> Option<Manifold> {
     let d = b.position - a.position;
     let l = d.length();
     let separation = l - ra - rb;
@@ -634,14 +634,14 @@ fn flip_manifold(mut manifold: Manifold) -> Manifold {
     manifold
 }
 
-pub(super) fn current(a: &Body, b: &Body, margin: Scalar) -> Option<Manifold> {
+pub(super) fn current(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
     current_counted(a, b, margin, &mut GeometryStats::default())
 }
 
 pub(super) fn current_counted(
     a: &Body,
     b: &Body,
-    margin: Scalar,
+    margin: Real,
     work: &mut GeometryStats,
 ) -> Option<Manifold> {
     work.current_queries += 1;
@@ -697,7 +697,7 @@ pub(super) fn current_counted(
 fn reference_current_counted(
     a: &Body,
     b: &Body,
-    margin: Scalar,
+    margin: Real,
     work: &mut GeometryStats,
 ) -> Option<Manifold> {
     match (a.shape, b.shape) {
@@ -725,14 +725,14 @@ fn reference_current_counted(
 
 // Earliest ray intersection with the actual rounded box: faces, edge cylinders and corner spheres.
 // Unlike an expanded AABB alone, a diagonal near miss does not become a hit.
-fn sphere_box_time(s: &Body, b: &Body, r: Scalar, dt: Scalar) -> Option<Scalar> {
+fn sphere_box_time(s: &Body, b: &Body, r: Real, dt: Real) -> Option<Real> {
     let Shape::Box(h) = b.shape else {
         unreachable!()
     };
     let p = b.orientation.inverse_rotate(s.position - b.position);
     let v = b.orientation.inverse_rotate((s.velocity - b.velocity) * dt);
-    let mut best: Scalar = 2.0;
-    let mut admit = |t: Scalar| {
+    let mut best: Real = 2.0;
+    let mut admit = |t: Real| {
         if (0.0..=1.0).contains(&t) {
             let q = p + v * t;
             let c = V(
@@ -791,7 +791,7 @@ fn sphere_box_time(s: &Body, b: &Body, r: Scalar, dt: Scalar) -> Option<Scalar> 
     }
     (best <= 1.0).then_some(best)
 }
-fn roots(a: Scalar, b: Scalar, c: Scalar) -> [Option<Scalar>; 2] {
+fn roots(a: Real, b: Real, c: Real) -> [Option<Real>; 2] {
     if a <= 1e-20 {
         return [None, None];
     }
@@ -810,8 +810,8 @@ fn roots(a: Scalar, b: Scalar, c: Scalar) -> [Option<Scalar>; 2] {
 pub(super) fn swept(
     a: &Body,
     b: &Body,
-    dt: Scalar,
-    margin: Scalar,
+    dt: Real,
+    margin: Real,
     work: &mut GeometryStats,
 ) -> Result<Option<Manifold>, super::SweepFailure> {
     work.sweep_queries += 1;
@@ -837,7 +837,7 @@ pub(super) fn swept(
                 .into_iter()
                 .flatten()
                 .filter(|t| (0.0..=1.0).contains(t))
-                .min_by(Scalar::total_cmp)
+                .min_by(Real::total_cmp)
         }
         primitive::PrimitivePair::BoxBox => box_sweep_time(
             left,
@@ -852,21 +852,22 @@ pub(super) fn swept(
     let Some(time) = time else {
         return Ok(None);
     };
+    let admission = impact_margin(a, b, dt, margin);
     Ok(finish_sweep(a, b, dt, time, |aa, bb| {
-        current_interval_counted(aa, bb, dt * (1.0 - time), margin.max(1e-6), work)
+        current_interval_counted(aa, bb, dt * (1.0 - time), admission, work)
     }))
 }
 
 fn box_sweep_time(
     a: &Body,
     b: &Body,
-    dt: Scalar,
-    projections: impl IntoIterator<Item = (V, usize, Scalar, Scalar)>,
-) -> Option<Scalar> {
+    dt: Real,
+    projections: impl IntoIterator<Item = (V, usize, Real, Real)>,
+) -> Option<Real> {
     let d = b.position - a.position;
     let v = (b.velocity - a.velocity) * dt;
-    let mut enter: Scalar = 0.0;
-    let mut exit: Scalar = 1.0;
+    let mut enter: Real = 0.0;
+    let mut exit: Real = 1.0;
     for (axis, _, ar, br) in projections {
         let r = ar + br;
         let x = d.dot(axis);
@@ -895,14 +896,15 @@ fn box_sweep_time(
 pub(super) fn box_swept_with_frames(
     a: &Body,
     b: &Body,
-    dt: Scalar,
-    margin: Scalar,
+    dt: Real,
+    margin: Real,
     frames: [[V; 3]; 2],
     work: &mut GeometryStats,
     scratch: &mut ClipScratch,
 ) -> Option<Manifold> {
     work.sweep_queries += 1;
     let time = box_sweep_time(a, b, dt, frame_projection_axes(a, b, frames))?;
+    let admission = impact_margin(a, b, dt, margin);
     finish_sweep(a, b, dt, time, |aa, bb| {
         work.current_queries += 1;
         work.manifold_refreshes += 1;
@@ -910,22 +912,40 @@ pub(super) fn box_swept_with_frames(
             box_current_interval_with_frames(
                 [aa, bb],
                 dt * (1.0 - time),
-                margin.max(1e-6),
+                admission,
                 frames,
                 work,
                 scratch,
             )
         } else {
-            box_current_with_frames(aa, bb, margin.max(1e-6), frames, work, scratch)
+            box_current_with_frames(aa, bb, admission, frames, work, scratch)
         }
     })
+}
+
+/// Admission margin for the current query at a swept impact pose.
+///
+/// With f32 state, the impact time rounds earlier and the advanced poses round to `Real`, so
+/// the surfaces can sit a few ulps beyond the sweep's own target. The allowance covers only
+/// that rounding, scaled by the pose and travel magnitudes. It is exactly zero in the default
+/// f64 build ([`super::NARROWING_ULPS`]), which keeps `margin.max(1e-6)` bit for bit.
+fn impact_margin(a: &Body, b: &Body, dt: Real, margin: Real) -> Real {
+    let scale = a
+        .position
+        .abs()
+        .max_component()
+        .max(b.position.abs().max_component())
+        + ((b.velocity - a.velocity) * dt).abs().max_component()
+        + a.shape.radius()
+        + b.shape.radius();
+    margin.max(1e-6) + super::NARROWING_ULPS * Real::EPSILON * (1.0 + scale)
 }
 
 fn finish_sweep(
     a: &Body,
     b: &Body,
-    dt: Scalar,
-    time: Scalar,
+    dt: Real,
+    time: Real,
     mut current: impl FnMut(&Body, &Body) -> Option<Manifold>,
 ) -> Option<Manifold> {
     let mut aa = a.clone();

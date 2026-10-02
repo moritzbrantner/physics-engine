@@ -5,7 +5,14 @@ use physics_engine::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
     },
 };
-const H: f64 = 1.0 / 240.0;
+use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
+const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
     content: [254; 32],
@@ -110,13 +117,13 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
     assert!(w.body(BodyId(ids[1])).unwrap().is_sleeping());
     w
 }
-fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> f64 {
+fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     let b = w.body(BodyId(ids[1])).unwrap();
-    let t = H * f64::from(n);
+    let t = H * n as Real;
     let (v, p, spin) = if case.loaded() {
         (
             V(6.0 * t, 0.0, 0.0),
-            V(3.0 * H * H * f64::from(n) * f64::from(n + 1), 1.0, 0.0),
+            V(3.0 * H * H * n as Real * (n + 1) as Real, 1.0, 0.0),
             V(0.0, 0.0, 15.0 * t),
         )
     } else if matches!(case, Case::Normal) {
@@ -129,7 +136,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> f64 {
         .max((b.position - p).length())
         .max((b.angular_velocity - spin).length());
     assert!(
-        error <= 1e-10,
+        error <= rounding(1e-10, 16.0 * (n as Real + 1.0)),
         "{case:?} ids={ids:?} n={n} error={error} body={b:?}"
     );
     assert_eq!(b.is_sleeping(), !case.admitted());
@@ -138,14 +145,16 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> f64 {
     let driver = w.body(BodyId(ids[0])).unwrap();
     assert!(driver.external);
     assert_eq!(driver.velocity, case.command());
-    assert!((driver.position - (case.origin() + case.command() * t)).length() <= 1e-10);
+    assert!(
+        (driver.position - (case.origin() + case.command() * t)).length() <= rounding(1e-10, 8.0)
+    );
     let neighbor = w.body(BodyId(30)).unwrap();
     assert!(neighbor.is_sleeping());
     assert_eq!(neighbor.position, V(10.0, 1.0, 0.0));
     assert_eq!(neighbor.velocity, V::ZERO);
     error
 }
-fn run_case(case: Case, ids: [u64; 2]) -> [f64; 20] {
+fn run_case(case: Case, ids: [u64; 2]) -> [Real; 20] {
     let mut w = fixture(case, ids);
     let mut repeated = fixture(case, ids);
     let bytes = w.checkpoint(CONTEXT).unwrap().to_bytes();
@@ -153,14 +162,14 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 20] {
         .unwrap()
         .restore();
     let before = w.elapsed_seconds();
-    let dt = H * f64::from(case.substeps());
+    let dt = H * Real::from(case.substeps());
     let mut first = None;
-    let mut max_error: f64 = 0.0;
+    let mut max_error: Real = 0.0;
     // LoadedFour stays in the independently known sliding regime through n=20.
     for call in 1..=5 {
-        let r = w.step(dt).unwrap();
-        repeated.step(dt).unwrap();
-        restored.step(dt).unwrap();
+        let r = w.step(dt as Scalar).unwrap();
+        repeated.step(dt as Scalar).unwrap();
+        restored.step(dt as Scalar).unwrap();
         for other in [&repeated, &restored] {
             assert_eq!(
                 w.checkpoint(CONTEXT).unwrap().to_bytes(),
@@ -198,8 +207,8 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 20] {
             } else {
                 0.0
             };
-            assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + 1e-10);
-            assert!((w.elapsed_seconds() - before - dt).abs() <= 1e-14);
+            assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + rounding(1e-10, 64.0));
+            assert!((w.elapsed_seconds() - before - dt as Scalar).abs() <= 1e-14);
             first = Some([
                 b.velocity.0,
                 b.velocity.1,
@@ -209,22 +218,22 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 20] {
                 b.angular_velocity.2,
                 energy,
                 work,
-                r.woken_bodies as f64,
-                r.response_preparations as f64,
-                r.inertia_preparations as f64,
-                r.inertia_applications as f64,
-                r.geometry.current_queries as f64,
-                r.geometry.sweep_queries as f64,
-                r.contact_points as f64,
-                r.convergence.constraint_visits as f64,
-                w.elapsed_seconds() - before,
+                r.woken_bodies as Real,
+                r.response_preparations as Real,
+                r.inertia_preparations as Real,
+                r.inertia_applications as Real,
+                r.geometry.current_queries as Real,
+                r.geometry.sweep_queries as Real,
+                r.contact_points as Real,
+                r.convergence.constraint_visits as Real,
+                (w.elapsed_seconds() - before) as Real,
                 0.0,
-                f64::from(u8::from(b.is_sleeping())),
-                f64::from(u8::from(w.body(BodyId(30)).unwrap().is_sleeping())),
+                Real::from(u8::from(b.is_sleeping())),
+                Real::from(u8::from(w.body(BodyId(30)).unwrap().is_sleeping())),
             ]);
         }
     }
-    assert!((w.elapsed_seconds() - before - 5.0 * dt).abs() <= 1e-12);
+    assert!((w.elapsed_seconds() - before - 5.0 * dt as Scalar).abs() <= 1e-12);
     let mut values = first.unwrap();
     values[17] = max_error;
     println!(
@@ -233,7 +242,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 20] {
     );
     values
 }
-pub fn run() -> [[f64; 20]; 24] {
+pub fn run() -> [[Real; 20]; 24] {
     std::array::from_fn(|i| {
         run_case(
             [

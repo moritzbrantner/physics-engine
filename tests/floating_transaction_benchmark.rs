@@ -1,4 +1,5 @@
 //! Successful whole-step cost/trace controls usable unchanged on the prior API.
+use physics_engine::approximate::Real;
 use std::{
     fs::{self, File},
     io::{BufWriter, Write},
@@ -32,7 +33,7 @@ fn supported(count: u64) -> World {
             .add_body(Body::new(
                 BodyId(index + 1),
                 Shape::Box(V(0.5, 0.5, 0.5)),
-                V(index as f64 * 3.0, 0.5, 0.0),
+                V(index as Real * 3.0, 0.5, 0.0),
                 1.0,
             ))
             .unwrap();
@@ -72,12 +73,12 @@ fn fixture(name: &str, count: u64) -> World {
     for index in 0..count {
         let position = if name == "stack" {
             V(
-                (index % 4) as f64 * 1.01,
-                ((index / 4) % 4) as f64 * 1.01 + 0.5,
-                (index / 16) as f64 * 1.01,
+                (index % 4) as Real * 1.01,
+                ((index / 4) % 4) as Real * 1.01 + 0.5,
+                (index / 16) as Real * 1.01,
             )
         } else {
-            V(index as f64 * 3.0, 10.0, 0.0)
+            V(index as Real * 3.0, 10.0, 0.0)
         };
         let mut body = Body::new(
             BodyId(index + 1),

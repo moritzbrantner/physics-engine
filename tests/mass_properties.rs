@@ -1,8 +1,11 @@
+use physics_engine::approximate::Real;
 use physics_engine::approximate::{MassPropertiesError, Shape, Vector};
 
-fn close(actual: f64, expected: f64) {
+fn close(actual: Real, expected: Real) {
+    // Rounding-only: 2e-14 relative in the f64 build, 32 ulps when Real is f32.
+    let relative = (2e-14 as Real).max(32.0 * Real::EPSILON);
     assert!(
-        (actual - expected).abs() <= 2e-14 * expected.abs().max(1e-30),
+        (actual - expected).abs() <= relative * expected.abs().max(1e-30),
         "{actual:e} != {expected:e}"
     );
 }
@@ -16,7 +19,7 @@ pub fn sphere_and_zero_skeleton_capsule_share_uniform_products() {
             assert_eq!(sphere, capsule);
             close(
                 sphere.volume,
-                4.0 * std::f64::consts::PI * radius.powi(3) / 3.0,
+                4.0 * (std::f64::consts::PI as Real) * radius.powi(3) / 3.0,
             );
             assert_eq!(sphere.local_center_of_mass, Vector::ZERO);
             for axis in 0..3 {
@@ -34,8 +37,8 @@ pub fn capsule_tensor_matches_cylinder_and_hemisphere_mass_integration() {
     for (h, r) in [(0.001, 1.0), (1.0, 0.01), (3.0, 2.0), (1e6, 1e-6)] {
         let mass = 7.0;
         let properties = Shape::capsule(h, r).mass_properties(mass).unwrap();
-        let cylinder_volume = std::f64::consts::PI * r * r * 2.0 * h;
-        let sphere_volume = 4.0 * std::f64::consts::PI * r * r * r / 3.0;
+        let cylinder_volume = (std::f64::consts::PI as Real) * r * r * 2.0 * h;
+        let sphere_volume = 4.0 * (std::f64::consts::PI as Real) * r * r * r / 3.0;
         let cylinder_mass = mass * cylinder_volume / (cylinder_volume + sphere_volume);
         let cap_mass = mass * sphere_volume / (cylinder_volume + sphere_volume);
         let hemisphere_centroid = h + 3.0 * r / 8.0;
@@ -88,7 +91,7 @@ pub fn box_and_wedge_report_com_and_complete_symmetric_tensors() {
         [0.0, 0.0, 1.0],
         [1.0, -1.0, 1.0],
     ] {
-        let product: f64 = (0..3)
+        let product: Real = (0..3)
             .flat_map(|i| (0..3).map(move |j| omega[i] * wedge.local_inertia[i][j] * omega[j]))
             .sum();
         assert!(product > 0.0);
@@ -98,7 +101,7 @@ pub fn box_and_wedge_report_com_and_complete_symmetric_tensors() {
 #[cfg_attr(test, test)]
 pub fn scaling_and_mass_changes_have_the_declared_units() {
     let base = Shape::capsule(3.0, 2.0).mass_properties(5.0).unwrap();
-    for scale in [1e-6_f64, 10.0, 1e10] {
+    for scale in [(1e-6 as Real), 10.0, 1e10] {
         let scaled = Shape::capsule(3.0 * scale, 2.0 * scale)
             .mass_properties(15.0)
             .unwrap();
@@ -117,7 +120,7 @@ pub fn scaling_and_mass_changes_have_the_declared_units() {
 
 #[cfg_attr(test, test)]
 pub fn invalid_mass_and_shape_products_fail_at_the_boundary() {
-    for mass in [0.0, -1.0, 1e-7, 1e12, f64::NAN, f64::INFINITY] {
+    for mass in [0.0, -1.0, 1e-7, 1e12, Real::NAN, Real::INFINITY] {
         assert_eq!(
             Shape::capsule(1.0, 1.0).mass_properties(mass),
             Err(MassPropertiesError::InvalidMass)
@@ -125,11 +128,11 @@ pub fn invalid_mass_and_shape_products_fail_at_the_boundary() {
     }
     for shape in [
         Shape::Sphere(0.0),
-        Shape::Sphere(f64::NAN),
+        Shape::Sphere(Real::NAN),
         Shape::capsule(-1.0, 1.0),
         Shape::capsule(1e12, 1.0),
         Shape::capsule(1.0, 1e-7),
-        Shape::Box(Vector(1.0, f64::INFINITY, 1.0)),
+        Shape::Box(Vector(1.0, Real::INFINITY, 1.0)),
         Shape::wedge(Vector(1.0, -1.0, 1.0)),
     ] {
         assert_eq!(

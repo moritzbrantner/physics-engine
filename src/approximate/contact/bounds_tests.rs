@@ -1,4 +1,4 @@
-use super::super::{Config, Quaternion, World};
+use super::super::{Config, Quaternion, Real, World};
 use super::{Body, Shape, V, bounds};
 use crate::BodyId;
 
@@ -47,7 +47,7 @@ fn contains(bounds: (V, V), point: V) {
         );
     }
 }
-fn shapes(scale: f64) -> [Shape; 4] {
+fn shapes(scale: Real) -> [Shape; 4] {
     [
         Shape::Sphere(scale),
         Shape::Box(V(scale, 2.0 * scale, 3.0 * scale)),
@@ -62,7 +62,7 @@ fn rounded_pose_bounds_enclose_independently_rotated_surface_extrema() {
     for _ in 0..128 {
         let mut component = || {
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            ((state >> 32) as f64 / u32::MAX as f64) * 2.0 - 1.0
+            ((state >> 32) as Real / u32::MAX as Real) * 2.0 - 1.0
         };
         let orientation =
             Quaternion(component(), component(), component(), component()).normalized();

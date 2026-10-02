@@ -5,7 +5,14 @@ use physics_engine::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
     },
 };
-const H: f64 = 1.0 / 240.0;
+use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
+const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
     content: [250; 32],
@@ -30,14 +37,14 @@ impl Case {
             Self::Current | Self::SlowCurrent | Self::Swept | Self::SweptOutsideSlop
         )
     }
-    fn interval(self) -> f64 {
+    fn interval(self) -> Real {
         if matches!(self, Self::Current | Self::SweptOutsideSlop) {
             1.0 / 60.0
         } else {
             H
         }
     }
-    fn speed(self) -> f64 {
+    fn speed(self) -> Real {
         match self {
             Self::SlowCurrent => 0.25,
             Self::Stationary => 0.0,
@@ -107,7 +114,7 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
     );
     w
 }
-fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
+fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
     let mut w = fixture(case, ids);
     let mut repeated = fixture(case, ids);
     let bytes = w.checkpoint(CONTEXT).unwrap().to_bytes();
@@ -116,16 +123,19 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
         .restore();
     let h = case.interval();
     let before = w.elapsed_seconds();
-    let report = w.step(h).unwrap();
-    repeated.step(h).unwrap();
-    restored.step(h).unwrap();
+    let report = w.step(h as Scalar).unwrap();
+    repeated.step(h as Scalar).unwrap();
+    restored.step(h as Scalar).unwrap();
     for other in [&repeated, &restored] {
         assert_eq!(
             w.checkpoint(CONTEXT).unwrap().to_bytes(),
             other.checkpoint(CONTEXT).unwrap().to_bytes()
         );
     }
-    assert!((w.elapsed_seconds() - before - h).abs() <= 16.0 * f64::EPSILON * (before + h));
+    assert!(
+        (w.elapsed_seconds() - before - h as Scalar).abs()
+            <= 16.0 * f64::EPSILON * (before + h as Scalar)
+    );
     assert_eq!(report.substeps, 1);
     assert!(report.impulse_iterations <= 8);
     assert!(report.convergence.constraint_visits <= 8 * report.contact_points);
@@ -134,7 +144,10 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     let driven = w.body(BodyId(ids[0])).unwrap();
     assert!(driven.external && !driven.is_sleeping());
     assert_eq!(driven.velocity, V(0.0, case.speed(), 0.0));
-    assert!((driven.position - (case.position() + driven.velocity * h)).length() <= 1e-12);
+    assert!(
+        (driven.position - (case.position() + driven.velocity * h)).length()
+            <= rounding(1e-12, 8.0)
+    );
     let rider = w.body(BodyId(ids[1])).unwrap();
     assert_eq!(rider.mass, 2.0);
     assert!(rider.position.finite() && rider.velocity.finite() && rider.angular_velocity.finite());
@@ -153,7 +166,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     } else {
         0.0
     };
-    assert!(energy + 20.0 * (rider.position.1 - 1.0) <= external_work + 1e-10);
+    assert!(energy + 20.0 * (rider.position.1 - 1.0) <= external_work + rounding(1e-10, 32.0));
     if case.admits() {
         assert_eq!(report.woken_bodies, 1);
         assert!(!rider.is_sleeping());
@@ -164,17 +177,17 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
         assert!(rider.velocity.1 > 0.0);
         let gap = rider.position.1 - 1.0 - (driven.position.1 + 0.5);
         assert!(
-            gap >= -1e-10,
+            gap >= -rounding(1e-10, 2.0),
             "admitted normal response leaves penetration {gap}"
         );
         if !matches!(case, Case::Swept | Case::SweptOutsideSlop) {
-            assert!((rider.velocity.1 - case.speed()).abs() <= 1e-10);
-            assert!((rider.position.1 - 1.0 - case.speed() * h).abs() <= 1e-10);
+            assert!((rider.velocity.1 - case.speed()).abs() <= rounding(1e-10, 4.0));
+            assert!((rider.position.1 - 1.0 - case.speed() * h).abs() <= rounding(1e-10, 2.0));
             assert_eq!(rider.angular_velocity, V::ZERO);
         } else {
             // Admission is the contract here; restitution/remaining-time response is #246.
             assert!(report.geometry.sweep_queries > 0);
-            assert!(rider.velocity.1 <= case.speed() + 1e-10);
+            assert!(rider.velocity.1 <= case.speed() + rounding(1e-10, 4.0));
         }
     } else {
         assert_eq!(report.woken_bodies, 0);
@@ -196,25 +209,25 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
         rider.velocity.1,
         energy,
         external_work,
-        report.woken_bodies as f64,
-        report.response_preparations as f64,
-        report.inertia_preparations as f64,
-        report.inertia_applications as f64,
-        report.pair_tests as f64,
-        report.narrow_tests as f64,
-        report.geometry.current_queries as f64,
-        report.geometry.sweep_queries as f64,
-        report.contact_points as f64,
-        report.convergence.constraint_visits as f64,
-        report.swept_contacts as f64,
-        f64::from(u8::from(rider.is_sleeping())),
-        f64::from(u8::from(neighbor.is_sleeping())),
-        w.elapsed_seconds() - before,
+        report.woken_bodies as Real,
+        report.response_preparations as Real,
+        report.inertia_preparations as Real,
+        report.inertia_applications as Real,
+        report.pair_tests as Real,
+        report.narrow_tests as Real,
+        report.geometry.current_queries as Real,
+        report.geometry.sweep_queries as Real,
+        report.contact_points as Real,
+        report.convergence.constraint_visits as Real,
+        report.swept_contacts as Real,
+        Real::from(u8::from(rider.is_sleeping())),
+        Real::from(u8::from(neighbor.is_sleeping())),
+        (w.elapsed_seconds() - before) as Real,
     ];
     // Compare complete continuation history, not only the observed first-call state.
     for _ in 0..8 {
         for world in [&mut w, &mut repeated, &mut restored] {
-            world.step(H).unwrap();
+            world.step(H as Scalar).unwrap();
         }
         for other in [&repeated, &restored] {
             assert_eq!(
@@ -226,7 +239,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [f64; 18] {
     println!("DRIVEN_PARKED {{\"case\":\"{case:?}\",\"ids\":{ids:?},\"values\":{values:?}}}");
     values
 }
-pub fn run() -> [[f64; 18]; 20] {
+pub fn run() -> [[Real; 18]; 20] {
     std::array::from_fn(|index| {
         run_case(
             [

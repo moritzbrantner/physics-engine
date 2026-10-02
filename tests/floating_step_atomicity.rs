@@ -2,19 +2,27 @@ use physics_engine::{
     BodyId,
     approximate::{Body, Config, Error, Shape, Vector, World},
 };
+use physics_engine::{
+    approximate::{REAL_BITS, Real},
+    numeric::Scalar,
+};
+
+/// Approach distances and speeds near the 1e12 position limit. Adjacent f32 positions there
+/// are 65536 apart, so the f32 build scales them by 2^24 to stay resolvable; f64 is unscaled.
+const EDGE_SCALE: Real = if REAL_BITS == 64 { 1.0 } else { 16_777_216.0 };
 
 fn bodies(world: &World) -> Vec<Body> {
     world.bodies().cloned().collect()
 }
 
-fn failing_body(id: u64, position: f64, speed: f64) -> Body {
+fn failing_body(id: u64, distance: Real, speed: Real) -> Body {
     let mut body = Body::new(
         BodyId(id),
         Shape::Sphere(0.1),
-        Vector(position, 0.0, 0.0),
+        Vector(1e12 - distance * EDGE_SCALE, 0.0, 0.0),
         1.0,
     );
-    body.velocity = Vector(speed, 0.0, 0.0);
+    body.velocity = Vector(speed * EDGE_SCALE, 0.0, 0.0);
     body
 }
 
@@ -27,9 +35,9 @@ fn failed_step_preserves_physical_state_and_pending_input() {
     })
     .unwrap();
     let id = BodyId(1);
-    let position = Vector(1e12 - 1.0, 0.0, 0.0);
+    let position = Vector(1e12 - EDGE_SCALE, 0.0, 0.0);
     let mut body = Body::new(id, Shape::Sphere(1.0), position, 1.0);
-    body.velocity = Vector(20.0, 0.0, 0.0);
+    body.velocity = Vector(20.0 * EDGE_SCALE, 0.0, 0.0);
     world.add_body(body).unwrap();
     world.add_force(id, Vector(1.0, 0.0, 0.0)).unwrap();
     world
@@ -60,7 +68,7 @@ fn repeated_failures_restore_earlier_bodies_and_do_not_consume_input_twice() {
         .apply_impulse(BodyId(1), Vector(2.0, 0.0, 0.0), Vector::ZERO)
         .unwrap();
     world.add_force(BodyId(1), Vector(3.0, 0.0, 0.0)).unwrap();
-    world.add_body(failing_body(99, 1e12 - 0.03, 1.0)).unwrap();
+    world.add_body(failing_body(99, 0.03, 1.0)).unwrap();
     let mut reference = world.clone();
     let before = bodies(&world);
     let report = format!("{:?}", world.last_report);
@@ -96,16 +104,16 @@ fn position_correction_failure_restores_pose_and_new_contact_history() {
         world
             .add_body(Body::new(
                 BodyId(0),
-                Shape::Box(Vector(10.0, 20.0, 20.0)),
-                Vector(1e12 - 8.0, 0.0, 0.0),
+                Shape::Box(Vector(10.0, 20.0, 20.0) * EDGE_SCALE),
+                Vector(1e12 - 8.0 * EDGE_SCALE, 0.0, 0.0),
                 0.0,
             ))
             .unwrap();
         world
             .add_body(Body::new(
                 BodyId(1),
-                Shape::Box(Vector(2.0, 10.0, 10.0)),
-                Vector(1e12 - 1.0, 0.0, 0.0),
+                Shape::Box(Vector(2.0, 10.0, 10.0) * EDGE_SCALE),
+                Vector(1e12 - EDGE_SCALE, 0.0, 0.0),
                 1.0,
             ))
             .unwrap();
@@ -145,7 +153,7 @@ fn retirement_before_a_later_substep_error_restores_membership_and_identity() {
     projectile.ccd = true;
     projectile.retire_on_impact = true;
     world.add_body(projectile).unwrap();
-    world.add_body(failing_body(99, 1e12 - 0.075, 1.0)).unwrap();
+    world.add_body(failing_body(99, 0.075, 1.0)).unwrap();
     let mut reference = world.clone();
     reference.remove_body(BodyId(99)).unwrap();
     assert_eq!(reference.step(0.1).unwrap().retired, [BodyId(1)]);
@@ -187,7 +195,7 @@ fn sleeping_world(count: u64) -> World {
             .add_body(Body::new(
                 BodyId(index + 1),
                 Shape::Box(Vector(0.5, 0.5, 0.5)),
-                Vector(index as f64 * 3.0, 0.5, 0.0),
+                Vector(index as Real * 3.0, 0.5, 0.0),
                 1.0,
             ))
             .unwrap();
@@ -212,7 +220,7 @@ fn failed_wake_restores_sleep_timers_warm_starts_and_changed_timestep_continuati
     projectile.velocity = Vector(20.0, 0.0, 0.0);
     projectile.ccd = true;
     world.add_body(projectile).unwrap();
-    world.add_body(failing_body(99, 1e12 - 0.075, 1.0)).unwrap();
+    world.add_body(failing_body(99, 0.075, 1.0)).unwrap();
     let mut reference = world.clone();
     let mut control = world.clone();
     control.remove_body(BodyId(99)).unwrap();
@@ -237,8 +245,8 @@ fn failed_wake_restores_sleep_timers_warm_starts_and_changed_timestep_continuati
     reference.remove_body(BodyId(99)).unwrap();
     for tick in 0..100 {
         let dt = if tick % 2 == 0 { 0.02 } else { 0.01 };
-        let actual = world.step(dt).unwrap();
-        let expected = reference.step(dt).unwrap();
+        let actual = world.step(dt as Scalar).unwrap();
+        let expected = reference.step(dt as Scalar).unwrap();
         assert_eq!(bodies(&world), bodies(&reference), "tick {tick}");
         assert_eq!(actual.retired, expected.retired);
         assert_eq!(actual.woken_bodies, expected.woken_bodies);
@@ -280,7 +288,7 @@ fn quiet_and_invalid_attempts_do_no_journaling_and_scratch_release_preserves_con
     assert_eq!(world.elapsed_seconds(), time + 0.03);
     let report = format!("{:?}", world.last_report);
     for dt in [f64::NAN, -0.1, 0.1001, f64::from_bits(1)] {
-        assert!(matches!(world.step(dt), Err(Error::InvalidInput)));
+        assert!(matches!(world.step(dt as Scalar), Err(Error::InvalidInput)));
         assert_eq!(bodies(&world), before);
         assert_eq!(format!("{:?}", world.last_report), report);
         assert_eq!(world.last_step_transaction().journaled_bodies, 0);
@@ -326,7 +334,7 @@ fn experimental_relaxation_history_is_also_rolled_back() {
             ))
             .unwrap();
     }
-    world.add_body(failing_body(99, 1e12 - 0.075, 1.0)).unwrap();
+    world.add_body(failing_body(99, 0.075, 1.0)).unwrap();
     let mut reference = world.clone();
     let mut control = world.clone();
     control.remove_body(BodyId(99)).unwrap();

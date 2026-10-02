@@ -44,6 +44,66 @@ acceptance result. [Admitted-contact position correction](dense-contact-correcti
 regression is now repaired by [contact continuation](legacy-contact-continuation.md), with its original
 240-frame finite-floor acceptance and 64-event cap. See [the tower runtime](tower-stability.md).
 
+## f32 floating-physics build
+
+Decision: #258 / #260. For game-scale consumers, f32 is the production floating-physics target;
+f64 stays the default build and the reference/diagnostic contract.
+
+The Cargo feature `f32-physics` is a **whole-build choice** (non-additive by design): it switches
+`physics_engine::approximate::Real` from `f64` to `f32` (`approximate::REAL_BITS` is 64 or 32).
+Every physical field of the floating solver (`approximate::World`) uses `Real`: vectors,
+quaternions, body mass/material and shape dimensions, `Config`, `Report` and query results.
+There is no runtime toggle and no generic `World<T>`. Combining it with `exact-reference` is a
+`compile_error!`. `demo-wasm` and Pages stay on the default f64 build.
+
+What stays f64 in both builds:
+
+- `numeric::Scalar`, the legacy translational/rotating worlds and `float_math` time composition
+  (bit-identical with and without the feature);
+- the `step(dt)` argument, accumulated elapsed seconds and the checkpointed prior-substep
+  duration. Each substep narrows its `dt` to `Real` once;
+- the `geometry-kernels::primitive3` kernels.
+
+**Kernel boundary.** `src/approximate/primitive.rs` widens `Real` inputs exactly to f64
+(`widen`) and narrows results conservatively: time of impact and sweep fractions toward zero, so
+an impact never moves later (`toward_zero`); bounds/extents outward (`round_up`); separation toward
+smaller (`round_down`); directions and witnesses to nearest (`nearest`). The f32 build renormalizes
+the widened quaternion in f64 before building the kernel frame. A swept impact is re-checked after
+narrowing with an allowance of `NARROWING_ULPS` (16) `Real::EPSILON`, scaled by the pose magnitude,
+which is zero in the f64 build. In the default build every conversion is the identity.
+
+**Precision envelope.** Supported f32 inputs (documented, not enforced by new rejections):
+
+| Quantity | f32 envelope |
+| --- | --- |
+| position component | \|x\| ≤ 16384 units (ulp ≤ 0.002 ≈ default `contact_slop` 0.02 / 10) |
+| linear speed | ≤ 4000 units/s with default substeps |
+| gravity | default `(0, -3600, 0)` |
+| shapes | dimensions ≥ 0.25 units |
+
+Inputs outside the envelope remain accepted under the existing finite/range validation but are
+unsupported for f32. `tests/f32_precision_envelope.rs` holds the adverse controls at the edge
+(resting crate at x = z = ±16384 and at the origin; a CCD sphere of radius 0.25 at 4000 units/s
+against a 0.5-unit fixed wall) with the same physical thresholds as the f64 build.
+
+**Checkpoints.** Same format 2 / algorithm 7 layout, with `Real` values at native width under a
+distinct magic; the other width is rejected with `CheckpointError::ScalarWidthMismatch`. See
+[floating checkpoints](floating-checkpoints.md#scalar-width-f32-physics).
+
+**Sizes** (x86_64 Linux, measured on the #260 branch):
+
+| | f64 (default) | f32-physics |
+| --- | --- | --- |
+| `size_of::<approximate::Body>()` | 368 B | 200 B |
+| empty-world checkpoint | 236 B | 200 B |
+| settled 32-crate tower + floor checkpoint (240 steps) | 55,264 B | 33,716 B |
+
+**Tests.** The f64 build is unchanged. Under `f32-physics`, only tests asserting f64 bit patterns
+are excluded (the f64 empty-world wire digest; the f32 build has its own digest test). Tolerances
+that only express rounding are scale-aware via `Real::EPSILON` and reduce to the previous f64
+values in the default build. Physical thresholds (penetration, settling, jitter, sleep, CCD
+no-tunneling) are identical in both builds. CI runs `cargo test --locked --features f32-physics`.
+
 ## Safety and tolerances
 
 Reject NaN, infinity and negative durations at input boundaries. Reject a computed non-finite
@@ -79,6 +139,7 @@ change is not permission to replace swept collision checks with frame-end overla
 cargo test --locked
 cargo clippy --all-targets -- -D warnings
 cargo test --locked --features exact-reference
+cargo test --locked --features f32-physics
 cargo test --manifest-path demo-wasm/Cargo.toml --locked
 cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
 node scripts/benchmark-tower.mjs demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm tower.json

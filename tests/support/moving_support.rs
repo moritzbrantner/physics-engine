@@ -3,7 +3,16 @@ use physics_engine::{
     BodyId,
     approximate::{Body, CheckpointContext, Config, Quaternion, Shape, Vector as V, World},
 };
-const H: f64 = 1.0 / 240.0;
+use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
+const H: Real = 1.0 / 240.0;
+/// The same step in the f64 time domain, so elapsed time composes exactly in both builds.
+const H_SECONDS: Scalar = 1.0 / 240.0;
 const COMMAND_STEP: u32 = 480;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,13 +68,13 @@ fn command(w: &mut World, case: Case, ids: [u64; 2], m: &mut Metrics) {
 
 #[derive(Debug, Default, PartialEq)]
 struct Metrics {
-    peak_penetration: f64,
-    peak_speed: f64,
-    peak_energy: f64,
-    external_work: f64,
-    max_motion_error: f64,
-    peak_departure_gap: f64,
-    max_ballistic_error: f64,
+    peak_penetration: Real,
+    peak_speed: Real,
+    peak_energy: Real,
+    external_work: Real,
+    max_motion_error: Real,
+    peak_departure_gap: Real,
+    max_ballistic_error: Real,
     support_samples: u64,
     departure_samples: u64,
     contact_points: u64,
@@ -75,13 +84,13 @@ struct Metrics {
     wake_transitions: u64,
     last_velocity: V,
     last_sleeping: bool,
-    final_y: f64,
-    final_vy: f64,
+    final_y: Real,
+    final_vy: Real,
 }
 
 fn advance(w: &mut World, substeps: u32, m: &mut Metrics) {
     let before = w.elapsed_seconds();
-    let dt = H * f64::from(substeps);
+    let dt = H_SECONDS * Scalar::from(substeps);
     let r = w.step(dt).unwrap();
     assert!((w.elapsed_seconds() - before - dt).abs() <= 16.0 * f64::EPSILON * (before.abs() + dt));
     assert_eq!(r.substeps, substeps);
@@ -102,14 +111,14 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
     assert!(rider.position.finite() && rider.velocity.finite());
     assert_eq!(rider.orientation, Quaternion::IDENTITY);
     assert_eq!(rider.angular_velocity, V::ZERO);
-    let n = f64::from(step);
+    let n = step as Real;
     let accelerated = n.min(80.0);
     let expected_x = 3.0 * H * H * accelerated * (accelerated + 1.0) + 2.0 * H * (n - accelerated);
     let expected_vx = (6.0 * H * n).min(2.0);
     let mut expected_y = 1.5;
     let mut expected_vy = 0.0;
     if step > COMMAND_STEP && case != Case::Carry {
-        let flight = f64::from(step - COMMAND_STEP);
+        let flight = (step - COMMAND_STEP) as Real;
         let vy = if case == Case::Departure { 3.0 } else { 0.0 };
         expected_y += vy * flight * H - 5.0 * H * H * flight * (flight + 1.0);
         expected_vy = vy - 10.0 * H * flight;
@@ -122,7 +131,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
             .max((rider.velocity.1 - expected_vy).abs());
         m.max_ballistic_error = m.max_ballistic_error.max(error);
         assert!(
-            error <= 1e-9,
+            error <= rounding(1e-9, 16.0 * (n + 1.0)),
             "{case:?} ids={ids:?} step={step} y/vy {:?}, expected {expected_y}/{expected_vy}",
             (rider.position.1, rider.velocity.1)
         );
@@ -132,7 +141,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         .max((rider.velocity - V(expected_vx, expected_vy, 0.0)).length());
     m.max_motion_error = m.max_motion_error.max(motion_error);
     assert!(
-        motion_error <= 1e-9,
+        motion_error <= rounding(1e-9, 16.0 * (n + 1.0)),
         "{case:?} ids={ids:?} step={step}: {motion_error}"
     );
     m.external_work += 4.0 * (rider.velocity.0 - m.last_velocity.0);
@@ -146,7 +155,8 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
     };
     let mechanical = energy + 20.0 * rider.position.1;
     assert!(
-        mechanical.is_finite() && mechanical <= 30.0 + m.external_work + departure_input + 1e-9
+        mechanical.is_finite()
+            && mechanical <= 30.0 + m.external_work + departure_input + rounding(1e-9, 64.0)
     );
     let supported = if let Some(platform) = w.body(BodyId(ids[0])) {
         assert!(platform.external && !platform.is_sleeping());
@@ -157,16 +167,16 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         assert_eq!(platform.angular_velocity, V::ZERO);
         let error = (platform.position - V(2.0 * H * n, 0.0, 0.0)).length();
         m.max_motion_error = m.max_motion_error.max(error);
-        assert!(error <= 1e-9);
+        assert!(error <= rounding(1e-9, 4.0 * (n + 1.0)));
         let gap = rider.position.1 - platform.position.1 - 1.5;
         let horizontal = (rider.position.0 - platform.position.0).abs() < 5.0
             && (rider.position.2 - platform.position.2).abs() < 5.0;
         if horizontal {
             m.peak_penetration = m.peak_penetration.max((-gap).max(0.0));
             m.peak_departure_gap = m.peak_departure_gap.max(gap.max(0.0));
-            assert!((-gap).max(0.0) <= 0.02 + 1e-9);
+            assert!((-gap).max(0.0) <= 0.02 + rounding(1e-9, 4.0));
         }
-        horizontal && gap.abs() <= 1e-9
+        horizontal && gap.abs() <= rounding(1e-9, 4.0)
     } else {
         false
     };
@@ -189,7 +199,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
                 "stale airborne support at step {step}"
             );
         }
-        if supported && rider.velocity.1.abs() <= 1e-9 {
+        if supported && rider.velocity.1.abs() <= rounding(1e-9, 16.0) {
             assert!(
                 w.has_support(BodyId(ids[1])),
                 "missing settled recontact at step {step}"
@@ -213,11 +223,11 @@ pub struct Measurements {
     ticks: Metrics,
     physical: Metrics,
     total_visits: u64,
-    elapsed: [f64; 2],
+    elapsed: [Real; 2],
 }
 impl Measurements {
     /// Counts remain integers internally and are below 2^53 in this bounded fixture.
-    pub fn values(&self, cadence: u32) -> Option<[f64; 19]> {
+    pub fn values(&self, cadence: u32) -> Option<[Real; 19]> {
         let m = match cadence {
             0 => &self.ticks,
             1 => &self.physical,
@@ -231,17 +241,17 @@ impl Measurements {
             m.max_motion_error,
             m.peak_departure_gap,
             m.max_ballistic_error,
-            m.support_samples as f64,
-            m.departure_samples as f64,
-            m.contact_points as f64,
-            m.constraint_visits as f64,
-            m.woken_bodies as f64,
-            m.sleep_transitions as f64,
-            m.wake_transitions as f64,
+            m.support_samples as Real,
+            m.departure_samples as Real,
+            m.contact_points as Real,
+            m.constraint_visits as Real,
+            m.woken_bodies as Real,
+            m.sleep_transitions as Real,
+            m.wake_transitions as Real,
             m.final_y,
             m.final_vy,
-            f64::from(u8::from(m.last_sleeping)),
-            self.total_visits as f64,
+            Real::from(u8::from(m.last_sleeping)),
+            self.total_visits as Real,
             self.elapsed[cadence as usize],
         ])
     }
@@ -310,7 +320,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> Measurements {
         ticks: tick_metrics,
         physical,
         total_visits,
-        elapsed: [ticks.elapsed_seconds(), w.elapsed_seconds()],
+        elapsed: [ticks.elapsed_seconds() as Real, w.elapsed_seconds() as Real],
     };
     println!(
         "MOVING_SUPPORT {{\"case\":\"{case:?}\",\"ids\":{ids:?},\"ticks\":{:?},\"physical_substeps\":{:?}}}",

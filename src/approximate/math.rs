@@ -1,15 +1,16 @@
 //! Small f64 math surface for the fixed-step experiment; no integer state in this path.
-use crate::{Vec3i, numeric::Scalar};
+use super::Real;
+use crate::Vec3i;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Vector(pub Scalar, pub Scalar, pub Scalar);
+pub struct Vector(pub Real, pub Real, pub Real);
 impl Vector {
     pub const ZERO: Self = Self(0.0, 0.0, 0.0);
     pub const X: Self = Self(1.0, 0.0, 0.0);
     pub const Y: Self = Self(0.0, 1.0, 0.0);
     pub const Z: Self = Self(0.0, 0.0, 1.0);
-    pub fn dot(self, b: Self) -> Scalar {
+    pub fn dot(self, b: Self) -> Real {
         self.0 * b.0 + self.1 * b.1 + self.2 * b.2
     }
     pub fn cross(self, b: Self) -> Self {
@@ -19,14 +20,14 @@ impl Vector {
             self.0 * b.1 - self.1 * b.0,
         )
     }
-    pub fn length(self) -> Scalar {
+    pub fn length(self) -> Real {
         self.dot(self).sqrt()
     }
     pub fn unit(self) -> Self {
         let n = self.length();
         if n > 1e-12 { self / n } else { Self::ZERO }
     }
-    pub fn at(self, i: usize) -> Scalar {
+    pub fn at(self, i: usize) -> Real {
         [self.0, self.1, self.2][i]
     }
     pub fn finite(self) -> bool {
@@ -35,10 +36,10 @@ impl Vector {
     pub fn abs(self) -> Self {
         Self(self.0.abs(), self.1.abs(), self.2.abs())
     }
-    pub fn max_component(self) -> Scalar {
+    pub fn max_component(self) -> Real {
         self.0.max(self.1).max(self.2)
     }
-    pub fn min_component(self) -> Scalar {
+    pub fn min_component(self) -> Real {
         self.0.min(self.1).min(self.2)
     }
     pub fn min(self, b: Self) -> Self {
@@ -53,7 +54,7 @@ impl Vector {
 }
 impl From<Vec3i> for Vector {
     fn from(v: Vec3i) -> Self {
-        Self(v.x as Scalar, v.y as Scalar, v.z as Scalar)
+        Self(v.x as Real, v.y as Real, v.z as Real)
     }
 }
 impl Add for Vector {
@@ -74,15 +75,15 @@ impl Neg for Vector {
         Self(-self.0, -self.1, -self.2)
     }
 }
-impl Mul<Scalar> for Vector {
+impl Mul<Real> for Vector {
     type Output = Self;
-    fn mul(self, k: Scalar) -> Self {
+    fn mul(self, k: Real) -> Self {
         Self(self.0 * k, self.1 * k, self.2 * k)
     }
 }
-impl Div<Scalar> for Vector {
+impl Div<Real> for Vector {
     type Output = Self;
-    fn div(self, k: Scalar) -> Self {
+    fn div(self, k: Real) -> Self {
         Self(self.0 / k, self.1 / k, self.2 / k)
     }
 }
@@ -98,7 +99,7 @@ impl SubAssign for Vector {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Quaternion(pub Scalar, pub Scalar, pub Scalar, pub Scalar);
+pub struct Quaternion(pub Real, pub Real, pub Real, pub Real);
 impl Default for Quaternion {
     fn default() -> Self {
         Self::IDENTITY
@@ -123,7 +124,7 @@ impl Quaternion {
     pub fn inverse_rotate(self, v: Vector) -> Vector {
         Self(-self.0, -self.1, -self.2, self.3).rotate(v)
     }
-    pub fn integrate(self, w: Vector, dt: Scalar) -> Self {
+    pub fn integrate(self, w: Vector, dt: Real) -> Self {
         // First-order quaternion derivative, normalized once per substep.
         let q = Vector(self.0, self.1, self.2);
         let dq = (w * self.3 + w.cross(q)) * (0.5 * dt);

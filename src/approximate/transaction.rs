@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use super::{
-    Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Quaternion, Report, Scalar, Vector,
+    Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Quaternion, Real, Report, Vector,
     World,
 };
 
@@ -67,7 +67,7 @@ struct Motion {
     orientation: Quaternion,
     angular_velocity: Vector,
     sleeping: bool,
-    quiet_time: Scalar,
+    quiet_time: Real,
     force: Vector,
     torque: Vector,
     impulse: Vector,

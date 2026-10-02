@@ -6,6 +6,7 @@ use physics_engine::{
         Vector as V, World,
     },
 };
+use physics_engine::{approximate::Real, numeric::Scalar};
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
     content: [243; 32],
@@ -49,7 +50,7 @@ fn falling(id: BodyId, case: usize) -> Body {
     b
 }
 // Independent quaternion-to-matrix projection, rather than engine contact/bounds helpers.
-fn floor_error(b: &Body) -> f64 {
+fn floor_error(b: &Body) -> Real {
     let Q(x, y, z, w) = b.orientation;
     let radius = 18.0
         * ((2.0 * (x * y + z * w)).abs()
@@ -62,13 +63,14 @@ fn bytes(w: &World) -> Vec<u8> {
 }
 
 /// [64-case peak floor error, cases, points, sweeps, visits, finite-floor upward response].
-pub fn run() -> [f64; 6] {
-    let mut peak_floor = 0.0_f64;
+pub fn run() -> [Real; 6] {
+    let mut peak_floor: Real = 0.0;
     let mut cases = 0_u32;
     let (mut points, mut sweeps, mut visits) = (0_u64, 0_u64, 0_u64);
     for case in 0..2 {
         for ids in [[1, 2], [2, 1]] {
-            for (h, physical_steps) in [(1.0 / 240.0, 4), (1.0 / 480.0, 8)] {
+            for (h_seconds, physical_steps) in [(1.0 / 240.0, 4), (1.0 / 480.0, 8)] {
+                let h = h_seconds as Real;
                 for substeps in [1, 4] {
                     for mode in 0..4 {
                         let config = Config {
@@ -108,7 +110,8 @@ pub fn run() -> [f64; 6] {
                         let mut reference_position = initial.position;
                         let mut reference_velocity = initial.velocity;
                         let mut reference_orientation = initial.orientation;
-                        let dt = h * f64::from(substeps);
+                        // Step in the f64 time domain so elapsed time composes exactly.
+                        let dt: Scalar = h_seconds * Scalar::from(substeps);
                         for _ in 0..physical_steps / substeps {
                             let saved = bytes(&world);
                             let checkpoint = Checkpoint::from_bytes(
@@ -176,17 +179,17 @@ pub fn run() -> [f64; 6] {
     // Explicit diagnostic ABI boundary; these bounded integer counts are exactly representable.
     [
         peak_floor,
-        f64::from(cases),
-        points as f64,
-        sweeps as f64,
-        visits as f64,
+        cases as Real,
+        points as Real,
+        sweeps as Real,
+        visits as Real,
         finite_floor_retains_actual_contacts(),
     ]
 }
 
 /// Upward response for the two ID orders of a seven-vertex finite-floor contact.
-pub fn finite_floor_retains_actual_contacts() -> f64 {
-    let mut minimum_upward_velocity = f64::INFINITY;
+pub fn finite_floor_retains_actual_contacts() -> Real {
+    let mut minimum_upward_velocity = Real::INFINITY;
     for ids in [[1, 2], [2, 1]] {
         let mut world = World::new(Config {
             gravity: V::ZERO,

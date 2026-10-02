@@ -4,7 +4,7 @@ use crate::{
     approximate::{Config, Error, Shape, Vector as V, World},
 };
 
-fn sphere(id: u64, x: f64, mass: f64) -> Body {
+fn sphere(id: u64, x: Real, mass: Real) -> Body {
     Body::new(BodyId(id), Shape::Sphere(1.0), V(x, 0.0, 0.0), mass)
 }
 fn row(a: usize, b: usize) -> Constraint {
@@ -37,7 +37,7 @@ fn row(a: usize, b: usize) -> Constraint {
 
 #[test]
 fn malformed_convergence_configuration_is_rejected() {
-    for value in [f64::NAN, f64::INFINITY, -0.01] {
+    for value in [Real::NAN, Real::INFINITY, -0.01] {
         for field in 0..3 {
             let mut c = Convergence::default();
             match field {
@@ -284,7 +284,7 @@ fn tolerance_and_stopping_decisions_repeat_through_warm_start_dt_changes_and_sup
         let mut body = Body::new(
             BodyId(id),
             Shape::Box(V(1.0, 1.0, 1.0)),
-            V(0.0, 1.0 + 2.0 * (id - 2) as f64, 0.0),
+            V(0.0, 1.0 + 2.0 * (id - 2) as Real, 0.0),
             1.0,
         );
         body.rotation_locked = true;

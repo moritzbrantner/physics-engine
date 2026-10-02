@@ -3,7 +3,7 @@ use crate::BodyId;
 use crate::approximate::{Config, Quaternion, Shape, World};
 
 fn vector_bits(v: Vector) -> [u64; 3] {
-    [v.0.to_bits(), v.1.to_bits(), v.2.to_bits()]
+    [v.0, v.1, v.2].map(|x| crate::approximate::primitive::widen(x).to_bits())
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn prepared_response_is_bit_identical_to_original_formula() {
     }
 }
 
-fn compare_step(prepared: &mut World, reference: &mut World, dt: Scalar) -> Report {
+fn compare_step(prepared: &mut World, reference: &mut World, dt: f64) -> Report {
     let got = prepared.step(dt).unwrap();
     let want = reference.step_with_preparation::<false>(dt).unwrap();
     assert_eq!(
@@ -91,8 +91,8 @@ fn rotating_bodies_force_torque_and_impulses_match_unprepared_replay() {
         let mut b = Body::new(
             BodyId(id),
             Shape::Box(Vector(0.8, 1.0, 1.2)),
-            Vector((id - 2) as f64 * 2.1, 2.0, 0.0),
-            id as f64,
+            Vector((id - 2) as Real * 2.1, 2.0, 0.0),
+            id as Real,
         );
         if id == 2 {
             b.orientation = Quaternion(0.1, 0.2, -0.3, 1.0).normalized();
@@ -226,7 +226,7 @@ fn lifecycle_rebuilds_response_indices_and_shape_mass_lock_state() {
         w.add_body(Body::new(
             BodyId(id),
             Shape::Sphere(1.0),
-            Vector(id as f64, 0.0, 0.0),
+            Vector(id as Real, 0.0, 0.0),
             2.0,
         ))
         .unwrap();
@@ -371,10 +371,11 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
     let b = w.body(BodyId(10)).unwrap();
     assert_eq!(b.velocity, Vector(3.0, 0.0, 3.0));
     // Total downward acceleration20 supplies friction spin30h; torque/I supplies yaw h.
-    assert!((b.angular_velocity.1 - h).abs() <= 1e-10);
+    let tolerance = crate::approximate::rounding_tolerance(1e-10, 16.0, 30.0 * h as Real);
+    assert!((b.angular_velocity.1 - h as Real).abs() <= tolerance);
     assert!(
-        (Vector(b.angular_velocity.0, 0.0, b.angular_velocity.2).length() - 30.0 * h).abs()
-            <= 1e-10
+        (Vector(b.angular_velocity.0, 0.0, b.angular_velocity.2).length() - 30.0 * h as Real).abs()
+            <= tolerance
     );
     assert_eq!(b.force, Vector::ZERO);
     assert_eq!(b.torque, Vector::ZERO);

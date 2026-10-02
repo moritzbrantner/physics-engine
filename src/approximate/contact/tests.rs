@@ -30,7 +30,7 @@ fn box_edge_contact_keeps_the_midpoint_of_tied_support_features() {
 }
 
 // Independent pre-change allocating clipper; this is a test oracle, not a production path.
-fn reference_clip(input: &[V], n: V, limit: Scalar) -> Vec<V> {
+fn reference_clip(input: &[V], n: V, limit: Real) -> Vec<V> {
     let mut out = Vec::with_capacity(8);
     if input.is_empty() {
         return out;
@@ -57,7 +57,7 @@ fn scratch_clipping_preserves_vertices_and_reuses_capacity() {
     let mut seed = 97_u64;
     let mut value = || {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-        (seed >> 32) as f64 / u32::MAX as f64 * 2.0 - 1.0
+        (seed >> 32) as Real / u32::MAX as Real * 2.0 - 1.0
     };
     let mut inputs = vec![vec![], vec![V::ZERO], vec![V::ZERO; 4]];
     for _ in 0..600 {
@@ -105,9 +105,9 @@ fn inline_points_preserve_the_original_bounded_selection_and_iteration_order() {
     for count in 0..20 {
         let input = (0..count)
             .map(|i| Point {
-                ra: V(i as f64, -0.0, 2.0),
-                rb: V(1.0, i as f64, 3.0),
-                separation: -(i as f64),
+                ra: V(i as Real, -0.0, 2.0),
+                rb: V(1.0, i as Real, 3.0),
+                separation: -(i as Real),
             })
             .collect::<Vec<_>>();
         let expected = if count > 4 {
@@ -163,14 +163,14 @@ fn pair_bodies(pair: primitive::PrimitivePair) -> (Body, Body) {
     (a, b)
 }
 
-fn separations(manifold: &Manifold) -> Vec<Scalar> {
+fn separations(manifold: &Manifold) -> Vec<Real> {
     let mut values = manifold
         .points
         .clone()
         .into_iter()
         .map(|point| point.separation)
         .collect::<Vec<_>>();
-    values.sort_by(Scalar::total_cmp);
+    values.sort_by(Real::total_cmp);
     values
 }
 

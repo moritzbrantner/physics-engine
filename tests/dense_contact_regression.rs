@@ -12,9 +12,13 @@ fn failed_dynamic_correction_rolls_back_both_endpoints_and_contact_history() {
     use physics_engine::{
         BodyId,
         approximate::{
-            Body, CheckpointContext, Config, Error, PositionCorrection, Shape, Vector as V, World,
+            Body, CheckpointContext, Config, Error, PositionCorrection, REAL_BITS, Real, Shape,
+            Vector as V, World,
         },
     };
+    // Adjacent f32 positions near the 1e12 limit are 65536 apart; the f32 build scales the
+    // fixture's lengths by 2^24 so the overlap stays resolvable. f64 is unscaled.
+    const EDGE_SCALE: Real = if REAL_BITS == 64 { 1.0 } else { 16_777_216.0 };
     let mut world = World::new(Config {
         gravity: V::ZERO,
         substeps: 1,
@@ -24,10 +28,15 @@ fn failed_dynamic_correction_rolls_back_both_endpoints_and_contact_history() {
     })
     .unwrap();
     for (id, half, x, mass) in [
-        (1, V(10.0, 20.0, 20.0), 1e12 - 8.0, 3.0),
-        (2, V(2.0, 10.0, 10.0), 1e12 - 1.0, 1.0),
+        (1, V(10.0, 20.0, 20.0), 8.0, 3.0),
+        (2, V(2.0, 10.0, 10.0), 1.0, 1.0),
     ] {
-        let mut body = Body::new(BodyId(id), Shape::Box(half), V(x, 0.0, 0.0), mass);
+        let mut body = Body::new(
+            BodyId(id),
+            Shape::Box(half * EDGE_SCALE),
+            V(1e12 - x * EDGE_SCALE, 0.0, 0.0),
+            mass,
+        );
         body.rotation_locked = true;
         world.add_body(body).unwrap();
     }

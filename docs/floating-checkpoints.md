@@ -26,6 +26,10 @@ contacts, changing continuation semantics. Fixed, external, one-way and swept
 response authority remains explicit. The empty-world digest changes only because
 the algorithm header and its checksum change; its physical trajectory is unchanged.
 
+### Scalar width (`f32-physics`)
+
+The `f32-physics` build (see [numerics](numerics.md#f32-floating-physics-build)) keeps format 2 / algorithm 7 and the same record layout, but writes every `Real` value at its native 4-byte width under the magic `PEFLT32` plus a zero byte. Elapsed and prior-substep seconds stay f64 in both builds. The default f64 build keeps `PEFLOAT`, its wire bytes and its empty-world digest unchanged. Each build checks the magic first and rejects the other width with `CheckpointError::ScalarWidthMismatch { expected_bits, found_bits }` before reading versions, payload or checksum; an unknown magic remains `InvalidData`. There is no cross-width conversion: a save is valid only for the scalar width that wrote it, which the caller's `build` tag should also identify.
+
 All current shapes, materials and fixed geometry are inline. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
 
 ## Continuation inventory
@@ -44,7 +48,7 @@ Capture validates before copying physical bodies/contact history. Restore consum
 
 ## Wire validation
 
-Version 2 uses `PEFLOAT` plus a zero byte, little-endian format/algorithm u32 versions, build/content tags, length-prefixed architecture/OS, configuration, elapsed/prior-substep f64 values, u64 body count and canonical bodies, then u64 pair count and canonical contact history. Floating values preserve their exact IEEE-754 bits. Shape tags are box=0, sphere=1, capsule=2, wedge=3. Body flags encode rotation-lock, external, sensor, sleep-allowed, CCD, retire-on-impact and sleeping in bits 0 through 6; other bits are rejected. The configuration policy byte uses bit 0 for optional soft contact and bit 1 for admitted-contact position correction; other bits are rejected. Boolean/optional/scope tags are checked. The trailing SHA-256 covers every payload byte. Hashing uses the existing [RustCrypto SHA-2 implementation](https://github.com/RustCrypto/hashes/blob/sha2-v0.10.9/sha2/Cargo.toml), rather than introducing a physics-owned hash algorithm.
+Version 2 uses `PEFLOAT` plus a zero byte (`PEFLT32` in the f32 build), little-endian format/algorithm u32 versions, build/content tags, length-prefixed architecture/OS, configuration, elapsed/prior-substep f64 values, u64 body count and canonical bodies, then u64 pair count and canonical contact history. Floating values preserve their exact IEEE-754 bits. Shape tags are box=0, sphere=1, capsule=2, wedge=3. Body flags encode rotation-lock, external, sensor, sleep-allowed, CCD, retire-on-impact and sleeping in bits 0 through 6; other bits are rejected. The configuration policy byte uses bit 0 for optional soft contact and bit 1 for admitted-contact position correction; other bits are rejected. Boolean/optional/scope tags are checked. The trailing SHA-256 covers every payload byte. Hashing uses the existing [RustCrypto SHA-2 implementation](https://github.com/RustCrypto/hashes/blob/sha2-v0.10.9/sha2/Cargo.toml), rather than introducing a physics-owned hash algorithm.
 
 The decoder checks total-byte and body/pair/point budgets, minimum record lengths before vector allocation, exact payload completion, checksum, known versions/policies, compatible target/context, finite physical values, the existing body/config ranges, nonnegative quiet time/normal impulse, strictly increasing unique IDs/pair keys, and live distinct pair endpoints. Orientation component magnitudes are bounded by 2 and stored normal components by a conservative 64. These envelopes cover the existing normalization/rotated-normal results and protect derived arithmetic; they never clamp or change solver state. Extreme finite quaternion normalization can lose unit length or yield signed zero in the existing API. The checkpoint preserves those accepted values and their continuation/failure behavior; it does not silently normalize them again. Pending inputs retain the API's finite-value policy and are not clamped. Optional experimental soft-contact data is rejected by an ordinary build. Unknown, damaged, truncated, oversized or semantically invalid data cannot mutate a live world. Panics/allocation aborts remain outside returned-error guarantees; checksum integrity does not authenticate a save.
 
@@ -54,7 +58,8 @@ Default decode budgets are 64 MiB, 100,000 bodies, 200,000 pairs and 800,000 poi
 
 ```sh
 cargo test --locked --test floating_checkpoints
-cargo test --all-features --locked --test floating_checkpoints
+cargo test --features exact-reference,experimental-soft-contact --locked --test floating_checkpoints
+cargo test --features f32-physics --locked --test floating_checkpoints
 cargo test --manifest-path demo-wasm/Cargo.toml --locked --example checkpoint-continuation
 cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \
   --target wasm32-unknown-unknown --example checkpoint-continuation

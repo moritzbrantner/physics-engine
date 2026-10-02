@@ -1,6 +1,6 @@
 //! Read-only queries against current authoritative poses; reusable geometry remains upstream.
 use super::{
-    Body, BodyId, Quaternion, Scalar, Shape, SweepFailure, Vector as V, World, contact, primitive,
+    Body, BodyId, Quaternion, Real, Shape, SweepFailure, Vector as V, World, contact, primitive,
 };
 use crate::CollisionLayers3d;
 use geometry_kernels::primitive3::PrimitiveWork3;
@@ -86,14 +86,14 @@ impl QueryFilter {
 pub struct QueryHit {
     pub body: BodyId,
     /// Fraction of the requested displacement, in [0, 1]; overlaps/touching start at zero.
-    pub fraction: Scalar,
-    pub distance: Scalar,
+    pub fraction: Real,
+    pub distance: Real,
     /// Outward from the target toward the query; deterministic at degenerate contacts.
     pub normal: V,
     pub query_point: V,
     pub target_point: V,
     /// Signed separation along the selected normal; negative denotes penetration.
-    pub separation: Scalar,
+    pub separation: Real,
     /// Strict geometric penetration at the initial pose, before sweeping.
     pub starts_overlapping: bool,
     /// Current target velocity at its witness point, including angular velocity.
@@ -242,7 +242,7 @@ impl World {
                     .max(target.position.abs().max_component())
                     .max(displacement.abs().max_component());
                 let radii = pose.shape.radius() + target.shape.radius();
-                let pad = 8.0 * Scalar::EPSILON * (1.0 + magnitude + radii)
+                let pad = 8.0 * Real::EPSILON * (1.0 + magnitude + radii)
                     + if cast.is_some() {
                         1e-9 * (1.0 + radii)
                     } else {
@@ -315,8 +315,16 @@ impl World {
     }
 }
 
+/// Unit-length admission for query poses: 1e-9 in the f64 build, widened to the
+/// rounding of one `Real` normalization (64 ulps of 1) when `Real` is f32.
+const UNIT_ORIENTATION_TOLERANCE: Real = if 64.0 * Real::EPSILON > 1e-9 {
+    64.0 * Real::EPSILON
+} else {
+    1e-9
+};
 fn unit_orientation(q: Quaternion) -> bool {
-    q.finite() && (q.0 * q.0 + q.1 * q.1 + q.2 * q.2 + q.3 * q.3 - 1.0).abs() <= 1e-9
+    q.finite()
+        && (q.0 * q.0 + q.1 * q.1 + q.2 * q.2 + q.3 * q.3 - 1.0).abs() <= UNIT_ORIENTATION_TOLERANCE
 }
 fn current(
     query: &Body,

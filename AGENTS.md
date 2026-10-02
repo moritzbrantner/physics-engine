@@ -7,6 +7,7 @@ This repository owns reusable physics semantics. Domain-neutral geometry and alg
 ## Numerical policy
 
 - Floating point is the default, not an exception. Use `numeric::Scalar` (`f64`) for new CPU physics math/state; use `f32` when a documented precision budget permits it.
+- The floating solver's physical state uses `approximate::Real`: f32 under the whole-build `f32-physics` feature (the production game build), f64 by default (the reference build). Keep elapsed time f64, keep `geometry-kernels` calls behind the conservative widen/narrow boundary in `src/approximate/primitive.rs`, and keep both builds' tests green; see `docs/numerics.md`.
 - Do not impose a "no floating point anywhere" constraint. Do not grow exact multi-limb fractions to avoid ordinary floating-point error.
 - The `exact-reference` feature is diagnostic only. Never enable it implicitly for a production or Pages build.
 - Retain integers for IDs, flags, counters and explicit legacy serialization boundaries, not as a mandatory representation for continuous physical quantities.

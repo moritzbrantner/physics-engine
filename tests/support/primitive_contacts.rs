@@ -3,11 +3,17 @@ use physics_engine::{
     BodyId,
     approximate::{Body, CheckpointContext, Config, Quaternion, Report, Shape, Vector as V, World},
 };
+use physics_engine::{approximate::Real, numeric::Scalar};
 
-const DT: f64 = 1.0 / 240.0;
+/// Rounding-only bound: the f64 reference, or 64 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(64.0 * Real::EPSILON * scale)
+}
+
+const DT: Real = 1.0 / 240.0;
 const STEPS: u32 = 64;
 
-fn origin(shape: Shape, z: f64) -> V {
+fn origin(shape: Shape, z: Real) -> V {
     // Put the rounded shapes' z-facing contact inside the wedge's triangular face.
     if matches!(shape, Shape::Wedge(_)) {
         V(0.5, 0.5, z)
@@ -19,9 +25,9 @@ fn origin(shape: Shape, z: f64) -> V {
 fn fixture(
     shapes: [Shape; 2],
     ids: [u64; 2],
-    mass: f64,
-    e: f64,
-    depth: f64,
+    mass: Real,
+    e: Real,
+    depth: Real,
     substeps: u8,
 ) -> World {
     let mut w = World::new(Config {
@@ -52,10 +58,10 @@ fn fixture(
 
 fn advance(w: &mut World, substeps: u32) -> Report {
     let before = w.elapsed_seconds();
-    let dt = DT * f64::from(substeps);
-    let r = w.step(dt).unwrap();
-    let tolerance = 16.0 * f64::EPSILON * (before.abs() + dt);
-    assert!((w.elapsed_seconds() - before - dt).abs() <= tolerance);
+    let dt = DT * substeps as Real;
+    let r = w.step(dt as Scalar).unwrap();
+    let tolerance = 16.0 * f64::EPSILON * (before.abs() + dt as Scalar);
+    assert!((w.elapsed_seconds() - before - dt as Scalar).abs() <= tolerance);
     assert_eq!(r.substeps, substeps);
     assert!(r.impulse_iterations <= 8 * u64::from(substeps));
     assert!(r.contact_points <= 4 * u64::from(substeps));
@@ -67,13 +73,13 @@ fn advance(w: &mut World, substeps: u32) -> Report {
     r
 }
 
-fn error(actual: V, expected: V) -> f64 {
+fn error(actual: V, expected: V) -> Real {
     (actual - expected).length() / (1.0 + expected.length())
 }
 
 /// Returns peak/residual overlap, velocity/momentum errors, energy ratio, cases,
 /// continuous-contact samples, total solver visits across all three worlds, and elapsed bounds.
-pub fn run() -> [f64; 10] {
+pub fn run() -> [Real; 10] {
     let shapes = [
         Shape::Sphere(1.0),
         Shape::Box(V(1.0, 1.0, 1.0)),
@@ -84,8 +90,8 @@ pub fn run() -> [f64; 10] {
         build: [0; 32],
         content: [241; 32],
     };
-    let mut values = [0.0_f64; 10];
-    values[8] = f64::INFINITY;
+    let mut values = [(0.0 as Real); 10];
+    values[8] = Real::INFINITY;
     let mut cases = 0_u32;
     let mut continuous = 0_u32;
     let mut visits = 0_u64;
@@ -104,7 +110,7 @@ pub fn run() -> [f64; 10] {
                             let impulse = (1.0 + restitution) * 3.0 / (1.0 + inv);
                             let expected = [V(0.0, 0.0, 3.0 - impulse), V(0.0, 0.0, impulse * inv)];
                             let expected_momentum = expected[0] + expected[1] * mass;
-                            let observe = |world: &World, step: u32, values: &mut [f64; 10]| {
+                            let observe = |world: &World, step: u32, values: &mut [Real; 10]| {
                                 let bodies = ids.map(|id| world.body(BodyId(id)).unwrap());
                                 for i in 0..2 {
                                     let body = bodies[i];
@@ -117,14 +123,14 @@ pub fn run() -> [f64; 10] {
                                     let v_error = error(body.velocity, expected[i]);
                                     values[2] = values[2].max(v_error);
                                     assert!(
-                                        v_error <= 1e-10,
+                                        v_error <= rounding(1e-10, 4.0),
                                         "{a:?}/{b:?} mass={mass} e={restitution} depth={depth} ids={ids:?} step={step} velocity={:?}",
                                         body.velocity
                                     );
                                     let initial =
                                         origin(body.shape, if i == 0 { 0.0 } else { 2.0 - depth });
-                                    let position = initial + expected[i] * (f64::from(step) * DT);
-                                    assert!(error(body.position, position) <= 1e-10);
+                                    let position = initial + expected[i] * (step as Real * DT);
+                                    assert!(error(body.position, position) <= rounding(1e-10, 8.0));
                                 }
                                 // Every fixture has z half-width 1 and a common interior x/y
                                 // cross-section. In this locked axial trace the face gap gives
@@ -132,7 +138,7 @@ pub fn run() -> [f64; 10] {
                                 let overlap =
                                     (2.0 - (bodies[1].position.2 - bodies[0].position.2)).max(0.0);
                                 values[0] = values[0].max(overlap);
-                                assert!(overlap <= 0.02 + 1e-10);
+                                assert!(overlap <= 0.02 + rounding(1e-10, 4.0));
                                 if step == STEPS {
                                     values[1] = values[1].max(overlap);
                                 }
@@ -141,18 +147,21 @@ pub fn run() -> [f64; 10] {
                                     expected_momentum,
                                 );
                                 values[3] = values[3].max(momentum_error);
-                                assert!(momentum_error <= 1e-10);
+                                assert!(momentum_error <= rounding(1e-10, 16.0));
                                 if mass > 0.0 {
                                     // Dynamic pair conserves linear momentum; a fixed target
                                     // intentionally exchanges it with its external authority.
-                                    assert!(error(expected_momentum, V(0.0, 0.0, 3.0)) <= 1e-10);
+                                    assert!(
+                                        error(expected_momentum, V(0.0, 0.0, 3.0))
+                                            <= rounding(1e-10, 16.0)
+                                    );
                                 }
                                 let energy = 0.5
                                     * (bodies[0].velocity.dot(bodies[0].velocity)
                                         + mass * bodies[1].velocity.dot(bodies[1].velocity));
                                 let ratio = energy / 4.5;
                                 values[4] = values[4].max(ratio);
-                                assert!(ratio.is_finite() && ratio <= 1.0 + 1e-10);
+                                assert!(ratio.is_finite() && ratio <= 1.0 + rounding(1e-10, 1.0));
                                 if restitution > 0.0 && step == STEPS {
                                     assert_eq!(overlap, 0.0);
                                 }
@@ -184,10 +193,10 @@ pub fn run() -> [f64; 10] {
                                 }
                             }
                             let elapsed = w.elapsed_seconds();
-                            assert!((elapsed - f64::from(STEPS) * DT).abs() <= 1e-12);
+                            assert!((elapsed - STEPS as Scalar * DT as Scalar).abs() <= 1e-12);
                             assert!((ticks.elapsed_seconds() - elapsed).abs() <= 1e-12);
-                            values[8] = values[8].min(elapsed);
-                            values[9] = values[9].max(elapsed);
+                            values[8] = values[8].min(elapsed as Real);
+                            values[9] = values[9].max(elapsed as Real);
                             cases += 1;
                         }
                     }
@@ -195,11 +204,11 @@ pub fn run() -> [f64; 10] {
             }
         }
     }
-    values[5] = f64::from(cases);
-    values[6] = f64::from(continuous);
+    values[5] = cases as Real;
+    values[6] = continuous as Real;
     // This explicitly bounded fixture cannot reach the f64 exact-integer boundary.
     assert!(visits < (1_u64 << 53));
-    values[7] = visits as f64;
+    values[7] = visits as Real;
     println!("PRIMITIVE_CONTACT {{\"values\":{values:?}}}");
     values
 }

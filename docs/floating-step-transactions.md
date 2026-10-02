@@ -22,7 +22,8 @@ Steady local steps among 128 or 512 sleeping bodies journal the same two bodies 
 
 ```sh
 cargo test --locked --test floating_step_atomicity
-cargo test --all-features --locked --test floating_step_atomicity
+cargo test --features exact-reference,experimental-soft-contact --locked --test floating_step_atomicity
+cargo test --features f32-physics --locked --test floating_step_atomicity
 cargo test --release --locked --lib approximate::transaction::tests::transaction_work_ratchet -- --ignored --nocapture
 cargo test --release --locked --test floating_transaction_benchmark -- --ignored --nocapture
 PHYSICS_TRANSACTION_TRACE_DIR=performance-evidence/floating-traces cargo test --release --locked --test floating_transaction_benchmark -- --ignored --nocapture

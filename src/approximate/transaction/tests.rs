@@ -24,7 +24,7 @@ fn supported_world(count: u64) -> World {
             .add_body(Body::new(
                 BodyId(index + 1),
                 Shape::Box(Vector(0.5, 0.5, 0.5)),
-                Vector(index as f64 * 3.0, 0.5, 0.0),
+                Vector(index as Real * 3.0, 0.5, 0.0),
                 1.0,
             ))
             .unwrap();
