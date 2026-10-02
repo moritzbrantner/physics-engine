@@ -96,8 +96,8 @@ mod tests {
                 Shape::capsule(3.0 * scale, scale),
             ] {
                 for mass in [1e-6, 1.0, 1e11] {
-                    // The solver's own split-mass formula multiplies mass by volume. Combinations
-                    // whose product leaves the `Real` range are outside the f32 envelope.
+                    // The public inertia tensor is `Real`; combinations whose inertia leaves the
+                    // `Real` range are outside the f32 envelope.
                     if !(mass * 64.0 * scale * scale * scale).is_finite() {
                         assert_eq!(super::super::REAL_BITS, 32);
                         continue;
@@ -119,5 +119,17 @@ mod tests {
             Shape::wedge(Vector(1.0, 2.0, 3.0)).local_inverse_inertia(1.0),
             None
         );
+        // Accepted extremes whose `mass * length^2` overflows f32 keep a representable,
+        // nonzero inverse inertia (evaluated in f64, then narrowed).
+        for shape in [
+            Shape::capsule(1e9, 1e9),
+            Shape::Box(Vector(1e9, 1e9, 1e9)),
+            Shape::Sphere(1e9),
+        ] {
+            let inverse = shape.local_inverse_inertia(1e12).unwrap();
+            for value in [inverse.0, inverse.1, inverse.2] {
+                assert!(value.is_finite() && value > 0.0, "{shape:?}: {value}");
+            }
+        }
     }
 }

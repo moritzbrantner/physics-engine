@@ -165,21 +165,32 @@ impl Shape {
             }
         }
     }
+    /// Evaluated in f64 in every build (the identity for the default build): with f32 state,
+    /// `mass * length^2` can overflow for accepted inputs although the inverse inertia is
+    /// representable. The narrowed result rounds to nearest.
+    #[allow(clippy::unnecessary_cast)]
     fn local_inverse_inertia(self, mass: Real) -> Option<Vector> {
+        let mass = mass as f64;
+        let narrow = |x: f64, y: f64, z: f64| Some(Vector(x as Real, y as Real, z as Real));
         match self {
             Self::Sphere(r) => {
+                let r = r as f64;
                 let inverse = 2.5 / (mass * r * r);
-                Some(Vector(inverse, inverse, inverse))
+                narrow(inverse, inverse, inverse)
             }
-            Self::Box(h) => Some(Vector(
-                3.0 / (mass * (h.1 * h.1 + h.2 * h.2)),
-                3.0 / (mass * (h.0 * h.0 + h.2 * h.2)),
-                3.0 / (mass * (h.0 * h.0 + h.1 * h.1)),
-            )),
+            Self::Box(h) => {
+                let [h0, h1, h2] = [h.0 as f64, h.1 as f64, h.2 as f64];
+                narrow(
+                    3.0 / (mass * (h1 * h1 + h2 * h2)),
+                    3.0 / (mass * (h0 * h0 + h2 * h2)),
+                    3.0 / (mass * (h0 * h0 + h1 * h1)),
+                )
+            }
             Self::Capsule {
                 half_segment: h,
                 radius: r,
             } => {
+                let (h, r) = (h as f64, r as f64);
                 let cylinder_volume = r * r * (2.0 * h);
                 let sphere_volume = (4.0 / 3.0) * r * r * r;
                 let total_volume = cylinder_volume + sphere_volume;
@@ -188,7 +199,7 @@ impl Shape {
                 let axial = cylinder_mass * r * r * 0.5 + sphere_mass * r * r * (2.0 / 5.0);
                 let radial = cylinder_mass * (3.0 * r * r + 4.0 * h * h) / 12.0
                     + sphere_mass * ((2.0 / 5.0) * r * r + h * h + (3.0 / 4.0) * h * r);
-                Some(Vector(1.0 / radial, 1.0 / axial, 1.0 / radial))
+                narrow(1.0 / radial, 1.0 / axial, 1.0 / radial)
             }
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
             // wedge inertia/pose contract is introduced.
