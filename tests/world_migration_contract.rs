@@ -6,7 +6,13 @@ use physics_engine::{approximate::Real, numeric::Scalar};
 
 const TICKS_PER_SECOND: Real = 60.0;
 const POSITION_UNITS_PER_DISTANCE_UNIT: Real = 1.0;
-const EPSILON: Real = 1e-9;
+/// Rounding-only tolerance: the f64 reference bound, or 64 ulps at this fixture's
+/// magnitude (|component| <= 64) with f32 state.
+const EPSILON: Real = if 1e-9 > 64.0 * 64.0 * Real::EPSILON {
+    1e-9
+} else {
+    64.0 * 64.0 * Real::EPSILON
+};
 
 fn position_to_floating(value: Vec3i) -> Vector {
     Vector(
