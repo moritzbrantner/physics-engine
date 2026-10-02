@@ -41,12 +41,16 @@ anchors and impulses survive for warm starting on the next substep.
    orientation for the entire substep. Non-CCD bodies have no chronological event restart.
    **CCD remaining time** (`src/approximate/ccd.rs`): an awake dynamic CCD body (without
    linear support) with an admitted swept impact is not limited by a speculative constraint.
-   After the solve it advances to the independent time of impact, receives the pair's
+   Before the contact solve it advances to the independent time of impact, receives the pair's
    normal/friction response with the combined restitution there, then sweeps the remaining
    substep along the response velocity against all candidates, including bodies the original
    sweep never reached. A sleeping target first reached by an admitted closing impact is woken
    (its mass/inertia and skipped forces activated) before its impulse; equal-time impacts apply
-   in BodyId order. Each impact uses one pass of the existing velocity-pass budget
+   in BodyId order. The struck partner keeps its ordinary contacts (e.g. its floor) in the
+   following solve, so they resist the impulse in the same substep; the advanced CCD body's
+   start-pose constraints are skipped. A CCD body already struck by an earlier-advanced one
+   continues from that impact pose. Each closing impact uses one pass of the existing
+   velocity-pass budget (a touching contact it separates from is excluded, not charged)
    (`velocity_iterations`, default eight). When the budget is exhausted the body stays at its
    last impact for the rest of that substep (no tunnelling, full requested time still elapses)
    and `GeometryStats::ccd_budget_fallbacks` counts it. Candidate AABB tests, swept probes,

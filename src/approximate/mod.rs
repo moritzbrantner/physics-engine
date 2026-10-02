@@ -884,6 +884,8 @@ impl World {
             report.substeps += 1;
             self.bookkeeping.ccd.clear();
             self.bookkeeping.ccd_offsets.clear();
+            self.bookkeeping.ccd_start.clear();
+            self.bookkeeping.ccd_retired.clear();
             self.responses
                 .resize(self.bodies.len(), PreparedResponse::default());
             for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
@@ -997,6 +999,33 @@ impl World {
                     return Err(error);
                 }
             }
+            // CCD remaining-time impacts respond before the contact solve, so a struck body's
+            // current contacts (e.g. its floor) still resist the impulse in this substep.
+            {
+                let s = &mut self.bookkeeping;
+                for (i, j, m) in &pairs {
+                    if m.swept && ccd::deferred(&self.bodies[*i], &self.bodies[*j]) {
+                        for k in [*i, *j] {
+                            if ccd::advances(&self.bodies[k]) {
+                                push(&mut s.ccd, k, &mut s.work);
+                            }
+                        }
+                    }
+                }
+            }
+            if !self.bookkeeping.ccd.is_empty()
+                && let Err(error) = self.advance_ccd_bodies::<PREPARED>(h, &mut report)
+            {
+                self.manifold_scratch = pairs;
+                self.failed_work = Some(FailedStepWork::capture(
+                    &report,
+                    BookkeepingStats {
+                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
+                        ..self.bookkeeping.work
+                    },
+                ));
+                return Err(error);
+            }
             let mut constraints = std::mem::take(&mut self.constraints);
             constraints.clear();
             #[cfg(feature = "experimental-soft-contact")]
@@ -1014,14 +1043,13 @@ impl World {
                 &mut self.bookkeeping.work,
             );
             for (i, j, m) in pairs.drain(..) {
-                if m.swept && ccd::deferred(&self.bodies[i], &self.bodies[j]) {
-                    // Handled at its time of impact by remaining-time advancement below.
-                    let s = &mut self.bookkeeping;
-                    for k in [i, j] {
-                        if ccd::advances(&self.bodies[k]) {
-                            push(&mut s.ccd, k, &mut s.work);
-                        }
-                    }
+                // Remaining-time advancement already resolved every contact of an advanced CCD
+                // body along its actual path; start-pose constraints would act on its response
+                // velocity a second time.
+                if (m.swept && ccd::deferred(&self.bodies[i], &self.bodies[j]))
+                    || self.bookkeeping.ccd.binary_search(&i).is_ok()
+                    || self.bookkeeping.ccd.binary_search(&j).is_ok()
+                {
                     continue;
                 }
                 let a = &self.bodies[i];
@@ -1387,18 +1415,6 @@ impl World {
                     true
                 }
             });
-            if !self.bookkeeping.ccd.is_empty()
-                && let Err(error) = self.advance_ccd_bodies::<PREPARED>(h, &mut report)
-            {
-                self.failed_work = Some(FailedStepWork::capture(
-                    &report,
-                    BookkeepingStats {
-                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
-                        ..self.bookkeeping.work
-                    },
-                ));
-                return Err(error);
-            }
             let scratch = &mut self.bookkeeping;
             scratch.support.propagate(
                 &mut scratch.supported,
@@ -1476,6 +1492,11 @@ impl World {
             }
             self.sleep_quiet_islands();
             // Retirement is local; remove all affected cached edges before indexed graph reuse.
+            let s = &mut self.bookkeeping;
+            for n in 0..s.ccd_retired.len() {
+                push(&mut s.retired, s.ccd_retired[n], &mut s.work);
+            }
+            s.ccd_retired.clear();
             self.bookkeeping.retired.sort_unstable();
             self.bookkeeping.retired.dedup();
             for n in 0..self.bookkeeping.retired.len() {

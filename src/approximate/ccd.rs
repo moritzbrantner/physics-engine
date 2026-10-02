@@ -49,7 +49,7 @@ impl World {
                 break;
             }
         }
-        queued.clear();
+        // Kept sorted for this substep: the advanced bodies' contacts are already resolved.
         self.bookkeeping.ccd = queued;
         result
     }
@@ -85,9 +85,16 @@ impl World {
             super::reserve(&mut s.ccd_offsets, count, &mut s.work);
             s.ccd_offsets.resize(count, Vector::ZERO);
         }
+        if self.bookkeeping.ccd_start.len() < count {
+            let s = &mut self.bookkeeping;
+            super::reserve(&mut s.ccd_start, count, &mut s.work);
+            s.ccd_start.resize(count, 0.0);
+        }
         self.transaction.body(i, &self.bodies[i]);
-        let mut position = self.bodies[i].position;
-        let mut elapsed: Real = 0.0;
+        // A body already struck by an earlier-advanced CCD body continues from that impact
+        // along its committed trajectory instead of replaying the substep from its start pose.
+        let mut elapsed: Real = self.bookkeeping.ccd_start[i];
+        let mut position = self.position_at(i, elapsed, h);
         let mut impacts: u8 = 0;
         let limit = self.config.velocity_iterations.max(1);
         let mut excluded = std::mem::take(&mut self.bookkeeping.ccd_excluded);
@@ -162,7 +169,6 @@ impl World {
             let step = time * remaining;
             position += probe.velocity * (step * h);
             elapsed += step;
-            impacts += 1;
             // Normal from the CCD body toward its partner, arms at the impact pose.
             let count = m.points.len().max(1) as Real;
             let (mut ra, mut rb) = (Vector::ZERO, Vector::ZERO);
@@ -180,14 +186,12 @@ impl World {
                 - contact_velocity(&self.bodies[i], r_self, true))
             .dot(n);
             if closing >= 0.0 {
-                // Touching while separating is not an impact; do not re-test this partner.
+                // Touching while separating is not an impact and does not use the budget;
+                // do not re-test this partner.
                 push(&mut excluded, j, &mut self.bookkeeping.work);
-                if impacts >= limit {
-                    report.geometry.ccd_budget_fallbacks += 1;
-                    break Ok(());
-                }
                 continue;
             }
+            impacts += 1;
             // An admitted closing impact is wake evidence; real mass/inertia (and the parked
             // body's skipped forces) are active before its impulse.
             if self.bodies[j].sleeping && self.bodies[j].movable() {
@@ -231,12 +235,14 @@ impl World {
                 // The partner moved with its earlier velocity until the impact.
                 let change = self.bodies[j].velocity - before;
                 self.bookkeeping.ccd_offsets[j] -= change * (elapsed * h);
+                let start = &mut self.bookkeeping.ccd_start[j];
+                *start = start.max(elapsed);
                 report.swept_contacts += 1;
                 report.contact_points += m.points.len() as u64;
                 let s = &mut self.bookkeeping;
                 for index in [i, j] {
                     if self.bodies[index].retire_on_impact {
-                        push(&mut s.retired, self.bodies[index].id, &mut s.work);
+                        push(&mut s.ccd_retired, self.bodies[index].id, &mut s.work);
                     }
                 }
             }

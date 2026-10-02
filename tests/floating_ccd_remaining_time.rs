@@ -218,3 +218,67 @@ fn remaining_time_cases_replay_and_continue_from_a_checkpoint() {
         .restore();
     assert_eq!(state(&run(30, restored)), state(&reference));
 }
+
+/// Two awake CCD bodies hit each other: the second one continues from the committed impact
+/// pose instead of replaying the whole substep with its post-impact velocity.
+#[test]
+fn head_on_ccd_pair_both_travel_only_the_remaining_substep() {
+    let mut w = one_substep(V::ZERO);
+    w.add_body(elastic_sphere(1, V(-6.0, 0.0, 0.0), V(4000.0, 0.0, 0.0)))
+        .unwrap();
+    w.add_body(elastic_sphere(2, V(6.0, 0.0, 0.0), V(-4000.0, 0.0, 0.0)))
+        .unwrap();
+    let report = w.step(H).unwrap();
+    assert!(report.swept_contacts > 0);
+    let tolerance: Real = (1e-9 as Real).max(4096.0 * Real::EPSILON);
+    let impact = 11.5 / 8000.0;
+    let expected = 0.25 + 4000.0 * (H as Real - impact);
+    let (a, b) = (w.body(BodyId(1)).unwrap(), w.body(BodyId(2)).unwrap());
+    assert!(close(a.velocity.0, -4000.0, tolerance), "{:?}", a.velocity);
+    assert!(close(b.velocity.0, 4000.0, tolerance), "{:?}", b.velocity);
+    assert!(
+        close(a.position.0, -expected, 16.0 * tolerance),
+        "a x = {}, expected {}",
+        a.position.0,
+        -expected
+    );
+    assert!(
+        close(b.position.0, expected, 16.0 * tolerance),
+        "b x = {}, expected {expected}",
+        b.position.0
+    );
+}
+
+/// A touching contact the projectile separates from is not an impact and must not use the
+/// velocity-pass budget: two passes cover the single real (wall) impact.
+#[test]
+fn separating_touch_does_not_consume_the_ccd_budget() {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        substeps: 1,
+        velocity_iterations: 2,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(fixed(1, V(0.25, 5.0, 5.0), V(-0.5, 0.0, 0.0), 1.0, 0.0))
+        .unwrap();
+    w.add_body(fixed(2, V(0.25, 5.0, 5.0), V(11.0, 0.0, 0.0), 1.0, 0.0))
+        .unwrap();
+    w.add_body(elastic_sphere(3, V::ZERO, V(4000.0, 0.0, 0.0)))
+        .unwrap();
+    let report = w.step(H).unwrap();
+    assert_eq!(report.geometry.ccd_budget_fallbacks, 0);
+    let ball = w.body(BodyId(3)).unwrap();
+    let tolerance: Real = (1e-9 as Real).max(4096.0 * Real::EPSILON);
+    let expected = 10.5 - 4000.0 * (H as Real - 10.5 / 4000.0);
+    assert!(
+        close(ball.velocity.0, -4000.0, tolerance),
+        "{:?}",
+        ball.velocity
+    );
+    assert!(
+        close(ball.position.0, expected, 16.0 * tolerance),
+        "x = {}, expected {expected}",
+        ball.position.0
+    );
+}
