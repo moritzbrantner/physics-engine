@@ -49,7 +49,8 @@ fn step(world: &mut World) {
     let time_budget = 16.0 * f64::EPSILON * (before.abs() + dt);
     assert!((world.elapsed_seconds() - before - dt).abs() <= time_budget);
     assert_eq!(report.substeps, 1);
-    assert!(report.contact_points > 0);
+    // A remaining-time CCD impact is a swept contact, not a solver row.
+    assert!(report.contact_points + report.swept_contacts > 0);
     assert!(report.impulse_iterations <= 8);
     assert_eq!(report.position.dynamic_corrections, 0);
     assert!(report.retired.is_empty());

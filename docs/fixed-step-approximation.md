@@ -40,7 +40,9 @@ anchors and impulses survive for warm starting on the next substep.
 5. Apply cached impulses, run at most eight contact iterations, then integrate updated velocity and
    orientation for the entire substep. Non-CCD bodies have no chronological event restart.
    **CCD remaining time** (`src/approximate/ccd.rs`): an awake dynamic CCD body (without
-   linear support) with an admitted swept impact is not limited by a speculative constraint.
+   linear support, and not retiring on impact) with an admitted swept impact is not limited by
+   a speculative constraint. A retire-on-impact projectile has no remaining time to advance and
+   keeps the speculative constraint, whose simultaneous solve reaches every equal-time target.
    Before the contact solve it advances to the independent time of impact, receives the pair's
    normal/friction response with the combined restitution there, then sweeps the remaining
    substep along the response velocity against all candidates, including bodies the original
@@ -54,7 +56,8 @@ anchors and impulses survive for warm starting on the next substep.
    (`velocity_iterations`, default eight). When the budget is exhausted the body stays at its
    last impact for the rest of that substep (no tunnelling, full requested time still elapses)
    and `GeometryStats::ccd_budget_fallbacks` counts it. Candidate AABB tests, swept probes,
-   and discarded probes count in `pair_tests`, `narrow_tests` and `sweep_queries`. A partner's
+   and discarded probes count in `pair_tests`, `narrow_tests` and `sweep_queries`; admitted
+   impacts count in `swept_contacts` (not `contact_points`, which counts solver rows). A partner's
    velocity change applies from the impact time onward. Rotation stays fixed per sweep; there is
    no angular-CCD claim.
 6. Cache contact anchors/impulses. Quiet connected dynamic islands sleep together. Fixed floors

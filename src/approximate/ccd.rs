@@ -12,8 +12,12 @@ use super::{
 };
 
 /// Whether a body advances through its own swept impacts in this substep.
+///
+/// A body that retires on impact has no remaining-time trajectory; it keeps the speculative
+/// constraint, whose simultaneous solve reaches every equal-time target (e.g. a projectile
+/// bridging two disconnected bodies).
 pub(super) fn advances(b: &Body) -> bool {
-    b.ccd && b.movable() && !b.sleeping && b.linear_support.is_none()
+    b.ccd && b.movable() && !b.sleeping && !b.retire_on_impact && b.linear_support.is_none()
 }
 
 /// Swept pairs handled by remaining-time advancement instead of a speculative constraint.
@@ -237,8 +241,8 @@ impl World {
                 self.bookkeeping.ccd_offsets[j] -= change * (elapsed * h);
                 let start = &mut self.bookkeeping.ccd_start[j];
                 *start = start.max(elapsed);
+                // `contact_points` counts solver rows; a remaining-time impact is not one.
                 report.swept_contacts += 1;
-                report.contact_points += m.points.len() as u64;
                 let s = &mut self.bookkeeping;
                 for index in [i, j] {
                     if self.bodies[index].retire_on_impact {
@@ -248,9 +252,6 @@ impl World {
             }
             excluded.clear();
             push(&mut excluded, j, &mut self.bookkeeping.work);
-            if self.bodies[i].retire_on_impact {
-                break Ok(());
-            }
             if impacts >= limit && elapsed < 1.0 {
                 report.geometry.ccd_budget_fallbacks += 1;
                 break Ok(());
