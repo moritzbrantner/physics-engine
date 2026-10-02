@@ -49,7 +49,8 @@ fn step(world: &mut World) {
     let time_budget = 16.0 * f64::EPSILON * (before.abs() + dt);
     assert!((world.elapsed_seconds() - before - dt).abs() <= time_budget);
     assert_eq!(report.substeps, 1);
-    assert!(report.contact_points > 0);
+    // A remaining-time CCD impact is a swept contact, not a solver row.
+    assert!(report.contact_points + report.swept_contacts > 0);
     assert!(report.impulse_iterations <= 8);
     assert_eq!(report.position.dynamic_corrections, 0);
     assert!(report.retired.is_empty());
@@ -114,8 +115,18 @@ pub fn fixed_target_restitution_and_speculative_contact() {
             let fixed = w.body(BodyId(fixed_id)).unwrap().clone();
             step(&mut w);
             let moving = w.body(BodyId(dynamic_id)).unwrap();
-            // Separated speculative contacts permit arrival, never premature restitution.
-            close(moving.velocity.0, if gap == 0.0 { -2.0 } else { gap / DT });
+            // A separated current (within-slop) speculative contact permits arrival, never
+            // premature restitution. A swept CCD impact beyond the slop responds at its time of
+            // impact with the combined restitution and travels the remaining substep.
+            let swept = gap > Config::default().contact_slop;
+            close(
+                moving.velocity.0,
+                if gap == 0.0 || swept { -2.0 } else { gap / DT },
+            );
+            if swept {
+                let impact = gap / 4.0;
+                close(moving.position.0, -1.0 + gap - 2.0 * (DT - impact));
+            }
             assert_eq!(w.body(BodyId(fixed_id)), Some(&fixed));
         }
     }
