@@ -39,6 +39,13 @@ pub const REAL_BITS: u32 = (size_of::<Real>() * 8) as u32;
 /// conservative narrowing. Zero in the f64 build, where narrowing is the identity.
 const NARROWING_ULPS: Real = if REAL_BITS == 64 { 0.0 } else { 16.0 };
 
+/// Rounding-only test tolerance: the f64 reference bound, or `ulps` of `Real::EPSILON`
+/// (scaled by the magnitude under test) when that is larger, as in the f32 build.
+#[cfg(test)]
+fn rounding_tolerance(reference: Real, ulps: Real, scale: Real) -> Real {
+    reference.max(ulps * Real::EPSILON * scale)
+}
+
 /// Narrows f64 time to the solver scalar once per substep (identity in the f64 build).
 #[allow(clippy::unnecessary_cast)]
 fn narrow_time(seconds: Scalar) -> Real {

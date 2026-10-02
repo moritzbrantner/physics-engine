@@ -12,7 +12,10 @@ Reusable collision mathematics is consumed from [`rust-kernels`](https://github.
 
 CPU simulation math defaults to **`f64`** through `numeric::Scalar`. Floating point is supported
 and preferred; there is no "no floating point anywhere" requirement. `f32` is appropriate where
-an explicit precision budget permits it, such as GPU/storage boundaries.
+an explicit precision budget permits it, such as GPU/storage boundaries. The floating solver
+(`approximate::World`) uses `approximate::Real`: f64 by default, f32 with the whole-build
+`f32-physics` Cargo feature, the production target for game consumers within the documented
+[f32 precision envelope](docs/numerics.md#f32-floating-physics-build).
 
 The default time-composition and shared scaled-arithmetic path no longer stores large exact
 fractions. The optional `exact-reference` Cargo feature exists only for diagnostic comparisons

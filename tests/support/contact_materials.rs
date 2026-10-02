@@ -5,12 +5,17 @@ use physics_engine::{
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
+/// Rounding-only bound: the f64 reference, or 64 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(64.0 * Real::EPSILON * scale)
+}
+
 const DT: Real = 0.01;
 
 fn close(actual: Real, expected: Real) {
     // Velocity controls are O(1) scene units/s; impulse/energy controls below are
     // normalized by their own physical scales before crossing this comparison seam.
-    let tolerance = 1e-11 * (1.0 + expected.abs());
+    let tolerance = rounding(1e-11, 1.0 + expected.abs());
     assert!(
         (actual - expected).abs() <= tolerance,
         "{actual} != {expected} within {tolerance}"
@@ -452,9 +457,18 @@ pub fn reciprocal_current_contact_momentum() -> [Real; 4] {
                                 / (1.0 + before.1.length() / (mass * 18.0));
                             let energy_ratio =
                                 w.bodies().map(Body::kinetic_energy).sum::<Real>() / energy;
-                            assert!(linear_error <= 1e-10, "linear {linear_error}");
-                            assert!(angular_error <= 1e-10, "angular {angular_error}");
-                            assert!(energy_ratio.is_finite() && energy_ratio <= 1.0 + 1e-10);
+                            assert!(
+                                linear_error <= rounding(1e-10, 1.0),
+                                "linear {linear_error}"
+                            );
+                            assert!(
+                                angular_error <= rounding(1e-10, 1.0),
+                                "angular {angular_error}"
+                            );
+                            assert!(
+                                energy_ratio.is_finite()
+                                    && energy_ratio <= 1.0 + rounding(1e-10, 1.0)
+                            );
                             if friction > 0.0 {
                                 assert!(w.body(BodyId(ids[1])).unwrap().velocity.0 < 10.0 - 1e-8);
                             }

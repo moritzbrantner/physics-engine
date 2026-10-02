@@ -5,6 +5,11 @@ use physics_engine::{
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
+/// Rounding-only bound: the f64 reference, or 64 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(64.0 * Real::EPSILON * scale)
+}
+
 const DT: Real = 1.0 / 240.0;
 const STEPS: u32 = 64;
 
@@ -118,14 +123,14 @@ pub fn run() -> [Real; 10] {
                                     let v_error = error(body.velocity, expected[i]);
                                     values[2] = values[2].max(v_error);
                                     assert!(
-                                        v_error <= 1e-10,
+                                        v_error <= rounding(1e-10, 4.0),
                                         "{a:?}/{b:?} mass={mass} e={restitution} depth={depth} ids={ids:?} step={step} velocity={:?}",
                                         body.velocity
                                     );
                                     let initial =
                                         origin(body.shape, if i == 0 { 0.0 } else { 2.0 - depth });
                                     let position = initial + expected[i] * (step as Real * DT);
-                                    assert!(error(body.position, position) <= 1e-10);
+                                    assert!(error(body.position, position) <= rounding(1e-10, 8.0));
                                 }
                                 // Every fixture has z half-width 1 and a common interior x/y
                                 // cross-section. In this locked axial trace the face gap gives
@@ -133,7 +138,7 @@ pub fn run() -> [Real; 10] {
                                 let overlap =
                                     (2.0 - (bodies[1].position.2 - bodies[0].position.2)).max(0.0);
                                 values[0] = values[0].max(overlap);
-                                assert!(overlap <= 0.02 + 1e-10);
+                                assert!(overlap <= 0.02 + rounding(1e-10, 4.0));
                                 if step == STEPS {
                                     values[1] = values[1].max(overlap);
                                 }
@@ -142,18 +147,21 @@ pub fn run() -> [Real; 10] {
                                     expected_momentum,
                                 );
                                 values[3] = values[3].max(momentum_error);
-                                assert!(momentum_error <= 1e-10);
+                                assert!(momentum_error <= rounding(1e-10, 16.0));
                                 if mass > 0.0 {
                                     // Dynamic pair conserves linear momentum; a fixed target
                                     // intentionally exchanges it with its external authority.
-                                    assert!(error(expected_momentum, V(0.0, 0.0, 3.0)) <= 1e-10);
+                                    assert!(
+                                        error(expected_momentum, V(0.0, 0.0, 3.0))
+                                            <= rounding(1e-10, 16.0)
+                                    );
                                 }
                                 let energy = 0.5
                                     * (bodies[0].velocity.dot(bodies[0].velocity)
                                         + mass * bodies[1].velocity.dot(bodies[1].velocity));
                                 let ratio = energy / 4.5;
                                 values[4] = values[4].max(ratio);
-                                assert!(ratio.is_finite() && ratio <= 1.0 + 1e-10);
+                                assert!(ratio.is_finite() && ratio <= 1.0 + rounding(1e-10, 1.0));
                                 if restitution > 0.0 && step == STEPS {
                                     assert_eq!(overlap, 0.0);
                                 }

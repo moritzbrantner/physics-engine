@@ -6,6 +6,12 @@ use physics_engine::{
     },
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
@@ -185,7 +191,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
         .max((b.position - p).length())
         .max((b.angular_velocity - spin).length());
     assert!(
-        error <= 1e-10,
+        error <= rounding(1e-10, 16.0 * (n as Real + 1.0)),
         "{case:?} ids={ids:?} n={n} error={error} body={b:?}"
     );
     assert_eq!(b.is_sleeping(), case.sleeping());
@@ -194,7 +200,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     if let Some(floor) = w.body(BodyId(ids[0])) {
         assert!(floor.external);
         assert_eq!(floor.velocity, case.command());
-        assert!((floor.position - case.command() * t).length() <= 1e-10);
+        assert!((floor.position - case.command() * t).length() <= rounding(1e-10, 8.0));
     }
     let neighbor = w.body(BodyId(40)).unwrap();
     assert!(neighbor.is_sleeping());
@@ -214,7 +220,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
             V(-1.5, 1.5, 0.0)
         };
         assert_eq!(driver.velocity, V(3.0, 0.0, 0.0));
-        assert!((driver.position - (start + driver.velocity * t)).length() <= 1e-10);
+        assert!((driver.position - (start + driver.velocity * t)).length() <= rounding(1e-10, 8.0));
     }
     error
 }
@@ -273,7 +279,7 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 21] {
                 Case::SharedSideContact => 3.0 * (2.0 * b.velocity.0 - 0.8 * b.angular_velocity.2),
                 _ => 0.0,
             };
-            assert!(energy + 20.0 * (b.position.1 - 1.5) <= work + 1e-10);
+            assert!(energy + 20.0 * (b.position.1 - 1.5) <= work + rounding(1e-10, 64.0));
             assert!((w.elapsed_seconds() - before - dt as Scalar).abs() <= 1e-14);
             first = Some([
                 b.velocity.0,

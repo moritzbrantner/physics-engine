@@ -7,7 +7,7 @@ use physics_engine::{
     approximate::{Body, CheckpointContext, Config, PositionCorrection, Shape, Vector as V, World},
 };
 
-const DT: Real = 1.0 / 60.0;
+const DT: Scalar = 1.0 / 60.0;
 const TICKS: usize = 600;
 const BOX: BodyId = BodyId(10);
 const SUPPORT: BodyId = BodyId(2);
@@ -103,10 +103,9 @@ fn observe(world: &World, case: Case, tail: bool, metrics: &mut Metrics) {
     }
 }
 
-fn advance(world: &mut World, dt: Real, maximum_substeps: u32, metrics: &mut Metrics) {
+fn advance(world: &mut World, dt: Scalar, maximum_substeps: u32, metrics: &mut Metrics) {
     let before = world.elapsed_seconds();
-    let report = world.step(dt as Scalar).unwrap();
-    let dt = dt as Scalar;
+    let report = world.step(dt).unwrap();
     let tolerance = 16.0 * f64::EPSILON * (before.abs() + dt);
     assert!((world.elapsed_seconds() - before - dt).abs() <= tolerance);
     assert!(report.substeps <= maximum_substeps);

@@ -2,8 +2,10 @@ use physics_engine::approximate::Real;
 use physics_engine::approximate::{MassPropertiesError, Shape, Vector};
 
 fn close(actual: Real, expected: Real) {
+    // Rounding-only: 2e-14 relative in the f64 build, 32 ulps when Real is f32.
+    let relative = (2e-14 as Real).max(32.0 * Real::EPSILON);
     assert!(
-        (actual - expected).abs() <= 2e-14 * expected.abs().max(1e-30),
+        (actual - expected).abs() <= relative * expected.abs().max(1e-30),
         "{actual:e} != {expected:e}"
     );
 }

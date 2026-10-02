@@ -235,7 +235,10 @@ fn correction_discovers_a_later_collider_entered_during_the_same_pass() {
     let r = correct_pair(&mut a, &mut b);
     assert_eq!(r.corrections, 2);
     assert_eq!(r.contact_tests, 2);
-    assert!((a.body(BodyId(20)).unwrap().position.1 - 0.62).abs() < 1e-12);
+    assert!(
+        (a.body(BodyId(20)).unwrap().position.1 - 0.62).abs()
+            < crate::approximate::rounding_tolerance(1e-12, 16.0, 1.0)
+    );
 }
 #[test]
 fn fixed_index_invalidates_for_id_reuse_shape_rotation_sensor_and_index_shifts() {

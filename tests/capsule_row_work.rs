@@ -8,6 +8,11 @@ use physics_engine::{
     },
 };
 
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 fn world(shape: Shape) -> World {
     let mut world = World::new(Config {
         gravity: V::ZERO,
@@ -64,8 +69,8 @@ pub fn capsule_row_public_queries_report_actual_distance_and_feature_work() {
             .unwrap();
         assert_eq!(hits.len(), 1);
         // All three shapes share a 0.5 X core/radius extent in this control.
-        assert!((hits[0].fraction - 0.465).abs() < 1e-8);
-        assert!((hits[0].normal + V::X).length() < 1e-8);
+        assert!((hits[0].fraction - 0.465).abs() < rounding(1e-8, 4.0));
+        assert!((hits[0].normal + V::X).length() < rounding(1e-8, 1.0));
         assert!(stats.sweep_iterations > 0);
         assert_eq!(stats.segment_distance_evaluations, stats.primitive_queries);
         assert!(stats.segment_feature_tests <= 46 * stats.primitive_queries);

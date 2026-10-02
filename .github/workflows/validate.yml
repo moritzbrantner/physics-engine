@@ -48,6 +48,9 @@ jobs:
           tier: fast
           install-mode: none
 
+      - name: Test the f32 floating-physics build
+        run: cargo test --locked --features f32-physics
+
       - name: Run long ECS tower acceptance
         run: cargo test --release --locked --test ecs_tower_regression -- --ignored --nocapture
 

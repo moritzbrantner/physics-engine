@@ -1,4 +1,10 @@
 use physics_engine::approximate::Real;
+
+/// Rounding-only bound: the f64 reference, or 64 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(64.0 * Real::EPSILON * scale)
+}
+
 #[path = "support/contact_materials.rs"]
 mod contract;
 
@@ -71,10 +77,17 @@ fn rotated_reciprocal_contacts_preserve_momentum() {
                 assert!(r.impulse_iterations <= 8);
                 assert_eq!(r.swept_contacts, 0);
                 let after = momentum(&w);
-                assert!((after.0 - before.0).length() / (1.0 + before.0.length()) <= 1e-10);
-                assert!((after.1 - before.1).length() / (36.0 + before.1.length()) <= 1e-10);
                 assert!(
-                    w.bodies().map(Body::kinetic_energy).sum::<Real>() <= energy * (1.0 + 1e-10)
+                    (after.0 - before.0).length() / (1.0 + before.0.length())
+                        <= rounding(1e-10, 1.0)
+                );
+                assert!(
+                    (after.1 - before.1).length() / (36.0 + before.1.length())
+                        <= rounding(1e-10, 1.0)
+                );
+                assert!(
+                    w.bodies().map(Body::kinetic_energy).sum::<Real>()
+                        <= energy * (1.0 + rounding(1e-10, 1.0))
                 );
                 assert_eq!(
                     w.bodies().collect::<Vec<_>>(),
@@ -120,6 +133,6 @@ fn generic_support_witnesses_keep_the_full_reciprocal_midpoint() {
         assert!(cube.velocity.1 < -1e-3, "normal response required");
         // Independent support vertices are (1,1,1) and (-1,.99,-1).
         // Their common midpoint lies on the cube's Y axis, giving zero torque.
-        assert!(cube.angular_velocity.length() <= 1e-12);
+        assert!(cube.angular_velocity.length() <= rounding(1e-12, 1.0));
     }
 }

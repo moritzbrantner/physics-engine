@@ -371,10 +371,11 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
     let b = w.body(BodyId(10)).unwrap();
     assert_eq!(b.velocity, Vector(3.0, 0.0, 3.0));
     // Total downward acceleration20 supplies friction spin30h; torque/I supplies yaw h.
-    assert!((b.angular_velocity.1 - h as Real).abs() <= 1e-10);
+    let tolerance = crate::approximate::rounding_tolerance(1e-10, 16.0, 30.0 * h as Real);
+    assert!((b.angular_velocity.1 - h as Real).abs() <= tolerance);
     assert!(
         (Vector(b.angular_velocity.0, 0.0, b.angular_velocity.2).length() - 30.0 * h as Real).abs()
-            <= 1e-10
+            <= tolerance
     );
     assert_eq!(b.force, Vector::ZERO);
     assert_eq!(b.torque, Vector::ZERO);

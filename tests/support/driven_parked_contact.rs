@@ -6,6 +6,12 @@ use physics_engine::{
     },
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
@@ -138,7 +144,10 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
     let driven = w.body(BodyId(ids[0])).unwrap();
     assert!(driven.external && !driven.is_sleeping());
     assert_eq!(driven.velocity, V(0.0, case.speed(), 0.0));
-    assert!((driven.position - (case.position() + driven.velocity * h)).length() <= 1e-12);
+    assert!(
+        (driven.position - (case.position() + driven.velocity * h)).length()
+            <= rounding(1e-12, 8.0)
+    );
     let rider = w.body(BodyId(ids[1])).unwrap();
     assert_eq!(rider.mass, 2.0);
     assert!(rider.position.finite() && rider.velocity.finite() && rider.angular_velocity.finite());
@@ -157,7 +166,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
     } else {
         0.0
     };
-    assert!(energy + 20.0 * (rider.position.1 - 1.0) <= external_work + 1e-10);
+    assert!(energy + 20.0 * (rider.position.1 - 1.0) <= external_work + rounding(1e-10, 32.0));
     if case.admits() {
         assert_eq!(report.woken_bodies, 1);
         assert!(!rider.is_sleeping());
@@ -168,17 +177,17 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
         assert!(rider.velocity.1 > 0.0);
         let gap = rider.position.1 - 1.0 - (driven.position.1 + 0.5);
         assert!(
-            gap >= -1e-10,
+            gap >= -rounding(1e-10, 2.0),
             "admitted normal response leaves penetration {gap}"
         );
         if !matches!(case, Case::Swept | Case::SweptOutsideSlop) {
-            assert!((rider.velocity.1 - case.speed()).abs() <= 1e-10);
-            assert!((rider.position.1 - 1.0 - case.speed() * h).abs() <= 1e-10);
+            assert!((rider.velocity.1 - case.speed()).abs() <= rounding(1e-10, 4.0));
+            assert!((rider.position.1 - 1.0 - case.speed() * h).abs() <= rounding(1e-10, 2.0));
             assert_eq!(rider.angular_velocity, V::ZERO);
         } else {
             // Admission is the contract here; restitution/remaining-time response is #246.
             assert!(report.geometry.sweep_queries > 0);
-            assert!(rider.velocity.1 <= case.speed() + 1e-10);
+            assert!(rider.velocity.1 <= case.speed() + rounding(1e-10, 4.0));
         }
     } else {
         assert_eq!(report.woken_bodies, 0);

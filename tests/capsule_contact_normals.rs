@@ -54,10 +54,13 @@ fn certify_query_clearance(target: QueryPose, mut query: QueryPose, scale: Real)
         ((hit.query_point - hit.target_point).dot(hit.normal) - hit.separation).abs()
             <= 128.0 * Real::EPSILON * scale
     );
-    query.position += hit.normal * (-hit.separation + scale * 1e-5);
+    // Probe clearance: 1e-5 of scale in the f64 build; with f32 state it must exceed the
+    // pose rounding (positions reach 13 * scale), so it is 8192 ulps of scale.
+    let clearance = scale * (1e-5 as Real).max(8192.0 * Real::EPSILON);
+    query.position += hit.normal * (-hit.separation + clearance);
     let gap = (support(query, -hit.normal) - support(target, hit.normal)).dot(hit.normal);
     assert!(
-        gap > scale * 0.99e-5,
+        gap > 0.99 * clearance,
         "reported clearance left support-plane gap {gap}"
     );
     world

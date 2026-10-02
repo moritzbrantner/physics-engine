@@ -96,13 +96,19 @@ mod tests {
                 Shape::capsule(3.0 * scale, scale),
             ] {
                 for mass in [1e-6, 1.0, 1e11] {
+                    // The solver's own split-mass formula multiplies mass by volume. Combinations
+                    // whose product leaves the `Real` range are outside the f32 envelope.
+                    if !(mass * 64.0 * scale * scale * scale).is_finite() {
+                        assert_eq!(super::super::REAL_BITS, 32);
+                        continue;
+                    }
                     let properties = shape.mass_properties(mass).unwrap();
                     let inverse = shape.local_inverse_inertia(mass).unwrap();
                     for (axis, inverse) in [inverse.0, inverse.1, inverse.2].into_iter().enumerate()
                     {
                         let actual = properties.local_inertia[axis][axis] * inverse;
                         assert!(
-                            (actual - 1.0).abs() <= 2e-14,
+                            (actual - 1.0).abs() <= (2e-14 as Real).max(32.0 * Real::EPSILON),
                             "{shape:?} mass {mass}: {actual}"
                         );
                     }

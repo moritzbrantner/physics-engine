@@ -4,7 +4,15 @@ use physics_engine::{
     approximate::{Body, CheckpointContext, Config, Quaternion, Shape, Vector as V, World},
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 const H: Real = 1.0 / 240.0;
+/// The same step in the f64 time domain, so elapsed time composes exactly in both builds.
+const H_SECONDS: Scalar = 1.0 / 240.0;
 const COMMAND_STEP: u32 = 480;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,9 +90,8 @@ struct Metrics {
 
 fn advance(w: &mut World, substeps: u32, m: &mut Metrics) {
     let before = w.elapsed_seconds();
-    let dt = H * substeps as Real;
-    let r = w.step(dt as Scalar).unwrap();
-    let dt = dt as Scalar;
+    let dt = H_SECONDS * Scalar::from(substeps);
+    let r = w.step(dt).unwrap();
     assert!((w.elapsed_seconds() - before - dt).abs() <= 16.0 * f64::EPSILON * (before.abs() + dt));
     assert_eq!(r.substeps, substeps);
     assert!(r.impulse_iterations <= 8 * u64::from(substeps));
@@ -124,7 +131,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
             .max((rider.velocity.1 - expected_vy).abs());
         m.max_ballistic_error = m.max_ballistic_error.max(error);
         assert!(
-            error <= 1e-9,
+            error <= rounding(1e-9, 16.0 * (n + 1.0)),
             "{case:?} ids={ids:?} step={step} y/vy {:?}, expected {expected_y}/{expected_vy}",
             (rider.position.1, rider.velocity.1)
         );
@@ -134,7 +141,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         .max((rider.velocity - V(expected_vx, expected_vy, 0.0)).length());
     m.max_motion_error = m.max_motion_error.max(motion_error);
     assert!(
-        motion_error <= 1e-9,
+        motion_error <= rounding(1e-9, 16.0 * (n + 1.0)),
         "{case:?} ids={ids:?} step={step}: {motion_error}"
     );
     m.external_work += 4.0 * (rider.velocity.0 - m.last_velocity.0);
@@ -148,7 +155,8 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
     };
     let mechanical = energy + 20.0 * rider.position.1;
     assert!(
-        mechanical.is_finite() && mechanical <= 30.0 + m.external_work + departure_input + 1e-9
+        mechanical.is_finite()
+            && mechanical <= 30.0 + m.external_work + departure_input + rounding(1e-9, 64.0)
     );
     let supported = if let Some(platform) = w.body(BodyId(ids[0])) {
         assert!(platform.external && !platform.is_sleeping());
@@ -159,16 +167,16 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         assert_eq!(platform.angular_velocity, V::ZERO);
         let error = (platform.position - V(2.0 * H * n, 0.0, 0.0)).length();
         m.max_motion_error = m.max_motion_error.max(error);
-        assert!(error <= 1e-9);
+        assert!(error <= rounding(1e-9, 4.0 * (n + 1.0)));
         let gap = rider.position.1 - platform.position.1 - 1.5;
         let horizontal = (rider.position.0 - platform.position.0).abs() < 5.0
             && (rider.position.2 - platform.position.2).abs() < 5.0;
         if horizontal {
             m.peak_penetration = m.peak_penetration.max((-gap).max(0.0));
             m.peak_departure_gap = m.peak_departure_gap.max(gap.max(0.0));
-            assert!((-gap).max(0.0) <= 0.02 + 1e-9);
+            assert!((-gap).max(0.0) <= 0.02 + rounding(1e-9, 4.0));
         }
-        horizontal && gap.abs() <= 1e-9
+        horizontal && gap.abs() <= rounding(1e-9, 4.0)
     } else {
         false
     };
@@ -191,7 +199,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
                 "stale airborne support at step {step}"
             );
         }
-        if supported && rider.velocity.1.abs() <= 1e-9 {
+        if supported && rider.velocity.1.abs() <= rounding(1e-9, 16.0) {
             assert!(
                 w.has_support(BodyId(ids[1])),
                 "missing settled recontact at step {step}"

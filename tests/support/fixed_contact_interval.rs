@@ -69,7 +69,8 @@ pub fn run() -> [Real; 6] {
     let (mut points, mut sweeps, mut visits) = (0_u64, 0_u64, 0_u64);
     for case in 0..2 {
         for ids in [[1, 2], [2, 1]] {
-            for (h, physical_steps) in [(1.0 / 240.0, 4), (1.0 / 480.0, 8)] {
+            for (h_seconds, physical_steps) in [(1.0 / 240.0, 4), (1.0 / 480.0, 8)] {
+                let h = h_seconds as Real;
                 for substeps in [1, 4] {
                     for mode in 0..4 {
                         let config = Config {
@@ -109,7 +110,8 @@ pub fn run() -> [Real; 6] {
                         let mut reference_position = initial.position;
                         let mut reference_velocity = initial.velocity;
                         let mut reference_orientation = initial.orientation;
-                        let dt = h * substeps as Real;
+                        // Step in the f64 time domain so elapsed time composes exactly.
+                        let dt: Scalar = h_seconds * Scalar::from(substeps);
                         for _ in 0..physical_steps / substeps {
                             let saved = bytes(&world);
                             let checkpoint = Checkpoint::from_bytes(
@@ -119,9 +121,9 @@ pub fn run() -> [Real; 6] {
                             )
                             .unwrap();
                             let mut restored = checkpoint.restore();
-                            let report = world.step(dt as Scalar).unwrap();
-                            replay.step(dt as Scalar).unwrap();
-                            restored.step(dt as Scalar).unwrap();
+                            let report = world.step(dt).unwrap();
+                            replay.step(dt).unwrap();
+                            restored.step(dt).unwrap();
                             assert_eq!(bytes(&world), bytes(&replay));
                             assert_eq!(bytes(&world), bytes(&restored));
                             assert_eq!(report.substeps, u32::from(substeps));

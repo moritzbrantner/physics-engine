@@ -118,7 +118,7 @@ pub fn advertised_shape_queries_and_mass_cross_the_public_api() {
             )
             .unwrap();
         assert_eq!(rays.len(), 1);
-        assert!((rays[0].normal.length() - 1.0).abs() < 1e-12);
+        assert!((rays[0].normal.length() - 1.0).abs() <= (1e-12 as Real).max(4.0 * Real::EPSILON));
         assert_eq!(world.checkpoint(context).unwrap().to_bytes(), before);
     }
 }

@@ -8,7 +8,9 @@
 //! outward, separation toward smaller; directions and witnesses round to nearest. In the
 //! default f64 build every conversion is the identity.
 
-use super::{Body, Real, Shape, SweepFailure, Vector as V, geometry::GeometryStats};
+use super::{
+    Body, Quaternion, REAL_BITS, Real, Shape, SweepFailure, Vector as V, geometry::GeometryStats,
+};
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveSweepError3, PrimitiveWork3,
     bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
@@ -84,6 +86,19 @@ pub(super) fn swept_time(
     margin: Real,
     work: &mut GeometryStats,
 ) -> Result<Option<Real>, SweepFailure> {
+    // The f64 kernel would absorb a relative motion that overflows `Real`, but the solver
+    // consumes the impact in `Real`. With f32 state, fail the search as the f64 build's
+    // kernel does for f64 overflow. Never evaluated in the f64 build.
+    // Non-finite inputs stay the kernel's InvalidInput.
+    if REAL_BITS < 64
+        && a.velocity.finite()
+        && b.velocity.finite()
+        && dt.is_finite()
+        && !((b.velocity - a.velocity) * dt).finite()
+    {
+        work.primitive_sweep_failures += 1;
+        return Err(SweepFailure::NonFiniteComputation);
+    }
     let mut kernel_work = PrimitiveWork3::default();
     let result = kernel_swept_time(
         kernel_body(a),
@@ -174,10 +189,10 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
         Shape::Sphere(_) => identity_axes(),
         Shape::Capsule { .. } => [
             [1.0, 0.0, 0.0],
-            to_array(body.orientation.rotate(V::Y)),
+            kernel_axes(body.orientation)[1],
             [0.0, 0.0, 1.0],
         ],
-        Shape::Box(_) | Shape::Wedge(_) => body.orientation.axes().map(to_array),
+        Shape::Box(_) | Shape::Wedge(_) => kernel_axes(body.orientation),
     };
     // Force integration can produce a non-finite velocity before the final body check.
     // The checked sweep reports that failure; the constructor's debug assertion would panic.
@@ -187,6 +202,35 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
         axes,
         velocity: to_array(body.velocity),
     }
+}
+
+/// Kernel frames must be orthonormal to f64 tolerances. The default build passes the solver's
+/// own axes unchanged; the f32 build widens the stored quaternion, renormalizes it and
+/// rotates in f64 so the frame is orthonormal at kernel precision.
+fn kernel_axes(q: Quaternion) -> [[f64; 3]; 3] {
+    if REAL_BITS == 64 {
+        return q.axes().map(to_array);
+    }
+    let [x, y, z, w] = [q.0, q.1, q.2, q.3].map(widen);
+    let length = (x * x + y * y + z * z + w * w).sqrt();
+    let [x, y, z, w] = [x, y, z, w].map(|c| c / length);
+    [
+        [
+            1.0 - 2.0 * (y * y + z * z),
+            2.0 * (x * y + w * z),
+            2.0 * (x * z - w * y),
+        ],
+        [
+            2.0 * (x * y - w * z),
+            1.0 - 2.0 * (x * x + z * z),
+            2.0 * (y * z + w * x),
+        ],
+        [
+            2.0 * (x * z + w * y),
+            2.0 * (y * z - w * x),
+            1.0 - 2.0 * (x * x + y * y),
+        ],
+    ]
 }
 
 const fn identity_axes() -> [[f64; 3]; 3] {

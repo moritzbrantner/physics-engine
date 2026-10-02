@@ -6,6 +6,12 @@ use physics_engine::{
     },
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
@@ -116,7 +122,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
         .max((b.velocity - expected_v).length())
         .max((b.angular_velocity - expected_spin).length());
     assert!(
-        error <= 1e-10,
+        error <= rounding(1e-10, 16.0 * (n as Real + 1.0)),
         "{case:?} ids={ids:?} n={n} error={error} body={b:?}"
     );
     assert!(b.position.finite() && b.velocity.finite() && b.angular_velocity.finite());
@@ -133,7 +139,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
         if let Some(wall) = w.body(BodyId(id)) {
             assert!(wall.external && !wall.is_sleeping());
             assert_eq!(wall.velocity, velocity);
-            assert!((wall.position - (position + velocity * t)).length() <= 1e-10);
+            assert!((wall.position - (position + velocity * t)).length() <= rounding(1e-10, 4.0));
         }
     }
     error
@@ -182,7 +188,7 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 17] {
                 } else {
                     0.0
                 };
-            assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + 1e-10);
+            assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + rounding(1e-10, 64.0));
             assert!(
                 (w.elapsed_seconds() - before - dt as Scalar).abs()
                     <= 16.0 * f64::EPSILON * (before + dt as Scalar)

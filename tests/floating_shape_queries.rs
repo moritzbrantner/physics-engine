@@ -7,6 +7,11 @@ use physics_engine::{
     },
 };
 
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 fn world() -> World {
     World::new(Config {
         gravity: V::ZERO,
@@ -40,10 +45,10 @@ fn sphere_cast_hits_a_thin_wall_across_the_full_interval_with_outward_normal() {
     assert_eq!(hits.len(), 1);
     let hit = hits[0];
     assert_eq!(hit.body, BodyId(7));
-    assert!((hit.fraction - 0.4745).abs() < 1e-8);
-    assert!((hit.distance - 9.49).abs() < 1e-7);
-    assert!((hit.normal + V::X).length() < 1e-12);
-    assert!((hit.target_point.0 + 0.01).abs() < 1e-8);
+    assert!((hit.fraction - 0.4745).abs() < rounding(1e-8, 1.0));
+    assert!((hit.distance - 9.49).abs() < rounding(1e-7, 16.0));
+    assert!((hit.normal + V::X).length() < rounding(1e-12, 1.0));
+    assert!((hit.target_point.0 + 0.01).abs() < rounding(1e-8, 16.0));
     assert!(!hit.starts_overlapping);
     assert_eq!(stats.bodies_visited, 1);
     assert_eq!(stats.exact_candidates, 1);
@@ -213,9 +218,9 @@ fn all_supported_query_shapes_have_thin_obstacle_sweeps_and_rotated_capsule_boun
             .unwrap();
         assert_eq!(hits.len(), 1, "{shape:?}");
         assert!(hits[0].fraction > 0.0 && hits[0].fraction < 0.5);
-        assert!((hits[0].normal - V::Z).length() < 1e-8);
-        assert!((hits[0].target_point.2 - 0.01).abs() < 1e-8);
-        assert!(hits[0].separation.abs() < 1e-7);
+        assert!((hits[0].normal - V::Z).length() < rounding(1e-8, 1.0));
+        assert!((hits[0].target_point.2 - 0.01).abs() < rounding(1e-8, 16.0));
+        assert!(hits[0].separation.abs() < rounding(1e-7, 16.0));
     }
     let mut world = world();
     world
@@ -265,9 +270,11 @@ fn ramp_normal_and_support_velocity_come_from_current_physical_geometry() {
         .unwrap();
     assert_eq!(hits.len(), 1);
     let normal = V(1.0, 1.0, 0.0) / (2.0 as Real).sqrt();
-    assert!((hits[0].normal - normal).length() < 1e-8);
-    assert!((hits[0].fraction - (3.0 - 0.2 * (2.0 as Real).sqrt()) / 6.0).abs() < 1e-8);
-    assert!((hits[0].target_point.0 + hits[0].target_point.1).abs() < 1e-8);
+    assert!((hits[0].normal - normal).length() < rounding(1e-8, 1.0));
+    assert!(
+        (hits[0].fraction - (3.0 - 0.2 * (2.0 as Real).sqrt()) / 6.0).abs() < rounding(1e-8, 4.0)
+    );
+    assert!((hits[0].target_point.0 + hits[0].target_point.1).abs() < rounding(1e-8, 16.0));
 
     let mut moving_world = world();
     let mut body = Body::new(BodyId(2), Shape::Sphere(1.0), V::ZERO, 1.0);
@@ -282,9 +289,9 @@ fn ramp_normal_and_support_velocity_come_from_current_physical_geometry() {
         )
         .unwrap();
     assert_eq!(hits.len(), 1);
-    assert!((hits[0].fraction - 0.3125).abs() < 1e-8);
-    assert!((hits[0].normal - V::X).length() < 1e-8);
-    assert!((hits[0].support_velocity - V(3.0, 2.0, 0.0)).length() < 1e-8);
+    assert!((hits[0].fraction - 0.3125).abs() < rounding(1e-8, 4.0));
+    assert!((hits[0].normal - V::X).length() < rounding(1e-8, 1.0));
+    assert!((hits[0].support_velocity - V(3.0, 2.0, 0.0)).length() < rounding(1e-8, 16.0));
 }
 
 #[test]
@@ -361,8 +368,8 @@ fn translated_scale_controls_preserve_hits_and_real_near_misses() {
             )
             .unwrap();
         assert_eq!(hits.len(), 1);
-        assert!((hits[0].fraction - 0.375).abs() < 1e-8);
-        assert!((hits[0].normal + V::X).length() < 1e-8);
+        assert!((hits[0].fraction - 0.375).abs() < rounding(1e-8, 16.0));
+        assert!((hits[0].normal + V::X).length() < rounding(1e-8, 1.0));
         let miss = QueryPose::new(shape, pose.position + V(0.0, 0.0, 1.01 * scale));
         world
             .cast_shape(

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use super::{
     Body, BodyId, CachedPoint, CollisionLayers3d, Config, Convergence, ConvergenceScope,
     PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, Vector, World, contact,
+    narrow_time, substep_length, widen_time,
 };
 
 // Each scalar width has its own magic; the layout is otherwise shared. Physical
@@ -319,8 +320,10 @@ fn validate(
     if !elapsed.is_finite()
         || elapsed < 0.0
         || !last_h.is_finite()
-        || !(0.0..=0.1 / Scalar::from(config.substeps)).contains(&last_h)
-        || (last_h > 0.0 && elapsed < last_h)
+        // The largest substep, as stored: narrowed to `Real` and widened back to f64.
+        || !(0.0..=widen_time(substep_length(0.1, config.substeps))).contains(&last_h)
+        // `last_h` is the narrowed substep; rounding is monotonic, so compare at that width.
+        || (last_h > 0.0 && narrow_time(elapsed) < narrow_time(last_h))
         || bodies.windows(2).any(|p| p[0].id >= p[1].id)
     {
         return Err(CheckpointError::InvalidData);

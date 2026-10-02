@@ -317,7 +317,10 @@ mod tests {
         let fixed = w.bodies[0].clone();
         let mut report = PositionReport::default();
         w.correct_positions(1.0 / 240.0, &mut report).unwrap();
-        assert!((w.bodies[1].position.1 - 0.98).abs() < 1e-12);
+        assert!(
+            (w.bodies[1].position.1 - 0.98).abs()
+                < super::super::rounding_tolerance(1e-12, 16.0, 1.0)
+        );
         assert_eq!(w.bodies[1].velocity, b.velocity);
         assert_eq!(w.bodies[1].angular_velocity, b.angular_velocity);
         assert_eq!(w.bodies[1].orientation, b.orientation);
@@ -354,13 +357,11 @@ mod tests {
             .unwrap();
         let d = w.bodies[1].position - old;
         assert!(d.dot(n) > 0.45);
-        assert!(d.cross(n).length() < 1e-12);
+        assert!(d.cross(n).length() < super::super::rounding_tolerance(1e-12, 16.0, 1.0));
         let m = super::super::contact::current(&w.bodies[0], &w.bodies[1], 0.0).unwrap();
-        assert!(
-            (&m.points)
-                .into_iter()
-                .all(|p| p.separation >= -0.020000001)
-        );
+        // Slop 0.02 plus a rounding-only allowance (1e-9 in the f64 build).
+        let limit = -(0.02 + super::super::rounding_tolerance(1e-9, 16.0, 2.0));
+        assert!((&m.points).into_iter().all(|p| p.separation >= limit));
     }
     #[test]
     fn no_correction_for_sensors_disabled_layers_sleepers_or_external_authority() {
@@ -450,11 +451,15 @@ mod tests {
         let center = before[0].position * before[0].mass + before[1].position * before[1].mass;
         let mut report = PositionReport::default();
         world.correct_positions(1.0 / 240.0, &mut report).unwrap();
-        assert!((world.bodies[0].position.0 + 0.36).abs() < 1e-12);
-        assert!((world.bodies[1].position.0 - 1.62).abs() < 1e-12);
+        let tolerance = super::super::rounding_tolerance(1e-12, 16.0, 2.0);
+        assert!((world.bodies[0].position.0 + 0.36).abs() < tolerance);
+        assert!((world.bodies[1].position.0 - 1.62).abs() < tolerance);
         let after_center =
             world.bodies[0].position * before[0].mass + world.bodies[1].position * before[1].mass;
-        assert!((after_center - center).length() < 1e-12);
+        assert!(
+            (after_center - center).length()
+                < super::super::rounding_tolerance(1e-12, 16.0, center.length())
+        );
         for (after, before) in world.bodies.iter().zip(before) {
             assert_eq!(after.velocity, before.velocity);
             assert_eq!(after.angular_velocity, before.angular_velocity);

@@ -6,6 +6,12 @@ use physics_engine::{
     },
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
+
+/// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
+fn rounding(reference: Real, scale: Real) -> Real {
+    reference.max(16.0 * Real::EPSILON * scale)
+}
+
 const H: Real = 1.0 / 240.0;
 const CONTEXT: CheckpointContext = CheckpointContext {
     build: [0; 32],
@@ -130,7 +136,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
         .max((b.position - p).length())
         .max((b.angular_velocity - spin).length());
     assert!(
-        error <= 1e-10,
+        error <= rounding(1e-10, 16.0 * (n as Real + 1.0)),
         "{case:?} ids={ids:?} n={n} error={error} body={b:?}"
     );
     assert_eq!(b.is_sleeping(), !case.admitted());
@@ -139,7 +145,9 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     let driver = w.body(BodyId(ids[0])).unwrap();
     assert!(driver.external);
     assert_eq!(driver.velocity, case.command());
-    assert!((driver.position - (case.origin() + case.command() * t)).length() <= 1e-10);
+    assert!(
+        (driver.position - (case.origin() + case.command() * t)).length() <= rounding(1e-10, 8.0)
+    );
     let neighbor = w.body(BodyId(30)).unwrap();
     assert!(neighbor.is_sleeping());
     assert_eq!(neighbor.position, V(10.0, 1.0, 0.0));
@@ -199,7 +207,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 20] {
             } else {
                 0.0
             };
-            assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + 1e-10);
+            assert!(energy + 20.0 * (b.position.1 - 1.0) <= work + rounding(1e-10, 64.0));
             assert!((w.elapsed_seconds() - before - dt as Scalar).abs() <= 1e-14);
             first = Some([
                 b.velocity.0,

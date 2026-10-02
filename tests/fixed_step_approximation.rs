@@ -32,7 +32,8 @@ fn forces_and_impulses_accumulate_and_updated_velocity_survives_the_next_tick() 
     w.step(0.1).unwrap();
     let b = w.body(BodyId(1)).unwrap();
     assert_eq!(b.velocity, V(1.5, 2.0, 0.0));
-    assert!((b.position.0 - p.0 - 0.15).abs() < 1e-12);
+    // Rounding-only tolerance: the displacement is exact up to a few ulps.
+    assert!((b.position.0 - p.0 - 0.15).abs() < (1e-12 as Real).max(16.0 * Real::EPSILON));
 }
 #[test]
 fn invalid_values_are_rejected_without_changing_state() {
