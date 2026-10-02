@@ -86,7 +86,7 @@ unsupported for f32. `tests/f32_precision_envelope.rs` holds the adverse control
 (resting crate at x = z = ±16384 and at the origin; a CCD sphere of radius 0.25 at 4000 units/s
 against a 0.5-unit fixed wall) with the same physical thresholds as the f64 build.
 
-**Checkpoints.** Same format 2 / algorithm 7 layout, with `Real` values at native width under a
+**Checkpoints.** Same format/algorithm versions and layout, with `Real` values at native width under a
 distinct magic; the other width is rejected with `CheckpointError::ScalarWidthMismatch`. See
 [floating checkpoints](floating-checkpoints.md#scalar-width-f32-physics).
 

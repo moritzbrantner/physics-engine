@@ -86,6 +86,7 @@ pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, SweepRow, push, reserve};
 use geometry::GeometryCache;
 pub use geometry::GeometryStats;
+mod ccd;
 mod math;
 mod response;
 use crate::{
@@ -881,6 +882,8 @@ impl World {
         let h = substep_length(dt, self.config.substeps);
         for substep in 0..self.config.substeps {
             report.substeps += 1;
+            self.bookkeeping.ccd.clear();
+            self.bookkeeping.ccd_offsets.clear();
             self.responses
                 .resize(self.bodies.len(), PreparedResponse::default());
             for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
@@ -1011,6 +1014,16 @@ impl World {
                 &mut self.bookkeeping.work,
             );
             for (i, j, m) in pairs.drain(..) {
+                if m.swept && ccd::deferred(&self.bodies[i], &self.bodies[j]) {
+                    // Handled at its time of impact by remaining-time advancement below.
+                    let s = &mut self.bookkeeping;
+                    for k in [i, j] {
+                        if ccd::advances(&self.bodies[k]) {
+                            push(&mut s.ccd, k, &mut s.work);
+                        }
+                    }
+                    continue;
+                }
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
                 let n = m.normal;
@@ -1374,6 +1387,19 @@ impl World {
                     true
                 }
             });
+            if !self.bookkeeping.ccd.is_empty()
+                && let Err(error) = self.advance_ccd_bodies::<PREPARED>(h, &mut report)
+            {
+                self.failed_work = Some(FailedStepWork::capture(
+                    &report,
+                    BookkeepingStats {
+                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
+                        ..self.bookkeeping.work
+                    },
+                ));
+                return Err(error);
+            }
+            let scratch = &mut self.bookkeeping;
             scratch.support.propagate(
                 &mut scratch.supported,
                 &scratch.support_edges,
@@ -1406,6 +1432,9 @@ impl World {
                     )
                 };
                 b.position += movement * h;
+                if let Some(offset) = scratch.ccd_offsets.get(i) {
+                    b.position += *offset;
+                }
                 if !b.rotation_locked {
                     b.orientation = b.orientation.integrate(spin, h);
                 }
@@ -1433,6 +1462,7 @@ impl World {
                 }
                 b.cached_bounds = contact::bounds(b);
             }
+            scratch.ccd_offsets.clear();
             self.constraints = constraints;
             if let Err(error) = self.correct_positions(h, &mut report.position) {
                 self.failed_work = Some(FailedStepWork::capture(
@@ -1710,10 +1740,21 @@ impl World {
                 }
             }
         }
+        let bodies = &self.bodies;
         out.retain(|(i, j, m)| {
-            [i, j]
+            let keep = [i, j]
                 .into_iter()
-                .all(|index| m.time <= s.earliest[*index] + 1e-7)
+                .all(|index| m.time <= s.earliest[*index] + 1e-7);
+            // A deferred later sweep is not wake evidence, but its CCD body still advances
+            // through the whole substep and re-sweeps every candidate.
+            if !keep && m.swept && ccd::deferred(&bodies[*i], &bodies[*j]) {
+                for k in [*i, *j] {
+                    if ccd::advances(&bodies[k]) {
+                        push(&mut s.ccd, k, &mut s.work);
+                    }
+                }
+            }
+            keep
         });
         out.sort_unstable_by_key(|(i, j, _)| (self.bodies[*i].id, self.bodies[*j].id));
         Ok(())

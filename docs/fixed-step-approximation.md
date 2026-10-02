@@ -36,9 +36,23 @@ anchors and impulses survive for warm starting on the next substep.
 3. Prepare OBB SAT contacts with clipped face manifolds (at most four points); use one-point
    edge and sphere contacts. Only real contact or an admitted translation sweep wakes an island.
 4. Retain the first/equal-time swept contacts of each CCD projectile, so a nearer wall shields
-   a target even when the target's BodyId sorts first. Re-evaluate new motion next substep.
+   a target even when the target's BodyId sorts first. Only those contacts are wake evidence here.
 5. Apply cached impulses, run at most eight contact iterations, then integrate updated velocity and
-   orientation for the entire substep. No chronological event restart or rational tail exists.
+   orientation for the entire substep. Non-CCD bodies have no chronological event restart.
+   **CCD remaining time** (`src/approximate/ccd.rs`): an awake dynamic CCD body (without
+   linear support) with an admitted swept impact is not limited by a speculative constraint.
+   After the solve it advances to the independent time of impact, receives the pair's
+   normal/friction response with the combined restitution there, then sweeps the remaining
+   substep along the response velocity against all candidates, including bodies the original
+   sweep never reached. A sleeping target first reached by an admitted closing impact is woken
+   (its mass/inertia and skipped forces activated) before its impulse; equal-time impacts apply
+   in BodyId order. Each impact uses one pass of the existing velocity-pass budget
+   (`velocity_iterations`, default eight). When the budget is exhausted the body stays at its
+   last impact for the rest of that substep (no tunnelling, full requested time still elapses)
+   and `GeometryStats::ccd_budget_fallbacks` counts it. Candidate AABB tests, swept probes,
+   and discarded probes count in `pair_tests`, `narrow_tests` and `sweep_queries`. A partner's
+   velocity change applies from the impact time onward. Rotation stays fixed per sweep; there is
+   no angular-CCD claim.
 6. Cache contact anchors/impulses. Quiet connected dynamic islands sleep together. Fixed floors
    are boundaries, not bridges connecting unrelated sleeping islands. Retire impacted projectiles
    locally after applying their impulse. Unrelated near misses preserve sleeping poses.
@@ -50,8 +64,8 @@ zero interpenetration or energy conservation. The reference fixture's crate widt
 ## Explicit limitations
 
 - Sweeps hold orientation fixed within each substep. This is continuous **translation** collision
-  detection, not analytic rotational CCD. Fast spin and secondary ricochets within one substep
-  are not fully resolved chronologically; choose a smaller step where needed.
+  detection, not analytic rotational CCD. Fast spin, and secondary ricochets of non-CCD bodies
+  within one substep, are not resolved chronologically; choose a smaller step where needed.
 - Shared capsule/wedge sweeps return an atomic step error on exhausted or non-finite
   search, never a collision miss. The 128-iteration limit is unchanged.
   See [checked primitive searches](checked-primitive-sweeps.md) for lane scope and work evidence.

@@ -406,7 +406,8 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
     }
     for (offset, value, error) in [
         (8, 3u32, CheckpointError::UnsupportedFormat(3)),
-        (12, 8u32, CheckpointError::UnsupportedAlgorithm(8)),
+        (12, 9u32, CheckpointError::UnsupportedAlgorithm(9)),
+        (12, 7u32, CheckpointError::UnsupportedAlgorithm(7)),
         (12, 6u32, CheckpointError::UnsupportedAlgorithm(6)),
         (12, 5u32, CheckpointError::UnsupportedAlgorithm(5)),
         (12, 4u32, CheckpointError::UnsupportedAlgorithm(4)),
@@ -616,7 +617,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
     not(feature = "f32-physics")
 ))]
 #[test]
-fn format_two_algorithm_seven_empty_world_wire_fixture_is_stable() {
+fn format_two_algorithm_eight_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         ..Config::default()
@@ -625,13 +626,13 @@ fn format_two_algorithm_seven_empty_world_wire_fixture_is_stable() {
     let encoded = bytes(&world);
     assert_eq!(
         format!("{:x}", Sha256::digest(&encoded)),
-        "c924619923ef7c9791f45ade050711ea0854d5dc6a065abc47c22fafd4e2cc81"
+        "276859507638104c2699891975fafb10b116c4e87c0f5caa9017c6bd2507cf49"
     );
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "f32-physics"))]
 #[test]
-fn format_two_algorithm_seven_f32_empty_world_wire_fixture_is_stable() {
+fn format_two_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         ..Config::default()
@@ -641,7 +642,7 @@ fn format_two_algorithm_seven_f32_empty_world_wire_fixture_is_stable() {
     assert_eq!(&encoded[..8], b"PEFLT32\0");
     assert_eq!(
         format!("{:x}", Sha256::digest(&encoded)),
-        "21671bd4b691fa90479ac88f5124cea3e4bb943954af02e25c21f7e05069c6a1"
+        "0dc81c7dda845d0ed3ab7d4214251b673128e9e04e5f06625b14e11c0938ec37"
     );
 }
 

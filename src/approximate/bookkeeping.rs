@@ -286,6 +286,11 @@ pub(super) struct Scratch {
     pub supported: Vec<bool>,
     pub support_edges: Vec<(usize, usize)>,
     pub earliest: Vec<Real>,
+    /// CCD bodies with an admitted swept impact this substep (remaining-time advancement).
+    pub ccd: Vec<usize>,
+    /// Per-body position correction from remaining-time advancement, added at integration.
+    pub ccd_offsets: Vec<Vector>,
+    pub ccd_excluded: Vec<usize>,
 }
 impl Scratch {
     pub fn layout_changed(&mut self) {
@@ -313,6 +318,9 @@ impl Scratch {
             + bytes(&self.supported)
             + bytes(&self.support_edges)
             + bytes(&self.earliest)
+            + bytes(&self.ccd)
+            + bytes(&self.ccd_offsets)
+            + bytes(&self.ccd_excluded)
     }
 }
 

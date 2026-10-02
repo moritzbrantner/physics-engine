@@ -43,6 +43,9 @@ pub struct GeometryStats {
     pub primitive_sweep_iterations: u64,
     /// Failed shared-kernel searches, included in discarded work on a returned step error.
     pub primitive_sweep_failures: u64,
+    /// CCD substeps whose remaining-time impacts exhausted the velocity-pass budget; the body
+    /// then stays at its last impact for the rest of that substep.
+    pub ccd_budget_fallbacks: u64,
     /// Entered closest segment/point, segment/segment and segment/box problems.
     /// Includes discarded search work; no scalar instruction-count claim is made.
     pub primitive_segment_distance_evaluations: u64,

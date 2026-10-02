@@ -114,8 +114,18 @@ pub fn fixed_target_restitution_and_speculative_contact() {
             let fixed = w.body(BodyId(fixed_id)).unwrap().clone();
             step(&mut w);
             let moving = w.body(BodyId(dynamic_id)).unwrap();
-            // Separated speculative contacts permit arrival, never premature restitution.
-            close(moving.velocity.0, if gap == 0.0 { -2.0 } else { gap / DT });
+            // A separated current (within-slop) speculative contact permits arrival, never
+            // premature restitution. A swept CCD impact beyond the slop responds at its time of
+            // impact with the combined restitution and travels the remaining substep.
+            let swept = gap > Config::default().contact_slop;
+            close(
+                moving.velocity.0,
+                if gap == 0.0 || swept { -2.0 } else { gap / DT },
+            );
+            if swept {
+                let impact = gap / 4.0;
+                close(moving.position.0, -1.0 + gap - 2.0 * (DT - impact));
+            }
             assert_eq!(w.body(BodyId(fixed_id)), Some(&fixed));
         }
     }
