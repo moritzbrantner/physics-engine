@@ -63,7 +63,7 @@ The first five lines are the `fast` tier in `.coding-tooling.json`; `coding-tool
 
 These rules govern how work is sliced and when expensive checks run. They never relax the authority, numerical, determinism or CCD rules above.
 
-- **One task = one branch = one PR.** A task is one `agent-task` issue, usually a bounded slice of a roadmap issue (#191 and its children). Deliver its complete declared scope on one branch, including tests, ratchet/evidence entries and docs it requires, in small commits. Do not split a task into new issues or follow-up PRs on your own; if it cannot land as one PR, stop and propose the split on the issue.
+- **One task = one branch = one PR.** A task is one GitHub issue, usually a bounded slice of a roadmap issue (#191 and its children). Deliver its complete declared scope on one branch, including tests, ratchet/evidence entries and docs it requires, in small commits. Do not split a task into new issues or follow-up PRs on your own; if it cannot land as one PR, stop and propose the split on the issue.
 - **Stay inside the task.** Do not start tooling, CI, pin-refresh or unrelated cleanup unless the task cannot be completed without it. Note unrelated findings in one line of the PR description; do not open issues for them.
 - **No new ratchets unless the task asks for one.** Do not add work ceilings, evidence collectors or gates on your own initiative. Existing ratchets stay; when a task legitimately improves work counts, record the entry in `.performance/ratchet/history/` per `docs/performance-ratchet.md` in the same PR. Never relax a ceiling or a physical threshold to make a check green.
 - **One version bump per task.** Settle checkpoint format/algorithm changes (`docs/floating-checkpoints.md`) and public API changes (`docs/world-api-contract.md`) before implementing; a task bumps each checkpoint version at most once.
@@ -71,8 +71,6 @@ These rules govern how work is sliced and when expensive checks run. They never 
 - **Codex reviews the PR.** Codex reviews automatically when a PR is opened or marked ready, so open it only once the branch is complete. Address or explicitly answer every Codex finding before merge; after substantial fixes, comment `@codex review`.
 - **Decide and continue.** When a task leaves a design choice open, pick the simplest option consistent with this file, record it in the PR description (or a doc under `docs/` when consequential) and keep going.
 - **Short PR descriptions.** At most about 15 lines: what changed, checkpoint/API compatibility changes, one line naming the checks that ran, and anything not verified.
-
-Tasks arrive as GitHub issues in the format, labels and pickup rules of `docs/AGENT_TASKS.md`; implement only `spec:ready` issues labeled for you. Claude Opus runs the loop with the `/agent-loop` skill (`.claude/skills/agent-loop/`).
 
 ## Done means
 
