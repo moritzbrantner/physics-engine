@@ -11,7 +11,7 @@ geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev
 sha2 = { version = "0.10.9", default-features = false }
 
 [dev-dependencies]
-serde_json = "1.0.151"
+serde_json = "=1.0.151"
 
 [features]
 default = ["performance-counters"]
