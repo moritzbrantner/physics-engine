@@ -54,6 +54,13 @@ fn sparse_snapshot_queries_preserve_order_across_unrelated_world_scales() {
         world.set_position(BodyId(1), Vec3i::new(14, 0, 0)).unwrap();
         assert_eq!(
             world
+                .overlap_query(Aabb::new(Vec3i::new(14, 0, 0), Vec3i::ZERO))
+                .unwrap(),
+            vec![BodyId(1)],
+            "moved body must be discoverable at unrelated population = {unrelated}"
+        );
+        assert_eq!(
+            world
                 .overlap_query(Aabb::new(Vec3i::new(10, 0, 0), Vec3i::ZERO))
                 .unwrap(),
             Vec::<BodyId>::new()
