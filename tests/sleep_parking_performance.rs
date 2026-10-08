@@ -39,20 +39,29 @@ fn parked_world(body_count: u64) -> PhysicsWorld3dKernel {
 
 #[test]
 fn parked_world_reports_zero_collision_tail_and_tree_work() {
-    let body_count = 64_u64;
-    let mut world = parked_world(body_count);
-    let before = world.boxes().cloned().collect::<Vec<_>>();
-
-    let report = world.step(1, 60).expect("quiescent parked step");
-
-    assert_eq!(
-        report.stats,
-        RotatingWorldStepStats3d {
+    // Hold active input at zero while scaling unrelated parked population.
+    // Compare *all* existing per-phase counters, rather than selected event totals.
+    for body_count in [16_u64, 64, 256] {
+        let mut world = parked_world(body_count);
+        let before = world.boxes().cloned().collect::<Vec<_>>();
+        let expected_work = RotatingWorldStepStats3d {
             body_count: usize::try_from(body_count).expect("small fixture"),
             ..RotatingWorldStepStats3d::default()
+        };
+
+        for _ in 0..2 {
+            let report = world.step(1, 60).expect("quiescent parked step");
+            assert_eq!(
+                report.stats, expected_work,
+                "parked population of {body_count} must not create per-phase step work"
+            );
+            assert!(
+                report.changed_body_ids.is_empty(),
+                "settled bodies must remain unchanged at {body_count}"
+            );
         }
-    );
-    assert_eq!(world.boxes().cloned().collect::<Vec<_>>(), before);
+        assert_eq!(world.boxes().cloned().collect::<Vec<_>>(), before);
+    }
 }
 
 #[test]

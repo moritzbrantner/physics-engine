@@ -7,6 +7,73 @@ fn fixed(id: u64, center: Vec3i, half_extents: Vec3i) -> RigidBody {
 }
 
 #[test]
+fn sparse_snapshot_queries_preserve_order_across_unrelated_world_scales() {
+    // Query-result correctness is a prerequisite for replacing the current O(n)
+    // scans with indexed candidates. Work counts still need instrumentation.
+    for unrelated in [0_u64, 32, 128, 256] {
+        let mut world = World::default();
+        world
+            .add_body(fixed(1, Vec3i::new(10, 0, 0), Vec3i::new(1, 1, 1)))
+            .unwrap();
+        world
+            .add_body(fixed(2, Vec3i::new(20, 0, 0), Vec3i::new(1, 1, 1)))
+            .unwrap();
+
+        for offset in 0..unrelated {
+            let x = 10_000 + i32::try_from(offset).unwrap() * 16;
+            world
+                .add_body(fixed(
+                    100 + offset,
+                    Vec3i::new(x, 0, 0),
+                    Vec3i::new(1, 1, 1),
+                ))
+                .unwrap();
+        }
+
+        let ray = Ray::new(Vec3i::ZERO, Vec3i::new(10, 0, 0));
+        let hits = world.ray_cast(ray, 4).unwrap();
+        assert_eq!(
+            hits.iter().map(|hit| hit.body).collect::<Vec<_>>(),
+            vec![BodyId(1), BodyId(2)],
+            "unrelated population = {unrelated}"
+        );
+        assert_eq!(world.ray_cast_first(ray, 4).unwrap(), hits.first().copied());
+        assert_eq!(
+            world
+                .cast_aabb(Aabb::new(Vec3i::ZERO, Vec3i::ZERO), ray.direction, 4)
+                .unwrap(),
+            hits
+        );
+        assert_eq!(
+            world
+                .overlap_query(Aabb::new(Vec3i::new(10, 0, 0), Vec3i::ZERO))
+                .unwrap(),
+            vec![BodyId(1)]
+        );
+
+        world.set_position(BodyId(1), Vec3i::new(14, 0, 0)).unwrap();
+        assert_eq!(
+            world
+                .overlap_query(Aabb::new(Vec3i::new(14, 0, 0), Vec3i::ZERO))
+                .unwrap(),
+            vec![BodyId(1)],
+            "moved body must be discoverable at unrelated population = {unrelated}"
+        );
+        assert_eq!(
+            world
+                .overlap_query(Aabb::new(Vec3i::new(10, 0, 0), Vec3i::ZERO))
+                .unwrap(),
+            Vec::<BodyId>::new()
+        );
+        assert_eq!(world.ray_cast(ray, 4).unwrap().len(), 2);
+        assert_eq!(
+            world.ray_cast_first(ray, 4).unwrap().unwrap().body,
+            BodyId(1)
+        );
+    }
+}
+
+#[test]
 fn overlap_query_returns_stable_body_id_order() {
     let mut world = World::default();
     world
