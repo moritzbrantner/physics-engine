@@ -51,9 +51,7 @@ fn sparse_snapshot_queries_preserve_order_across_unrelated_world_scales() {
             vec![BodyId(1)]
         );
 
-        world
-            .set_position(BodyId(1), Vec3i::new(14, 0, 0))
-            .unwrap();
+        world.set_position(BodyId(1), Vec3i::new(14, 0, 0)).unwrap();
         assert_eq!(
             world
                 .overlap_query(Aabb::new(Vec3i::new(10, 0, 0), Vec3i::ZERO))
@@ -61,7 +59,10 @@ fn sparse_snapshot_queries_preserve_order_across_unrelated_world_scales() {
             Vec::<BodyId>::new()
         );
         assert_eq!(world.ray_cast(ray, 4).unwrap().len(), 2);
-        assert_eq!(world.ray_cast_first(ray, 4).unwrap().unwrap().body, BodyId(1));
+        assert_eq!(
+            world.ray_cast_first(ray, 4).unwrap().unwrap().body,
+            BodyId(1)
+        );
     }
 }
 
