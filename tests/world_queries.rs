@@ -6,7 +6,6 @@ fn fixed(id: u64, center: Vec3i, half_extents: Vec3i) -> RigidBody {
     RigidBody::fixed(BodyId(id), center, half_extents)
 }
 
-
 #[test]
 fn sparse_snapshot_queries_preserve_order_across_unrelated_world_scales() {
     // Query-result correctness is a prerequisite for replacing the current O(n)
