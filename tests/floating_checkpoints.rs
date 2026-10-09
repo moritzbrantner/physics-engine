@@ -625,7 +625,10 @@ fn format_two_algorithm_eight_empty_world_wire_fixture_is_stable() {
     .unwrap();
     let encoded = bytes(&world);
     assert_eq!(
-        format!("{:x}", Sha256::digest(&encoded)),
+        Sha256::digest(&encoded)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
         "276859507638104c2699891975fafb10b116c4e87c0f5caa9017c6bd2507cf49"
     );
 }
@@ -641,7 +644,10 @@ fn format_two_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
     let encoded = bytes(&world);
     assert_eq!(&encoded[..8], b"PEFLT32\0");
     assert_eq!(
-        format!("{:x}", Sha256::digest(&encoded)),
+        Sha256::digest(&encoded)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>(),
         "0dc81c7dda845d0ed3ab7d4214251b673128e9e04e5f06625b14e11c0938ec37"
     );
 }
