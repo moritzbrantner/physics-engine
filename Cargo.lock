@@ -48,7 +48,7 @@ dependencies = [
 [[package]]
 name = "geometry-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=7049e423ef00f5f65e7276281c0845d431ed6300#7049e423ef00f5f65e7276281c0845d431ed6300"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=b3e2bf8f84958dc84598422beb5e00ca6841b803#b3e2bf8f84958dc84598422beb5e00ca6841b803"
 dependencies = [
  "spatial-kernels",
 ]
@@ -163,7 +163,7 @@ dependencies = [
 [[package]]
 name = "spatial-kernels"
 version = "0.1.0"
-source = "git+https://github.com/moritzbrantner/rust-kernels?rev=7049e423ef00f5f65e7276281c0845d431ed6300#7049e423ef00f5f65e7276281c0845d431ed6300"
+source = "git+https://github.com/moritzbrantner/rust-kernels?rev=b3e2bf8f84958dc84598422beb5e00ca6841b803#b3e2bf8f84958dc84598422beb5e00ca6841b803"
 
 [[package]]
 name = "syn"
