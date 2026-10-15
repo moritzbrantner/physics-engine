@@ -4,7 +4,7 @@
 
 This repository owns reusable physics semantics. Domain-neutral geometry and algorithm kernels belong in `rust-kernels`; Physics Engine should consume those kernels rather than duplicate them, while retaining authority over body/world state, contact persistence, CCD admission, wake/sleep policy, and response. Keep ECS, rendering, game-loop, scene, editor and UI concepts outside the engine.
 
-For approved technical policies TECH-001 (Rapier reference), TECH-002 (external-first for new consumers), and TECH-003 (versioned provider conversion at restart), see [technical decisions](docs/technical-decisions.md). These do not authorize unverified changes to an existing consumer's production backend, concurrent interacting physics authorities, or treating one solver's checkpoint as another's.
+For approved technical policies TECH-001 (Rapier reference), TECH-002 (external-first for new consumers), TECH-003 (versioned provider conversion at restart), and TECH-004 (build/target-specific checkpoints), see [technical decisions](docs/technical-decisions.md). These do not authorize unverified production backend/target changes, concurrent interacting physics authorities, or restoring foreign/cross-target physics checkpoints. Cross-target migration reconstructs physical state through a consumer-owned, versioned game-state restart.
 
 ## Numerical policy
 

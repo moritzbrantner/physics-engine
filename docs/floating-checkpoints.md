@@ -2,6 +2,10 @@
 
 `approximate::World` provides an explicit physical checkpoint product. On the same supported build/target, destroying the original world and restoring the checkpoint preserves exact future physical state and semantic contact/wake/retirement reports for the same commands and timesteps. This does not promise universal compiler/target bit identity, another solver's event stream, or stronger collision quality/CCD than the selected floating solver. The approved [TECH-003](technical-decisions.md#tech-003--versioned-physics-provider-conversion-at-a-controlled-restart) instead requires **consumer-owned conversion at a versioned restart boundary**, constructing a fresh physics world from validated game/domain state and then establishing a compatible first-party checkpoint. `Checkpoint::restore()` does not accept Rapier checkpoints or guarantee identical cross-solver trajectories.
 
+## Target portability policy
+
+Approved [TECH-004](technical-decisions.md#tech-004--keep-physical-checkpoints-build--and-target-specific) retains this checkpoint as **build/target-specific**. Native and WASM use their own tested continuation paths, not interchangeable checkpoint payloads. An application switching execution target must reconstruct physics from validated, versioned game/domain state at a controlled restart (TECH-003) and create a new target-compatible checkpoint. Cross-target physical replay identity is not promised; incompatible restores continue to fail closed. This clarification changes no encoding, API or version.
+
 ## Interface and compatibility
 
 ```rust
