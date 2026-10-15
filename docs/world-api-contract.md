@@ -26,6 +26,8 @@ replacement for an older one.
 
 A dependency update does not move a consumer between these worlds.
 
+For a **new** consumer requiring a capability that these public worlds cannot yet support, approved [TECH-002](technical-decisions.md#tech-002--prefer-an-established-external-physics-provider-when-a-new-consumer-needs-unsupported-first-party-capabilities) permits choosing an established external physics provider such as Rapier. That provider is declared in the consumer; it is not a hidden fallback within a physics-engine world or an automatic migration of an existing game. Any later provider switch requires the consumer's explicit physical, lifecycle and recovery acceptance.
+
 `approximate::World` state uses `approximate::Real`, `f64` by default. Game consumers can build it with f32 physical state by enabling the whole-build Cargo feature `f32-physics` (the production game target; f64 stays the reference). Time arguments and elapsed time stay `f64`; checkpoints are width-specific and the other width is rejected with `CheckpointError::ScalarWidthMismatch`. Supported f32 inputs are limited to the precision envelope in [numerics](numerics.md#f32-floating-physics-build) (|position| ≤ 16384, speed ≤ 4000 units/s, shapes ≥ 0.25 units). The default build's signatures are unchanged except the additive `Real`/`REAL_BITS` and the new error variant.
 
 `PhysicsWorld3dKernel` exposes the rotating parked-sleep kernel without the public wrapper's retained
@@ -254,8 +256,10 @@ Missing behavior stays visible and owned upstream:
 | Portable physical failure replay/debug capture for consumer failures | #203 |
 
 Compatibility-only omissions such as collision layers on the old translational `World` are not invitations
-to extend it indefinitely. If a migration requires a capability, add it to the destination world under the
-owning issue and prove it with that consumer; do not build a game-local fallback.
+to extend it indefinitely. If an **existing physics-engine consumer** is migrating to another engine
+world and needs a capability, add it to the destination world under the owning issue and prove it with
+that consumer; do not build a game-local fallback. The separate external-first choice for **new consumers**
+is governed by [TECH-002](technical-decisions.md#tech-002--prefer-an-established-external-physics-provider-when-a-new-consumer-needs-unsupported-first-party-capabilities).
 
 ## Compiling examples
 
