@@ -1,7 +1,7 @@
 # Soft-contact and relaxation experiment (#158)
 
 Status: opt-in research comparison, compiled only with `--features experimental-soft-contact`.
-Approved [TECH-005](technical-decisions.md#tech-005--one-production-correction-policy-initially-multiple-validated-per-world-policies-later) keeps one production correction policy initially while selecting multiple validated per-world policies as the long-term direction. This research mode is **not** yet a second supported production policy; adoption requires independent contact-quality, runtime and checkpoint/replay evidence for a real consumer.
+Approved [TECH-005](technical-decisions.md#tech-005--one-production-correction-policy-initially-multiple-validated-per-world-policies-later) keeps one production correction policy initially while selecting multiple validated per-world policies as the long-term direction. [TECH-006](technical-decisions.md#tech-006--select-contact-correction-policy-at-world-creation) requires each future production world to select its policy on creation, never during a running step or live world lifetime. This research mode is **not** yet a second supported production policy; adoption requires independent contact-quality, runtime and checkpoint/replay evidence for a real consumer.
 Normal CPU/WASM builds do not contain the optional Config/Constraint/World/Report fields or
 correction exports; even enabled builds retain `soft_contact: None` by default.
 The reconciled primary solve uses the existing island/whole-world/fixed-pass scheduler with a

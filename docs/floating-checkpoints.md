@@ -6,6 +6,10 @@
 
 Approved [TECH-004](technical-decisions.md#tech-004--keep-physical-checkpoints-build--and-target-specific) retains this checkpoint as **build/target-specific**. Native and WASM use their own tested continuation paths, not interchangeable checkpoint payloads. An application switching execution target must reconstruct physics from validated, versioned game/domain state at a controlled restart (TECH-003) and create a new target-compatible checkpoint. Cross-target physical replay identity is not promised; incompatible restores continue to fail closed. This clarification changes no encoding, API or version.
 
+## Future correction-policy compatibility
+
+Approved [TECH-006](technical-decisions.md#tech-006--select-contact-correction-policy-at-world-creation) fixes a future supported production correction algorithm for the lifetime of each world. A future multi-policy checkpoint must carry a compatible per-world policy/algorithm identity and reject mismatches: do not restore incompatible warm-start or constraint history across policies. Changing policy requires a controlled world reconstruction at a completed tick boundary. This is a **future contract only**; it does not change the current default, experimental soft-contact feature, checkpoint encoding, or format/algorithm version.
+
 ## Interface and compatibility
 
 ```rust
