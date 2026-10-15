@@ -4,6 +4,8 @@
 
 This repository owns reusable physics semantics. Domain-neutral geometry and algorithm kernels belong in `rust-kernels`; Physics Engine should consume those kernels rather than duplicate them, while retaining authority over body/world state, contact persistence, CCD admission, wake/sleep policy, and response. Keep ECS, rendering, game-loop, scene, editor and UI concepts outside the engine.
 
+For the established reuse-first Rapier reference policy, see [technical decisions](docs/technical-decisions.md). This record does not authorize changing any consumer's production physics provider.
+
 ## Numerical policy
 
 - Floating point is the default, not an exception. Use `numeric::Scalar` (`f64`) for new CPU physics math/state; use `f32` when a documented precision budget permits it.

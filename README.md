@@ -29,7 +29,8 @@ remains under issue #193 and [the tower runtime contract](docs/tower-stability.m
 
 For consumer API selection, current capability status, and integer-tick to persistent-f64 conversion,
 read [the supported world APIs and migration contract](docs/world-api-contract.md). A dependency update
-does not itself migrate a consumer to another world surface. See also the measured
+does not itself migrate a consumer to another world surface.
+For the independent Rapier reference and migration-evidence policy, see [technical decisions](docs/technical-decisions.md). See also the measured
 [translational maintenance improvements](docs/translational-maintenance.md) for the existing `World` API.
 
 ## Fixed-step comparison
