@@ -114,13 +114,17 @@ adapter is superseded. Further solver migration remains independent of retention
 Changing its solver remains a separate task under `moritzbrantner/ecs-lab#134`.
 ECS identity, storage and synchronization remain consumer-owned.
 
-### Medieval (query only)
+### Medieval (legacy geometry-only caller, with approved removal)
 
-`moritzbrantner/medieval/crates/medieval-core/src/tactical.rs` imports `Collider`, `ColliderShape`,
-`Vec3i` and `collider_contact` for rebased melee/pursuit proximity. It does not instantiate a world or
-step rigid bodies. Its unsigned tactical coordinates are locally rebased before checked integer
-conversion. `moritzbrantner/medieval#76` needs an efficient query boundary; adopting a rigid solver would
-change its tactical authority and is not part of that migration.
+`moritzbrantner/medieval/crates/medieval-core/src/tactical.rs` currently imports `Collider`,
+`ColliderShape`, `Vec3i` and `collider_contact` **only** to check melee/pursuit distance thresholds.
+It does not instantiate a physics world or advance rigid bodies. The 2026-10-16 owner decision
+[TECH-013](technical-decisions.md#tech-013--medieval-owns-tactical-proximity-geometry-without-a-physics-simulation-dependency)
+selects **removing that dependency**, replacing the adapter with exact, overflow-safe tactical integer
+proximity and using generic `rust-kernels` algorithms only when needed. [Medieval #76](https://github.com/moritzbrantner/medieval/issues/76)
+owns the verified implementation and `Cargo.lock` cleanup. This remains a **current legacy call until
+that implementation merges**, not a supported reason to build a retained read-only physics scene.
+A future physical simulation feature would require a separate consumer decision.
 
 ## Integer-tick to floating-state conversion
 
