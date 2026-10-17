@@ -27,6 +27,7 @@ const requiredFunctions = [
   "sandbox_reset_with_options",
   "sandbox_reset_with_baking_options",
   "sandbox_reset_tower_with_baking_options",
+  "sandbox_reset_terrain_with_baking_options",
   "sandbox_body_count",
   "sandbox_numeric_backend",
   "sandbox_body_sleeping",
@@ -83,6 +84,11 @@ if (
   exports.sandbox_fixed_geometry_representation_version() !== 1
 ) {
   throw new Error("prepare-at-load fixed geometry evidence is invalid");
+}
+if (exports.sandbox_reset_terrain_with_baking_options(1, 1, 1) !== 0 ||
+    exports.sandbox_body_count() !== 151 ||
+    exports.sandbox_fixed_geometry_prepared_count() !== 126) {
+  throw new Error("uneven terrain scenario failed to initialize");
 }
 
 const explicitRules = (1 << 29) | ((1 << 11) - 2);

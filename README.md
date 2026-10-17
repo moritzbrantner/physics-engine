@@ -99,6 +99,12 @@ let report = world.step(1)?;
 
 ## Interactive acceptance sandbox
 
+The Pages catalog also includes an [uneven terrain fixture](site/scenarios/terrain/index.html)
+with 121 stepped fixed cells and 24 movable boxes, barrels, balls and pipe sections. The rounded
+props are rendered from oriented-box physics proxies. Use the runtime/prepared fixed-geometry
+control and the [terrain benchmark](docs/sandbox-performance.md#uneven-terrain-fixture) to compare
+the larger workload; the live debug line reports how many bodies and triangles the browser draws.
+
 GitHub Pages now builds a small first-person acceptance world through `demo-wasm`. The adapter depends on this crate and exposes only the state needed by the browser consumer; it does not reimplement collision detection or response in JavaScript.
 
 The fixture currently exercises:

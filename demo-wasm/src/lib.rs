@@ -98,6 +98,89 @@ impl Sandbox {
         Self::with_crate_layout(linear_push, upright_crates, &crate_positions)
     }
 
+    fn with_terrain_options(
+        linear_push: bool,
+        upright_crates: bool,
+    ) -> Result<Self, RotatingWorldError3d> {
+        let mut sandbox = Self::with_options(linear_push, upright_crates)?;
+        // Keep the arena floor and walls, and replace its showcase obstacles and crates.
+        for id in [15_u64, 20, 21, 22, 23, 24, 100, 101, 102, 103, 104, 105] {
+            sandbox.world.remove_box(BodyId(id));
+        }
+        sandbox.world.remove_box(PLAYER_ID);
+        sandbox
+            .world
+            .add_box(sandbox_player(Vec3i::new(0, 38, 440), linear_push))?;
+
+        for z in -5..=5 {
+            for x in -5..=5 {
+                let top = terrain_height(x, z);
+                let index = u64::try_from((z + 5) * 11 + x + 5).expect("terrain index fits");
+                let half_height = (top + 17) / 2;
+                sandbox.world.add_box(rotating_box(RigidBody::fixed(
+                    BodyId(200 + index),
+                    Vec3i::new(x * 70, top - half_height, z * 70),
+                    Vec3i::new(35, half_height, 35),
+                )))?;
+            }
+        }
+
+        // Each prop owns a real dynamic OBB. Rounded meshes in the browser are visual proxies.
+        let placements = [
+            (-2, -2),
+            (0, -2),
+            (2, -2),
+            (-3, 0),
+            (-1, 0),
+            (2, 1),
+            (3, 2),
+            (-2, 2),
+            (0, 3),
+            (1, -1),
+            (-3, 3),
+            (3, -3),
+            (-5, -4),
+            (-4, 1),
+            (-3, -4),
+            (-1, 4),
+            (1, -5),
+            (2, 3),
+            (4, -2),
+            (5, 1),
+            (-5, 4),
+            (-2, 5),
+            (4, 5),
+            (5, -5),
+        ];
+        for (index, (x, z)) in placements.into_iter().enumerate() {
+            let (base, half, mass) = match index % 4 {
+                0 => (400, Vec3i::new(14, 14, 14), 2), // box
+                1 => (420, Vec3i::new(11, 17, 11), 2), // barrel proxy
+                2 => (440, Vec3i::new(11, 11, 11), 1), // ball proxy
+                _ => (460, Vec3i::new(23, 8, 8), 2),   // pipe proxy
+            };
+            let id = BodyId(base + u64::try_from(index / 4).expect("prop index fits"));
+            let body = rotating_box(
+                RigidBody::dynamic(
+                    id,
+                    Vec3i::new(x * 70, terrain_height(x, z) + half.y + 2, z * 70),
+                    Vec3i::ZERO,
+                    half,
+                )
+                .with_mass(mass)
+                .with_material(
+                    Material::new(CRATE_RESTITUTION_MILLI).with_friction(CRATE_FRICTION_MILLI),
+                ),
+            );
+            sandbox.world.add_box(if upright_crates {
+                body.with_rotation_locked()
+            } else {
+                body
+            })?;
+        }
+        Ok(sandbox)
+    }
+
     fn with_crate_layout(
         linear_push: bool,
         upright_crates: bool,
@@ -134,21 +217,7 @@ impl Sandbox {
             )))?;
         }
 
-        let player = rotating_box(
-            RigidBody::dynamic(
-                PLAYER_ID,
-                Vec3i::new(0, 38, 320),
-                Vec3i::ZERO,
-                Vec3i::new(12, 20, 12),
-            )
-            .with_mass(4),
-        )
-        .with_rotation_locked();
-        world.add_box(if linear_push {
-            player.with_linear_push(Vec3i::new(0, -1, 0))
-        } else {
-            player
-        })?;
+        world.add_box(sandbox_player(Vec3i::new(0, 38, 320), linear_push))?;
 
         for (offset, position) in crate_positions.iter().copied().enumerate() {
             let crate_body = rotating_box(
@@ -557,6 +626,18 @@ fn rotating_box(body: RigidBody) -> RigidBox3d {
     .expect("sandbox rotating body must be valid")
 }
 
+fn sandbox_player(position: Vec3i, linear_push: bool) -> RigidBox3d {
+    let player = rotating_box(
+        RigidBody::dynamic(PLAYER_ID, position, Vec3i::ZERO, Vec3i::new(12, 20, 12)).with_mass(4),
+    )
+    .with_rotation_locked();
+    if linear_push {
+        player.with_linear_push(Vec3i::new(0, -1, 0))
+    } else {
+        player
+    }
+}
+
 fn integer_sqrt(value: u64) -> u32 {
     let mut low = 0_u64;
     let mut high = value.saturating_add(1);
@@ -598,11 +679,49 @@ fn role_for(id: BodyId) -> i32 {
         1
     } else if id.0 >= PROJECTILE_ID_START {
         3
+    } else if (200..321).contains(&id.0) {
+        0
+    } else if (420..426).contains(&id.0) {
+        6
+    } else if (440..446).contains(&id.0) {
+        7
+    } else if (460..466).contains(&id.0) {
+        8
     } else if id.0 >= 100 {
         2
     } else {
         0
     }
+}
+
+// Hill centres are separated by at least two 70-unit cells, as in a small
+// Poisson-disk sample. Integer evaluation keeps scene generation repeatable.
+fn terrain_height(x: i32, z: i32) -> i32 {
+    // The central level corridor lets the player traverse the stepped hills without
+    // requiring an engine-owned stair-climbing character controller.
+    if x == 0 {
+        return 0;
+    }
+    const CENTRES: [(i32, i32); 12] = [
+        (-5, -4),
+        (-5, 0),
+        (-4, 4),
+        (-2, -2),
+        (-1, 2),
+        (0, -5),
+        (1, -1),
+        (2, 4),
+        (3, -4),
+        (4, 0),
+        (5, 5),
+        (-1, 5),
+    ];
+    let hill = CENTRES
+        .into_iter()
+        .map(|(cx, cz)| (20 - 3 * ((x - cx).pow(2) + (z - cz).pow(2))).max(0))
+        .max()
+        .unwrap_or(0);
+    4 + hill
 }
 
 fn saturating_u32(value: u64) -> u32 {
@@ -1021,11 +1140,29 @@ mod tests {
         RotatingWorldError3d, Vec3i,
     };
 
-    use super::{PLAYER_ID, ProjectileType, Sandbox, rotating_box, world_error_detail};
+    use super::{
+        PLAYER_ID, ProjectileType, Sandbox, role_for, rotating_box, terrain_height,
+        world_error_detail,
+    };
 
     fn settle_player(sandbox: &mut Sandbox) {
         for _ in 0..240 {
             assert_eq!(sandbox.step(0, 0, false), 0);
+        }
+    }
+
+    #[test]
+    fn terrain_fixture_has_repeatable_hills_and_mixed_dynamic_props() {
+        let mut sandbox = Sandbox::with_terrain_options(true, true).expect("terrain fixture");
+        assert_eq!(sandbox.body_count(), 151);
+        assert!(terrain_height(-5, -4) > terrain_height(-5, -5));
+        assert_eq!(role_for(BodyId(200)), 0);
+        for (id, role) in [(400, 2), (420, 6), (440, 7), (460, 8)] {
+            assert_eq!(role_for(BodyId(id)), role);
+            assert!(sandbox.world.box_by_id(BodyId(id)).is_some());
+        }
+        for _ in 0..30 {
+            assert_eq!(sandbox.step(0, 0, false), 0, "terrain step must complete");
         }
     }
 

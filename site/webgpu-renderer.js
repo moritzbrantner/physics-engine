@@ -95,10 +95,22 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     base = vec3f(0.42, 0.25, 0.09);
     detail = vec3f(0.88, 0.58, 0.17);
     pattern = box_border(fract(input.uv));
-  } else {
+  } else if input.material < 4.5 {
     base = vec3f(0.86, 0.19, 0.17);
     detail = vec3f(1.0, 0.52, 0.34);
     pattern = 0.28;
+  } else if input.material < 5.5 {
+    base = vec3f(0.42, 0.22, 0.12);
+    detail = vec3f(0.72, 0.36, 0.17);
+    pattern = grid_line(input.uv * vec2f(1.0, 4.0)) * 0.25;
+  } else if input.material < 6.5 {
+    base = vec3f(0.18, 0.42, 0.66);
+    detail = vec3f(0.33, 0.65, 0.82);
+    pattern = 0.3;
+  } else {
+    base = vec3f(0.30, 0.38, 0.43);
+    detail = vec3f(0.68, 0.75, 0.78);
+    pattern = 0.35;
   }
 
   let light_direction = normalize(vec3f(-0.35, 0.82, 0.26));

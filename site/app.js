@@ -6,6 +6,7 @@ import {
 } from "./performance-log.mjs";
 import { createWebGlRenderer } from "./webgl-renderer.js";
 import { createWebGpuRenderer } from "./webgpu-renderer.js";
+import { bodyMayBeVisible, cameraSpace, createCamera } from "./scene-visibility.mjs";
 
 const canvas = document.querySelector("#scene");
 const status = document.querySelector("#status");
@@ -201,6 +202,8 @@ function reset() {
   const resetWithOptions =
     scenarioId === "tower"
       ? engine.sandbox_reset_tower_with_baking_options
+      : scenarioId === "terrain"
+        ? engine.sandbox_reset_terrain_with_baking_options
       : engine.sandbox_reset_with_baking_options;
   if (
     typeof resetWithOptions !== "function" ||
@@ -244,6 +247,8 @@ function reset() {
   status.textContent =
     scenarioId === "tower"
       ? `Tower ready · fixed-step f64. WASD moves, Space jumps, F shoots, 1/2/3 selects a projectile. Rendering with ${renderer.backend}.`
+      : scenarioId === "terrain"
+        ? `Uneven terrain ready · 121 cells and 24 props. WASD moves, Space jumps, and click or F shoots. Rendering with ${renderer.backend}.`
       : `Click the world to capture the mouse. WASD moves, Space jumps, mouse or arrows look, and click or F shoots. Rendering with ${renderer.backend}.`;
 }
 
@@ -412,23 +417,6 @@ function resizeCanvas() {
   return true;
 }
 
-function cameraSpace(point, camera) {
-  const dx = point[0] - camera[0];
-  const dy = point[1] - camera[1];
-  const dz = point[2] - camera[2];
-  const sinYaw = Math.sin(yaw);
-  const cosYaw = Math.cos(yaw);
-  const cameraX = dx * cosYaw + dz * sinYaw;
-  const forward = dx * sinYaw - dz * cosYaw;
-  const sinPitch = Math.sin(pitch);
-  const cosPitch = Math.cos(pitch);
-  return [
-    cameraX,
-    dy * cosPitch + forward * sinPitch,
-    -dy * sinPitch + forward * cosPitch,
-  ];
-}
-
 function rotateVector(vector, quaternion) {
   const [x, y, z] = vector;
   const [qx, qy, qz, qw] = quaternion;
@@ -463,6 +451,9 @@ function boxVertices(body) {
 
 function materialFor(body) {
   if (body.role === 3 || body.role === 4) return 4;
+  if (body.role === 6) return 5;
+  if (body.role === 7) return 6;
+  if (body.role === 8) return 7;
   if (body.role === 2) return 3;
   if (body.role !== 0) return 2;
   const [hx, hy, hz] = body.half;
@@ -472,7 +463,7 @@ function materialFor(body) {
 }
 
 function textureScale(material, body, face) {
-  if (material === 3 || material === 4) return [1, 1];
+  if (material >= 3) return [1, 1];
   const full = body.half.map((value) => Math.max(1, value * 2));
   const u = full[face.axes[0]];
   const v = full[face.axes[1]];
@@ -494,7 +485,7 @@ function faceCenter(vertices, indices) {
 function faceVisible(vertices, face, body, camera) {
   const center = faceCenter(vertices, face.indices);
   const normal = rotateVector(face.normal, body.orientation);
-  const towardCamera = [camera[0] - center[0], camera[1] - center[1], camera[2] - center[2]];
+  const towardCamera = [camera.position[0] - center[0], camera.position[1] - center[1], camera.position[2] - center[2]];
   return (
     towardCamera[0] * normal[0] +
       towardCamera[1] * normal[1] +
@@ -582,13 +573,62 @@ function appendSphereVertices(data, body, material, camera) {
   }
 }
 
+function appendCylinderVertices(data, body, material, camera, pipe) {
+  const segments = 12;
+  const axis = pipe ? 0 : 1;
+  const length = body.half[axis];
+  const radius = body.half[pipe ? 1 : 0];
+  const axisVector = pipe ? [1, 0, 0] : [0, 1, 0];
+  const radial = (angle) =>
+    pipe ? [0, Math.cos(angle), Math.sin(angle)] : [Math.cos(angle), 0, Math.sin(angle)];
+  const worldPoint = (local) => {
+    const rotated = rotateVector(local, body.orientation);
+    return body.position.map((value, index) => value + rotated[index]);
+  };
+  const emit = (point, normal, uv) =>
+    appendVertex(data, worldPoint(point), rotateVector(normal, body.orientation), uv, material, camera);
+  const point = (direction, axial, radialScale) =>
+    direction.map((value, index) => value * radius * radialScale + axisVector[index] * axial);
+
+  for (let segment = 0; segment < segments; segment += 1) {
+    const a = radial((2 * Math.PI * segment) / segments);
+    const b = radial((2 * Math.PI * (segment + 1)) / segments);
+    for (const [direction, axial, uv] of [
+      [a, -length, [segment / segments, 0]],
+      [a, length, [segment / segments, 1]],
+      [b, length, [(segment + 1) / segments, 1]],
+      [a, -length, [segment / segments, 0]],
+      [b, length, [(segment + 1) / segments, 1]],
+      [b, -length, [(segment + 1) / segments, 0]],
+    ]) {
+      emit(point(direction, axial, 1), direction, uv);
+    }
+    for (const sign of [-1, 1]) {
+      const normal = axisVector.map((value) => value * sign);
+      const inner = pipe ? 0.55 : 0;
+      for (const [direction, radialScale] of [
+        [a, 1], [b, 1], [a, inner],
+        [b, 1], [b, inner], [a, inner],
+      ]) {
+        emit(point(direction, sign * length, radialScale), normal, [0, 0]);
+      }
+    }
+  }
+}
+
 function buildSceneVertices(bodies, camera) {
   const data = [];
+  let visibleBodies = 0;
   for (const body of bodies) {
-    if (body.role === 1) continue;
+    if (body.role === 1 || !bodyMayBeVisible(body, camera)) continue;
+    visibleBodies += 1;
     const material = materialFor(body);
-    if (body.role === 3) {
+    if (body.role === 3 || body.role === 7) {
       appendSphereVertices(data, body, material, camera);
+      continue;
+    }
+    if (body.role === 6 || body.role === 8) {
+      appendCylinderVertices(data, body, material, camera, body.role === 8);
       continue;
     }
     const vertices = boxVertices(body);
@@ -610,7 +650,7 @@ function buildSceneVertices(bodies, camera) {
       }
     }
   }
-  return new Float32Array(data);
+  return { vertices: new Float32Array(data), visibleBodies };
 }
 
 function ensureCrosshair() {
@@ -628,8 +668,17 @@ function render() {
   const bodies = readBodies();
   const player = bodies.find((body) => body.role === 1);
   if (!player) return false;
-  const camera = [player.position[0], player.position[1] + 13, player.position[2]];
-  renderer.render(buildSceneVertices(bodies, camera));
+  const camera = createCamera(
+    [player.position[0], player.position[1] + 13, player.position[2]],
+    yaw,
+    pitch,
+    canvas.width / canvas.height,
+    FOV_RADIANS,
+    NEAR_PLANE,
+    FAR_PLANE,
+  );
+  const scene = buildSceneVertices(bodies, camera);
+  renderer.render(scene.vertices);
 
   const grounded = engine.sandbox_grounded() === 1 ? "grounded" : "airborne";
   const mouse = document.pointerLockElement === canvas ? "mouse captured" : "mouse free";
@@ -657,7 +706,7 @@ function render() {
       : recentPhysicsStepMs.reduce((sum, value) => sum + value, 0) / recentPhysicsStepMs.length;
   const physicsTiming =
     averagePhysicsStepMs == null ? "" : ` · physics ${averagePhysicsStepMs.toFixed(2)} ms/step`;
-  debug.textContent = `${renderer.backend} · ${bodies.length} bodies · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
+  debug.textContent = `${renderer.backend} · ${bodies.length} bodies, ${scene.visibleBodies} drawn, ${scene.vertices.length / 27} triangles · ${grounded}${sleep}${fixedGeometry} · projectile ${projectileType}${physicsTiming} · yaw ${yawDegrees}° · pitch ${pitchDegrees}° · ${mouse} · ${engine.sandbox_last_collision_events()} collision contacts this tick${tailDiagnostics} · ${engine.sandbox_total_collisions()} total${paused ? " · paused" : ""}`;
   if (scenarioId === "tower") {
     // Read-only diagnostic observations; tests never drive or replace simulation state here.
     window.physicsTowerState = Object.freeze({
@@ -884,8 +933,8 @@ try {
   }
   if (scenarioId !== "tower" && (
     typeof engine.sandbox_reset_with_baking_options !== "function" ||
-    (scenarioId === "tower" &&
-      typeof engine.sandbox_reset_tower_with_baking_options !== "function") ||
+    (scenarioId === "terrain" &&
+      typeof engine.sandbox_reset_terrain_with_baking_options !== "function") ||
     typeof engine.sandbox_fixed_geometry_prepared_count !== "function" ||
     typeof engine.sandbox_fixed_geometry_retained_bytes !== "function"
   )) {

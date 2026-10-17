@@ -67,7 +67,7 @@ fn interaction_category_for_role(role: i32) -> InteractionCategory3d {
     match role {
         0 => WORLD_CATEGORY,
         1 => CHARACTER_CATEGORY,
-        2 => CRATE_CATEGORY,
+        2 | 6..=8 => CRATE_CATEGORY,
         _ => InteractionCategory3d::DEFAULT,
     }
 }
@@ -215,6 +215,21 @@ pub extern "C" fn sandbox_reset_tower_with_baking_options(
         upright_crates_or_pair_policies,
         fixed_geometry_mode,
         Sandbox::with_tower_options,
+    )
+}
+
+/// Reset the mixed, stepped terrain fixture with deterministic hill centres.
+#[unsafe(no_mangle)]
+pub extern "C" fn sandbox_reset_terrain_with_baking_options(
+    simulation_rules: i32,
+    upright_crates_or_pair_policies: i32,
+    fixed_geometry_mode: i32,
+) -> i32 {
+    reset_with_baking_options(
+        simulation_rules,
+        upright_crates_or_pair_policies,
+        fixed_geometry_mode,
+        Sandbox::with_terrain_options,
     )
 }
 

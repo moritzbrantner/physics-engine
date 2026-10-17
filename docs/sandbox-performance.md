@@ -1,5 +1,31 @@
 # Sandbox performance evidence
 
+## Uneven terrain fixture
+
+The browser page at `scenarios/terrain/` uses the same Rust/WASM sandbox adapter as the general
+scene. Rust places 121 fixed stepped cells from twelve spaced hill centres and 24 dynamic props:
+six each of boxes, barrel proxies, ball proxies and pipe proxies. The rounded barrel, ball and
+pipe meshes are visual only; all resting props currently use oriented-box collision geometry.
+The scene makes the existing fixed-geometry preparation choice and the browser's conservative
+body culling visible on a larger, mixed workload. The debug line reports bodies retained for
+drawing and submitted triangles; local performance logging records browser frame and physics
+step timings.
+
+Run the named, deterministic WASM workload with:
+
+```sh
+cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
+node scripts/benchmark-terrain.mjs demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm demo-wasm/target/terrain-benchmark.json
+```
+
+The `terrain-mixed-v1` cases are idle, traverse and projectiles. Each trial warms the same scene
+for 60 steps and measures 120 physics steps with both runtime and prepared fixed geometry. The
+script requires matching observable replay hashes for the two modes and repeat trials, records
+work counters, and counts bodies conservatively retained by the camera outside the timed step.
+Set `TRIALS=3` for more timing samples. Timing ratios are advisory and should be compared on the
+same machine; idle timings near the clock resolution are not speedup evidence. The camera count
+demonstrates avoided mesh construction, not an end-to-end browser frame-time guarantee.
+
 `node scripts/benchmark-sandbox.mjs <head.wasm> <results.json>` runs the stable `sandbox-projectiles-v5` workload. Build the module with `cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked`.
 
 Each case resets and settles the actual Rust sandbox for 240 ticks. A separate 120-tick walking warmup precedes measurement. The ordinary cases measure 180 canonical 1/60-second physics calls: settled idle, walking without shots, three projectiles while stationary, three projectiles while walking, and a six-projectile scaling case. The v5 stress case measures 240 ticks while walking and fires 30 deterministic sphere projectiles at five-tick intervals, specifically to expose population-driven tail and stabilization work. Keep the workload version and inputs stable for historical comparisons.

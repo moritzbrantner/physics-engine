@@ -211,10 +211,10 @@ pub(crate) fn apply_to_sandbox(
             ScenarioRole::Character
         } else if id.0 >= PROJECTILE_ID_START {
             ScenarioRole::Projectile
-        } else if id.0 >= 100 {
-            ScenarioRole::Crate
-        } else {
+        } else if (200..321).contains(&id.0) || id.0 < 100 {
             ScenarioRole::World
+        } else {
+            ScenarioRole::Crate
         };
         let removed = sandbox.world.remove_box(id);
         debug_assert!(
@@ -236,10 +236,14 @@ pub extern "C" fn sandbox_simulation_rules() -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use physics_engine::BodyId;
+
+    use crate::Sandbox;
+
     use super::{
         CHARACTER_CRATE_BIT, CHARACTER_PROJECTILE_BIT, CRATE_UPRIGHT_BIT, EXPLICIT_RULES_BIT,
         PROJECTILE_POLICY_EXPLICIT_BIT, PROJECTILE_POLICY_SHIFT, ProjectileImpactPolicy,
-        ScenarioRole, ScenarioRules,
+        ScenarioRole, ScenarioRules, apply_to_sandbox,
     };
 
     #[test]
@@ -291,5 +295,28 @@ mod tests {
         let encoded =
             EXPLICIT_RULES_BIT | PROJECTILE_POLICY_EXPLICIT_BIT | (3 << PROJECTILE_POLICY_SHIFT);
         assert!(ScenarioRules::decode(encoded, false).is_none());
+    }
+
+    #[test]
+    fn terrain_cells_use_world_rules_and_rounded_props_use_crate_rules() {
+        let mut sandbox = Sandbox::with_terrain_options(true, true).expect("terrain fixture");
+        let rules = ScenarioRules::decode(EXPLICIT_RULES_BIT | CHARACTER_CRATE_BIT, false)
+            .expect("valid explicit rules");
+        apply_to_sandbox(&mut sandbox, rules).expect("assign terrain collision layers");
+        let terrain = sandbox.world.box_by_id(BodyId(200)).expect("terrain cell");
+        let barrel = sandbox.world.box_by_id(BodyId(420)).expect("barrel proxy");
+        let player = sandbox.world.box_by_id(BodyId(1)).expect("player");
+        assert_eq!(terrain.collision_layers().memberships(), super::WORLD_LAYER);
+        assert_eq!(barrel.collision_layers().memberships(), super::CRATE_LAYER);
+        assert!(
+            barrel
+                .collision_layers()
+                .collides_with(player.collision_layers())
+        );
+        assert!(
+            !barrel
+                .collision_layers()
+                .collides_with(terrain.collision_layers())
+        );
     }
 }
