@@ -21,14 +21,15 @@ const name = (i) => new TextDecoder().decode(new Uint8Array(e.memory.buffer, e.o
 const median = (v) => v.sort((a, b) => a - b)[v.length >> 1];
 
 let failed = false;
-console.log("scenario             engine µs/tick rapier µs/tick   ratio  invariants");
+console.log("scenario             engine µs/tick rapier µs/tick   ratio  rapier raw  invariants");
 for (let i = 0; i < e.oracle_scenarios(); i++) {
   const ok = e.oracle_check(i) === 0;
   failed ||= !ok;
   const engine = [], rapier = [];
   for (let s = 0; s < 11; s++) { engine.push(e.oracle_time(i, 0)); rapier.push(e.oracle_time(i, 1)); }
   const [pe, ra] = [median(engine), median(rapier)];
-  console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)}  ${ok ? "ok" : "FAILED"}`);
+  const raw = e.oracle_has_raw(i) ? median(Array.from({ length: 11 }, () => e.oracle_time(i, 2))).toFixed(2) : "-";
+  console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)} ${raw.padStart(11)}  ${ok ? "ok" : "FAILED"}`);
 }
 console.log(`WASM size: engine ${(sizes.engine / 1e6).toFixed(2)} MB, rapier ${(sizes.rapier / 1e6).toFixed(2)} MB (scenario workloads included)`);
 // WASM timings are reported, not gated; invariants must still hold on WASM.

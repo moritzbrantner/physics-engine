@@ -9,11 +9,24 @@ unsafe extern "C" {
 }
 
 fn side(value: u32) -> Side {
-    if value == 0 {
-        Side::Engine
-    } else {
-        Side::Rapier
+    match value {
+        0 => Side::Engine,
+        1 => Side::Rapier,
+        _ => Side::RapierRaw,
     }
+}
+
+/// 1 when scenario `index` has a raw Rapier variant (side 2).
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_has_raw(index: u32) -> i32 {
+    #[cfg(feature = "rapier")]
+    let raw = all()[index as usize].rapier_raw.is_some();
+    #[cfg(not(feature = "rapier"))]
+    let raw = {
+        let _ = index;
+        false
+    };
+    i32::from(raw)
 }
 
 #[unsafe(no_mangle)]

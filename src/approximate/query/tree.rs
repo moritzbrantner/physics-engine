@@ -126,6 +126,12 @@ impl QueryTree {
         self.generation = Some(generation);
     }
 
+    /// Body `index` moved: refit its leaf.
+    pub fn moved(&mut self, bodies: &[Body], index: usize) {
+        let leaf = self.leaf(self.slots[index], &bodies[index]);
+        self.tree.update(leaf);
+    }
+
     pub fn index_of(&self, slot: u32) -> usize {
         self.index_of[slot as usize] as usize
     }
