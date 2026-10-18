@@ -512,7 +512,7 @@ pub struct World {
     keys: BTreeMap<u64, BodyId>,
     /// Creation serial of the next keyless body (its order after every keyed body).
     next_serial: u64,
-    characters: std::collections::HashMap<BodyId, character::CharacterState>,
+    characters: character::Characters,
     failed_work: Option<FailedStepWork>,
     elapsed: Scalar,
 }
@@ -553,7 +553,7 @@ impl World {
             free: Vec::new(),
             keys: BTreeMap::new(),
             next_serial: 0,
-            characters: std::collections::HashMap::new(),
+            characters: character::Characters::default(),
             failed_work: None,
             elapsed: 0.0,
         })
@@ -699,7 +699,7 @@ impl World {
     }
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let i = self.index(id).ok()?;
-        self.characters.remove(&id);
+        self.characters.remove(id);
         self.bookkeeping.ensure_graph(&self.bodies, &self.cache);
         let neighbors = self
             .bookkeeping

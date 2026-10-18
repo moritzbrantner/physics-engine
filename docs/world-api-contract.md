@@ -69,7 +69,12 @@ penetration is resolved first and reported as `depenetration`, apart from `trans
 `CharacterSettings::plane: Some(height)` makes a planar character: it moves only horizontally
 at its height, needs no floor collider and is always grounded with `support` `None`.
 Depenetration leaves static and kinematic bodies, not other characters.
-Moves run in input order; each sees the earlier characters at their new positions.
+Moves run once each in body order (keyed by key, then keyless by creation), independent of
+the order of the slice; each sees the earlier movers at their new positions, and `out[i]` is
+the result of `moves[i]`. Characters of a batch that overlap each other are first separated
+horizontally, half each (a character overlapping one outside the batch moves the whole way);
+that separation is part of `depenetration`. A character blocked head-on by another character
+sidesteps to its right instead of locking. Characters do not push each other yet.
 `set_kinematic_position` places an external body without resolving contact.
 
 ## Failure behaviour

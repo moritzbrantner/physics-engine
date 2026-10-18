@@ -127,5 +127,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::static_queries::scenario(),
         scenarios::character_move::scenario(),
         scenarios::arpg_planar::scenario(),
+        scenarios::crowd::scenario(),
     ]
 }
