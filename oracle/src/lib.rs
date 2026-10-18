@@ -38,6 +38,22 @@ pub enum Side {
     Engine,
     Rapier,
     RapierRaw,
+    /// physics-engine with `BodyStorage::Indexed` (`Engine` uses the default `Ordered`).
+    EngineIndexed,
+}
+
+/// Body storage of engine worlds built next; scenarios read it through [`engine_storage`].
+#[cfg(feature = "engine")]
+static INDEXED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The body storage mode the engine side being built uses.
+#[cfg(feature = "engine")]
+pub fn engine_storage() -> physics_engine::approximate::BodyStorage {
+    if INDEXED.load(std::sync::atomic::Ordering::Relaxed) {
+        physics_engine::approximate::BodyStorage::Indexed
+    } else {
+        physics_engine::approximate::BodyStorage::Ordered
+    }
 }
 
 /// A parity scenario: the same workload on both engines.
@@ -64,6 +80,14 @@ impl Scenario {
         match side {
             #[cfg(feature = "engine")]
             Side::Engine => (self.engine)(),
+            #[cfg(feature = "engine")]
+            Side::EngineIndexed => {
+                use std::sync::atomic::Ordering;
+                INDEXED.store(true, Ordering::Relaxed);
+                let sim = (self.engine)();
+                INDEXED.store(false, Ordering::Relaxed);
+                sim
+            }
             #[cfg(feature = "rapier")]
             Side::Rapier => (self.rapier)(),
             #[cfg(feature = "rapier")]
@@ -88,6 +112,12 @@ impl Scenario {
         self.run(&mut *self.build(Side::Engine), &mut engine);
         self.run(&mut *self.build(Side::Rapier), &mut rapier);
         finite(&engine)?;
+        // Both storage modes must give identical results.
+        let mut indexed = Trace::default();
+        self.run(&mut *self.build(Side::EngineIndexed), &mut indexed);
+        if indexed != engine {
+            return Err("BodyStorage::Indexed differs from Ordered".into());
+        }
         (self.check)(&engine, &rapier)
     }
 }

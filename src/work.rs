@@ -10,7 +10,7 @@ pub enum Counter {
     TreeNodes,
     /// Bodies tested exactly by a query after tree pruning.
     ExactTests,
-    /// Body records moved in storage by inserts and removals.
+    /// Body records moved in storage by inserts, removals and compaction.
     StorageShifts,
     /// Leaves inserted into the query tree, including rebuilds.
     TreeInserts,
@@ -18,9 +18,11 @@ pub enum Counter {
     TerrainCells,
     /// Heightfield triangles tested.
     TerrainTriangles,
+    /// Body-order comparisons (storage searches, the `Indexed` order index, sorts).
+    OrderComparisons,
 }
 
-const COUNTERS: usize = 6;
+const COUNTERS: usize = 7;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

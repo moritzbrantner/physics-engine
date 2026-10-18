@@ -420,8 +420,86 @@
     },
     {
       "id": "body-churn",
-      "description": "256 operations of remove-a-body-from-the-middle-of-the-order plus add-a-new-keyed-body, in a town of n boxes; amortized values are totals divided by 256.",
-      "publicContract": "physics_engine::approximate::World::{add_body, remove_body}",
+      "description": "BodyStorage::Ordered: 4n operations, each removing a body from the middle of the order and adding one after every body.",
+      "dimensions": {
+        "bodies": {
+          "description": "boxes in the town"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 512
+        },
+        {
+          "bodies": 1024
+        },
+        {
+          "bodies": 2048
+        },
+        {
+          "bodies": 4096
+        },
+        {
+          "bodies": 8192
+        },
+        {
+          "bodies": 16384
+        }
+      ],
+      "metrics": [
+        {
+          "name": "storage-shifts-per-op",
+          "unit": "records",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Amortized O(1): a removal leaves a tombstone; a compaction moves every record once when tombstones reach half the records (and at the next step)."
+        },
+        {
+          "name": "tree-inserts-per-op",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Incremental tree inserts plus the amortized SAH rebuild (every n/2 inserts)."
+        },
+        {
+          "name": "order-comparisons-per-op",
+          "unit": "comparisons",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            }
+          ],
+          "notes": "Binary search for the insertion point."
+        },
+        {
+          "name": "worst-op-work",
+          "unit": "work units",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "linear"
+            }
+          ],
+          "notes": "The removal that triggers a compaction, or a tree rebuild: O(n)."
+        }
+      ]
+    },
+    {
+      "id": "body-insert-middle",
+      "description": "BodyStorage::Ordered: 64 bodies added in the middle of the order (keys between existing ones).",
       "dimensions": {
         "bodies": {
           "description": "boxes in the town"
@@ -458,7 +536,7 @@
               "bound": "linear"
             }
           ],
-          "notes": "Declared linear, not the O(log n) target: bodies are stored densely in key order, so inserting or removing in the middle moves the later records and their slot indices. Amortized O(log n) needs a storage change (see the PR)."
+          "notes": "Ordered storage keeps body order in one array: a middle insert moves the later records, O(n). BodyStorage::Indexed avoids this."
         },
         {
           "name": "tree-inserts-per-op",
@@ -469,17 +547,108 @@
               "dimension": "bodies",
               "bound": "constant"
             }
+          ]
+        },
+        {
+          "name": "order-comparisons-per-op",
+          "unit": "comparisons",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            }
           ],
-          "notes": "Incremental tree inserts plus the amortized SAH rebuild (every n/2 inserts)."
+          "notes": "Binary search for the insertion point."
         },
         {
           "name": "worst-op-work",
+          "unit": "work units",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "body-churn-indexed",
+      "description": "BodyStorage::Indexed: 4n operations, each removing a body and adding one anywhere in the order.",
+      "dimensions": {
+        "bodies": {
+          "description": "boxes in the town"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 512
+        },
+        {
+          "bodies": 1024
+        },
+        {
+          "bodies": 2048
+        },
+        {
+          "bodies": 4096
+        },
+        {
+          "bodies": 8192
+        },
+        {
+          "bodies": 16384
+        }
+      ],
+      "metrics": [
+        {
+          "name": "storage-shifts-per-op",
           "unit": "records",
           "signal": "operation-count",
-          "budget": {
-            "max": 32768
-          },
-          "notes": "Worst single operation: the storage shift above or a full tree rebuild, both O(n)."
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Adds append to the arena; compaction (at half tombstones, or the next step) moves every record once: amortized O(1)."
+        },
+        {
+          "name": "tree-inserts-per-op",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "order-comparisons-per-op",
+          "unit": "comparisons",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            }
+          ],
+          "notes": "Order-index insert and remove, O(log n), plus the amortized sort of out-of-order adds at compaction, O(log k) per add."
+        },
+        {
+          "name": "worst-op-work",
+          "unit": "work units",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "linearithmic"
+            }
+          ],
+          "notes": "The removal that triggers a compaction sorts the k out-of-order adds and merges them: O(n + k log k)."
         }
       ]
     },

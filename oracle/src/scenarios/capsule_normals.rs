@@ -146,6 +146,7 @@ mod engine {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
             // The game moves these bodies every tick: one world holds this tick's targets.
             let mut world = World::new(Config {
+                body_storage: crate::engine_storage(),
                 gravity: Vector::ZERO,
                 ..Config::default()
             })

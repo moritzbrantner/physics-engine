@@ -12,7 +12,8 @@ fn side(value: u32) -> Side {
     match value {
         0 => Side::Engine,
         1 => Side::Rapier,
-        _ => Side::RapierRaw,
+        2 => Side::RapierRaw,
+        _ => Side::EngineIndexed,
     }
 }
 
@@ -34,7 +35,8 @@ pub extern "C" fn oracle_scenarios() -> u32 {
     all().len() as u32
 }
 
-/// Microseconds per tick of one run of scenario `index` on `side` (0 engine, 1 Rapier).
+/// Microseconds per tick of one run of scenario `index` on `side` (0 engine, 1 Rapier, 2 bare
+/// Rapier, 3 engine with `BodyStorage::Indexed`).
 #[unsafe(no_mangle)]
 pub extern "C" fn oracle_time(index: u32, which: u32) -> f64 {
     let scenarios = all();

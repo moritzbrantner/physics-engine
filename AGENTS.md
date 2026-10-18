@@ -39,6 +39,7 @@ cargo clippy --all-targets --locked -- -D warnings
 (cd demo-wasm && cargo clippy --all-targets --locked -- -D warnings)
 cargo build --locked
 cargo test --locked --features checkpoints
+cargo test --locked --features checkpoints,indexed-storage   # every suite on BodyStorage::Indexed
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
 cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle: invariants + native perf gate
 node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes

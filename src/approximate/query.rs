@@ -177,6 +177,16 @@ impl Candidates {
             self.spill.sort_unstable();
         }
     }
+    /// Sorts by body order when storage positions are not in body order (`Indexed` storage
+    /// between steps), so candidates are tested in the same order in every storage mode.
+    fn sort_by_order(&mut self, bodies: &[Body]) {
+        let key = |&i: &u32| bodies[i as usize].order;
+        if self.spill.is_empty() {
+            self.inline[..self.len].sort_unstable_by_key(key);
+        } else {
+            self.spill.sort_unstable_by_key(key);
+        }
+    }
     fn len(&self) -> usize {
         self.len
     }
@@ -292,7 +302,7 @@ impl World {
                         max: [hi.0, hi.1, hi.2],
                     },
                     |leaf| {
-                        let index = tree.index_of(leaf.id);
+                        let index = self.slot_index(leaf.id);
                         if self.bodies[index].shape != Shape::HalfSpace {
                             found.push(index as u32);
                         }
@@ -305,16 +315,23 @@ impl World {
                         found.push(index as u32);
                     }
                 }
-                found.sort();
+                if self.storage_sorted() {
+                    found.sort();
+                } else {
+                    found.sort_by_order(&self.bodies);
+                }
                 found
             });
+        // Without the tree: every live body, in body order.
+        let scan = candidates.is_none().then(|| self.ordered_positions());
         let count = candidates
             .as_ref()
-            .map_or(self.bodies.len(), Candidates::len);
+            .map_or(scan.as_ref().map_or(0, Vec::len), Candidates::len);
         for n in 0..count {
-            let target = &self.bodies[match &candidates {
-                Some(found) => found.get(n) as usize,
-                None => n,
+            let target = &self.bodies[match (&candidates, &scan) {
+                (Some(found), _) => found.get(n) as usize,
+                (None, Some(scan)) => scan[n],
+                (None, None) => unreachable!(),
             }];
             stats.bodies_visited += 1;
             if !filter.admits(target) {

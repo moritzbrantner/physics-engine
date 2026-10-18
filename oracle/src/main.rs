@@ -1,6 +1,7 @@
 //! Native oracle: checks every scenario's invariants and fails when physics-engine is more than
 //! 5% slower than Rapier (median of interleaved samples), both with the consumer's call pattern
-//! and, where a scenario has one, bare Rapier without the consumer's workarounds.
+//! and, where a scenario has one, bare Rapier without the consumer's workarounds. Both engine
+//! storage modes (`BodyStorage::Ordered`, the default, and `Indexed`) are timed and gated.
 
 use physics_oracle::{Scenario, Side, Trace, all};
 use std::{process::ExitCode, time::Instant};
@@ -27,8 +28,14 @@ fn median(mut v: Vec<f64>) -> f64 {
 fn main() -> ExitCode {
     let mut failed = false;
     println!(
-        "{:<20} {:<12} {:>14} {:>14} {:>7} {:>11}  result",
-        "scenario", "capability", "engine µs/tick", "rapier µs/tick", "ratio", "rapier raw"
+        "{:<20} {:<12} {:>14} {:>14} {:>14} {:>7} {:>11}  result",
+        "scenario",
+        "capability",
+        "engine µs/tick",
+        "indexed µs/tick",
+        "rapier µs/tick",
+        "ratio",
+        "rapier raw"
     );
     for scenario in all() {
         if let Err(error) = scenario.verify() {
@@ -39,24 +46,29 @@ fn main() -> ExitCode {
             failed = true;
             continue;
         }
-        let (mut engine, mut rapier, mut raw) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut engine, mut indexed, mut rapier, mut raw) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for _ in 0..SAMPLES {
             engine.push(time(&scenario, Side::Engine));
+            indexed.push(time(&scenario, Side::EngineIndexed));
             rapier.push(time(&scenario, Side::Rapier));
             if scenario.rapier_raw.is_some() {
                 raw.push(time(&scenario, Side::RapierRaw));
             }
         }
-        let (e, r) = (median(engine), median(rapier));
+        let (e, x, r) = (median(engine), median(indexed), median(rapier));
         // Rapier without the consumer's workarounds: gated too, so the engine beats bare Rapier.
         let raw = (!raw.is_empty()).then(|| median(raw));
-        let slow = e > r * MARGIN || raw.is_some_and(|raw| e > raw * MARGIN);
+        let slow = [e, x]
+            .into_iter()
+            .any(|e| e > r * MARGIN || raw.is_some_and(|raw| e > raw * MARGIN));
         failed |= slow;
         println!(
-            "{:<20} {:<12} {:>14.2} {:>14.2} {:>7.2} {:>11}  {}",
+            "{:<20} {:<12} {:>14.2} {:>14.2} {:>14.2} {:>7.2} {:>11}  {}",
             scenario.name,
             scenario.capabilities,
             e,
+            x,
             r,
             e / r,
             raw.map_or("-".to_string(), |raw| format!("{raw:.2}")),

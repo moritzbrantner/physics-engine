@@ -343,6 +343,10 @@ impl GeometryCache {
         self.frames.clear();
         self.retained_bytes = self.measure_retained_bytes();
     }
+    /// Storage positions moved (compaction); per-position frames are dropped.
+    pub fn positions_moved(&mut self) {
+        self.frames.clear();
+    }
     pub fn retained_bytes(&self) -> usize {
         self.retained_bytes
     }

@@ -22,6 +22,9 @@ checkpoints = ["dep:sha2"]
 # Test-only deterministic work counters for the complexity contracts (.performance/contract.json).
 # Off in every release build, so they never affect the Rapier speed gate.
 work-counters = []
+# Test-only: `Config::default()` uses `BodyStorage::Indexed`, so every suite checks that both
+# storage modes give identical results.
+indexed-storage = []
 
 [lib]
 name = "physics_engine"

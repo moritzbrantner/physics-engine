@@ -52,6 +52,39 @@ the oracle harness (D4). The per-capability parity status is tracked in
   dynamics bit-exactly.
 - Results are identical across worker counts on the same build and target. There is no
   cross-target bit-identity claim.
+- `World::bodies()` yields the live bodies in body order; `body_count()` counts them.
+
+## Body storage
+
+`Config::body_storage` picks how a world stores its bodies. It is fixed when the world is
+created. Both modes give identical results for the same calls: bodies, ids, step reports, query
+results and character moves. CI runs every test suite in both modes, and the Rapier oracle
+checks that both produce the same traces. Only the cost of adding and removing bodies differs.
+
+| | `Ordered` (default) | `Indexed` |
+| --- | --- | --- |
+| Layout | one array in body order | arena in insertion order, plus an order index |
+| Add after every body | amortized O(1) | O(log n) |
+| Add in the middle of the order | O(n) (later records move) | O(log n) |
+| Remove any body | amortized O(1) | O(log n) |
+| Next step after adds and removes | O(n) compaction if bodies were removed | O(n + k log k) sort of the k out-of-order adds |
+| Steps, queries, characters | contiguous, in body order | the same (the step sorts the arena first) |
+
+A removal leaves a tombstone. The next step compacts the tombstones away, or a removal does it
+once tombstones are half the records. Removing a body that touches others also costs
+O(contact pairs), because its contacts wake their islands. `set_velocity`, `apply_impulse` and
+`add_force` sort `Indexed` storage first when bodies were added out of order, because waking an
+island searches storage by body order.
+
+When to pick which:
+
+- **`Ordered`** suits games whose keys mostly grow, such as entity ids handed out in sequence,
+  and games that add and remove only a few bodies per tick. Appends and removals are O(1), and
+  no index is kept.
+- **`Indexed`** suits games that insert many bodies in the middle of the key order between
+  steps, such as streaming level chunks with pre-assigned keys or spawning many keyed bodies
+  while keyless ones exist (keyless bodies sort after every keyed one). Each add costs O(log n)
+  instead of moving the later records.
 
 ## Queries
 

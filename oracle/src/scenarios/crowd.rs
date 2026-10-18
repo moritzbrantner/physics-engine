@@ -114,6 +114,7 @@ mod engine {
     impl Sim {
         pub fn new() -> Self {
             let mut world = World::new(Config {
+                body_storage: crate::engine_storage(),
                 gravity: Vector::ZERO,
                 ..Config::default()
             })
