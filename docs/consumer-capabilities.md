@@ -28,17 +28,18 @@ over the integer `World`; no consumer enables it).
 | C10 | Accurate capsule-cast normals against long boxes | ARPG | custom `QueryDispatcher` (circle vs rectangle) | **parity** (`capsule-normals`): exact against closed forms, no custom dispatcher needed | #290 |
 | C11 | Ray cast against static geometry (line of sight, ground height, projectiles) | ARPG, MMORPG | `QueryPipeline::cast_ray` with `only_fixed`, `Cuboid::cast_ray` | **parity** within `static-queries` (`cast_ray_first`); rays alone still ~1.7× Rapier's cost | — |
 | C12 | Shape overlap / penetration test (placement, door occupancy) | ARPG, MMORPG | `intersect_shape` + `contact` depth | **parity** (`static-queries`; ~0.3× Rapier's cost) | — |
-| C13 | Length-unit-relative tolerances | MMORPG, ARPG | none (absolute metre tolerances; game converts units) | missing | #291 |
+| C13 | Length-unit-relative tolerances | MMORPG, ARPG | none (absolute metre tolerances; game converts units) | **parity** for characters and queries: `Config::length_unit`, `World::character_settings`; dynamics defaults parked (#318) | #291 |
 | C14 | Query ties broken by stable id; save → load → continue matches | MMORPG (rebuilds ~1,150 colliders per tick), ARPG | none (game rebuilds the world every tick) | **parity** for queries/characters: ties by key, independent of slot and insertion history (no per-tick rebuild needed) | #292 |
 | C15 | Whole-tick cost at or below Rapier (ARPG: ~18 µs native, ~27 µs WASM, 2.68 MB WASM; MMORPG: WASM 1.76 → 3.29 MB, debug combat ~31 s → ~41 s) | MMORPG, ARPG | — | not measured | #310, #297 |
 | C16 | Characters separate and slide around each other (bounded pushing) | MMORPG | none (head-on contact blocks both) | partial (`crowd`): head-on sidestep and half-each separation; bounded pushing open (#308) | #308 |
+| C17 | Static heightfield terrain: capsule characters standing and walking on hills, ground rays | MMORPG (#159 step 2; caves later) | `SharedShape::heightfield`, KCC on terrain, `cast_ray` | missing | #195 |
 
 Scenarios live in `oracle/src/scenarios/`; `cargo run --release --manifest-path oracle/Cargo.toml`
 checks them natively (invariants + not more than 5% slower than Rapier) and
 `node scripts/oracle-wasm.mjs` reports WASM timings and sizes.
 
 Not used by any consumer today: dynamic rigid bodies, joints, sensors/contact events, collision
-groups, CCD, materials, heightfields, triangle meshes. Work on those stays parked until a consumer
+groups, CCD, materials, triangle meshes. Work on those stays parked until a consumer
 uses them.
 
 ## Other dependents of the removed worlds

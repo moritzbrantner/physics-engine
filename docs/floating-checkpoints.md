@@ -9,7 +9,7 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
-Format 3 stores each body's handle, key (or creation serial), the slot generations and the
+Format 4 adds the configuration's length unit. Format 3 stores each body's handle, key (or creation serial), the slot generations and the
 next creation serial, so restored ids stay valid and stale ids stay rejected.
 
 Character registrations (`add_character` settings and grounded state) are not part of a

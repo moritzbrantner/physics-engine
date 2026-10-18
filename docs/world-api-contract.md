@@ -12,6 +12,14 @@ the oracle harness (D4). The per-capability parity status is tracked in
 
 ## Units and meanings
 
+- `Config::length_unit` declares scene units per metre (1 by default, 100 for a centimetre
+  game). Built-in length defaults are defined in metres and scaled by it —
+  `World::character_settings()` returns the character defaults (2.5 mm offset, 5 cm snap) in
+  scene units; values the game passes explicitly stay in scene units. Query and controller
+  tolerances are relative (to magnitudes or to the character offset), so a scene scaled by the
+  unit moves identically. The rigid-body dynamics defaults (`gravity`, `contact_slop`,
+  `sleep_speed`) are still the historical scene-unit values.
+
 - Positions and collider dimensions are scene distance units; box dimensions are **half extents**.
 - `step(dt)` takes seconds (finite, `0..=0.1`). Elapsed time is kept in `f64`.
 - `gravity` is acceleration in distance units per second squared.
