@@ -114,8 +114,8 @@ fn warmed_query_outputs_reuse_capacity_and_prune_unrelated_geometry() {
         let stats = world
             .overlap_shape(pose, QueryFilter::default(), &mut hits)
             .unwrap();
-        assert_eq!(stats.bodies_visited, 512);
-        assert_eq!(stats.bound_tests, 512);
+        assert!(stats.bodies_visited <= 2, "tree visits only nearby bodies");
+        assert!(stats.bound_tests <= 2);
         assert_eq!(stats.exact_candidates, 1);
         assert_eq!(stats.current_queries, 1);
         assert_eq!(stats.output_capacity_growths, 0);

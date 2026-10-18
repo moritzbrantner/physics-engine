@@ -7,7 +7,9 @@ use geometry_kernels::primitive3::PrimitiveWork3;
 use std::{error::Error, fmt, mem::size_of};
 
 mod ray;
+mod tree;
 pub use ray::{RayCast, RayFeature, RayHit};
+pub(super) use tree::QueryTree;
 
 /// A query shape in world units. Orientation must already be a unit quaternion.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -219,7 +221,45 @@ impl World {
         let (min, max) = contact::bounds(&query);
         stats.query_bound_preparations += 1;
         let sweep_bounds = (min.min(min + displacement), max.max(max + displacement));
-        for target in &self.bodies {
+        // Tree preselection, in BodyId order so results and failures match a full scan.
+        let candidates =
+            (prune && self.query_tree.current(self.bookkeeping.generation)).then(|| {
+                let tree = &self.query_tree;
+                let m = tree.magnitude;
+                let magnitude = pose
+                    .position
+                    .abs()
+                    .max_component()
+                    .max(m)
+                    .max(displacement.abs().max_component());
+                // Every target radius is at most twice the leaf coordinate bound.
+                let radii = pose.shape.radius() + 2.0 * m;
+                let pad = 8.0 * Real::EPSILON * (1.0 + magnitude + radii)
+                    + if cast.is_some() {
+                        1e-9 * (1.0 + radii)
+                    } else {
+                        0.0
+                    };
+                let (lo, hi) = (
+                    sweep_bounds.0 - V(pad, pad, pad),
+                    sweep_bounds.1 + V(pad, pad, pad),
+                );
+                let mut found = Vec::new();
+                tree.tree().visit_aabb(
+                    spatial_kernels::Aabb {
+                        min: [lo.0, lo.1, lo.2],
+                        max: [hi.0, hi.1, hi.2],
+                    },
+                    |leaf| found.push(tree.index_of(leaf.id)),
+                );
+                found.sort_unstable();
+                found
+            });
+        let targets: Box<dyn Iterator<Item = &Body>> = match &candidates {
+            Some(found) => Box::new(found.iter().map(|&i| &self.bodies[i])),
+            None => Box::new(self.bodies.iter()),
+        };
+        for target in targets {
             stats.bodies_visited += 1;
             if !filter.admits(target) {
                 stats.filtered_bodies += 1;

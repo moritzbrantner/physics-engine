@@ -39,6 +39,12 @@ jobs:
       - name: Test the Pages adapter
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
 
+      - name: Rapier oracle (invariants + native perf gate)
+        run: cargo run --release --locked --manifest-path oracle/Cargo.toml
+
+      - name: Rapier oracle on WASM (timings and sizes, not gated)
+        run: node scripts/oracle-wasm.mjs
+
   build-pages:
     name: Build or reuse validated Pages artifact
     permissions:

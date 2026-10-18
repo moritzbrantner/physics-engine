@@ -216,8 +216,8 @@ fn sparse_work_is_bounded_and_warmed_output_retains_capacity() {
     for _ in 0..32 {
         let s = w.cast_ray(cast, QueryFilter::default(), &mut hits).unwrap();
         assert_eq!(hits, expected);
-        assert_eq!(s.bodies_visited, 512);
-        assert_eq!(s.bound_tests, 512);
+        assert!(s.bodies_visited <= 2, "tree visits only nearby bodies");
+        assert!(s.bound_tests <= 2);
         assert_eq!(s.exact_candidates, 1);
         assert_eq!(s.geometry_preparations, 1);
         assert_eq!(s.ray_quadratic_tests, 1);
@@ -302,5 +302,45 @@ fn paired_ray_workload_evidence() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn first_hit_matches_the_first_of_all_hits_after_layout_changes() {
+    let mut w = world();
+    for id in 0..120u64 {
+        let x = (id % 12) as Real * 3.0 - 18.0;
+        let z = (id / 12) as Real * 3.0 - 15.0;
+        let shape = if id % 2 == 0 {
+            Shape::Box(V(1.0, 1.0, 0.5))
+        } else {
+            Shape::Sphere(0.8)
+        };
+        w.add_body(Body::new(BodyId(id), shape, V(x, 0.0, z), 0.0))
+            .unwrap();
+    }
+    // Duplicate geometry at one place: equal fractions must keep the lower BodyId.
+    w.add_body(Body::new(
+        BodyId(500),
+        Shape::Box(V(1.0, 1.0, 0.5)),
+        V(-18.0, 0.0, -15.0),
+        0.0,
+    ))
+    .unwrap();
+    for removed in [3, 40, 77] {
+        w.remove_body(BodyId(removed));
+    }
+    let mut hits = Vec::new();
+    for i in 0..200 {
+        let a = i as Real * 0.37;
+        let origin = V(
+            -25.0 + (i % 7) as Real,
+            0.1 * (i % 3) as Real,
+            -20.0 + (i % 11) as Real,
+        );
+        let cast = RayCast::new(origin, V(40.0 * a.cos(), 0.0, 40.0 * a.sin().abs()));
+        w.cast_ray(cast, QueryFilter::default(), &mut hits).unwrap();
+        let first = w.cast_ray_first(cast, QueryFilter::default()).unwrap();
+        assert_eq!(first, hits.first().copied(), "ray {i}");
     }
 }

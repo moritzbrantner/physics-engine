@@ -35,7 +35,10 @@ the oracle harness (D4). The per-capability parity status is tracked in
   normals and support velocity; see [floating shape queries](floating-shape-queries.md).
   Translation-only casts hold orientations and target positions fixed.
 - `cast_ray` queries a finite segment against current poses with local feature identity; see
-  [floating ray queries](floating-ray-queries.md).
+  [floating ray queries](floating-ray-queries.md). `cast_ray_first` returns only the earliest
+  hit (ties by lower BodyId), the same hit as `cast_ray(..)[0]`, without collecting the rest.
+- Queries traverse an incremental AABB tree (`bvh-kernels`) kept current by `add_body`,
+  `remove_body` and `step`; it changes which bodies are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
 ## Failure behaviour

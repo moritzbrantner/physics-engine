@@ -208,6 +208,9 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
 /// own axes unchanged; the f32 build widens the stored quaternion, renormalizes it and
 /// rotates in f64 so the frame is orthonormal at kernel precision.
 fn kernel_axes(q: Quaternion) -> [[f64; 3]; 3] {
+    if q == Quaternion::IDENTITY {
+        return identity_axes();
+    }
     if REAL_BITS == 64 {
         return q.axes().map(to_array);
     }
