@@ -42,7 +42,7 @@ jobs:
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked --manifest-path oracle/Cargo.toml
 
-      - name: Rapier oracle on WASM (timings and sizes, not gated)
+      - name: Rapier oracle on WASM (invariants + 1.10x perf gate, sizes)
         run: node scripts/oracle-wasm.mjs
 
   build-pages:

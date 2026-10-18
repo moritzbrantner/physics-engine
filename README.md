@@ -19,8 +19,8 @@ Physics Engine is slower than Rapier. See [technical decisions](docs/technical-d
   multi-character moves, stable never-reused ids, depenetration reported separately,
   length-unit-relative tolerances, stable-id tie-breaking, plane constraints and grounded state.
 - **Rapier as oracle:** `oracle/` runs each parity scenario on both engines; CI fails when an
-  invariant breaks or Physics Engine is more than 5% slower than Rapier natively, and reports
-  WASM timings and sizes.
+  invariant breaks or Physics Engine is slower than Rapier — the consumer's call pattern or bare
+  Rapier — by more than 5% natively or 10% in WASM. WASM sizes are reported.
 - **Pages sandbox:** `site/` + `demo-wasm/` show the parity scenarios side by side with Rapier.
 
 Consumer API, units and query conventions: [world API contract](docs/world-api-contract.md).
