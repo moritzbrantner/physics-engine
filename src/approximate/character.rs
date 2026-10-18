@@ -12,7 +12,10 @@ use super::{
     World,
 };
 
-/// Per-character movement settings, fixed when the character is added.
+/// Per-character movement settings, fixed when the character is added. Lengths are scene
+/// units; [`Default`] gives the metre values (a 2.5 mm offset, 5 cm snap) and
+/// [`World::character_settings`] the same values in the world's
+/// [`Config::length_unit`](super::Config::length_unit).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CharacterSettings {
     /// Gap kept to everything the character touches, in scene units.
@@ -152,6 +155,17 @@ fn is_static(b: &Body) -> bool {
 }
 
 impl World {
+    /// Default character settings in this world's length unit.
+    pub fn character_settings(&self) -> CharacterSettings {
+        let unit = self.config.length_unit;
+        let metres = CharacterSettings::default();
+        CharacterSettings {
+            offset: metres.offset * unit,
+            snap_to_ground: metres.snap_to_ground.map(|s| s * unit),
+            ..metres
+        }
+    }
+
     /// Makes an existing upright capsule body a kinematic character.
     pub fn add_character(&mut self, id: BodyId, settings: CharacterSettings) -> Result<(), Error> {
         let i = self.index(id)?;

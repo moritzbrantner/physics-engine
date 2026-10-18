@@ -350,7 +350,7 @@ fn config_start() -> usize {
     80 + 1 + std::env::consts::ARCH.len() + 1 + std::env::consts::OS.len()
 }
 /// Configuration without convergence tolerances or a soft-contact policy.
-const CONFIG_BYTES: usize = 6 * W + 7;
+const CONFIG_BYTES: usize = 7 * W + 7;
 fn body_start() -> usize {
     config_start() + CONFIG_BYTES + 16 + 8
 }
@@ -377,7 +377,8 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         );
     }
     for (offset, value, error) in [
-        (8, 4u32, CheckpointError::UnsupportedFormat(4)),
+        (8, 5u32, CheckpointError::UnsupportedFormat(5)),
+        (8, 3u32, CheckpointError::UnsupportedFormat(3)),
         (8, 2u32, CheckpointError::UnsupportedFormat(2)),
         (12, 9u32, CheckpointError::UnsupportedAlgorithm(9)),
         (12, 7u32, CheckpointError::UnsupportedAlgorithm(7)),
@@ -585,7 +586,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_three_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
+fn format_four_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         ..Config::default()
@@ -598,7 +599,7 @@ fn format_three_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "176f860fd66e36427ad05b7fe31a244f0dcf45ee7c514c910f377da8c6c7d52d"
+        "22fd130ad2c7ae6de88e1b832f49afc36f4371f03ce3d57ee2e2fb89e274548c"
     );
 }
 

@@ -334,3 +334,59 @@ fn overlap_is_resolved_after_a_door_closes_or_the_game_places_a_character() {
     let d = (position(&w, c).0 - position(&w, other).0).abs();
     assert!(d >= 2.0 * RADIUS + OFFSET - 1e-4, "{d}");
 }
+
+/// The same scene in metres and in centimetres moves identically (#291).
+#[test]
+fn character_motion_does_not_depend_on_the_length_unit() {
+    let run = |unit: f32| {
+        let mut w = World::new(Config {
+            gravity: V::ZERO,
+            length_unit: unit,
+            ..Config::default()
+        })
+        .unwrap();
+        let s = |v: V| v * unit;
+        w.add_body(Body::keyed(
+            1,
+            Shape::Box(s(V(200.0, 0.5, 200.0))),
+            s(V(0.0, -0.5, 0.0)),
+            0.0,
+        ))
+        .unwrap();
+        w.add_body(Body::keyed(
+            2,
+            Shape::Box(s(V(0.25, 3.0, 20.0))),
+            s(V(5.0, 3.0, 0.0)),
+            0.0,
+        ))
+        .unwrap();
+        let mut body = Body::keyed(
+            10,
+            Shape::capsule(HALF * unit, RADIUS * unit),
+            s(V(3.0, FOOT + OFFSET + 0.5, 0.0)),
+            1.0,
+        );
+        body.external = true;
+        let c = w.add_body(body).unwrap();
+        w.add_character(c, w.character_settings()).unwrap();
+        let mut out = Vec::new();
+        let mut trace = Vec::new();
+        let mut vy = 0.0;
+        for _ in 0..120 {
+            vy -= 9.81 / 60.0;
+            let desired = s(V(0.05, vy / 60.0, 0.02));
+            w.move_characters(&[CharacterMove { body: c, desired }], &mut out)
+                .unwrap();
+            if out[0].grounded {
+                vy = 0.0;
+            }
+            trace.push((w.body(c).unwrap().position * (1.0 / unit), out[0].grounded));
+        }
+        trace
+    };
+    let (metres, centimetres) = (run(1.0), run(100.0));
+    for (tick, ((a, ga), (b, gb))) in metres.iter().zip(&centimetres).enumerate() {
+        assert_eq!(ga, gb, "grounded differs at tick {tick}");
+        assert!((*a - *b).length() < 1e-4, "tick {tick}: {a:?} vs {b:?}");
+    }
+}

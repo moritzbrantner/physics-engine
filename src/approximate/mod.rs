@@ -367,6 +367,10 @@ pub struct Config {
     /// Contact-island-local stopping, or the original whole-world convergence reference.
     /// With `convergence: None`, both scopes use the unchanged fixed-pass solver.
     pub convergence_scope: ConvergenceScope,
+    /// Scene units per metre (100 for a centimetre game). Built-in tolerances and defaults
+    /// that are lengths are defined in metres and scaled by it, e.g.
+    /// [`World::character_settings`]; values the game passes explicitly stay in scene units.
+    pub length_unit: Real,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -382,6 +386,7 @@ impl Default for Config {
             warm_start: true,
             convergence: Some(Convergence::default()),
             convergence_scope: ConvergenceScope::ContactIslands,
+            length_unit: 1.0,
         }
     }
 }
@@ -527,6 +532,8 @@ impl World {
             || config.convergence.is_some_and(|c| !c.valid())
             || !config.contact_slop.is_finite()
             || config.contact_slop <= 0.0
+            || !config.length_unit.is_finite()
+            || !(1e-6..=1e6).contains(&config.length_unit)
             || !config.sleep_speed.is_finite()
             || config.sleep_speed <= 0.0
             || !config.sleep_seconds.is_finite()

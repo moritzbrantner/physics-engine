@@ -18,7 +18,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 3;
+const FORMAT: u32 = 4;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 8;
 const DIGEST_BYTES: usize = 32;
@@ -454,6 +454,7 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
         ConvergenceScope::WholeWorld => 0,
         ConvergenceScope::ContactIslands => 1,
     });
+    scalar(out, config.length_unit);
     let position =
         u8::from(config.position_correction == PositionCorrection::AdmittedContacts) << 1;
     out.push(position);
@@ -619,7 +620,9 @@ impl<'a> Reader<'a> {
                 1 => ConvergenceScope::ContactIslands,
                 _ => return Err(CheckpointError::InvalidData),
             },
+            length_unit: 1.0,
         };
+        config.length_unit = self.scalar()?;
         let policies = self.u8()?;
         if policies & !3 != 0 {
             return Err(CheckpointError::InvalidData);
