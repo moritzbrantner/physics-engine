@@ -416,17 +416,7 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
     });
     let position =
         u8::from(config.position_correction == PositionCorrection::AdmittedContacts) << 1;
-    #[cfg(not(feature = "experimental-soft-contact"))]
     out.push(position);
-    #[cfg(feature = "experimental-soft-contact")]
-    {
-        out.push(position | u8::from(config.soft_contact.is_some()));
-        if let Some(c) = config.soft_contact {
-            scalar(out, c.frequency_hz);
-            scalar(out, c.damping_ratio);
-            out.push(c.relaxation_iterations);
-        }
-    }
 }
 fn encode_body(out: &mut Vec<u8>, b: &Body) {
     out.extend_from_slice(&b.id.0.to_le_bytes());
@@ -575,8 +565,6 @@ impl<'a> Reader<'a> {
                 1 => ConvergenceScope::ContactIslands,
                 _ => return Err(CheckpointError::InvalidData),
             },
-            #[cfg(feature = "experimental-soft-contact")]
-            soft_contact: None,
         };
         let policies = self.u8()?;
         if policies & !3 != 0 {
@@ -586,17 +574,8 @@ impl<'a> Reader<'a> {
             config.position_correction = PositionCorrection::AdmittedContacts;
         }
         let soft = policies & 1 != 0;
-        #[cfg(not(feature = "experimental-soft-contact"))]
         if soft {
             return Err(CheckpointError::UnsupportedPolicy);
-        }
-        #[cfg(feature = "experimental-soft-contact")]
-        if soft {
-            config.soft_contact = Some(super::SoftContact {
-                frequency_hz: self.scalar()?,
-                damping_ratio: self.scalar()?,
-                relaxation_iterations: self.u8()?,
-            });
         }
         Ok(config)
     }

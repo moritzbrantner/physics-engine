@@ -11,7 +11,10 @@ Physics Engine is slower than Rapier. See [technical decisions](docs/technical-d
 ## Shape of the engine
 
 - **One world:** `approximate::World` with `f32` physical state. The legacy integer `World` and
-  `RotatingWorld3d` are being removed; their consumers stay on their current git pin.
+  `RotatingWorld3d` were removed; their consumers stay on their old git pin until they move to
+  Rapier.
+- **Opt-in checkpoints:** versioned physical checkpoints for debugging and logging behind the
+  `checkpoints` Cargo feature.
 - **Own API:** primitives shaped by consumer usage rather than a Rapier clone — batched
   multi-character moves, stable never-reused ids, depenetration reported separately,
   length-unit-relative tolerances, stable-id tie-breaking, plane constraints and grounded state.
@@ -50,8 +53,8 @@ game loops, scenes and gameplay rules stay in consumers; the engine never depend
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
+cargo clippy --all-targets --features checkpoints --locked -- -D warnings
+cargo test --locked --features checkpoints
 bash scripts/build-pages.sh
 ```
 

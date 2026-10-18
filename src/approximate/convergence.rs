@@ -405,25 +405,10 @@ fn solve_rows<
 // Compile-time opt-in: ordinary builds retain the original hard row formula and layout.
 #[inline(always)]
 fn next_normal(c: &Constraint, vn: Real) -> Real {
-    #[cfg(feature = "experimental-soft-contact")]
-    if !c.hard_normal && !c.relaxing_normal {
-        let coefficients = c.normal_coefficients;
-        let delta = coefficients.mass_scale * c.normal_mass * (c.bias - vn)
-            - coefficients.impulse_scale * c.normal_impulse;
-        return (c.normal_impulse + delta).max(0.0);
-    }
     (c.normal_impulse + (c.bias - vn) * c.normal_mass).max(0.0)
 }
 #[inline(always)]
 fn normal_error(c: &Constraint, vn: Real) -> Real {
-    #[cfg(feature = "experimental-soft-contact")]
-    if !c.hard_normal && !c.relaxing_normal {
-        let coefficients = c.normal_coefficients;
-        return c.bias
-            - vn
-            - coefficients.impulse_scale / (coefficients.mass_scale * c.normal_mass)
-                * c.normal_impulse;
-    }
     c.bias - vn
 }
 

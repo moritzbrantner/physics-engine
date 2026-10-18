@@ -1,5 +1,5 @@
 use super::*;
-use crate::approximate::{CheckpointContext, Config};
+use crate::approximate::Config;
 
 fn world() -> World {
     World::new(Config {
@@ -19,11 +19,7 @@ fn native_contract_has_stable_ties_features_support_velocity_and_no_state_change
         w.add_body(b).unwrap();
     }
     w.add_force(BodyId(3), V::X).unwrap();
-    let context = CheckpointContext {
-        build: [19; 32],
-        content: [94; 32],
-    };
-    let before = w.checkpoint(context).unwrap().to_bytes();
+    let before: Vec<Body> = w.bodies().cloned().collect();
     let cast = RayCast::new(V(-100.0, 0.0, 0.0), V(200.0, 0.0, 0.0));
     let mut hits = Vec::new();
     let stats = w.cast_ray(cast, QueryFilter::default(), &mut hits).unwrap();
@@ -46,7 +42,7 @@ fn native_contract_has_stable_ties_features_support_velocity_and_no_state_change
         assert_eq!(hits, expected);
         assert_eq!(stats.output_capacity_growths, 0);
     }
-    assert_eq!(w.checkpoint(context).unwrap().to_bytes(), before);
+    assert_eq!(w.bodies().cloned().collect::<Vec<_>>(), before);
     let inside = RayCast::new(V::ZERO, V::X);
     w.cast_ray(inside, QueryFilter::default(), &mut hits)
         .unwrap();

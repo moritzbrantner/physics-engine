@@ -1,6 +1,5 @@
-//! Small f64 math surface for the fixed-step experiment; no integer state in this path.
+//! Small f32 vector/quaternion math for the world.
 use super::Real;
-use crate::Vec3i;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -50,11 +49,6 @@ impl Vector {
     }
     pub fn component_mul(self, b: Self) -> Self {
         Self(self.0 * b.0, self.1 * b.1, self.2 * b.2)
-    }
-}
-impl From<Vec3i> for Vector {
-    fn from(v: Vec3i) -> Self {
-        Self(v.x as Real, v.y as Real, v.z as Real)
     }
 }
 impl Add for Vector {

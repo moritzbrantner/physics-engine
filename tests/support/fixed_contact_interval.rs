@@ -78,11 +78,6 @@ pub fn run() -> [Real; 6] {
                             substeps,
                             ..Config::default()
                         };
-                        #[cfg(feature = "experimental-soft-contact")]
-                        let config = Config {
-                            soft_contact: Some(physics_engine::approximate::SoftContact::default()),
-                            ..config
-                        };
                         let mut world = World::new(config).unwrap();
                         let mut floor = Body::new(
                             BodyId(ids[0]),
@@ -127,11 +122,7 @@ pub fn run() -> [Real; 6] {
                             assert_eq!(bytes(&world), bytes(&replay));
                             assert_eq!(bytes(&world), bytes(&restored));
                             assert_eq!(report.substeps, u32::from(substeps));
-                            let passes = if cfg!(feature = "experimental-soft-contact") {
-                                10
-                            } else {
-                                8
-                            };
+                            let passes = if false { 10 } else { 8 };
                             assert!(report.impulse_iterations <= passes * u64::from(substeps));
                             assert_eq!(report.woken_bodies, 0);
                             assert!(report.retired.is_empty());
