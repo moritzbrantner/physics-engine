@@ -52,7 +52,9 @@ class of each public operation: queries, body churn, character batches, terrain 
 heap allocations per warm tick. `tests/work_complexity.rs` measures deterministic work
 counters (the test-only `work-counters` feature; off in every release build) on world
 families that scale one dimension at doubling points, and CI fails when a declared bound
-breaks. Changing a declared class happens in the same PR, with the reason in the contract.
+breaks. Bounds use coding-tooling's classes: exact `constant` and `linear`; tolerant
+`logarithmic`, polynomial and product classes such as O(m · log n). Tree descents are
+declared `logarithmic` in bodies, not held by budgets. Changing a declared class happens in the same PR, with the reason in the contract.
 
 ## D5 — Which work is eligible
 

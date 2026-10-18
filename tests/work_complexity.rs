@@ -85,8 +85,9 @@ fn write(operation: &str, samples: &[Sample]) {
     .expect("writable evidence directory");
 }
 
-/// Self-check when not collecting: `constant` and `linear` (marginal work never increases),
-/// as coding-tooling judges them, within groups that agree on the other dimensions.
+/// Self-check when not collecting: the exact classes `constant` and `linear` (marginal work
+/// never increases); the tolerant classes (`logarithmic`, `polynomial`, products) are judged by
+/// `coding-tooling performance work` in CI. Groups agree on the other dimensions, as there.
 fn judge(operation: &str, samples: &[Sample], bounds: &[(&str, &str, &str)]) {
     if std::env::var_os("WORK_PRINT").is_some() {
         eprintln!("{operation}: {samples:?}");
@@ -225,7 +226,7 @@ fn ray_casts_are_log_n_plus_k() {
         }
         if hits == 4 {
             first.push((
-                vec![("log2Bodies", log2 as u64)],
+                vec![("bodies", 1u64 << log2)],
                 vec![
                     ("tree-nodes", n_first / QUERIES),
                     ("exact-tests", e_first / QUERIES),
@@ -233,7 +234,7 @@ fn ray_casts_are_log_n_plus_k() {
             ));
         }
         all.push((
-            vec![("log2Bodies", log2 as u64), ("hits", hits)],
+            vec![("bodies", 1u64 << log2), ("hits", hits)],
             vec![
                 ("tree-nodes", n_all / QUERIES),
                 ("exact-tests", e_all / QUERIES),
@@ -243,13 +244,13 @@ fn ray_casts_are_log_n_plus_k() {
     judge(
         "ray-first",
         &first,
-        &[("exact-tests", "log2Bodies", "constant")],
+        &[("exact-tests", "bodies", "constant")],
     );
     judge(
         "ray-all",
         &all,
         &[
-            ("exact-tests", "log2Bodies", "constant"),
+            ("exact-tests", "bodies", "constant"),
             ("exact-tests", "hits", "linear"),
         ],
     );
@@ -259,12 +260,12 @@ fn ray_casts_are_log_n_plus_k() {
 fn shape_queries_are_log_n_plus_k() {
     let mut overlap = Vec::new();
     let mut sweep = Vec::new();
-    let mut out: Vec<QueryHit> = Vec::with_capacity(64);
+    let mut out: Vec<QueryHit> = Vec::with_capacity(256);
     // Overlap squares of side s boxes give s² hits; sweeps along a row give `hits` hits.
     for (log2, side) in SIZES
         .iter()
         .map(|&s| (s, 2u64))
-        .chain([1u64, 4].iter().map(|&s| (12, s)))
+        .chain([1u64, 4, 8, 16].iter().map(|&s| (12, s)))
     {
         let w = town(log2);
         let (mut n, mut e) = (0, 0);
@@ -290,7 +291,7 @@ fn shape_queries_are_log_n_plus_k() {
             e += b;
         }
         overlap.push((
-            vec![("log2Bodies", log2 as u64), ("hits", side * side)],
+            vec![("bodies", 1u64 << log2), ("hits", side * side)],
             vec![("tree-nodes", n / QUERIES), ("exact-tests", e / QUERIES)],
         ));
     }
@@ -317,12 +318,12 @@ fn shape_queries_are_log_n_plus_k() {
             e += b;
         }
         sweep.push((
-            vec![("log2Bodies", log2 as u64), ("hits", hits)],
+            vec![("bodies", 1u64 << log2), ("hits", hits)],
             vec![("tree-nodes", n / QUERIES), ("exact-tests", e / QUERIES)],
         ));
     }
     let bounds = [
-        ("exact-tests", "log2Bodies", "constant"),
+        ("exact-tests", "bodies", "constant"),
         ("exact-tests", "hits", "linear"),
     ];
     judge("overlap-shape", &overlap, &bounds);
@@ -442,7 +443,7 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
         let (n, e) = counted(|| w.move_characters(&moves, &mut out).unwrap());
         samples.push((
             vec![
-                ("log2Bodies", log2 as u64),
+                ("bodies", 1u64 << log2),
                 ("characters", m),
                 ("density", density),
             ],
@@ -601,14 +602,14 @@ fn a_warm_tick_allocates_nothing_at_any_size() {
         tick(&mut w);
         let allocs = allocations(|| tick(&mut w));
         samples.push((
-            vec![("log2Bodies", log2 as u64)],
+            vec![("bodies", 1u64 << log2)],
             vec![("heap-allocations", allocs)],
         ));
     }
     judge(
         "warm-tick-allocations",
         &samples,
-        &[("heap-allocations", "log2Bodies", "constant")],
+        &[("heap-allocations", "bodies", "constant")],
     );
     if evidence_dir().is_none() {
         assert!(samples.iter().all(|s| s.1[0].1 == 0), "{samples:?}");

@@ -100,28 +100,28 @@
       "description": "World::cast_ray_first, short rays in a town of unit boxes on a 2 m grid (constant density); 64 queries per point, per-query averages.",
       "publicContract": "physics_engine::approximate::World::cast_ray_first",
       "dimensions": {
-        "log2Bodies": {
-          "description": "log2 of the boxes in the town"
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
         }
       },
       "scalePoints": [
         {
-          "log2Bodies": 9
+          "bodies": 512
         },
         {
-          "log2Bodies": 10
+          "bodies": 1024
         },
         {
-          "log2Bodies": 11
+          "bodies": 2048
         },
         {
-          "log2Bodies": 12
+          "bodies": 4096
         },
         {
-          "log2Bodies": 13
+          "bodies": 8192
         },
         {
-          "log2Bodies": 14
+          "bodies": 16384
         }
       ],
       "metrics": [
@@ -129,10 +129,13 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "budget": {
-            "max": 32
-          },
-          "notes": "O(log n). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+          "notes": "O(log n): one descent through the query tree.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            }
+          ]
         },
         {
           "name": "exact-tests",
@@ -140,7 +143,7 @@
           "signal": "operation-count",
           "growth": [
             {
-              "dimension": "log2Bodies",
+              "dimension": "bodies",
               "bound": "constant"
             }
           ],
@@ -153,8 +156,8 @@
       "description": "World::cast_ray (all hits) along a grid row crossing exactly `hits` boxes; 64 queries per point.",
       "publicContract": "physics_engine::approximate::World::cast_ray",
       "dimensions": {
-        "log2Bodies": {
-          "description": "log2 of the boxes in the town"
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
         },
         "hits": {
           "description": "boxes the ray crosses"
@@ -162,43 +165,43 @@
       },
       "scalePoints": [
         {
-          "log2Bodies": 9,
+          "bodies": 512,
           "hits": 4
         },
         {
-          "log2Bodies": 10,
+          "bodies": 1024,
           "hits": 4
         },
         {
-          "log2Bodies": 11,
+          "bodies": 2048,
           "hits": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 4
         },
         {
-          "log2Bodies": 13,
+          "bodies": 8192,
           "hits": 4
         },
         {
-          "log2Bodies": 14,
+          "bodies": 16384,
           "hits": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 2
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 8
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 16
         }
       ],
@@ -207,10 +210,18 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "budget": {
-            "max": 160
-          },
-          "notes": "O(log n + k). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+          "notes": "O(log n + k): logarithmic in bodies at fixed hits and linear in hits at fixed bodies. The hits bound is the tolerant degree-1 class because node visits per extra hit vary by a few nodes, which the exact linear test rejects.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            },
+            {
+              "dimension": "hits",
+              "bound": "polynomial",
+              "degree": 1
+            }
+          ]
         },
         {
           "name": "exact-tests",
@@ -218,7 +229,7 @@
           "signal": "operation-count",
           "growth": [
             {
-              "dimension": "log2Bodies",
+              "dimension": "bodies",
               "bound": "constant"
             },
             {
@@ -234,8 +245,8 @@
       "description": "World::overlap_shape with box squares covering exactly `hits` boxes; 64 queries per point.",
       "publicContract": "physics_engine::approximate::World::overlap_shape",
       "dimensions": {
-        "log2Bodies": {
-          "description": "log2 of the boxes in the town"
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
         },
         "hits": {
           "description": "boxes the query overlaps"
@@ -243,36 +254,44 @@
       },
       "scalePoints": [
         {
-          "log2Bodies": 9,
+          "bodies": 512,
           "hits": 4
         },
         {
-          "log2Bodies": 10,
+          "bodies": 1024,
           "hits": 4
         },
         {
-          "log2Bodies": 11,
+          "bodies": 2048,
           "hits": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 4
         },
         {
-          "log2Bodies": 13,
+          "bodies": 8192,
           "hits": 4
         },
         {
-          "log2Bodies": 14,
+          "bodies": 16384,
           "hits": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 16
+        },
+        {
+          "bodies": 4096,
+          "hits": 64
+        },
+        {
+          "bodies": 4096,
+          "hits": 256
         }
       ],
       "metrics": [
@@ -280,10 +299,18 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "budget": {
-            "max": 128
-          },
-          "notes": "O(log n + k). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+          "notes": "O(log n + k): logarithmic in bodies at fixed hits and linear in hits at fixed bodies. The hits bound is the tolerant degree-1 class because node visits per extra hit vary by a few nodes, which the exact linear test rejects.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            },
+            {
+              "dimension": "hits",
+              "bound": "polynomial",
+              "degree": 1
+            }
+          ]
         },
         {
           "name": "exact-tests",
@@ -291,7 +318,7 @@
           "signal": "operation-count",
           "growth": [
             {
-              "dimension": "log2Bodies",
+              "dimension": "bodies",
               "bound": "constant"
             },
             {
@@ -307,8 +334,8 @@
       "description": "World::cast_shape, sphere sweeps along a grid row crossing exactly `hits` boxes; 64 queries per point.",
       "publicContract": "physics_engine::approximate::World::cast_shape",
       "dimensions": {
-        "log2Bodies": {
-          "description": "log2 of the boxes in the town"
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
         },
         "hits": {
           "description": "boxes the sweep crosses"
@@ -316,43 +343,43 @@
       },
       "scalePoints": [
         {
-          "log2Bodies": 9,
+          "bodies": 512,
           "hits": 4
         },
         {
-          "log2Bodies": 10,
+          "bodies": 1024,
           "hits": 4
         },
         {
-          "log2Bodies": 11,
+          "bodies": 2048,
           "hits": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 4
         },
         {
-          "log2Bodies": 13,
+          "bodies": 8192,
           "hits": 4
         },
         {
-          "log2Bodies": 14,
+          "bodies": 16384,
           "hits": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 2
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 8
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "hits": 16
         }
       ],
@@ -361,10 +388,18 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "budget": {
-            "max": 224
-          },
-          "notes": "O(log n + k). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+          "notes": "O(log n + k): logarithmic in bodies at fixed hits and linear in hits at fixed bodies. The hits bound is the tolerant degree-1 class because node visits per extra hit vary by a few nodes, which the exact linear test rejects.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            },
+            {
+              "dimension": "hits",
+              "bound": "polynomial",
+              "degree": 1
+            }
+          ]
         },
         {
           "name": "exact-tests",
@@ -372,7 +407,7 @@
           "signal": "operation-count",
           "growth": [
             {
-              "dimension": "log2Bodies",
+              "dimension": "bodies",
               "bound": "constant"
             },
             {
@@ -453,8 +488,8 @@
       "description": "One World::move_characters batch: characters scattered in 4 x 4 m blocks of the town's lanes, `density` per block, each moving 1 m.",
       "publicContract": "physics_engine::approximate::World::move_characters",
       "dimensions": {
-        "log2Bodies": {
-          "description": "log2 of the boxes in the town"
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
         },
         "characters": {
           "description": "characters in the batch"
@@ -465,67 +500,67 @@
       },
       "scalePoints": [
         {
-          "log2Bodies": 9,
+          "bodies": 512,
           "characters": 32,
           "density": 1
         },
         {
-          "log2Bodies": 10,
+          "bodies": 1024,
           "characters": 32,
           "density": 1
         },
         {
-          "log2Bodies": 11,
+          "bodies": 2048,
           "characters": 32,
           "density": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 32,
           "density": 1
         },
         {
-          "log2Bodies": 13,
+          "bodies": 8192,
           "characters": 32,
           "density": 1
         },
         {
-          "log2Bodies": 14,
+          "bodies": 16384,
           "characters": 32,
           "density": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 8,
           "density": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 16,
           "density": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 64,
           "density": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 128,
           "density": 1
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 32,
           "density": 2
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 32,
           "density": 4
         },
         {
-          "log2Bodies": 12,
+          "bodies": 4096,
           "characters": 32,
           "density": 8
         }
@@ -535,19 +570,40 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
+          "notes": "O(m log n): every move's casts descend the tree. Density is held by the budget, not a class: node visits stay flat up to density 4 and then step up when characters start touching (2846, 2859, 2859, 3474), which no growth class describes.",
+          "growth": [
+            {
+              "product": [
+                {
+                  "dimension": "characters",
+                  "bound": "linear"
+                },
+                {
+                  "dimension": "bodies",
+                  "bound": "logarithmic"
+                }
+              ]
+            }
+          ],
           "budget": {
             "max": 16384
-          },
-          "notes": "O(m log n): every move's casts descend the tree. Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+          }
         },
         {
           "name": "tree-nodes-per-character",
           "unit": "nodes",
           "signal": "operation-count",
-          "budget": {
-            "max": 128
-          },
-          "notes": "O(log n) per character; held by budget for the same reason."
+          "notes": "O(log n) per character, independent of how many characters move.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            },
+            {
+              "dimension": "characters",
+              "bound": "constant"
+            }
+          ]
         },
         {
           "name": "exact-tests",
@@ -714,28 +770,28 @@
       "description": "One warm tick (32 character moves, 24 queries, one step) after two warm-up ticks, in towns of 2^log2Bodies boxes.",
       "publicContract": "physics_engine::approximate::World",
       "dimensions": {
-        "log2Bodies": {
-          "description": "log2 of the boxes in the town"
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
         }
       },
       "scalePoints": [
         {
-          "log2Bodies": 9
+          "bodies": 512
         },
         {
-          "log2Bodies": 10
+          "bodies": 1024
         },
         {
-          "log2Bodies": 11
+          "bodies": 2048
         },
         {
-          "log2Bodies": 12
+          "bodies": 4096
         },
         {
-          "log2Bodies": 13
+          "bodies": 8192
         },
         {
-          "log2Bodies": 14
+          "bodies": 16384
         }
       ],
       "metrics": [
@@ -748,7 +804,7 @@
           },
           "growth": [
             {
-              "dimension": "log2Bodies",
+              "dimension": "bodies",
               "bound": "constant"
             }
           ],
