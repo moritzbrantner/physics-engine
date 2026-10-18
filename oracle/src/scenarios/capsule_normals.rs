@@ -31,8 +31,11 @@ fn pair(tick: u32, k: usize) -> ([f32; 3], [f32; 3]) {
     )
 }
 
-/// Cast `k`: a wall (centre, half extents), the capsule start and its displacement.
-fn cast(tick: u32, k: usize) -> (([f32; 3], [f32; 3]), [f32; 3], [f32; 3]) {
+/// A wall: centre and half extents.
+type Wall = ([f32; 3], [f32; 3]);
+
+/// Cast `k`: a wall, the capsule start and its displacement.
+fn cast(tick: u32, k: usize) -> (Wall, [f32; 3], [f32; 3]) {
     let mut rng = Rng(0xbead_0000 + u64::from(tick) * 131 + k as u64);
     let length = rng.range(2.5, 60.0);
     let wall = ([k as f32 * 150.0, 1.5, 50.0], [length, 1.5, 0.25]);
