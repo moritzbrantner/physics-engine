@@ -28,7 +28,7 @@ jobs:
           node-version: 22
 
       - name: Run fast tier
-        uses: moritzbrantner/coding-tooling@20afb614772346991b3e7ac60b5857ecab5472e3
+        uses: moritzbrantner/coding-tooling@6e4cfce6da1151b6cd3db2c3cacc6478e59d4b84
         with:
           tier: fast
           install-mode: none
