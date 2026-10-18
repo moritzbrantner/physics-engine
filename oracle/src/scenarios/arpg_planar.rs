@@ -63,7 +63,7 @@ fn desired(index: usize, tick: u32) -> [f32; 3] {
 pub fn scenario() -> Scenario {
     Scenario {
         name: "arpg-planar",
-        capabilities: "C6 C8",
+        capabilities: "C2 C6 C8",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: || Box::new(engine::Sim::new()),
@@ -140,7 +140,12 @@ mod engine {
             let (boxes, starts) = scene();
             for (i, (c, h)) in boxes.into_iter().enumerate() {
                 world
-                    .add_body(Body::keyed(1 + i as u64, Shape::Box(v(h)), v(c), 0.0))
+                    .add_body(if i == 0 {
+                        // The consumers' ground is a halfspace through the floor box's top.
+                        Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0)
+                    } else {
+                        Body::keyed(1 + i as u64, Shape::Box(v(h)), v(c), 0.0)
+                    })
                     .unwrap();
             }
             let settings = CharacterSettings {

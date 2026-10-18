@@ -106,6 +106,9 @@ pub enum Shape {
         terrain: TerrainId,
         half_extents: Vector,
     },
+    /// Static solid halfspace below the plane through the body position; the outward normal is
+    /// the body's local +Y (an infinite floor with the identity orientation).
+    HalfSpace,
 }
 impl Shape {
     pub const fn capsule(half_segment: Real, radius: Real) -> Self {
@@ -117,6 +120,11 @@ impl Shape {
     pub const fn wedge(half_extents: Vector) -> Self {
         Self::Wedge(half_extents)
     }
+    /// Terrain and halfspaces answer queries and character moves but take no part in rigid
+    /// contacts; they are static only.
+    pub fn query_only(self) -> bool {
+        matches!(self, Self::Heightfield { .. } | Self::HalfSpace)
+    }
     pub fn radius(self) -> Real {
         match self {
             Self::Box(h)
@@ -124,6 +132,7 @@ impl Shape {
             | Self::Heightfield {
                 half_extents: h, ..
             } => h.length(),
+            Self::HalfSpace => 0.0,
             Self::Sphere(r) => r,
             Self::Capsule {
                 half_segment,
@@ -138,6 +147,7 @@ impl Shape {
             | Self::Heightfield {
                 half_extents: h, ..
             } => h,
+            Self::HalfSpace => Vector::ZERO,
             Self::Sphere(r) => Vector(r, r, r),
             Self::Capsule {
                 half_segment,
@@ -154,6 +164,7 @@ impl Shape {
             Self::Heightfield {
                 half_extents: h, ..
             } => h.finite() && h.max_component() < 1e12,
+            Self::HalfSpace => true,
             Self::Capsule {
                 half_segment,
                 radius,
@@ -203,7 +214,7 @@ impl Shape {
             }
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
             // wedge inertia/pose contract is introduced. Terrain is static.
-            Self::Wedge(_) | Self::Heightfield { .. } => None,
+            Self::Wedge(_) | Self::Heightfield { .. } | Self::HalfSpace => None,
         }
     }
 }
@@ -342,6 +353,7 @@ impl Body {
             && self.orientation.finite()
             && self.shape.valid_dimensions()
             && (!matches!(self.shape, Shape::Wedge(_)) || self.rotation_locked || !self.movable())
+            && (!self.shape.query_only() || (self.mass == 0.0 && !self.external))
             && self.mass.is_finite()
             && (self.mass == 0.0 || self.mass >= 1e-6)
             && self.mass < 1e12
@@ -531,6 +543,8 @@ pub struct World {
     last_transaction: TransactionStats,
     query_tree: query::QueryTree,
     terrains: Vec<terrain::Terrain>,
+    /// Halfspace bodies, which every query tests (they have no finite bounds).
+    halfspaces: Vec<BodyId>,
     slots: Vec<Slot>,
     /// Free slots, descending: `pop` returns the lowest.
     free: Vec<u32>,
@@ -577,6 +591,7 @@ impl World {
             last_transaction: TransactionStats::default(),
             query_tree: query::QueryTree::default(),
             terrains: Vec::new(),
+            halfspaces: Vec::new(),
             slots: Vec::new(),
             free: Vec::new(),
             keys: BTreeMap::new(),
@@ -696,21 +711,19 @@ impl World {
         self.next_serial += 1;
         let i = self.bodies.partition_point(|b| b.order < body.order);
         // Local topology change: only a genuine new fixed overlap can disturb a sleeper.
-        let wake =
-            if body.mass == 0.0 && !body.sensor && !matches!(body.shape, Shape::Heightfield { .. })
-            {
-                self.bodies
-                    .iter()
-                    .filter(|b| {
-                        b.sleeping
-                            && b.layers.collides_with(body.layers)
-                            && contact::current(b, &body, 0.0).is_some()
-                    })
-                    .map(|b| b.order)
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            };
+        let wake = if body.mass == 0.0 && !body.sensor && !body.shape.query_only() {
+            self.bodies
+                .iter()
+                .filter(|b| {
+                    b.sleeping
+                        && b.layers.collides_with(body.layers)
+                        && contact::current(b, &body, 0.0).is_some()
+                })
+                .map(|b| b.order)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         for id in wake {
             self.wake_island(id);
         }
@@ -718,6 +731,9 @@ impl World {
         self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let (id, key) = (body.id, body.key);
+        if body.shape == Shape::HalfSpace {
+            self.halfspaces.push(id);
+        }
         self.bodies.insert(i, body);
         crate::work::add(
             crate::work::Counter::StorageShifts,
@@ -740,6 +756,7 @@ impl World {
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let i = self.index(id).ok()?;
         self.characters.remove(id);
+        self.halfspaces.retain(|&h| h != id);
         self.bookkeeping.ensure_graph(&self.bodies, &self.cache);
         let neighbors = self
             .bookkeeping
@@ -1702,8 +1719,8 @@ impl World {
                 if a.sensor
                     || b.sensor
                     // Terrain answers queries and character moves; it has no rigid contacts.
-                    || matches!(a.shape, Shape::Heightfield { .. })
-                    || matches!(b.shape, Shape::Heightfield { .. })
+                    || a.shape.query_only()
+                    || b.shape.query_only()
                     || !a.layers.collides_with(b.layers)
                     || (a.inverse_mass() == 0.0
                         && b.inverse_mass() == 0.0

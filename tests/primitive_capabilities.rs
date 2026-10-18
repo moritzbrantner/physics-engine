@@ -36,6 +36,7 @@ fn kind(shape: Shape) -> &'static str {
         Shape::Capsule { .. } => "capsule",
         Shape::Wedge(_) => "wedge",
         Shape::Heightfield { .. } => "heightfield",
+        Shape::HalfSpace => "halfspace",
     }
 }
 
@@ -231,7 +232,9 @@ pub fn restrictions_and_validation_remain_explicit() {
                 Shape::Box(_) => Shape::Box(V(dimension, minimum, minimum)),
                 Shape::Capsule { .. } => Shape::capsule(0.0, dimension),
                 Shape::Wedge(_) => Shape::wedge(V(dimension, minimum, minimum)),
-                Shape::Heightfield { .. } => unreachable!("the ledger lists primitives only"),
+                Shape::Heightfield { .. } | Shape::HalfSpace => {
+                    unreachable!("the ledger lists primitives only")
+                }
             };
             let mut invalid = Body::keyed(2, shape, V::ZERO, 0.0);
             invalid.rotation_locked = true;

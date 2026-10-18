@@ -76,6 +76,15 @@ character moves work against it; box and wedge queries return an error. Terrain 
 in rigid-body contacts, and worlds with terrain are not checkpointed. `add_body` rejects
 heightfield shapes.
 
+## Halfspaces
+
+`Shape::HalfSpace` is the solid side of the plane through the body position; the outward
+normal is the body's local +Y, so the identity orientation gives an infinite floor. It is
+static only (mass 0, not external). Every ray, sphere and capsule query tests it with a
+closed form, wherever the query is; box and wedge queries return an error. Characters stand,
+walk and snap on it. Like terrain, it takes no part in rigid-body contacts, and worlds with
+a halfspace are not checkpointed.
+
 ## Characters
 
 `add_character(id, CharacterSettings)` makes an external (kinematic) upright capsule body a

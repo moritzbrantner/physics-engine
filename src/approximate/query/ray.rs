@@ -185,7 +185,7 @@ impl World {
                 body: target.id,
                 reason,
             };
-            if prune {
+            if prune && target.shape != Shape::HalfSpace {
                 stats.bound_tests += 1;
                 let (min, max) = target.cached_bounds;
                 let Some(enter) = entry(min, max) else {
@@ -203,7 +203,25 @@ impl World {
             crate::work::add(crate::work::Counter::ExactTests, 1);
             stats.geometry_preparations += 1;
             let mut work = PrimitiveRayWork3::default();
-            let result = if let Shape::Heightfield { terrain, .. } = target.shape {
+            let result = if target.shape == Shape::HalfSpace {
+                let (point, normal) = super::super::terrain::plane_of(target);
+                let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
+                let end = [end.0, end.1, end.2].map(f64::from);
+                work.queries += 1;
+                Ok(
+                    geometry_kernels::halfspace::segment_halfspace(start, end, point, normal).map(
+                        |fraction| geometry_kernels::primitive3::PrimitiveRayHit3 {
+                            fraction,
+                            point: std::array::from_fn(|k| {
+                                start[k] + (end[k] - start[k]) * fraction
+                            }),
+                            normal,
+                            feature: RayFeature::Interior,
+                            starts_inside: fraction == 0.0,
+                        },
+                    ),
+                )
+            } else if let Shape::Heightfield { terrain, .. } = target.shape {
                 let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
                 let end = [end.0, end.1, end.2].map(f64::from);
                 work.queries += 1;
@@ -293,8 +311,10 @@ impl World {
                 1.0,
                 pad,
                 |leaf, _| {
+                    let index = tree.index_of(leaf.id);
                     if failure.is_none()
-                        && let Err(reason) = test(tree.index_of(leaf.id), hits)
+                        && self.bodies[index].shape != Shape::HalfSpace
+                        && let Err(reason) = test(index, hits)
                     {
                         failure = Some(reason);
                     }
@@ -309,7 +329,16 @@ impl World {
                 },
             );
             crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
-            failure.map_or(Ok(()), Err)
+            if let Some(reason) = failure {
+                return Err(reason);
+            }
+            // Halfspaces are unbounded: every ray tests them (their tree leaves are points).
+            for &id in &self.halfspaces {
+                if let Ok(index) = self.index(id) {
+                    test(index, hits)?;
+                }
+            }
+            Ok(())
         } else {
             (0..self.bodies.len()).try_for_each(|i| test(i, hits))
         }
