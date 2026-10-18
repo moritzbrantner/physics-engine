@@ -295,9 +295,12 @@ pub(super) struct Scratch {
     pub ccd_excluded: Vec<usize>,
     /// Retirements admitted by remaining-time impacts, merged after the contact solve.
     pub ccd_retired: Vec<BodyId>,
+    /// Incremented by every layout change; the query index records the one it was built for.
+    pub generation: u64,
 }
 impl Scratch {
     pub fn layout_changed(&mut self) {
+        self.generation += 1;
         self.position.invalidate();
         self.activity.dirty = true;
         self.graph.dirty = true;

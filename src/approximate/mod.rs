@@ -459,6 +459,7 @@ pub struct World {
     pub last_report: Report,
     transaction: transaction::Journal,
     last_transaction: TransactionStats,
+    query_tree: query::QueryTree,
     failed_work: Option<FailedStepWork>,
     elapsed: Scalar,
 }
@@ -494,6 +495,7 @@ impl World {
             last_report: Report::default(),
             transaction: transaction::Journal::default(),
             last_transaction: TransactionStats::default(),
+            query_tree: query::QueryTree::default(),
             failed_work: None,
             elapsed: 0.0,
         })
@@ -566,8 +568,16 @@ impl World {
         }
         body.cached_bounds = contact::bounds(&body);
         self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
+        let synced = self.query_tree.current(self.bookkeeping.generation);
         self.bodies.insert(i, body);
         self.bookkeeping.layout_changed();
+        if synced {
+            self.query_tree
+                .inserted(&self.bodies, i, self.bookkeeping.generation);
+        } else {
+            self.query_tree
+                .sync(&self.bodies, self.bookkeeping.generation);
+        }
         Ok(())
     }
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
@@ -585,9 +595,16 @@ impl World {
         }
         self.geometry.remove(id);
         self.cache.retain(|&(a, b), _| a != id && b != id);
+        let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies.remove(i);
         self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
         self.bookkeeping.layout_changed();
+        if synced {
+            self.query_tree.removed(i, self.bookkeeping.generation);
+        } else {
+            self.query_tree
+                .sync(&self.bodies, self.bookkeeping.generation);
+        }
         Some(removed)
     }
     pub fn set_velocity(&mut self, id: BodyId, v: Vector) -> Result<(), Error> {
@@ -752,7 +769,7 @@ impl World {
         if let Some(work) = &mut self.failed_work {
             work.transaction = self.last_transaction;
         }
-        match result {
+        let result = match result {
             Ok(report) => {
                 self.transaction.commit();
                 self.last_report = report.clone();
@@ -766,7 +783,10 @@ impl World {
                 self.bookkeeping.activity.count = prior_activity;
                 Err(error)
             }
-        }
+        };
+        self.query_tree
+            .sync(&self.bodies, self.bookkeeping.generation);
+        result
     }
     fn advance_substeps<const PREPARED: bool, const CACHED: bool>(
         &mut self,

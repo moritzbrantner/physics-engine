@@ -163,6 +163,9 @@ impl Checkpoint {
             .count();
         world.bookkeeping.layout_changed();
         world
+            .query_tree
+            .sync(&world.bodies, world.bookkeeping.generation);
+        world
     }
 
     /// Canonical little-endian encoding of exact `Real` bits (f64 time). SHA-256 detects damaged

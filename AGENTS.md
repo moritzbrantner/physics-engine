@@ -30,6 +30,7 @@ Fast-moving bodies must be tested across the requested interval. Do not replace 
 | `src/` | The `physics-engine` crate: `approximate::World`, queries, opt-in checkpoints |
 | `demo-wasm/` | Narrow WASM adapter for the Pages sandbox; owns no physics rules |
 | `site/` | Pages UI over `demo-wasm`; never reconstructs collision truth in JavaScript |
+| `oracle/` | Rapier oracle: every parity scenario on Rapier (`rapier3d =0.36.1`) and Physics Engine |
 
 ```sh
 cargo fmt --all -- --check
@@ -39,6 +40,8 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --locked
 cargo test --locked --features checkpoints
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
+cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle: invariants + native perf gate
+node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: timings and sizes (not gated)
 ```
 
 CI (`.github/workflows/validate.yml`) runs these on plain Ubuntu with the `rust-toolchain.toml` toolchain; the `fast` tier is declared in `.coding-tooling.json`.

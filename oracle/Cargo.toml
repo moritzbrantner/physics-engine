@@ -1,0 +1,25 @@
+[package]
+name = "physics-oracle"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Rapier oracle: runs each parity scenario on Rapier and physics-engine"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["engine", "rapier"]
+# Each side can be built alone so the WASM size of each engine's workload is measurable.
+engine = ["dep:physics-engine"]
+rapier = ["dep:rapier3d"]
+
+[dependencies]
+physics-engine = { path = "..", optional = true }
+rapier3d = { version = "=0.36.1", optional = true }
+
+[[bin]]
+name = "oracle"
+path = "src/main.rs"
+required-features = ["engine", "rapier"]
+

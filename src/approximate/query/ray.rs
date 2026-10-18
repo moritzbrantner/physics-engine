@@ -33,6 +33,35 @@ pub struct RayHit {
     pub sensor: bool,
 }
 
+/// Ray query output: every hit, or only the best first hit (no allocation).
+enum RayOut<'a> {
+    All(&'a mut Vec<RayHit>),
+    First(Option<RayHit>),
+}
+impl RayOut<'_> {
+    /// The current best hit of a first-hit query; `None` when collecting every hit.
+    fn best(&self) -> Option<&RayHit> {
+        match self {
+            Self::All(_) => None,
+            Self::First(best) => best.as_ref(),
+        }
+    }
+    /// Stores a hit; returns whether the output vector grew.
+    fn push(&mut self, hit: RayHit) -> bool {
+        match self {
+            Self::All(hits) => {
+                let capacity = hits.capacity();
+                hits.push(hit);
+                hits.capacity() > capacity
+            }
+            Self::First(best) => {
+                *best = Some(hit);
+                false
+            }
+        }
+    }
+}
+
 impl World {
     /// All current-pose ray entries, ordered by fraction then BodyId. Initial touching
     /// and overlap are included even for separating movement. Reuses caller output;
@@ -46,6 +75,25 @@ impl World {
         self.ray_query(cast, filter, hits, true)
     }
 
+    /// The earliest current-pose ray entry, ties broken by the lower BodyId: the same hit as
+    /// `cast_ray(..)[0]`, without collecting the others. Targets whose bounds the segment can
+    /// only enter after the best hit so far are skipped. Never steps/wakes.
+    pub fn cast_ray_first(
+        &self,
+        cast: RayCast,
+        filter: QueryFilter,
+    ) -> Result<Option<RayHit>, Box<QueryFailure>> {
+        let mut stats = QueryStats::default();
+        let mut out = RayOut::First(None);
+        match self.collect_ray_hits(cast, filter, &mut out, true, &mut stats) {
+            Ok(()) => Ok(match out {
+                RayOut::First(best) => best,
+                RayOut::All(_) => None,
+            }),
+            Err(reason) => Err(Box::new(QueryFailure { reason, stats })),
+        }
+    }
+
     fn ray_query(
         &self,
         cast: RayCast,
@@ -55,7 +103,7 @@ impl World {
     ) -> Result<QueryStats, Box<QueryFailure>> {
         hits.clear();
         let mut stats = QueryStats::default();
-        let result = self.collect_ray_hits(cast, filter, hits, prune, &mut stats);
+        let result = self.collect_ray_hits(cast, filter, &mut RayOut::All(hits), prune, &mut stats);
         if result.is_err() {
             hits.clear();
         }
@@ -75,7 +123,7 @@ impl World {
         &self,
         cast: RayCast,
         filter: QueryFilter,
-        hits: &mut Vec<RayHit>,
+        hits: &mut RayOut<'_>,
         prune: bool,
         stats: &mut QueryStats,
     ) -> Result<(), QueryFailureReason> {
@@ -92,36 +140,61 @@ impl World {
         let bounds = (cast.origin.min(end), cast.origin.max(end));
         stats.query_bound_preparations += 1;
         let distance = cast.displacement.length();
-        for target in &self.bodies {
+        let ray_magnitude = cast
+            .origin
+            .abs()
+            .max_component()
+            .max(end.abs().max_component());
+        // Entry parameter of the segment into `min..max` padded for rounding, or `None` when
+        // the segment misses it. Conservative: never rejects a box the exact test could hit.
+        let entry = |min: V, max: V| -> Option<Real> {
+            // Twice the bounds' largest coordinate covers any contained position and radius.
+            let magnitude =
+                ray_magnitude.max(2.0 * min.abs().max_component().max(max.abs().max_component()));
+            let pad = 64.0 * Real::EPSILON * (1.0 + magnitude);
+            if (0..3).any(|i| bounds.1.at(i) + pad < min.at(i) || max.at(i) + pad < bounds.0.at(i))
+            {
+                return None;
+            }
+            let (mut enter, mut exit): (Real, Real) = (0.0, 1.0);
+            for i in 0..3 {
+                let d = cast.displacement.at(i);
+                if d != 0.0 {
+                    let o = cast.origin.at(i);
+                    let a = (min.at(i) - pad - o) / d;
+                    let b = (max.at(i) + pad - o) / d;
+                    enter = enter.max(a.min(b));
+                    exit = exit.min(a.max(b));
+                }
+            }
+            let slack = 64.0 * Real::EPSILON * (1.0 + enter.abs().max(exit.abs()));
+            (enter <= exit + slack).then_some(enter - slack)
+        };
+        let first = matches!(hits, RayOut::First(_));
+        let mut test = |index: usize, hits: &mut RayOut<'_>| -> Result<(), QueryFailureReason> {
+            let target = &self.bodies[index];
             stats.bodies_visited += 1;
             if !filter.admits(target) {
                 stats.filtered_bodies += 1;
-                continue;
+                return Ok(());
             }
             let failure = |reason| QueryFailureReason::Search {
                 body: target.id,
                 reason,
             };
-            if !unit_orientation(target.orientation) {
-                return Err(failure(SweepFailure::InvalidGeometryInput));
-            }
             if prune {
                 stats.bound_tests += 1;
-                let magnitude = cast
-                    .origin
-                    .abs()
-                    .max_component()
-                    .max(end.abs().max_component())
-                    .max(target.position.abs().max_component())
-                    .max(target.shape.radius());
-                // Conservative rounding padding only; snapshot rays have no collision skin.
-                let pad = 64.0 * Real::EPSILON * (1.0 + magnitude);
                 let (min, max) = target.cached_bounds;
-                if (0..3)
-                    .any(|i| bounds.1.at(i) + pad < min.at(i) || max.at(i) + pad < bounds.0.at(i))
-                {
-                    continue;
+                let Some(enter) = entry(min, max) else {
+                    return Ok(());
+                };
+                // A later entry cannot beat the best first hit so far.
+                if hits.best().is_some_and(|best| enter > best.fraction) {
+                    return Ok(());
                 }
+            }
+            if !unit_orientation(target.orientation) {
+                return Err(failure(SweepFailure::InvalidGeometryInput));
             }
             stats.exact_candidates += 1;
             stats.geometry_preparations += 1;
@@ -131,7 +204,7 @@ impl World {
             stats.ray_planes_tested += work.planes_tested;
             stats.ray_quadratic_tests += work.quadratic_tests;
             let Some(hit) = result.map_err(failure)? else {
-                continue;
+                return Ok(());
             };
             let point = V(
                 primitive::nearest(hit.point[0]),
@@ -145,8 +218,13 @@ impl World {
             if !support_velocity.finite() {
                 return Err(failure(SweepFailure::NonFiniteComputation));
             }
-            let capacity = hits.capacity();
-            hits.push(RayHit {
+            // First hit: earliest fraction wins; equal fractions keep the lower BodyId.
+            if hits.best().is_some_and(|best| {
+                best.fraction < fraction || (best.fraction == fraction && best.body < target.id)
+            }) {
+                return Ok(());
+            }
+            let grew = hits.push(RayHit {
                 body: target.id,
                 fraction,
                 distance: distance * fraction,
@@ -161,10 +239,44 @@ impl World {
                 support_velocity,
                 sensor: target.sensor,
             });
-            stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
+            stats.output_capacity_growths += u64::from(grew);
             stats.hits_admitted += 1;
+            Ok(())
+        };
+        if prune && self.query_tree.current(self.bookkeeping.generation) {
+            let tree = &self.query_tree;
+            // Covers every per-target pad above: leaf coordinates are bounded by `magnitude`.
+            let pad = 64.0 * Real::EPSILON * (1.0 + ray_magnitude.max(2.0 * tree.magnitude));
+            let mut failure = None;
+            tree.tree().visit_segment(
+                [cast.origin.0, cast.origin.1, cast.origin.2],
+                [
+                    cast.displacement.0,
+                    cast.displacement.1,
+                    cast.displacement.2,
+                ],
+                1.0,
+                pad,
+                |leaf, _| {
+                    if failure.is_none()
+                        && let Err(reason) = test(tree.index_of(leaf.id), hits)
+                    {
+                        failure = Some(reason);
+                    }
+                    match (failure, first, hits.best()) {
+                        (Some(_), ..) => -1.0,
+                        // Keep boxes entered at the best fraction: a lower BodyId may tie.
+                        (None, true, Some(best)) => {
+                            best.fraction + 64.0 * Real::EPSILON * (1.0 + best.fraction)
+                        }
+                        _ => 1.0,
+                    }
+                },
+            );
+            failure.map_or(Ok(()), Err)
+        } else {
+            (0..self.bodies.len()).try_for_each(|i| test(i, hits))
         }
-        Ok(())
     }
 }
 
