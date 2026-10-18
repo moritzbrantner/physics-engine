@@ -13,6 +13,10 @@ pub enum Obs {
     Ray(Option<(f32, [f32; 3])>),
     /// Whether a query shape penetrates static geometry deeper than the scenario tolerance.
     Penetrates(bool),
+    /// A body position after a tick.
+    Position([f32; 3]),
+    /// Whether a character stands on static support after a tick.
+    Grounded(bool),
 }
 
 /// Observations in the order a scenario recorded them.
@@ -80,9 +84,12 @@ impl Scenario {
 /// Every observation is finite.
 pub fn finite(trace: &Trace) -> Result<(), String> {
     for (i, obs) in trace.0.iter().enumerate() {
-        if let Obs::Ray(Some((t, n))) = obs
-            && !(t.is_finite() && n.iter().all(|v| v.is_finite()))
-        {
+        let ok = match obs {
+            Obs::Ray(Some((t, n))) => t.is_finite() && n.iter().all(|v| v.is_finite()),
+            Obs::Position(p) => p.iter().all(|v| v.is_finite()),
+            _ => true,
+        };
+        if !ok {
             return Err(format!("observation {i} is not finite: {obs:?}"));
         }
     }
@@ -107,5 +114,8 @@ impl Rng {
 
 /// All scenarios in the harness. Every parity PR adds its scenario here.
 pub fn all() -> Vec<Scenario> {
-    vec![scenarios::static_queries::scenario()]
+    vec![
+        scenarios::static_queries::scenario(),
+        scenarios::character_move::scenario(),
+    ]
 }

@@ -41,6 +41,17 @@ the oracle harness (D4). The per-capability parity status is tracked in
   `remove_body` and `step`; it changes which bodies are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
+## Characters
+
+`add_character(id, CharacterSettings)` makes an external (kinematic) upright capsule body a
+character. `move_characters(&[CharacterMove], &mut Vec<CharacterMoveResult>)` is the only move
+primitive: collide-and-slide that keeps `offset` to every surface it touches, then a grounded
+test against walkable static support within `offset + snap_to_ground` (snapping down when the
+character was grounded and does not move up). Zero desired motion never moves a character;
+penetration is resolved first and reported as `depenetration`, apart from `translation`.
+Moves run in input order; each sees the earlier characters at their new positions.
+`set_kinematic_position` places an external body without resolving contact.
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the

@@ -301,6 +301,10 @@ pub(super) struct Scratch {
 impl Scratch {
     pub fn layout_changed(&mut self) {
         self.generation += 1;
+        self.poses_changed();
+    }
+    /// A body moved outside a step: derived pose caches are stale, the layout is not.
+    pub fn poses_changed(&mut self) {
         self.position.invalidate();
         self.activity.dirty = true;
         self.graph.dirty = true;
