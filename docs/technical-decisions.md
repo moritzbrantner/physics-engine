@@ -39,7 +39,9 @@ dropped; Rapier is the independent reference (D1).
 A shared scenario harness runs each scenario on Rapier (a dev-dependency) and on Physics Engine.
 CI checks behaviour invariants — no tunneling, grounding/support, normals within tolerance, finite
 state and the scenario's own expectations — and **fails when Physics Engine is slower than Rapier**
-on that scenario natively. WASM timings are measured and reported too. Every parity change adds its
+on that scenario natively (more than 5% slower than Rapier with the consumer's call pattern or
+than bare Rapier), and in WASM when more than 10% slower than either; both figures are always
+printed. Every parity change adds its
 scenario to the harness. The harness stays lean: no attestation, fingerprints or evidence
 packaging.
 
