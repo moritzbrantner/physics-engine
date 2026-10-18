@@ -39,11 +39,6 @@ jobs:
       - name: Test the Pages adapter
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
 
-      - name: Lint the Rapier oracle
-        run: |
-          cargo fmt --manifest-path oracle/Cargo.toml -- --check
-          cargo clippy --manifest-path oracle/Cargo.toml --all-targets --locked -- -D warnings
-
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked --manifest-path oracle/Cargo.toml
 

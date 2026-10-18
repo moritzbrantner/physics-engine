@@ -101,7 +101,8 @@ fn queries(tick: u32) -> Queries {
 
 /// Door `index` toggles at this tick.
 fn door_toggle(tick: u32) -> Option<usize> {
-    tick.is_multiple_of(DOOR_PERIOD).then_some((tick / DOOR_PERIOD) as usize % DOORS)
+    tick.is_multiple_of(DOOR_PERIOD)
+        .then_some((tick / DOOR_PERIOD) as usize % DOORS)
 }
 
 pub fn scenario() -> Scenario {
