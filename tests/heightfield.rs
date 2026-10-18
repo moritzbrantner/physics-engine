@@ -136,12 +136,45 @@ fn characters_stand_and_walk_at_terrain_height() {
 }
 
 #[test]
+fn box_and_wedge_overlaps_meet_the_terrain_surface() {
+    use physics_engine::approximate::{Quaternion, QueryPose};
+    let (w, terrain) = hills();
+    let mut hits = Vec::new();
+    for (x, z) in [(-10.0, -10.0), (3.0, 7.0), (12.0, -4.0)] {
+        let g = ground(&w, x, z);
+        // A door probe straddling the surface overlaps it; one clear above does not.
+        for (shape, half_height) in [
+            (Shape::Box(V(0.6, 1.0, 0.1)), 1.0),
+            (Shape::wedge(V(0.6, 1.0, 0.6)), 1.0),
+        ] {
+            let mut pose = QueryPose::new(shape, V(x, g + half_height - 0.3, z));
+            pose.orientation = Quaternion(0.0, 0.38, 0.0, 0.925).normalized();
+            w.overlap_shape(pose, QueryFilter::default(), &mut hits)
+                .unwrap();
+            assert_eq!(hits.len(), 1, "{shape:?} at {x}, {z}");
+            assert_eq!(hits[0].body, terrain);
+            assert!(hits[0].separation < 0.0, "{:?}", hits[0]);
+            pose.position.1 = g + half_height + 3.0;
+            w.overlap_shape(pose, QueryFilter::default(), &mut hits)
+                .unwrap();
+            assert!(hits.is_empty());
+        }
+    }
+}
+
+#[test]
 fn terrain_rejects_rigid_body_api_misuse() {
     let (mut w, terrain) = hills();
     assert!(w.add_body(w.body(terrain).unwrap().clone()).is_err());
-    // Overlap queries with boxes are not supported against terrain.
-    let r = w.overlap_shape(
-        physics_engine::approximate::QueryPose::new(Shape::Box(V(1.0, 1.0, 1.0)), V(0.0, 0.0, 0.0)),
+    // Box casts against terrain are not supported (overlaps are).
+    let r = w.cast_shape(
+        physics_engine::approximate::ShapeCast::new(
+            physics_engine::approximate::QueryPose::new(
+                Shape::Box(V(1.0, 1.0, 1.0)),
+                V(0.0, 9.0, 0.0),
+            ),
+            V(0.0, -20.0, 0.0),
+        ),
         QueryFilter::default(),
         &mut Vec::new(),
     );

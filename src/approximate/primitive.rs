@@ -197,6 +197,77 @@ pub(super) fn deepest_along(body: &Body, normal: [f64; 3]) -> [f64; 3] {
     )
 }
 
+/// A box's or wedge's world-space vertices, outward face normals and edge directions, for
+/// separating-axis tests against terrain triangles. `None` for other shapes.
+pub(super) struct Polytope {
+    pub vertices: Vec<[f64; 3]>,
+    pub face_normals: Vec<[f64; 3]>,
+    pub edges: Vec<[f64; 3]>,
+}
+pub(super) fn polytope_of(body: &Body) -> Option<Polytope> {
+    let axes = kernel_axes(body.orientation);
+    let c = to_array(body.position);
+    let world = |l: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| c[i] + axes[0][i] * l[0] + axes[1][i] * l[1] + axes[2][i] * l[2])
+    };
+    let direction = |l: [f64; 3]| -> [f64; 3] {
+        std::array::from_fn(|i| axes[0][i] * l[0] + axes[1][i] * l[1] + axes[2][i] * l[2])
+    };
+    let Polytope {
+        vertices: local,
+        face_normals: normals,
+        edges,
+    } = match body.shape {
+        Shape::Box(h) => {
+            let h = to_array(h);
+            let corners = (0..8)
+                .map(|k| std::array::from_fn(|i| if k >> i & 1 == 0 { -h[i] } else { h[i] }))
+                .collect();
+            Polytope {
+                vertices: corners,
+                face_normals: identity_axes().to_vec(),
+                edges: identity_axes().to_vec(),
+            }
+        }
+        Shape::Wedge(h) => {
+            // The ramp rises toward -X: corners (-x, ±y), (+x, -y) at both z.
+            let [x, y, z] = to_array(h);
+            let corners = vec![
+                [-x, -y, -z],
+                [-x, y, -z],
+                [x, -y, -z],
+                [-x, -y, z],
+                [-x, y, z],
+                [x, -y, z],
+            ];
+            let ramp = (y * y + x * x).sqrt();
+            let normals = vec![
+                [0.0, -1.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [y / ramp, x / ramp, 0.0],
+            ];
+            let edges = vec![
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [x, -y, 0.0],
+            ];
+            Polytope {
+                vertices: corners,
+                face_normals: normals,
+                edges,
+            }
+        }
+        _ => return None,
+    };
+    Some(Polytope {
+        vertices: local.into_iter().map(world).collect(),
+        face_normals: normals.into_iter().map(direction).collect(),
+        edges: edges.into_iter().map(direction).collect(),
+    })
+}
+
 fn kernel_body(body: &Body) -> PrimitiveBody3 {
     let axes = match body.shape {
         Shape::Sphere(_) => identity_axes(),
