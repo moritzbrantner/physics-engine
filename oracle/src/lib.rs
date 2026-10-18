@@ -19,6 +19,8 @@ pub enum Obs {
     Grounded(bool),
     /// Translation applied to leave penetration (zero where an engine does not report it).
     Depenetration([f32; 3]),
+    /// Signed separation and outward target normal of the deepest contact, if touching.
+    Contact(Option<(f32, [f32; 3])>),
 }
 
 /// Observations in the order a scenario recorded them.
@@ -94,7 +96,9 @@ impl Scenario {
 pub fn finite(trace: &Trace) -> Result<(), String> {
     for (i, obs) in trace.0.iter().enumerate() {
         let ok = match obs {
-            Obs::Ray(Some((t, n))) => t.is_finite() && n.iter().all(|v| v.is_finite()),
+            Obs::Ray(Some((t, n))) | Obs::Contact(Some((t, n))) => {
+                t.is_finite() && n.iter().all(|v| v.is_finite())
+            }
             Obs::Position(p) | Obs::Depenetration(p) => p.iter().all(|v| v.is_finite()),
             _ => true,
         };
@@ -128,5 +132,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::character_move::scenario(),
         scenarios::arpg_planar::scenario(),
         scenarios::crowd::scenario(),
+        scenarios::capsule_normals::scenario(),
     ]
 }

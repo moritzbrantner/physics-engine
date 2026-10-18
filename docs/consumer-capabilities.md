@@ -24,8 +24,8 @@ over the integer `World`; no consumer enables it).
 | C6 | Planar (2.5D) movement constraint | ARPG | game zeroes y around `move_shape` | **parity** (`arpg-planar`): `CharacterSettings::plane`, no floor collider needed, always grounded | #293 |
 | C7 | Batched multi-character move, order-independent | ARPG, MMORPG | one `move_shape` per character with a BVH refresh between | **parity** (`crowd`): one batch per tick in body order, independent of slice order | #294 |
 | C8 | Depenetration reported apart from motion | ARPG, MMORPG | game clamps velocity | **parity** (`arpg-planar`): `CharacterMoveResult::depenetration`, never part of `translation` | #295 |
-| C9 | Accurate capsule/capsule contact normals (parallel, deep, coincident) | ARPG | custom `QueryDispatcher` over parry | unverified against oracle | #289 |
-| C10 | Accurate capsule-cast normals against long boxes | ARPG | custom `QueryDispatcher` (circle vs rectangle) | unverified against oracle | #290 |
+| C9 | Accurate capsule/capsule contact normals (parallel, deep, coincident) | ARPG | custom `QueryDispatcher` over parry | **parity** (`capsule-normals`): exact against closed forms, no custom dispatcher needed | #289 |
+| C10 | Accurate capsule-cast normals against long boxes | ARPG | custom `QueryDispatcher` (circle vs rectangle) | **parity** (`capsule-normals`): exact against closed forms, no custom dispatcher needed | #290 |
 | C11 | Ray cast against static geometry (line of sight, ground height, projectiles) | ARPG, MMORPG | `QueryPipeline::cast_ray` with `only_fixed`, `Cuboid::cast_ray` | **parity** within `static-queries` (`cast_ray_first`); rays alone still ~1.7× Rapier's cost | — |
 | C12 | Shape overlap / penetration test (placement, door occupancy) | ARPG, MMORPG | `intersect_shape` + `contact` depth | **parity** (`static-queries`; ~0.3× Rapier's cost) | — |
 | C13 | Length-unit-relative tolerances | MMORPG, ARPG | none (absolute metre tolerances; game converts units) | missing | #291 |
