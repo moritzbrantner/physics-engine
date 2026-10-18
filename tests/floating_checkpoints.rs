@@ -323,33 +323,6 @@ fn failed_steps_retirement_and_repeated_restores_keep_the_same_boundary() {
     }
 }
 
-#[cfg(feature = "experimental-soft-contact")]
-#[test]
-fn experimental_policy_and_warm_history_are_preserved_explicitly() {
-    let c = Config {
-        soft_contact: Some(physics_engine::approximate::SoftContact::default()),
-        ..config()
-    };
-    let mut expected = fixture(c);
-    let mut captured = fixture(c);
-    for w in [&mut expected, &mut captured] {
-        for _ in 0..8 {
-            w.step(0.01).unwrap();
-        }
-    }
-    let saved = bytes(&captured);
-    drop(captured);
-    let mut actual = restore(&saved);
-    for tick in 0..40 {
-        let dt = if tick % 2 == 0 { 0.01 } else { 0.02 };
-        let a = actual.step(dt as Scalar).unwrap();
-        let e = expected.step(dt as Scalar).unwrap();
-        assert_eq!(a.correction.softened_points, e.correction.softened_points);
-        assert_eq!(semantic(&a), semantic(&e));
-        same(&actual, &expected);
-    }
-}
-
 fn rehash(bytes: &mut [u8]) {
     let len = bytes.len() - 32;
     let digest = Sha256::digest(&bytes[..len]);
@@ -592,7 +565,6 @@ fn warm_start_endpoints_points_and_resource_budgets_are_validated() {
     same(&checkpoint.restore(), &world);
 }
 
-#[cfg(not(feature = "experimental-soft-contact"))]
 #[test]
 fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
     let mut saved = bytes(&simple());
@@ -610,30 +582,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
     );
 }
 
-// f64 wire bit pattern: the default build's digest is fixed; the f32 build has its own.
-#[cfg(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    not(feature = "f32-physics")
-))]
-#[test]
-fn format_two_algorithm_eight_empty_world_wire_fixture_is_stable() {
-    let world = World::new(Config {
-        gravity: V::ZERO,
-        ..Config::default()
-    })
-    .unwrap();
-    let encoded = bytes(&world);
-    assert_eq!(
-        Sha256::digest(&encoded)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>(),
-        "276859507638104c2699891975fafb10b116c4e87c0f5caa9017c6bd2507cf49"
-    );
-}
-
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "f32-physics"))]
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
 fn format_two_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {

@@ -1,164 +1,30 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>physics-engine · scenarios</title>
-    <link rel="stylesheet" href="catalog.css" />
-  </head>
-  <body>
-    <main class="catalog-shell">
-      <header class="catalog-header">
-        <p class="eyebrow">physics-engine</p>
-        <h1>Browser scenarios</h1>
-        <p class="intro">
-          Focused Rust-backed fixtures progress from isolated collision mechanics to larger worlds.
-          The browser configures, drives, and visualizes them; simulation state, contacts, queries,
-          sleeping, and collision response remain engine authority.
-        </p>
-      </header>
-
-      <section class="scenario-section" aria-labelledby="focused-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Levels 1–2</p>
-            <h2 id="focused-title">Focused mechanics</h2>
-          </div>
-          <p class="section-note">Small fixtures make one physical behavior easy to inspect before larger worlds combine them.</p>
-        </div>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Level 1 · continuous collision detection</p>
-            <h3>CCD Gauntlet</h3>
-            <p>Fire fast projectiles through a field of deliberately thin targets to inspect tunnelling resistance and chronological impact handling.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/ccd-gauntlet/">Open scenario</a></div>
-        </article>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Level 1 · spatial queries</p>
-            <h3>Collision Query Lab</h3>
-            <p>Aim through a gallery of fixed shapes. The highlighted target is selected by the engine's deterministic ray query, not browser hit testing.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/collision-query-lab/">Open scenario</a></div>
-        </article>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Level 2 · angular response</p>
-            <h3>Off-Centre Impact</h3>
-            <p>Shoot a raised rigid box away from its center of mass and inspect translation, rotation, friction, and settling after impact.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/off-centre-impact/">Open scenario</a></div>
-        </article>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Level 2 · rotating bodies</p>
-            <h3>Rotating Box Lab</h3>
-            <p>Observe free-rotation boxes with different proportions and offset collisions on separate plinths, then compare against upright locking.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/rotating-box-lab/">Open scenario</a></div>
-        </article>
-      </section>
-
-      <section class="scenario-section" aria-labelledby="world-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Levels 3–4</p>
-            <h2 id="world-title">World behavior</h2>
-          </div>
-          <p class="section-note">These fixtures combine many contacts and bodies so solver convergence, sleeping, and locality become visible.</p>
-        </div>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Level 3 · stacked contacts</p>
-            <h3>Compact Stack</h3>
-            <p>A compact multi-level stack exercises repeated contacts, stabilization, friction, and deterministic settling in a compact fixture. The separate Tower scenario exercises the canonical floating-point solver.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/tower-stability/">Open scenario</a></div>
-        </article>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Level 4 · sleeping and locality</p>
-            <h3>Sleeping World</h3>
-            <p>Walk between distant clusters of settled bodies to inspect how a larger world becomes quiescent and how local interaction reactivates work.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/sleeping-world/">Open scenario</a></div>
-        </article>
-      </section>
-
-      <section class="scenario-section" aria-labelledby="integrated-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Integrated</p>
-            <h2 id="integrated-title">General sandbox</h2>
-          </div>
-          <p class="section-note">The original acceptance world remains available as the mixed-feature consumer.</p>
-        </div>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Integrated · mixed interaction</p>
-            <h3>General sandbox</h3>
-            <p>Character movement, crate interactions, projectiles, collision-pair policies, fixed-geometry preparation, and portable performance logging in one world.</p>
-          </div>
-          <div class="scenario-actions"><span class="status">Interactive</span><a class="primary-link" href="./scenarios/sandbox/">Open scenario</a></div>
-        </article>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Large moving world</p>
-            <h3>Parkour world</h3>
-            <p>
-              Traverse a long elevated course with six engine-colliding moving platforms and blockers,
-              side routes, stacked crates, large gaps, and a lower recovery floor. External motion stays
-              deterministic in Rust while normal collision response, CCD, and character physics remain
-              engine-owned.
-            </p>
-          </div>
-          <div class="scenario-actions">
-            <span class="status">Interactive</span>
-            <a class="primary-link" href="./scenarios/parkour/">Open scenario</a>
-          </div>
-        </article>
-
-        <article class="scenario-row">
-          <div class="scenario-copy">
-            <p class="scenario-kicker">Stack stability</p>
-            <h3>Tower stability</h3>
-            <p>
-              Exercise a 32-crate tower using the bounded f64 fixed-step solver in Rust/WASM. Let the
-              stack settle, disturb it with movement or projectiles, and inspect collapse behavior without
-              moving body placement or collision authority into the browser.
-            </p>
-          </div>
-          <div class="scenario-actions">
-            <span class="status">Interactive</span>
-            <a class="primary-link" href="./scenarios/tower/">Open scenario</a>
-          </div>
-        </article>
-        <article class="scenario-row">
-          <div class="scenario-copy"><p class="scenario-kicker">Solver comparison</p><h3>Fixed-step approximation</h3>
-            <p>Compare bounded f64 impulse integration with sampled-event stepping on the same Rust tower.
-              Test direct hits, near misses, and free rotation. The approximation is explicitly selectable,
-              not a silent change to the existing sandbox.</p></div>
-          <div class="scenario-actions"><span class="status">Experimental</span><a class="primary-link" href="./scenarios/fixed-step/">Compare solvers</a></div>
-        </article>
-      </section>
-
-      <section class="scenario-contract" aria-labelledby="contract-title">
-        <p class="eyebrow">Scenario contract</p>
-        <h2 id="contract-title">One shared browser harness, multiple engine fixtures</h2>
-        <p>
-          Focused routes are generated from the same page template and select a Rust fixture by stable
-          scenario ID. JavaScript never reconstructs collision, response, query, or sleep truth.
-        </p>
-      </section>
-    </main>
-  </body>
-</html>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>physics-engine · tower lab</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#0d1a24;--panel:#142532;--text:#dbe8ef;--line:#304955}
+    body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}
+    main{max-width:1200px;margin:auto;padding:24px 16px}h1{font-size:28px;margin:0 0 8px}
+    .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:16px 0}
+    label{display:grid;gap:6px;font-size:13px}
+    select,button{font:inherit;color:var(--text);background:var(--panel);border:1px solid #4d6576;border-radius:6px;padding:8px 12px}
+    button{cursor:pointer}button:disabled{opacity:.45}
+    .world{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+    canvas{display:block;width:100%;height:520px}@media(max-width:700px){canvas{height:360px}}
+    .status{margin:0;padding:10px 14px;background:var(--panel);font:13px ui-monospace,monospace}
+  </style>
+</head>
+<body><main>
+  <h1>Tower lab</h1>
+  <p>A 32-crate tower on <code>approximate::World</code> (f32). Rust owns all bodies, contacts and steps; this page sends commands and renders snapshots. Side-by-side Rapier parity scenarios replace this page as they land.</p>
+  <div class="controls">
+    <label>Crate rotation<select id="crates"><option value="free">Free rotation</option><option value="upright">Locked upright</option></select></label>
+    <label>Projectile<select id="projectile"><option value="1">Arrow</option><option value="0">Sphere</option><option value="2">Rigid box</option></select></label>
+    <button id="hit" disabled>Shoot tower</button><button id="miss" disabled>Shoot beside tower</button><button id="pause" disabled>Resume</button><button id="reset" disabled>Reset</button>
+  </div>
+  <section class="world"><canvas id="scene" width="1280" height="520" aria-label="Tower of crates"></canvas>
+    <p class="status" id="status" role="status" aria-live="polite">Loading Rust/WASM…</p></section>
+  <script type="module" src="lab.js"></script>
+</main></body></html>

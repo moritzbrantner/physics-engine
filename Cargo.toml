@@ -4,29 +4,19 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.98"
-description = "Deterministic continuous-collision physics kernel"
+description = "Physics engine for the owner's games, measured against Rapier"
 
 [dependencies]
 geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "c9a2d1bdaad586e6c4a25ffce2d78dba8060c758" }
-sha2 = { version = "0.11.0", default-features = false }
+sha2 = { version = "0.11.0", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json = "=1.0.154"
 
 [features]
-default = ["performance-counters"]
-# Diagnostic computational-work counters. Disable with --no-default-features to prove
-# instrumentation-neutral simulation semantics without changing the default evidence path.
-performance-counters = []
-# Diagnostic legacy replay only. Never required by the default or Pages build.
-exact-reference = []
-# Whole-build choice (non-additive by design): the floating solver (`approximate::World`)
-# stores physical state as f32 instead of f64. Legacy worlds and time composition stay f64.
-# Checkpoints from one width are rejected by the other. Incompatible with `exact-reference`.
-# See docs/numerics.md for the supported f32 precision envelope.
-f32-physics = []
-# Diagnostic correction study only; no optional state/branches in production builds.
-experimental-soft-contact = []
+default = []
+# Opt-in versioned physical checkpoints for debugging and logging.
+checkpoints = ["dep:sha2"]
 
 [lib]
 name = "physics_engine"
@@ -37,7 +27,73 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+# Fixture literals keep their recorded decimal values; f32 rounds them.
+excessive_precision = "allow"
 
-[[example]]
-name = "contact_correction_quality"
-required-features = ["experimental-soft-contact"]
+[[test]]
+name = "capsule_contact_normals"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "dense_contact_regression"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "floating_ccd_remaining_time"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "floating_checkpoints"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "floating_shape_queries"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "floating_sweep_failures"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "primitive_capabilities"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "capsule_row_work"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "contact_materials"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "contact_wake_forces"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "driven_parked_contact"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "fixed_contact_interval"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "moving_support_quality"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "narrow_support"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "primitive_contact_quality"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "stationary_external_support"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "tangential_contact_wake"
+required-features = ["checkpoints"]

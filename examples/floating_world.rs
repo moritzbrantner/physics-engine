@@ -20,6 +20,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     world.step(1.0 / 60.0)?;
 
     let position = world.body(id).expect("body remains").position;
-    assert!((position.0 - 1.0).abs() < 1e-12);
+    assert!((position.0 - 1.0).abs() < 1e-5);
     Ok(())
 }

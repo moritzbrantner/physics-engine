@@ -1,14 +1,13 @@
 # Floating physical checkpoints
 
-`approximate::World` provides an explicit physical checkpoint product. On the same supported build/target, destroying the original world and restoring the checkpoint preserves exact future physical state and semantic contact/wake/retirement reports for the same commands and timesteps. This does not promise universal compiler/target bit identity, another solver's event stream, or stronger collision quality/CCD than the selected floating solver. The approved [TECH-003](technical-decisions.md#tech-003--versioned-physics-provider-conversion-at-a-controlled-restart) instead requires **consumer-owned conversion at a versioned restart boundary**, constructing a fresh physics world from validated game/domain state and then establishing a compatible first-party checkpoint. `Checkpoint::restore()` does not accept Rapier checkpoints or guarantee identical cross-solver trajectories.
+Opt-in: enable the `checkpoints` Cargo feature. Checkpoints exist for debugging and logging; the
+default build and the Rapier performance gate do not include them.
 
-## Target portability policy
-
-Approved [TECH-004](technical-decisions.md#tech-004--keep-physical-checkpoints-build--and-target-specific) retains this checkpoint as **build/target-specific**. Native and WASM use their own tested continuation paths, not interchangeable checkpoint payloads. An application switching execution target must reconstruct physics from validated, versioned game/domain state at a controlled restart (TECH-003) and create a new target-compatible checkpoint. Cross-target physical replay identity is not promised; incompatible restores continue to fail closed. This clarification changes no encoding, API or version.
-
-## Future correction-policy compatibility
-
-Approved [TECH-006](technical-decisions.md#tech-006--select-contact-correction-policy-at-world-creation) fixes a future supported production correction algorithm for the lifetime of each world. A future multi-policy checkpoint must carry a compatible per-world policy/algorithm identity and reject mismatches: do not restore incompatible warm-start or constraint history across policies. Changing policy requires a controlled world reconstruction at a completed tick boundary. This is a **future contract only**; it does not change the current default, experimental soft-contact feature, checkpoint encoding, or format/algorithm version.
+`approximate::World` provides an explicit physical checkpoint product. On the same build and
+target, destroying the original world and restoring the checkpoint preserves exact future physical
+state and contact/wake/retirement reports for the same commands and timesteps. Checkpoints are
+build- and target-specific; moving between targets or providers reconstructs physics from
+consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
 ## Interface and compatibility
 
@@ -34,9 +33,9 @@ contacts, changing continuation semantics. Fixed, external, one-way and swept
 response authority remains explicit. The empty-world digest changes only because
 the algorithm header and its checksum change; its physical trajectory is unchanged.
 
-### Scalar width (`f32-physics`)
+### Scalar width
 
-The `f32-physics` build (see [numerics](numerics.md#f32-floating-physics-build)) keeps the same format/algorithm versions and record layout, but writes every `Real` value at its native 4-byte width under the magic `PEFLT32` plus a zero byte. Elapsed and prior-substep seconds stay f64 in both builds. The default f64 build keeps `PEFLOAT`, its wire bytes and its empty-world digest unchanged. Each build checks the magic first and rejects the other width with `CheckpointError::ScalarWidthMismatch { expected_bits, found_bits }` before reading versions, payload or checksum; an unknown magic remains `InvalidData`. There is no cross-width conversion: a save is valid only for the scalar width that wrote it, which the caller's `build` tag should also identify.
+The f32 build keeps the same format/algorithm versions and record layout, but writes every `Real` value at its native 4-byte width under the magic `PEFLT32` plus a zero byte. Elapsed and prior-substep seconds stay f64 in both builds. The default f64 build keeps `PEFLOAT`, its wire bytes and its empty-world digest unchanged. Each build checks the magic first and rejects the other width with `CheckpointError::ScalarWidthMismatch { expected_bits, found_bits }` before reading versions, payload or checksum; an unknown magic remains `InvalidData`. There is no cross-width conversion: a save is valid only for the scalar width that wrote it, which the caller's `build` tag should also identify.
 
 CCD remaining-time response (#246/#261) advances the algorithm to 8 while retaining wire format 2. Algorithms 1 through 7 are rejected: a CCD body now responds at its swept time of impact and travels the rest of the substep along the response velocity, which changes continuation semantics. The empty-world digests change only because the algorithm header and its checksum change.
 
@@ -67,18 +66,10 @@ Default decode budgets are 64 MiB, 100,000 bodies, 200,000 pairs and 800,000 poi
 ## Acceptance and reproduction
 
 ```sh
-cargo test --locked --test floating_checkpoints
-cargo test --features exact-reference,experimental-soft-contact --locked --test floating_checkpoints
-cargo test --features f32-physics --locked --test floating_checkpoints
-cargo test --manifest-path demo-wasm/Cargo.toml --locked --example checkpoint-continuation
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \
-  --target wasm32-unknown-unknown --example checkpoint-continuation
-node scripts/test-checkpoint-wasm.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/examples/checkpoint_continuation.wasm
-cargo test --release --locked --test floating_checkpoint_benchmark -- --ignored --nocapture
+cargo test --locked --features checkpoints --test floating_checkpoints
 ```
 
-Native tests destroy/restore worlds with current contacts, all four supported shapes, nontrivial orientations, material/layer/external/sensor/linear-support policies, pending force/off-center impulse, partial quiet timers, sleepers and support removal. Future timesteps include changed dt and zero-duration calls. Mutations include add/remove/same-ID reuse; failures include retirement before a later numerical error, repeated failed steps/repeated restores and huge finite queued force, subnormal-scale orientation and signed-zero orientation followed by its existing numerical failure. Tests compare subsequent exact checkpoint bytes, rebuilt body bounds and semantic contact/event ordering, rather than accepting serialization round-trip alone. Experimental relaxation has a separate all-feature continuation control.
+Native tests destroy/restore worlds with current contacts, all four supported shapes, nontrivial orientations, material/layer/external/sensor/linear-support policies, pending force/off-center impulse, partial quiet timers, sleepers and support removal. Future timesteps include changed dt and zero-duration calls. Mutations include add/remove/same-ID reuse; failures include retirement before a later numerical error, repeated failed steps/repeated restores and huge finite queued force, subnormal-scale orientation and signed-zero orientation followed by its existing numerical failure. Tests compare subsequent exact checkpoint bytes, rebuilt body bounds and semantic contact/event ordering, rather than accepting serialization round-trip alone.
 
 Corruption tests cover every truncation and single-byte bit flip in a representative checkpoint, unknown format/algorithm, build/content/target mismatch, trailing data, unknown flags/shapes/booleans, duplicate IDs, nonfinite/out-of-range state, missing contact endpoints, invalid points and exhausted budgets. A fixed native x86_64/Linux empty-world wire digest guards version-2 layout. Legacy body construction can admit a nonfinite linear-support direction; checkpoint capture explicitly rejects that state without serializing it or modifying the world.
 

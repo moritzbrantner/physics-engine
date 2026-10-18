@@ -7,45 +7,5 @@ publish = false
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[features]
-default = []
-# Budget controls are diagnostic exports, never a production quality switch.
-solver-budget-experiment = []
-exact-reference = ["physics-engine/exact-reference"]
-experimental-soft-contact = ["physics-engine/experimental-soft-contact"]
-
 [dependencies]
 physics-engine = { path = ".." }
-
-[dev-dependencies]
-serde_json = "=1.0.154"
-
-[[example]]
-name = "checkpoint-continuation"
-crate-type = ["cdylib"]
-test = true
-
-[[example]]
-name = "shape-query-contract"
-crate-type = ["cdylib"]
-test = true
-
-[[example]]
-name = "dense-contact-contract"
-crate-type = ["cdylib"]
-test = true
-
-[[example]]
-name = "rotating-interval-contract"
-crate-type = ["cdylib"]
-test = true
-
-[[example]]
-name = "mass-properties-contract"
-crate-type = ["cdylib"]
-test = true
-
-[[example]]
-name = "translational-maintenance-contract"
-crate-type = ["cdylib"]
-test = true

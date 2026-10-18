@@ -1,29 +1,14 @@
 # Repository context
 
-`physics-engine` is the reusable simulation authority extracted from physics experiments that were previously hosted in `ecs-lab`.
+`physics-engine` provides the physics capabilities the owner's games use from Rapier, through its
+own performance-oriented API, and is measured against Rapier natively and in WASM. See
+`docs/technical-decisions.md` and `docs/consumer-capabilities.md`.
 
-CPU simulation arithmetic defaults to `numeric::Scalar` (`f64`). There is no prohibition on floating point.
-Time composition and shared scaled arithmetic use floats in the normal and Pages builds. The historical
-multi-limb backend is opt-in under `exact-reference` for diagnostic replay only. See `docs/numerics.md`.
+There is one world, `approximate::World`, with `f32` physical state and `f64` time. It is a
+persistent-manifold, warm-started solver with bounded iterations and translation CCD. Returned
+step errors restore touched physical state, pending inputs and warm-start/sleep history; see
+`docs/floating-step-transactions.md`. Opt-in versioned physical checkpoints (Cargo feature
+`checkpoints`) support debugging and logging; see `docs/floating-checkpoints.md`.
 
-The original translational AABB path and current public body/geometry APIs still expose quantized integer
-state as compatibility formats; these are not the design for new solver state. Fixed IDs, counters and
-flags remain integers. Stable ordering and repeatable input traces remain important independently of the
-number representation.
-
-The repository is not a game engine. It must remain usable by ECS experiments, games, browser/WASM applications, simulations and tooling without importing their ownership models.
-
-The runtime architecture has one authoritative mutable world. Simulation changes are expressed and committed as explicit deltas; search/frontier/solver structures must not own complete world copies. Snapshots are explicit caller-requested products for persistence, replay/debug checkpoints, fixtures or export and must not be used as an ordinary stepping/rollback mechanism. Derived collision state should persist and be invalidated from precise changed-body IDs. See `docs/world-state-architecture.md`.
-
-The limited `approximate::World` retains floating-point state in a persistent-manifold, warm-started
-solver with bounded iterations and translation CCD. Returned step errors restore touched physical state,
-pending inputs and warm-start/sleep history; see `docs/floating-step-transactions.md`. Explicit versioned
-physical checkpoints preserve continuation history and rebuild scratch; see `docs/floating-checkpoints.md`.
-MMORPG floating-solver adoption remains a separate #198 requirement. The canonical Tower Stability runtime uses that
-path with explicit fixed-contact position correction and passes its recorded repeated-volley matrix
-(see `docs/tower-stability.md`). The separate legacy frame-38 tower regression is repaired with its unchanged 240-frame acceptance
-(see `docs/legacy-contact-continuation.md`). General dense dynamic contact quality remains limited. Passing the canonical fixture does not prove universal contact quality or make
-the floating-state world a drop-in game replacement; see `docs/world-api-contract.md` and issues #193,
-#194 and #198.
-
-The public `approximate::Shape::mass_properties` surface provides checked uniform volume, local COM and full COM inertia for all four existing primitives. Geometric integrals remain upstream; physical mass scaling belongs here. Wedge products do not enable solver rotation or alter origin-based poses. See `docs/shape-mass-properties.md`.
+The repository is not a game engine. ECS storage, rendering, game loops and gameplay rules stay in
+consumers. Domain-neutral geometry kernels come from `rust-kernels`.

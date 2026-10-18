@@ -2,8 +2,8 @@
 
 Physics Engine has one world: `physics_engine::approximate::World`, with `f32` physical state
 ([technical decisions](technical-decisions.md) D3). The translational integer `World` and
-`RotatingWorld3d` are being removed without shims; consumers that still use them stay on their
-current git pin until they move to Rapier.
+`RotatingWorld3d` were removed without shims; consumers that still use them stay on their old git
+pin until they move to Rapier.
 
 The API is designed around how the consuming games use Rapier (D2). It is not a Rapier clone: a
 consumer uses a thin adapter, and every capability listed as at parity is checked against Rapier by
@@ -46,7 +46,8 @@ are excluded. Non-finite inputs are rejected, never saturated.
 
 ## Checkpoints
 
-Versioned physical checkpoints restore only on their own build and target
+Checkpoints are opt-in (Cargo feature `checkpoints`) for debugging and logging. Versioned physical
+checkpoints restore only on their own build and target
 ([floating checkpoints](floating-checkpoints.md)). Moving between providers or targets
 reconstructs physics from consumer-owned game state; Rapier state is never deserialized into a
 Physics Engine checkpoint.
