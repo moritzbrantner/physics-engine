@@ -737,6 +737,11 @@ impl World {
     }
     /// Places an external (kinematic) body at `position` without resolving contact.
     pub fn set_kinematic_position(&mut self, id: BodyId, position: Vector) -> Result<(), Error> {
+        self.place_kinematic(id, position)?;
+        self.characters.placed(id);
+        Ok(())
+    }
+    fn place_kinematic(&mut self, id: BodyId, position: Vector) -> Result<(), Error> {
         let i = self.index(id)?;
         if !self.bodies[i].external || !position.finite() || position.abs().max_component() >= 1e12
         {

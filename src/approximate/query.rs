@@ -151,6 +151,44 @@ impl fmt::Display for QueryFailure {
 }
 impl Error for QueryFailure {}
 
+/// Tree candidates: inline for the usual handful, spilling to the heap beyond that.
+#[derive(Default)]
+struct Candidates {
+    inline: [u32; 16],
+    len: usize,
+    spill: Vec<u32>,
+}
+impl Candidates {
+    fn push(&mut self, index: u32) {
+        if self.len < self.inline.len() {
+            self.inline[self.len] = index;
+        } else {
+            if self.spill.is_empty() {
+                self.spill.extend_from_slice(&self.inline);
+            }
+            self.spill.push(index);
+        }
+        self.len += 1;
+    }
+    fn sort(&mut self) {
+        if self.spill.is_empty() {
+            self.inline[..self.len].sort_unstable();
+        } else {
+            self.spill.sort_unstable();
+        }
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn get(&self, n: usize) -> u32 {
+        if self.spill.is_empty() {
+            self.inline[n]
+        } else {
+            self.spill[n]
+        }
+    }
+}
+
 impl World {
     /// All current overlaps, including exact touching, in stable BodyId order.
     /// Reuses caller output capacity, clearing its previous contents on success or error.
@@ -247,22 +285,25 @@ impl World {
                     sweep_bounds.0 - V(pad, pad, pad),
                     sweep_bounds.1 + V(pad, pad, pad),
                 );
-                let mut found = Vec::new();
+                let mut found = Candidates::default();
                 tree.tree().visit_aabb(
                     spatial_kernels::Aabb {
                         min: [lo.0, lo.1, lo.2],
                         max: [hi.0, hi.1, hi.2],
                     },
-                    |leaf| found.push(tree.index_of(leaf.id)),
+                    |leaf| found.push(tree.index_of(leaf.id) as u32),
                 );
-                found.sort_unstable();
+                found.sort();
                 found
             });
-        let targets: Box<dyn Iterator<Item = &Body>> = match &candidates {
-            Some(found) => Box::new(found.iter().map(|&i| &self.bodies[i])),
-            None => Box::new(self.bodies.iter()),
-        };
-        for target in targets {
+        let count = candidates
+            .as_ref()
+            .map_or(self.bodies.len(), Candidates::len);
+        for n in 0..count {
+            let target = &self.bodies[match &candidates {
+                Some(found) => found.get(n) as usize,
+                None => n,
+            }];
             stats.bodies_visited += 1;
             if !filter.admits(target) {
                 stats.filtered_bodies += 1;

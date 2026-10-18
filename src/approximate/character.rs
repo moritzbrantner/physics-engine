@@ -77,7 +77,16 @@ pub(super) struct Characters {
     ids: Vec<BodyId>,
     settings: Vec<CharacterSettings>,
     grounded: Vec<bool>,
+    /// Layout generation at which the character was last known free of overlap
+    /// ([`DIRTY`] when unknown). Moves keep a gap to everything, so a character stays free
+    /// until bodies are added or removed, or it is placed by the game.
+    clear: Vec<(u64, u64)>,
+    /// Incremented whenever a character is placed rather than moved: a placed character can
+    /// overlap any other, so every character checks again once.
+    placements: u64,
 }
+
+const DIRTY: (u64, u64) = (u64::MAX, u64::MAX);
 
 impl Characters {
     fn slot(&self, id: BodyId) -> Option<usize> {
@@ -99,10 +108,29 @@ impl Characters {
             self.ids.resize(slot + 1, BodyId::NONE);
             self.settings.resize(slot + 1, CharacterSettings::default());
             self.grounded.resize(slot + 1, false);
+            self.clear.resize(slot + 1, DIRTY);
         }
         self.ids[slot] = id;
         self.settings[slot] = settings;
         self.grounded[slot] = false;
+        self.clear[slot] = DIRTY;
+    }
+    /// Whether the character is known free of overlap at layout `generation`.
+    fn is_clear(&self, id: BodyId, generation: u64) -> bool {
+        self.slot(id)
+            .is_some_and(|s| self.clear[s] == (generation, self.placements))
+    }
+    fn set_clear(&mut self, id: BodyId, generation: Option<u64>) {
+        let state = generation.map_or(DIRTY, |g| (g, self.placements));
+        if let Some(slot) = self.slot(id) {
+            self.clear[slot] = state;
+        }
+    }
+    /// A character was placed instead of moved: overlap is unknown again for all of them.
+    pub fn placed(&mut self, id: BodyId) {
+        if self.slot(id).is_some() {
+            self.placements += 1;
+        }
     }
     pub fn remove(&mut self, id: BodyId) {
         if let Some(slot) = self.slot(id) {
@@ -199,8 +227,13 @@ impl World {
         separation: &mut [V],
     ) -> Result<(), Error> {
         let mut hits = Vec::new();
+        let generation = self.bookkeeping.generation;
         for &(_, n, state) in batch {
             let id = moves[n].body;
+            // Two characters can only overlap if one of them was placed or the layout changed.
+            if self.characters.is_clear(id, generation) {
+                continue;
+            }
             let pose = self.character_pose(id)?;
             let filter = QueryFilter {
                 exclude: Some(id),
@@ -222,6 +255,7 @@ impl World {
                         let half = push * 0.5;
                         self.shift_character(id, half)?;
                         self.shift_character(h.body, -half)?;
+                        self.characters.placed(h.body);
                         separation[n] += half;
                         separation[other] += -half;
                     }
@@ -237,7 +271,9 @@ impl World {
 
     fn shift_character(&mut self, id: BodyId, by: V) -> Result<(), Error> {
         let p = self.bodies[self.index(id)?].position + by;
-        self.set_kinematic_position(id, p)
+        self.place_kinematic(id, p)?;
+        self.characters.placed(id);
+        Ok(())
     }
 
     fn character_pose(&self, id: BodyId) -> Result<QueryPose, Error> {
@@ -309,7 +345,9 @@ impl World {
             exclude: Some(id),
             ..QueryFilter::default()
         };
-        for _ in 0..4 {
+        let generation = self.bookkeeping.generation;
+        let mut resolved = self.characters.is_clear(id, generation);
+        for _ in 0..if resolved { 0 } else { 4 } {
             self.overlap_shape(pose, filter, &mut hits)
                 .map_err(|_| Error::InvalidInput)?;
             let mut push = V::ZERO;
@@ -324,6 +362,7 @@ impl World {
                 }
             }
             if push == V::ZERO {
+                resolved = true;
                 break;
             }
             pose.position += push;
@@ -406,8 +445,11 @@ impl World {
         result.grounded = planar || support.is_some();
         result.support = support;
         if pose.position != start {
-            self.set_kinematic_position(id, pose.position)?;
+            self.place_kinematic(id, pose.position)?;
         }
+        // The slide kept its gap: free of overlap until the layout changes or it is placed.
+        self.characters
+            .set_clear(id, resolved.then_some(generation));
         Ok(result)
     }
 }
