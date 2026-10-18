@@ -198,12 +198,105 @@ fn planar_characters_keep_their_height_and_need_no_floor() {
 }
 
 #[test]
-fn depenetration_ignores_other_characters() {
+fn a_lone_mover_leaves_an_overlapped_character_the_whole_way() {
     let mut w = world();
     let a = character(&mut w, 10, V(30.0, FOOT + OFFSET, 0.0));
     let b = character(&mut w, 11, V(30.3, FOOT + OFFSET, 0.0));
     let r = step(&mut w, a, V::ZERO);
-    assert_eq!(r.depenetration, V::ZERO);
-    assert_eq!(position(&w, a).0, 30.0);
+    assert!((r.depenetration.0 + 0.3025).abs() < 1e-4, "{r:?}");
+    assert_eq!(r.translation, V::ZERO);
     assert_eq!(position(&w, b).0, 30.3);
+}
+
+#[test]
+fn head_on_characters_sidestep_and_pass() {
+    let mut w = world();
+    let a = character(&mut w, 10, V(40.0, FOOT + OFFSET, -3.0));
+    let b = character(&mut w, 11, V(40.0, FOOT + OFFSET, 3.0));
+    let mut out = Vec::new();
+    for _ in 0..120 {
+        w.move_characters(
+            &[
+                CharacterMove {
+                    body: a,
+                    desired: V(0.0, 0.0, 0.05),
+                },
+                CharacterMove {
+                    body: b,
+                    desired: V(0.0, 0.0, -0.05),
+                },
+            ],
+            &mut out,
+        )
+        .unwrap();
+        let (pa, pb) = (position(&w, a), position(&w, b));
+        let d = V(pa.0 - pb.0, 0.0, pa.2 - pb.2).length();
+        assert!(d >= 2.0 * RADIUS + OFFSET - 1e-4, "characters overlap: {d}");
+    }
+    assert!(
+        position(&w, a).2 > 2.0 && position(&w, b).2 < -2.0,
+        "they pass each other"
+    );
+}
+
+#[test]
+fn batch_results_do_not_depend_on_slice_order() {
+    let run = |reverse: bool| {
+        let mut w = world();
+        let ids: Vec<_> = (0..6)
+            .map(|k| character(&mut w, 20 + k, V(50.0 + 0.5 * k as f32, FOOT + OFFSET, 0.0)))
+            .collect();
+        let mut out = Vec::new();
+        for tick in 0..30 {
+            let mut moves: Vec<_> = ids
+                .iter()
+                .enumerate()
+                .map(|(k, &body)| CharacterMove {
+                    body,
+                    desired: V(
+                        if k % 2 == 0 { 0.05 } else { -0.05 },
+                        0.0,
+                        0.01 * tick as f32,
+                    ),
+                })
+                .collect();
+            if reverse {
+                moves.reverse();
+            }
+            w.move_characters(&moves, &mut out).unwrap();
+        }
+        ids.iter().map(|&id| position(&w, id)).collect::<Vec<_>>()
+    };
+    assert_eq!(run(false), run(true));
+}
+
+#[test]
+fn overlapping_characters_separate_half_each() {
+    let mut w = world();
+    let a = character(&mut w, 10, V(60.0, FOOT + OFFSET, 0.0));
+    let b = character(&mut w, 11, V(60.4, FOOT + OFFSET, 0.0));
+    let mut out = Vec::new();
+    w.move_characters(
+        &[
+            CharacterMove {
+                body: b,
+                desired: V::ZERO,
+            },
+            CharacterMove {
+                body: a,
+                desired: V::ZERO,
+            },
+        ],
+        &mut out,
+    )
+    .unwrap();
+    let (pa, pb) = (position(&w, a), position(&w, b));
+    assert!(
+        (pb.0 - pa.0 - (2.0 * RADIUS + OFFSET)).abs() < 1e-4,
+        "{pa:?} {pb:?}"
+    );
+    assert!(((pa.0 + pb.0) * 0.5 - 60.2).abs() < 1e-4, "half each");
+    assert_eq!(out[0].body, b);
+    assert!(out[0].depenetration.0 > 0.0 && out[1].depenetration.0 < 0.0);
+    assert_eq!(out[0].translation, V::ZERO);
 }

@@ -65,10 +65,59 @@ pub struct CharacterMoveResult {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct CharacterState {
-    pub settings: CharacterSettings,
-    pub grounded: bool,
+struct CharacterState {
+    settings: CharacterSettings,
+    grounded: bool,
 }
+
+/// Character state in dense arrays indexed by body slot (no hashing per move).
+#[derive(Clone, Debug, Default)]
+pub(super) struct Characters {
+    /// Owning body per slot; [`BodyId::NONE`] where the slot has no character.
+    ids: Vec<BodyId>,
+    settings: Vec<CharacterSettings>,
+    grounded: Vec<bool>,
+}
+
+impl Characters {
+    fn slot(&self, id: BodyId) -> Option<usize> {
+        let slot = id.slot() as usize;
+        (self.ids.get(slot) == Some(&id)).then_some(slot)
+    }
+    pub fn contains(&self, id: BodyId) -> bool {
+        self.slot(id).is_some()
+    }
+    fn get(&self, id: BodyId) -> Option<CharacterState> {
+        self.slot(id).map(|s| CharacterState {
+            settings: self.settings[s],
+            grounded: self.grounded[s],
+        })
+    }
+    fn insert(&mut self, id: BodyId, settings: CharacterSettings) {
+        let slot = id.slot() as usize;
+        if slot >= self.ids.len() {
+            self.ids.resize(slot + 1, BodyId::NONE);
+            self.settings.resize(slot + 1, CharacterSettings::default());
+            self.grounded.resize(slot + 1, false);
+        }
+        self.ids[slot] = id;
+        self.settings[slot] = settings;
+        self.grounded[slot] = false;
+    }
+    pub fn remove(&mut self, id: BodyId) {
+        if let Some(slot) = self.slot(id) {
+            self.ids[slot] = BodyId::NONE;
+        }
+    }
+    fn set_grounded(&mut self, id: BodyId, grounded: bool) {
+        if let Some(slot) = self.slot(id) {
+            self.grounded[slot] = grounded;
+        }
+    }
+}
+
+/// Contact normals within about 5 degrees of the motion count as head-on.
+const HEAD_ON_COS: Real = 0.996;
 
 fn is_static(b: &Body) -> bool {
     b.mass == 0.0 && !b.external
@@ -91,39 +140,104 @@ impl World {
         if !valid || !matches!(body.shape, Shape::Capsule { .. }) || !body.external {
             return Err(Error::InvalidInput);
         }
-        self.characters.insert(
-            id,
-            CharacterState {
-                settings,
-                grounded: false,
-            },
-        );
+        self.characters.insert(id, settings);
         Ok(())
     }
 
-    /// Moves characters by their desired translations, in the given order: each later move
-    /// sees the earlier characters at their new positions. Results replace `out`.
+    /// Moves characters by their desired translations. Moves run once each in body order
+    /// (keyed bodies by key, then keyless by creation), independent of the order of `moves`;
+    /// each later mover sees the earlier ones at their new positions. Characters of the batch
+    /// that overlap each other are first separated horizontally, half each. `out[i]` is the
+    /// result of `moves[i]`.
     pub fn move_characters(
         &mut self,
         moves: &[CharacterMove],
         out: &mut Vec<CharacterMoveResult>,
     ) -> Result<(), Error> {
         out.clear();
-        for m in moves {
+        let mut batch = Vec::with_capacity(moves.len());
+        for (n, m) in moves.iter().enumerate() {
             if !m.desired.finite() || m.desired.abs().max_component() >= 1e12 {
                 return Err(Error::InvalidInput);
             }
-            let state = *self
+            let state = self
                 .characters
-                .get(&m.body)
+                .get(m.body)
                 .ok_or(Error::MissingBody(m.body))?;
-            let result = self.move_character(m.body, m.desired, state)?;
-            if let Some(s) = self.characters.get_mut(&m.body) {
-                s.grounded = result.grounded;
-            }
-            out.push(result);
+            batch.push((self.bodies[self.index(m.body)?].order, n, state));
+        }
+        batch.sort_unstable_by_key(|&(order, n, _)| (order, n));
+        let mut separation = vec![V::ZERO; moves.len()];
+        self.separate_characters(moves, &batch, &mut separation)?;
+        out.resize(
+            moves.len(),
+            CharacterMoveResult {
+                body: BodyId::NONE,
+                translation: V::ZERO,
+                depenetration: V::ZERO,
+                grounded: false,
+                support: None,
+                contacts: 0,
+            },
+        );
+        for &(_, n, state) in &batch {
+            let m = moves[n];
+            let mut result = self.move_character(m.body, m.desired, state)?;
+            result.depenetration += separation[n];
+            self.characters.set_grounded(m.body, result.grounded);
+            out[n] = result;
         }
         Ok(())
+    }
+
+    /// Separates overlapping characters of one batch horizontally, half each, in body order.
+    /// A character overlapping one outside the batch moves the whole way.
+    fn separate_characters(
+        &mut self,
+        moves: &[CharacterMove],
+        batch: &[(super::Order, usize, CharacterState)],
+        separation: &mut [V],
+    ) -> Result<(), Error> {
+        let mut hits = Vec::new();
+        for &(_, n, state) in batch {
+            let id = moves[n].body;
+            let pose = self.character_pose(id)?;
+            let filter = QueryFilter {
+                exclude: Some(id),
+                ..QueryFilter::default()
+            };
+            self.overlap_shape(pose, filter, &mut hits)
+                .map_err(|_| Error::InvalidInput)?;
+            for h in hits.iter().filter(|h| h.separation < 0.0) {
+                if !self.characters.contains(h.body) {
+                    continue;
+                }
+                let n_flat = V(h.normal.0, 0.0, h.normal.2);
+                if n_flat == V::ZERO {
+                    continue;
+                }
+                let push = n_flat.unit() * (state.settings.offset - h.separation);
+                match batch.iter().find(|b| moves[b.1].body == h.body) {
+                    Some(&(_, other, _)) => {
+                        let half = push * 0.5;
+                        self.shift_character(id, half)?;
+                        self.shift_character(h.body, -half)?;
+                        separation[n] += half;
+                        separation[other] += -half;
+                    }
+                    None => {
+                        self.shift_character(id, push)?;
+                        separation[n] += push;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn shift_character(&mut self, id: BodyId, by: V) -> Result<(), Error> {
+        let p = self.bodies[self.index(id)?].position + by;
+        self.set_kinematic_position(id, p)
     }
 
     fn character_pose(&self, id: BodyId) -> Result<QueryPose, Error> {
@@ -202,7 +316,7 @@ impl World {
             // Other characters are separated by the character interaction rules, not here.
             for h in hits
                 .iter()
-                .filter(|h| h.separation < 0.0 && !self.characters.contains_key(&h.body))
+                .filter(|h| h.separation < 0.0 && !self.characters.contains(h.body))
             {
                 let n = flat(h.normal);
                 if n != V::ZERO {
@@ -260,6 +374,14 @@ impl World {
             pose.position += direction * travel;
             let rest = remaining - direction * travel;
             remaining = flat(rest - normal * rest.dot(normal));
+            // Head-on against another character: sidestep to the right instead of locking.
+            if approach > HEAD_ON_COS && self.characters.contains(hit.body) {
+                let side = V(direction.0, 0.0, direction.2).cross(up);
+                let blocked = V(rest.0, 0.0, rest.2).length();
+                if side != V::ZERO {
+                    remaining = side.unit() * blocked + V(0.0, remaining.1, 0.0);
+                }
+            }
         }
 
         // Grounded test and snapping: walkable static support within reach below.
