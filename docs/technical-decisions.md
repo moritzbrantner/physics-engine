@@ -49,7 +49,7 @@ Only issues that reach Rapier parity for a capability one of the owner's project
 worked on. Consumer priority is MMORPG, then ARPG. The ARPG lessons #289–#297 are eligible; #297
 (ARPG's Rapier cost: about 18 µs native / 27 µs WASM per tick, 2.68 MB WASM) is the target. Other
 issues stay open but parked. The capability inventory lives in
-`docs/consumer-capabilities.md`.
+[consumer capabilities](consumer-capabilities.md).
 
 ## D6 — Pages sandbox shows parity
 

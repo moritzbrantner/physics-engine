@@ -8,7 +8,7 @@ current git pin until they move to Rapier.
 The API is designed around how the consuming games use Rapier (D2). It is not a Rapier clone: a
 consumer uses a thin adapter, and every capability listed as at parity is checked against Rapier by
 the oracle harness (D4). The per-capability parity status is tracked in
-`docs/consumer-capabilities.md`.
+[consumer capabilities](consumer-capabilities.md).
 
 ## Units and meanings
 
