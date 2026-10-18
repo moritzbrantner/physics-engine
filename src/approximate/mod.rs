@@ -719,6 +719,10 @@ impl World {
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let (id, key) = (body.id, body.key);
         self.bodies.insert(i, body);
+        crate::work::add(
+            crate::work::Counter::StorageShifts,
+            (self.bodies.len() - 1 - i) as u64,
+        );
         self.shift_slots(i);
         if let Some(key) = key {
             self.keys.insert(key, id);
@@ -752,6 +756,10 @@ impl World {
         self.cache.retain(|&(a, b), _| a != order && b != order);
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies.remove(i);
+        crate::work::add(
+            crate::work::Counter::StorageShifts,
+            (self.bodies.len() - i) as u64,
+        );
         self.shift_slots(i);
         let slot = id.slot();
         self.slots[slot as usize].index = FREE_SLOT;

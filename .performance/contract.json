@@ -1,0 +1,760 @@
+{
+  "schemaVersion": 2,
+  "suite": "physics-engine",
+  "description": "Rapier-oracle scenarios (speed is gated by the oracle, not here) and deterministic Big-O work contracts of the public API, measured by tests/work_complexity.rs with the test-only work-counters feature.",
+  "scenarios": [
+    {
+      "id": "static-queries",
+      "kind": "journey",
+      "description": "C1/C11/C12 static boxes, rays and overlaps; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "character-move",
+      "kind": "journey",
+      "description": "C4/C5 MMORPG-shaped character moves; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "arpg-planar",
+      "kind": "journey",
+      "description": "C6/C8 ARPG planar monsters; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "crowd",
+      "kind": "journey",
+      "description": "C7/C16 crowd; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "capsule-normals",
+      "kind": "journey",
+      "description": "#289/#290 exact capsule contacts; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
+      "id": "terrain",
+      "kind": "journey",
+      "description": "C17 heightfield terrain; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "id": "ray-first",
+      "description": "World::cast_ray_first, short rays in a town of unit boxes on a 2 m grid (constant density); 64 queries per point, per-query averages.",
+      "publicContract": "physics_engine::approximate::World::cast_ray_first",
+      "dimensions": {
+        "log2Bodies": {
+          "description": "log2 of the boxes in the town"
+        }
+      },
+      "scalePoints": [
+        {
+          "log2Bodies": 9
+        },
+        {
+          "log2Bodies": 10
+        },
+        {
+          "log2Bodies": 11
+        },
+        {
+          "log2Bodies": 12
+        },
+        {
+          "log2Bodies": 13
+        },
+        {
+          "log2Bodies": 14
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 32
+          },
+          "notes": "O(log n). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "log2Bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Bodies tested exactly: independent of the world size."
+        }
+      ]
+    },
+    {
+      "id": "ray-all",
+      "description": "World::cast_ray (all hits) along a grid row crossing exactly `hits` boxes; 64 queries per point.",
+      "publicContract": "physics_engine::approximate::World::cast_ray",
+      "dimensions": {
+        "log2Bodies": {
+          "description": "log2 of the boxes in the town"
+        },
+        "hits": {
+          "description": "boxes the ray crosses"
+        }
+      },
+      "scalePoints": [
+        {
+          "log2Bodies": 9,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 10,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 11,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 13,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 14,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 1
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 2
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 8
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 16
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 160
+          },
+          "notes": "O(log n + k). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "log2Bodies",
+              "bound": "constant"
+            },
+            {
+              "dimension": "hits",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "overlap-shape",
+      "description": "World::overlap_shape with box squares covering exactly `hits` boxes; 64 queries per point.",
+      "publicContract": "physics_engine::approximate::World::overlap_shape",
+      "dimensions": {
+        "log2Bodies": {
+          "description": "log2 of the boxes in the town"
+        },
+        "hits": {
+          "description": "boxes the query overlaps"
+        }
+      },
+      "scalePoints": [
+        {
+          "log2Bodies": 9,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 10,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 11,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 13,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 14,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 1
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 16
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 128
+          },
+          "notes": "O(log n + k). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "log2Bodies",
+              "bound": "constant"
+            },
+            {
+              "dimension": "hits",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cast-shape",
+      "description": "World::cast_shape, sphere sweeps along a grid row crossing exactly `hits` boxes; 64 queries per point.",
+      "publicContract": "physics_engine::approximate::World::cast_shape",
+      "dimensions": {
+        "log2Bodies": {
+          "description": "log2 of the boxes in the town"
+        },
+        "hits": {
+          "description": "boxes the sweep crosses"
+        }
+      },
+      "scalePoints": [
+        {
+          "log2Bodies": 9,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 10,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 11,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 13,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 14,
+          "hits": 4
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 1
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 2
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 8
+        },
+        {
+          "log2Bodies": 12,
+          "hits": 16
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 224
+          },
+          "notes": "O(log n + k). Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "log2Bodies",
+              "bound": "constant"
+            },
+            {
+              "dimension": "hits",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "body-churn",
+      "description": "256 operations of remove-a-body-from-the-middle-of-the-order plus add-a-new-keyed-body, in a town of n boxes; amortized values are totals divided by 256.",
+      "publicContract": "physics_engine::approximate::World::{add_body, remove_body}",
+      "dimensions": {
+        "bodies": {
+          "description": "boxes in the town"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 512
+        },
+        {
+          "bodies": 1024
+        },
+        {
+          "bodies": 2048
+        },
+        {
+          "bodies": 4096
+        },
+        {
+          "bodies": 8192
+        },
+        {
+          "bodies": 16384
+        }
+      ],
+      "metrics": [
+        {
+          "name": "storage-shifts-per-op",
+          "unit": "records",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "linear"
+            }
+          ],
+          "notes": "Declared linear, not the O(log n) target: bodies are stored densely in key order, so inserting or removing in the middle moves the later records and their slot indices. Amortized O(log n) needs a storage change (see the PR)."
+        },
+        {
+          "name": "tree-inserts-per-op",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Incremental tree inserts plus the amortized SAH rebuild (every n/2 inserts)."
+        },
+        {
+          "name": "worst-op-work",
+          "unit": "records",
+          "signal": "operation-count",
+          "budget": {
+            "max": 32768
+          },
+          "notes": "Worst single operation: the storage shift above or a full tree rebuild, both O(n)."
+        }
+      ]
+    },
+    {
+      "id": "move-characters",
+      "description": "One World::move_characters batch: characters scattered in 4 x 4 m blocks of the town's lanes, `density` per block, each moving 1 m.",
+      "publicContract": "physics_engine::approximate::World::move_characters",
+      "dimensions": {
+        "log2Bodies": {
+          "description": "log2 of the boxes in the town"
+        },
+        "characters": {
+          "description": "characters in the batch"
+        },
+        "density": {
+          "description": "characters per 4 x 4 m block"
+        }
+      },
+      "scalePoints": [
+        {
+          "log2Bodies": 9,
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "log2Bodies": 10,
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "log2Bodies": 11,
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "log2Bodies": 13,
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "log2Bodies": 14,
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 8,
+          "density": 1
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 16,
+          "density": 1
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 64,
+          "density": 1
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 128,
+          "density": 1
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 32,
+          "density": 2
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 32,
+          "density": 4
+        },
+        {
+          "log2Bodies": 12,
+          "characters": 32,
+          "density": 8
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 16384
+          },
+          "notes": "O(m log n): every move's casts descend the tree. Tree nodes grow with log n but coding-tooling has no logarithmic bound and its linear marginal-rate test is too strict for integer tree depths, so the class is held by a budget: a linear scan or a lost tree would exceed it by orders of magnitude at the largest town."
+        },
+        {
+          "name": "tree-nodes-per-character",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 128
+          },
+          "notes": "O(log n) per character; held by budget for the same reason."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "budget": {
+            "max": 256
+          },
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "linear"
+            }
+          ],
+          "notes": "Neighbour tests: linear in movers at fixed density. With density they grow faster than linear here (more slides per move when crowded), so density is held by a budget far below all-pairs (32 movers would be 1024 tests per cast)."
+        }
+      ]
+    },
+    {
+      "id": "terrain-ray",
+      "description": "World::cast_ray_first against heightfield terrain, rays crossing `cellsCrossed` cells; 16 queries per point.",
+      "publicContract": "physics_engine::approximate::World::cast_ray_first",
+      "dimensions": {
+        "terrainCells": {
+          "description": "cells in the terrain"
+        },
+        "cellsCrossed": {
+          "description": "cells the ray's ground track crosses along X"
+        }
+      },
+      "scalePoints": [
+        {
+          "terrainCells": 1024,
+          "cellsCrossed": 8
+        },
+        {
+          "terrainCells": 4096,
+          "cellsCrossed": 8
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCrossed": 8
+        },
+        {
+          "terrainCells": 65536,
+          "cellsCrossed": 8
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCrossed": 2
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCrossed": 4
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCrossed": 16
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCrossed": 32
+        }
+      ],
+      "metrics": [
+        {
+          "name": "cells-visited",
+          "unit": "cells",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            },
+            {
+              "dimension": "cellsCrossed",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "terrain-capsule-sweep",
+      "description": "World::cast_shape of a capsule over heightfield terrain covering `cellsCovered` cells; 16 queries per point.",
+      "publicContract": "physics_engine::approximate::World::cast_shape",
+      "dimensions": {
+        "terrainCells": {
+          "description": "cells in the terrain"
+        },
+        "cellsCovered": {
+          "description": "cells the sweep's footprint spans along X"
+        }
+      },
+      "scalePoints": [
+        {
+          "terrainCells": 1024,
+          "cellsCovered": 8
+        },
+        {
+          "terrainCells": 4096,
+          "cellsCovered": 8
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCovered": 8
+        },
+        {
+          "terrainCells": 65536,
+          "cellsCovered": 8
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCovered": 2
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCovered": 4
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCovered": 16
+        },
+        {
+          "terrainCells": 16384,
+          "cellsCovered": 32
+        }
+      ],
+      "metrics": [
+        {
+          "name": "cells-visited",
+          "unit": "cells",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            },
+            {
+              "dimension": "cellsCovered",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "triangle-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "budget": {
+            "max": 1024
+          },
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Newton steps per covered triangle vary slightly with the footprint, so the cellsCovered class is carried by cells-visited."
+        }
+      ]
+    },
+    {
+      "id": "warm-tick-allocations",
+      "description": "One warm tick (32 character moves, 24 queries, one step) after two warm-up ticks, in towns of 2^log2Bodies boxes.",
+      "publicContract": "physics_engine::approximate::World",
+      "dimensions": {
+        "log2Bodies": {
+          "description": "log2 of the boxes in the town"
+        }
+      },
+      "scalePoints": [
+        {
+          "log2Bodies": 9
+        },
+        {
+          "log2Bodies": 10
+        },
+        {
+          "log2Bodies": 11
+        },
+        {
+          "log2Bodies": 12
+        },
+        {
+          "log2Bodies": 13
+        },
+        {
+          "log2Bodies": 14
+        }
+      ],
+      "metrics": [
+        {
+          "name": "heap-allocations",
+          "unit": "allocations",
+          "signal": "allocation-count",
+          "budget": {
+            "max": 0
+          },
+          "growth": [
+            {
+              "dimension": "log2Bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Counting global allocator in the test binary (alloc + realloc)."
+        }
+      ]
+    }
+  ]
+}

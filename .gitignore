@@ -8,3 +8,5 @@
 
 /experiments/solver-budget/target
 /oracle/target
+/.coding-tooling-src
+/work-report.json

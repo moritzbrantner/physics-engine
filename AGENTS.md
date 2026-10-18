@@ -42,6 +42,8 @@ cargo test --locked --features checkpoints
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
 cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle: invariants + native perf gate
 node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes
+cargo test --release --features work-counters --test work_complexity   # Big-O work contracts (self-checking)
+bun <coding-tooling>/src/router.ts performance work --root .            # the same, judged by coding-tooling as in CI
 ```
 
 CI (`.github/workflows/validate.yml`) runs these on plain Ubuntu with the `rust-toolchain.toml` toolchain; the `fast` tier is declared in `.coding-tooling.json`.
@@ -51,6 +53,7 @@ CI (`.github/workflows/validate.yml`) runs these on plain Ubuntu with the `rust-
 - **One task = one branch = one PR**, targeting `main`. A task is one eligible issue. Deliver its scope, its oracle scenario and the docs it changes on that branch.
 - **Stay inside the task.** Note unrelated findings in one line of the PR description.
 - **Rapier oracle.** Every parity PR adds its scenario to the shared Rapier harness; CI checks behaviour invariants and fails when Physics Engine is slower than Rapier (native 1.05×, WASM 1.10×, against the consumer pattern and bare Rapier). Do not add other ratchets, evidence packaging or attestation.
+- **Complexity contracts.** A change that alters an operation's work class updates `.performance/contract.json` in the same PR with the reason in the metric's `notes`; new operations add their world family to `tests/work_complexity.rs`.
 - **Experimental API.** Pick the cleanest API for the consumers; no deprecation windows, shims or back-compat layers. Update `docs/world-api-contract.md` and `docs/consumer-capabilities.md` when the API or a capability's status changes.
 - **Checkpoints** are an opt-in debugging/logging feature. When a change alters their wire layout or continuation semantics, bump the format or algorithm version once and update `docs/floating-checkpoints.md`; no new checkpoint features.
 - **Validate in tiers.** Run focused tests while iterating; CI is the full gate. A red check blocks merge; fix it.

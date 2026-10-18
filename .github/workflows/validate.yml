@@ -39,6 +39,32 @@ jobs:
       - name: Test the Pages adapter
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
 
+      - name: Check out coding-tooling for the work contracts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: moritzbrantner/coding-tooling
+          ref: 6e4cfce6da1151b6cd3db2c3cacc6478e59d4b84
+          path: .coding-tooling-src
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Big-O work contracts (.performance/contract.json)
+        run: |
+          (cd .coding-tooling-src && bun install --frozen-lockfile)
+          bun .coding-tooling-src/src/router.ts performance work --root . --json > work-report.json || true
+          python3 - <<'PY'
+          import json, sys
+          report = json.load(open("work-report.json"))
+          for operation in report["data"]["operations"]:
+              for check in operation["checks"]:
+                  print(f"{operation['id']:<24} {check['metric']:<26} {check['kind']:<7} {check.get('dimension') or '':<14} {check['state']}")
+          for d in report.get("diagnostics") or []:
+              print("diagnostic:", d)
+          sys.exit(0 if report["status"] == "passed" else 1)
+          PY
+
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked --manifest-path oracle/Cargo.toml
 

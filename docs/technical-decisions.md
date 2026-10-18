@@ -45,6 +45,15 @@ printed. Every parity change adds its
 scenario to the harness. The harness stays lean: no attestation, fingerprints or evidence
 packaging.
 
+## D4a — Complexity contracts in CI
+
+`.performance/contract.json` (coding-tooling schemaVersion 2 `operations`) declares the Big-O
+class of each public operation: queries, body churn, character batches, terrain queries and
+heap allocations per warm tick. `tests/work_complexity.rs` measures deterministic work
+counters (the test-only `work-counters` feature; off in every release build) on world
+families that scale one dimension at doubling points, and CI fails when a declared bound
+breaks. Changing a declared class happens in the same PR, with the reason in the contract.
+
 ## D5 — Which work is eligible
 
 Only issues that reach Rapier parity for a capability one of the owner's projects actually uses are

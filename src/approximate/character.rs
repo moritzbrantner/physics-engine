@@ -87,6 +87,10 @@ pub(super) struct Characters {
     /// Incremented whenever a character is placed rather than moved: a placed character can
     /// overlap any other, so every character checks again once.
     placements: u64,
+    /// Batch scratch kept between calls so a warm batch allocates nothing.
+    batch: Vec<(super::Order, usize, CharacterState)>,
+    separation: Vec<V>,
+    hits: Vec<QueryHit>,
 }
 
 const DIRTY: (u64, u64) = (u64::MAX, u64::MAX);
@@ -197,7 +201,22 @@ impl World {
         out: &mut Vec<CharacterMoveResult>,
     ) -> Result<(), Error> {
         out.clear();
-        let mut batch = Vec::with_capacity(moves.len());
+        let mut batch = std::mem::take(&mut self.characters.batch);
+        let mut separation = std::mem::take(&mut self.characters.separation);
+        let result = self.move_batch(moves, out, &mut batch, &mut separation);
+        self.characters.batch = batch;
+        self.characters.separation = separation;
+        result
+    }
+
+    fn move_batch(
+        &mut self,
+        moves: &[CharacterMove],
+        out: &mut Vec<CharacterMoveResult>,
+        batch: &mut Vec<(super::Order, usize, CharacterState)>,
+        separation: &mut Vec<V>,
+    ) -> Result<(), Error> {
+        batch.clear();
         for (n, m) in moves.iter().enumerate() {
             if !m.desired.finite() || m.desired.abs().max_component() >= 1e12 {
                 return Err(Error::InvalidInput);
@@ -209,8 +228,9 @@ impl World {
             batch.push((self.bodies[self.index(m.body)?].order, n, state));
         }
         batch.sort_unstable_by_key(|&(order, n, _)| (order, n));
-        let mut separation = vec![V::ZERO; moves.len()];
-        self.separate_characters(moves, &batch, &mut separation)?;
+        separation.clear();
+        separation.resize(moves.len(), V::ZERO);
+        self.separate_characters(moves, batch, separation)?;
         out.resize(
             moves.len(),
             CharacterMoveResult {
@@ -222,7 +242,7 @@ impl World {
                 contacts: 0,
             },
         );
-        for &(_, n, state) in &batch {
+        for &(_, n, state) in batch.iter() {
             let m = moves[n];
             let mut result = self.move_character(m.body, m.desired, state)?;
             result.depenetration += separation[n];
@@ -240,7 +260,19 @@ impl World {
         batch: &[(super::Order, usize, CharacterState)],
         separation: &mut [V],
     ) -> Result<(), Error> {
-        let mut hits = Vec::new();
+        let mut hits = std::mem::take(&mut self.characters.hits);
+        let result = self.separate_with(moves, batch, separation, &mut hits);
+        self.characters.hits = hits;
+        result
+    }
+
+    fn separate_with(
+        &mut self,
+        moves: &[CharacterMove],
+        batch: &[(super::Order, usize, CharacterState)],
+        separation: &mut [V],
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<(), Error> {
         let generation = self.bookkeeping.generation;
         for &(_, n, state) in batch {
             let id = moves[n].body;
@@ -253,7 +285,7 @@ impl World {
                 exclude: Some(id),
                 ..QueryFilter::default()
             };
-            self.overlap_shape(pose, filter, &mut hits)
+            self.overlap_shape(pose, filter, hits)
                 .map_err(|_| Error::InvalidInput)?;
             for h in hits.iter().filter(|h| h.separation < 0.0) {
                 if !self.characters.contains(h.body) {
@@ -335,6 +367,19 @@ impl World {
         desired: V,
         state: CharacterState,
     ) -> Result<CharacterMoveResult, Error> {
+        let mut hits = std::mem::take(&mut self.characters.hits);
+        let result = self.move_character_with(id, desired, state, &mut hits);
+        self.characters.hits = hits;
+        result
+    }
+
+    fn move_character_with(
+        &mut self,
+        id: BodyId,
+        desired: V,
+        state: CharacterState,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<CharacterMoveResult, Error> {
         let s = state.settings;
         let up = V::Y;
         let min_up = s.max_slope.cos();
@@ -343,7 +388,6 @@ impl World {
         let flat = |v: V| if planar { V(v.0, 0.0, v.2) } else { v };
         let mut pose = self.character_pose(id)?;
         let start = pose.position;
-        let mut hits = Vec::new();
         let mut result = CharacterMoveResult {
             body: id,
             translation: V::ZERO,
@@ -362,7 +406,7 @@ impl World {
         let generation = self.bookkeeping.generation;
         let mut resolved = self.characters.is_clear(id, generation);
         for _ in 0..if resolved { 0 } else { 4 } {
-            self.overlap_shape(pose, filter, &mut hits)
+            self.overlap_shape(pose, filter, hits)
                 .map_err(|_| Error::InvalidInput)?;
             let mut push = V::ZERO;
             // Other characters are separated by the character interaction rules, not here.
@@ -394,8 +438,7 @@ impl World {
             let direction = remaining * (1.0 / length);
             // Cast one offset further so motion never ends closer than `offset`.
             let reach = length + s.offset;
-            let Some(hit) = self.blocking_hit(id, pose, direction * reach, &mut hits, |_| true)?
-            else {
+            let Some(hit) = self.blocking_hit(id, pose, direction * reach, hits, |_| true)? else {
                 pose.position += remaining;
                 break;
             };
@@ -448,7 +491,7 @@ impl World {
         let reach = s.offset + s.snap_to_ground.unwrap_or(0.0) + s.offset;
         if planar {
             // The plane is the support.
-        } else if let Some(hit) = self.blocking_hit(id, pose, -up * reach, &mut hits, is_static)?
+        } else if let Some(hit) = self.blocking_hit(id, pose, -up * reach, hits, is_static)?
             && hit.normal.dot(up) >= min_up
         {
             let gap = hit.fraction * reach;

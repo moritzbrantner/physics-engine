@@ -7,9 +7,9 @@ rust-version = "1.98"
 description = "Physics engine for the owner's games, measured against Rapier"
 
 [dependencies]
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "b8c094cd7dfa7b09938616effcc9167e7ab27bee" }
-bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "b8c094cd7dfa7b09938616effcc9167e7ab27bee" }
-spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "b8c094cd7dfa7b09938616effcc9167e7ab27bee" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "4b05eea6f34341559135e9fa3360add567f603e1" }
+bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "4b05eea6f34341559135e9fa3360add567f603e1" }
+spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "4b05eea6f34341559135e9fa3360add567f603e1" }
 sha2 = { version = "0.11.0", default-features = false, optional = true }
 
 [dev-dependencies]
@@ -19,13 +19,18 @@ serde_json = "=1.0.154"
 default = []
 # Opt-in versioned physical checkpoints for debugging and logging.
 checkpoints = ["dep:sha2"]
+# Test-only deterministic work counters for the complexity contracts (.performance/contract.json).
+# Off in every release build, so they never affect the Rapier speed gate.
+work-counters = []
 
 [lib]
 name = "physics_engine"
 path = "src/lib.rs"
 
 [lints.rust]
-unsafe_code = "forbid"
+# The library forbids unsafe code itself (`#![forbid(unsafe_code)]`); only the counting
+# allocator of the complexity-contract test opts in.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -99,3 +104,7 @@ required-features = ["checkpoints"]
 [[test]]
 name = "tangential_contact_wake"
 required-features = ["checkpoints"]
+
+[[test]]
+name = "work_complexity"
+required-features = ["work-counters"]
