@@ -188,7 +188,12 @@ impl Shape {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
+    /// Assigned by [`World::add_body`]; [`BodyId::NONE`] before.
     pub id: BodyId,
+    /// Deterministic traversal and tie-break order, assigned by [`World::add_body`].
+    order: Order,
+    /// Optional game-supplied stable key (the game's entity id), unique among live bodies.
+    pub key: Option<u64>,
     pub position: Vector,
     pub velocity: Vector,
     pub orientation: Quaternion,
@@ -222,9 +227,25 @@ pub struct Body {
     cached_bounds: (Vector, Vector),
 }
 impl Body {
-    pub fn new(id: BodyId, shape: Shape, position: Vector, mass: Real) -> Self {
+    /// A body carrying the game's stable `key` (see [`World::body_id`]).
+    pub fn keyed(key: u64, shape: Shape, position: Vector, mass: Real) -> Self {
+        let mut body = Self::new(shape, position, mass);
+        body.key = Some(key);
+        body
+    }
+    /// Test fixture: keyed, with the id it would have as slot `key` of a fresh world.
+    #[cfg(test)]
+    pub(crate) fn fixture(key: u64, shape: Shape, position: Vector, mass: Real) -> Self {
+        let mut body = Self::keyed(key, shape, position, mass);
+        body.id = BodyId::new(key as u32, 0);
+        body.order = Order::new(Some(key), 0);
+        body
+    }
+    pub fn new(shape: Shape, position: Vector, mass: Real) -> Self {
         Self {
-            id,
+            id: BodyId::NONE,
+            order: Order(u128::MAX),
+            key: None,
             shape,
             position,
             mass,
@@ -365,7 +386,8 @@ impl Default for Config {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidInput,
-    DuplicateBody(BodyId),
+    /// Another live body already has this game key.
+    DuplicateKey(u64),
     MissingBody(BodyId),
     NonFiniteState(BodyId),
     /// A failed search cannot establish collision absence. The attempted step is rolled back.
@@ -442,11 +464,33 @@ struct Constraint {
     response: [bool; 2],
     spin: bool,
 }
+/// Internal body order: keyed bodies first by key, then keyless bodies by creation serial.
+/// Every traversal, pair orientation and tie uses it, so results depend on game keys and the
+/// world's contents, not on slot reuse or insertion history of keyed bodies.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct Order(u128);
+impl Order {
+    pub(crate) fn new(key: Option<u64>, serial: u64) -> Self {
+        Self(match key {
+            Some(key) => u128::from(key),
+            None => (1 << 64) | u128::from(serial),
+        })
+    }
+}
+
+const FREE_SLOT: u32 = u32::MAX;
+/// One id slot: its current generation and the body's index while live.
+#[derive(Clone, Copy, Debug)]
+struct Slot {
+    generation: u32,
+    index: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct World {
     config: Config,
     bodies: Vec<Body>,
-    cache: BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
+    cache: BTreeMap<(Order, Order), Vec<CachedPoint>>,
     /// Prior substep length. Time composition and its checkpoint value stay f64.
     last_h: Scalar,
     // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
@@ -460,6 +504,12 @@ pub struct World {
     transaction: transaction::Journal,
     last_transaction: TransactionStats,
     query_tree: query::QueryTree,
+    slots: Vec<Slot>,
+    /// Free slots, descending: `pop` returns the lowest.
+    free: Vec<u32>,
+    keys: BTreeMap<u64, BodyId>,
+    /// Creation serial of the next keyless body (its order after every keyed body).
+    next_serial: u64,
     failed_work: Option<FailedStepWork>,
     elapsed: Scalar,
 }
@@ -496,6 +546,10 @@ impl World {
             transaction: transaction::Journal::default(),
             last_transaction: TransactionStats::default(),
             query_tree: query::QueryTree::default(),
+            slots: Vec::new(),
+            free: Vec::new(),
+            keys: BTreeMap::new(),
+            next_serial: 0,
             failed_work: None,
             elapsed: 0.0,
         })
@@ -535,20 +589,74 @@ impl World {
     pub fn config(&self) -> Config {
         self.config
     }
+    /// O(1) slot lookup; a stale generation never matches.
     fn index(&self, id: BodyId) -> Result<usize, Error> {
-        self.bodies
-            .binary_search_by_key(&id, |b| b.id)
-            .map_err(|_| Error::MissingBody(id))
+        self.slots
+            .get(id.slot() as usize)
+            .filter(|s| s.generation == id.generation() && s.index != FREE_SLOT)
+            .map(|s| s.index as usize)
+            .filter(|&i| self.bodies.get(i).is_some_and(|b| b.id == id))
+            // Mid-step layout changes (retirement) refresh slots only at the step's end.
+            .or_else(|| self.bodies.iter().position(|b| b.id == id))
+            .ok_or(Error::MissingBody(id))
     }
-    pub fn add_body(&mut self, mut body: Body) -> Result<(), Error> {
+    /// The live body with game key `key`.
+    pub fn body_id(&self, key: u64) -> Option<BodyId> {
+        self.keys.get(&key).copied()
+    }
+    /// Recomputes slot indices, free slots and keys from `bodies` after internal layout
+    /// changes (retirement, rollback, restore). Generations are kept.
+    fn reindex_slots(&mut self) {
+        for slot in &mut self.slots {
+            slot.index = FREE_SLOT;
+        }
+        self.keys.clear();
+        for (i, b) in self.bodies.iter().enumerate() {
+            self.slots[b.id.slot() as usize].index = i as u32;
+            if let Some(key) = b.key {
+                self.keys.insert(key, b.id);
+            }
+        }
+        self.free = (0..self.slots.len() as u32)
+            .rev()
+            .filter(|&s| self.slots[s as usize].index == FREE_SLOT)
+            .collect();
+    }
+    fn shift_slots(&mut self, from: usize) {
+        for (i, b) in self.bodies.iter().enumerate().skip(from) {
+            self.slots[b.id.slot() as usize].index = i as u32;
+        }
+    }
+    /// Adds a body and returns its new id. `body.key`, when set, must be unique among live
+    /// bodies; `body.id` is ignored.
+    pub fn add_body(&mut self, mut body: Body) -> Result<BodyId, Error> {
         body.orientation = body.orientation.normalized();
-        if !body.valid() {
+        if !body.valid() || self.slots.len() >= u32::MAX as usize - 1 {
             return Err(Error::InvalidInput);
         }
-        let i = match self.bodies.binary_search_by_key(&body.id, |b| b.id) {
-            Ok(_) => return Err(Error::DuplicateBody(body.id)),
-            Err(i) => i,
+        if let Some(key) = body.key
+            && self.keys.contains_key(&key)
+        {
+            return Err(Error::DuplicateKey(key));
+        }
+        // Reuse the lowest free slot with a new generation, else a fresh slot.
+        body.id = match self.free.pop() {
+            Some(slot) => {
+                let s = &mut self.slots[slot as usize];
+                s.generation = s.generation.wrapping_add(1);
+                BodyId::new(slot, s.generation)
+            }
+            None => {
+                self.slots.push(Slot {
+                    generation: 0,
+                    index: FREE_SLOT,
+                });
+                BodyId::new(self.slots.len() as u32 - 1, 0)
+            }
         };
+        body.order = Order::new(body.key, self.next_serial);
+        self.next_serial += 1;
+        let i = self.bodies.partition_point(|b| b.order < body.order);
         // Local topology change: only a genuine new fixed overlap can disturb a sleeper.
         let wake = if body.mass == 0.0 && !body.sensor {
             self.bodies
@@ -558,7 +666,7 @@ impl World {
                         && b.layers.collides_with(body.layers)
                         && contact::current(b, &body, 0.0).is_some()
                 })
-                .map(|b| b.id)
+                .map(|b| b.order)
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -569,7 +677,12 @@ impl World {
         body.cached_bounds = contact::bounds(&body);
         self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
         let synced = self.query_tree.current(self.bookkeeping.generation);
+        let (id, key) = (body.id, body.key);
         self.bodies.insert(i, body);
+        self.shift_slots(i);
+        if let Some(key) = key {
+            self.keys.insert(key, id);
+        }
         self.bookkeeping.layout_changed();
         if synced {
             self.query_tree
@@ -578,7 +691,7 @@ impl World {
             self.query_tree
                 .sync(&self.bodies, self.bookkeeping.generation);
         }
-        Ok(())
+        Ok(id)
     }
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let i = self.index(id).ok()?;
@@ -588,15 +701,25 @@ impl World {
             .graph
             .neighbors(i)
             .iter()
-            .map(|&j| self.bodies[j].id)
+            .map(|&j| self.bodies[j].order)
             .collect::<Vec<_>>();
         for n in neighbors {
             self.wake_island(n);
         }
-        self.geometry.remove(id);
-        self.cache.retain(|&(a, b), _| a != id && b != id);
+        let order = self.bodies[i].order;
+        self.geometry.remove(order);
+        self.cache.retain(|&(a, b), _| a != order && b != order);
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies.remove(i);
+        self.shift_slots(i);
+        let slot = id.slot();
+        self.slots[slot as usize].index = FREE_SLOT;
+        // Descending, so `pop` reuses the lowest free slot.
+        let at = self.free.partition_point(|&f| f > slot);
+        self.free.insert(at, slot);
+        if let Some(key) = removed.key {
+            self.keys.remove(&key);
+        }
         self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
         self.bookkeeping.layout_changed();
         if synced {
@@ -620,7 +743,7 @@ impl World {
             };
         }
         if self.bodies[i].velocity != v {
-            self.wake_island(id);
+            self.wake_island(self.bodies[i].order);
             self.bodies[i].velocity = v;
         }
         Ok(())
@@ -645,7 +768,7 @@ impl World {
             return Err(Error::InvalidInput);
         }
         if j != Vector::ZERO {
-            self.wake_island(id);
+            self.wake_island(self.bodies[i].order);
         }
         self.bodies[i].impulse = pending;
         self.bodies[i].angular_impulse = spin;
@@ -664,13 +787,17 @@ impl World {
             return Err(Error::InvalidInput);
         }
         if force != Vector::ZERO {
-            self.wake_island(id);
+            self.wake_island(self.bodies[i].order);
         }
         self.bodies[i].force = total;
         Ok(())
     }
-    fn wake_island(&mut self, root: BodyId) -> u64 {
-        let Ok(root) = self.index(root) else {
+    /// Index of the body with internal order `order` (bodies are sorted by it).
+    fn index_of_order(&self, order: Order) -> Option<usize> {
+        self.bodies.binary_search_by_key(&order, |b| b.order).ok()
+    }
+    fn wake_island(&mut self, root: Order) -> u64 {
+        let Some(root) = self.index_of_order(root) else {
             return 0;
         };
         let s = &mut self.bookkeeping;
@@ -697,7 +824,7 @@ impl World {
     }
     fn wake_contact_island<const PREPARED: bool>(
         &mut self,
-        root: BodyId,
+        root: Order,
         h: Real,
         report: &mut Report,
     ) -> u64 {
@@ -713,6 +840,10 @@ impl World {
         woke
     }
     pub fn has_support(&self, id: BodyId) -> bool {
+        let Ok(i) = self.index(id) else {
+            return false;
+        };
+        let id = self.bodies[i].order;
         let up = (-self.config.gravity).unit();
         self.cache.iter().any(|(&(a, b), p)| {
             p.iter().any(|p| {
@@ -761,6 +892,7 @@ impl World {
             self.last_report = report.clone();
             return Ok(report);
         }
+        let layout = self.bookkeeping.generation;
         self.transaction.begin(self.bodies.len());
         let prior_h = self.last_h;
         let prior_activity = self.bookkeeping.activity.count;
@@ -784,6 +916,9 @@ impl World {
                 Err(error)
             }
         };
+        if self.bookkeeping.generation != layout {
+            self.reindex_slots();
+        }
         self.query_tree
             .sync(&self.bodies, self.bookkeeping.generation);
         result
@@ -860,7 +995,7 @@ impl World {
                         let departing_support = approach < 0.0
                             && ((a.external && b.sleeping && m.normal.dot(up) > 0.5)
                                 || (b.external && a.sleeping && m.normal.dot(up) < -0.5))
-                            && self.cache.get(&(a.id, b.id)).is_some_and(|points| {
+                            && self.cache.get(&(a.order, b.order)).is_some_and(|points| {
                                 points
                                     .iter()
                                     .any(|p| p.impulse > 0.0 && p.normal.dot(m.normal) > 0.99)
@@ -880,12 +1015,12 @@ impl World {
                             || driven_contact_motion;
                         [
                             if disruptive && a.sleeping && b.mass > 0.0 {
-                                Some(a.id)
+                                Some(a.order)
                             } else {
                                 None
                             },
                             if disruptive && b.sleeping && a.mass > 0.0 {
-                                Some(b.id)
+                                Some(b.order)
                             } else {
                                 None
                             },
@@ -1025,7 +1160,7 @@ impl World {
                         - contact_velocity(a, point.ra, !linear);
                     let restitution = if rel.dot(n) < -1.0
                         && point.separation <= self.config.contact_slop
-                        && !self.cache.contains_key(&(a.id, b.id))
+                        && !self.cache.contains_key(&(a.order, b.order))
                     {
                         -a.restitution.min(b.restitution) * rel.dot(n)
                     } else {
@@ -1099,7 +1234,7 @@ impl World {
                     if self.config.warm_start
                         && point.separation <= self.config.contact_slop
                         && self.last_h > 0.0
-                        && let Some(old) = self.cache.get(&(a.id, b.id))
+                        && let Some(old) = self.cache.get(&(a.order, b.order))
                     {
                         let la = a.orientation.inverse_rotate(c.ra);
                         let lb = b.orientation.inverse_rotate(c.rb);
@@ -1191,11 +1326,11 @@ impl World {
                 let key = (a, b);
                 let a = self
                     .bodies
-                    .binary_search_by_key(&a, |b| b.id)
+                    .binary_search_by_key(&a, |b| b.order)
                     .expect("live contact");
                 let b = self
                     .bodies
-                    .binary_search_by_key(&b, |b| b.id)
+                    .binary_search_by_key(&b, |b| b.order)
                     .expect("live contact");
                 if !scratch.supported[a] || !scratch.supported[b] {
                     if !points.is_empty() {
@@ -1209,10 +1344,10 @@ impl World {
                 let b = &self.bodies[c.b];
                 if c.normal_impulse > 0.0 {
                     if a.retire_on_impact {
-                        push(&mut scratch.retired, a.id, &mut scratch.work);
+                        push(&mut scratch.retired, a.order, &mut scratch.work);
                     }
                     if b.retire_on_impact {
-                        push(&mut scratch.retired, b.id, &mut scratch.work);
+                        push(&mut scratch.retired, b.order, &mut scratch.work);
                     }
                     if c.swept {
                         report.swept_contacts += 1;
@@ -1220,8 +1355,8 @@ impl World {
                 }
                 if c.sep <= self.config.contact_slop * 2.0 {
                     self.transaction
-                        .pair((a.id, b.id), self.cache.get(&(a.id, b.id)));
-                    let points = match self.cache.entry((a.id, b.id)) {
+                        .pair((a.order, b.order), self.cache.get(&(a.order, b.order)));
+                    let points = match self.cache.entry((a.order, b.order)) {
                         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             scratch.graph.dirty = true;
@@ -1318,8 +1453,9 @@ impl World {
             self.bookkeeping.retired.dedup();
             for n in 0..self.bookkeeping.retired.len() {
                 let id = self.bookkeeping.retired[n];
-                if let Ok(i) = self.index(id) {
+                if let Some(i) = self.index_of_order(id) {
                     let b = self.bodies.remove(i);
+                    let handle = b.id;
                     self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                     self.geometry.remove(id);
                     self.cache.retain(|&(a, b), points| {
@@ -1332,7 +1468,7 @@ impl World {
                     });
                     self.transaction.remove(i, b);
                     self.bookkeeping.layout_changed();
-                    report.retired.push(id);
+                    report.retired.push(handle);
                 }
             }
             self.last_h = widen_time(h);
@@ -1450,7 +1586,7 @@ impl World {
         let compare = |a: &SweepRow, b: &SweepRow| {
             a.lo.0
                 .total_cmp(&b.lo.0)
-                .then_with(|| self.bodies[a.index].id.cmp(&self.bodies[b.index].id))
+                .then_with(|| self.bodies[a.index].order.cmp(&self.bodies[b.index].order))
         };
         let ordered = s.bounds.windows(2).all(|rows| {
             s.work.bounds_order_checks += 1;
@@ -1479,7 +1615,7 @@ impl World {
                 if bl.1 > hi.1 || bh.1 < lo.1 || bl.2 > hi.2 || bh.2 < lo.2 {
                     continue;
                 }
-                let (i, j) = if self.bodies[i].id < self.bodies[j].id {
+                let (i, j) = if self.bodies[i].order < self.bodies[j].order {
                     (i, j)
                 } else {
                     (j, i)
@@ -1588,7 +1724,7 @@ impl World {
             }
             keep
         });
-        out.sort_unstable_by_key(|(i, j, _)| (self.bodies[*i].id, self.bodies[*j].id));
+        out.sort_unstable_by_key(|(i, j, _)| (self.bodies[*i].order, self.bodies[*j].order));
         Ok(())
     }
 }

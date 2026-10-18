@@ -1,9 +1,6 @@
 //! First-substep force/load oracles for contact-awakened bodies. No sleep-policy changes.
-use physics_engine::{
-    BodyId,
-    approximate::{
-        Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
-    },
+use physics_engine::approximate::{
+    Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -33,8 +30,8 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> World {
     })
     .unwrap();
     for (id, x) in [(0, 0.0), (40, 10.0)] {
-        w.add_body(Body::new(
-            BodyId(id),
+        w.add_body(Body::keyed(
+            id,
             Shape::Box(V(4.0, 0.5, 4.0)),
             V(x, -0.5, 0.0),
             0.0,
@@ -42,7 +39,7 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> World {
         .unwrap();
     }
     for (id, x) in [(ids[1], 0.0), (30, 10.0)] {
-        let mut b = Body::new(BodyId(id), Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0);
+        let mut b = Body::keyed(id, Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0);
         b.friction = 0.0; // max mixing: the floor contributes .6; driven walls contribute0.
         if id == ids[1] && matches!(case, Case::AwakeReference) {
             b.sleep_allowed = false;
@@ -53,15 +50,33 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> World {
         w.step(1.0 / 60.0).unwrap();
     }
     assert_eq!(
-        w.body(BodyId(ids[1])).unwrap().is_sleeping(),
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping(),
         !matches!(case, Case::AwakeReference)
     );
-    assert!(w.body(BodyId(30)).unwrap().is_sleeping());
+    assert!(
+        w.body_id(30)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     if matches!(case, Case::RemovedSupport) {
-        w.remove_body(BodyId(0)).unwrap();
-        assert!(!w.body(BodyId(ids[1])).unwrap().is_sleeping());
-        assert!(!w.has_support(BodyId(ids[1])));
-        assert!(w.body(BodyId(30)).unwrap().is_sleeping());
+        w.remove_body(w.body_id(0).unwrap()).unwrap();
+        assert!(
+            !w.body_id(ids[1])
+                .and_then(|id| w.body(id))
+                .unwrap()
+                .is_sleeping()
+        );
+        assert!(!w.has_support(w.body_id(ids[1]).unwrap()));
+        assert!(
+            w.body_id(30)
+                .and_then(|id| w.body(id))
+                .unwrap()
+                .is_sleeping()
+        );
     }
     let walls = if matches!(case, Case::RepeatedRoots) {
         2
@@ -79,20 +94,23 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> World {
         } else {
             (20, V(4.0, 4.0, 0.5), V(0.0, 1.0, -1.5), V(0.0, 0.0, 3.0))
         };
-        let mut body = Body::new(BodyId(id), Shape::Box(half), position, 1.0);
+        let mut body = Body::keyed(id, Shape::Box(half), position, 1.0);
         body.external = true;
         body.friction = 0.0;
         w.add_body(body).unwrap();
-        w.set_velocity(BodyId(id), velocity).unwrap();
+        w.set_velocity(w.body_id(id).unwrap(), velocity).unwrap();
     }
     assert_eq!(
-        w.body(BodyId(ids[1])).unwrap().is_sleeping(),
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping(),
         matches!(case, Case::ContactWake | Case::RepeatedRoots)
     );
     w
 }
 fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
-    let b = w.body(BodyId(ids[1])).unwrap();
+    let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
     let t = H * n as Real;
     let double = matches!(case, Case::RepeatedRoots);
     let removed = matches!(case, Case::RemovedSupport);
@@ -128,7 +146,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     assert!(b.position.finite() && b.velocity.finite() && b.angular_velocity.finite());
     assert!(!b.is_sleeping());
     assert_eq!(b.mass, 2.0);
-    let neighbor = w.body(BodyId(30)).unwrap();
+    let neighbor = w.body_id(30).and_then(|id| w.body(id)).unwrap();
     assert!(neighbor.is_sleeping());
     assert_eq!(neighbor.position, V(10.0, 1.0, 0.0));
     assert_eq!(neighbor.velocity, V::ZERO);
@@ -136,7 +154,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
         (ids[0], V(-1.5, 1.0, 0.0), V(3.0, 0.0, 0.0)),
         (20, V(0.0, 1.0, -1.5), V(0.0, 0.0, 3.0)),
     ] {
-        if let Some(wall) = w.body(BodyId(id)) {
+        if let Some(wall) = w.body_id(id).and_then(|id| w.body(id)) {
             assert!(wall.external && !wall.is_sleeping());
             assert_eq!(wall.velocity, velocity);
             assert!((wall.position - (position + velocity * t)).length() <= rounding(1e-10, 4.0));
@@ -176,7 +194,7 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 17] {
             assert_eq!(report.woken_bodies, expected_wake);
             assert_eq!(report.response_preparations, u64::from(substeps));
             assert_eq!(report.inertia_preparations, u64::from(substeps));
-            let b = w.body(BodyId(ids[1])).unwrap();
+            let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
             let energy =
                 b.velocity.dot(b.velocity) + 0.4 * b.angular_velocity.dot(b.angular_velocity);
             // Floor angular impulse comes only from tangential load, since wall friction is0.
@@ -210,7 +228,12 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 17] {
                 report.convergence.constraint_visits as Real,
                 (w.elapsed_seconds() - before) as Real,
                 0.0,
-                Real::from(u8::from(w.body(BodyId(30)).unwrap().is_sleeping())),
+                Real::from(u8::from(
+                    w.body_id(30)
+                        .and_then(|id| w.body(id))
+                        .unwrap()
+                        .is_sleeping(),
+                )),
             ]);
         }
     }

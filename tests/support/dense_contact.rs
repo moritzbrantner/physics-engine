@@ -1,6 +1,5 @@
-use physics_engine::{
-    BodyId,
-    approximate::{Body, Config, PositionCorrection, Quaternion, Shape, Vector as V, World},
+use physics_engine::approximate::{
+    Body, Config, PositionCorrection, Quaternion, Shape, Vector as V, World,
 };
 
 pub fn fixture(substeps: u8) -> World {
@@ -50,7 +49,7 @@ pub fn fixture(substeps: u8) -> World {
             ),
         ),
     ] {
-        let mut body = Body::new(BodyId(id), Shape::Box(V(18.0, 18.0, 18.0)), position, 2.0);
+        let mut body = Body::keyed(id, Shape::Box(V(18.0, 18.0, 18.0)), position, 2.0);
         body.velocity = velocity;
         body.orientation = orientation;
         body.angular_velocity = angular;
@@ -58,8 +57,8 @@ pub fn fixture(substeps: u8) -> World {
         body.sleep_allowed = false;
         world.add_body(body).unwrap();
     }
-    let mut projectile = Body::new(
-        BodyId(100002),
+    let mut projectile = Body::keyed(
+        100002,
         Shape::Box(V(1.0, 1.0, 9.0)),
         V(-122.0, 49.375, 138.0),
         1.0,
@@ -78,23 +77,24 @@ pub use super::box_fixture_oracle::box_overlap_depth;
 pub fn run() {
     let mut world = fixture(4);
     let before = box_overlap_depth(
-        world.body(BodyId(148)).unwrap(),
-        world.body(BodyId(156)).unwrap(),
+        world.body_id(148).and_then(|id| world.body(id)).unwrap(),
+        world.body_id(156).and_then(|id| world.body(id)).unwrap(),
     );
     assert!(
         before < 0.03,
         "reproducer must start with only a shallow contact: {before}"
     );
+    let projectile_id = world.body_id(100002).unwrap();
     let report = world.step(1.0 / 60.0).unwrap();
     let depth = box_overlap_depth(
-        world.body(BodyId(148)).unwrap(),
-        world.body(BodyId(156)).unwrap(),
+        world.body_id(148).and_then(|id| world.body(id)).unwrap(),
+        world.body_id(156).and_then(|id| world.body(id)).unwrap(),
     );
     assert!(
         depth <= 1.8,
         "opposite face penetrated {depth}; unchanged dense screening bound is 1.8"
     );
-    assert_eq!(report.retired, [BodyId(100002)]);
+    assert_eq!(report.retired, [projectile_id]);
     assert!(report.swept_contacts > 0);
     assert!(report.impulse_iterations <= 32);
     assert!((world.elapsed_seconds() - 1.0 / 60.0).abs() < 1e-12);
@@ -103,8 +103,8 @@ pub fn run() {
     for substep in 1..=4 {
         observed.step(1.0 / 240.0).unwrap();
         let depth = box_overlap_depth(
-            observed.body(BodyId(148)).unwrap(),
-            observed.body(BodyId(156)).unwrap(),
+            observed.body(observed.body_id(148).unwrap()).unwrap(),
+            observed.body(observed.body_id(156).unwrap()).unwrap(),
         );
         assert!(depth <= 1.8, "substep {substep} penetrated {depth}");
     }

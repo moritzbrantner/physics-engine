@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Body, BodyId, CachedPoint, CollisionLayers3d, Config, Convergence, ConvergenceScope,
+    Body, BodyId, CachedPoint, CollisionLayers3d, Config, Convergence, ConvergenceScope, Order,
     PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, Vector, World, contact,
     narrow_time, substep_length, widen_time,
 };
@@ -18,13 +18,13 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 2;
+const FORMAT: u32 = 3;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 8;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
 // Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 30 physical scalars.
-const MIN_BODY_BYTES: usize = 20 + 30 * REAL_BYTES;
+const MIN_BODY_BYTES: usize = 29 + 30 * REAL_BYTES;
 const POINT_BYTES: usize = 13 * REAL_BYTES;
 // Conservative envelopes for stored normalization/rotated-normal results. The
 // existing normalization can lose unit length for extreme finite input scales;
@@ -104,7 +104,11 @@ pub struct Checkpoint {
     elapsed: Scalar,
     last_h: Scalar,
     bodies: Vec<Body>,
-    cache: BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
+    cache: BTreeMap<(Order, Order), Vec<CachedPoint>>,
+    /// Generation of every id slot, so restored ids stay valid and stale ids stay rejected.
+    slot_generations: Vec<u32>,
+    /// Creation serial of the next keyless body.
+    next_serial: u64,
 }
 
 impl World {
@@ -125,6 +129,8 @@ impl World {
             last_h: self.last_h,
             bodies: self.bodies.clone(),
             cache: self.cache.clone(),
+            slot_generations: self.slots.iter().map(|s| s.generation).collect(),
+            next_serial: self.next_serial,
         })
     }
 }
@@ -162,6 +168,16 @@ impl Checkpoint {
             .filter(|b| b.mass > 0.0 && !b.sleeping)
             .count();
         world.bookkeeping.layout_changed();
+        world.slots = self
+            .slot_generations
+            .iter()
+            .map(|&generation| super::Slot {
+                generation,
+                index: super::FREE_SLOT,
+            })
+            .collect();
+        world.next_serial = self.next_serial;
+        world.reindex_slots();
         world
             .query_tree
             .sync(&world.bodies, world.bookkeeping.generation);
@@ -201,6 +217,11 @@ impl Checkpoint {
                 scalar(&mut out, point.impulse);
                 vector(&mut out, point.tangent);
             }
+        }
+        out.extend_from_slice(&self.next_serial.to_le_bytes());
+        count(&mut out, self.slot_generations.len());
+        for generation in &self.slot_generations {
+            out.extend_from_slice(&generation.to_le_bytes());
         }
         let digest = Sha256::digest(&out);
         out.extend_from_slice(&digest);
@@ -265,17 +286,17 @@ impl Checkpoint {
         let mut bodies = Vec::with_capacity(body_count);
         for _ in 0..body_count {
             let body = reader.body()?;
-            if bodies.last().is_some_and(|b: &Body| b.id >= body.id) {
+            if bodies.last().is_some_and(|b: &Body| b.order >= body.order) {
                 return Err(CheckpointError::InvalidData);
             }
             bodies.push(body);
         }
-        let pair_count = reader.count(limits.pairs, 24 + POINT_BYTES)?;
+        let pair_count = reader.count(limits.pairs, 40 + POINT_BYTES)?;
         let mut cache = BTreeMap::new();
         let mut previous = None;
         let mut total_points = 0usize;
         for _ in 0..pair_count {
-            let key = (BodyId(reader.u64()?), BodyId(reader.u64()?));
+            let key = (Order(reader.u128()?), Order(reader.u128()?));
             if key.0 >= key.1 || previous.is_some_and(|p| p >= key) {
                 return Err(CheckpointError::InvalidData);
             }
@@ -297,10 +318,24 @@ impl Checkpoint {
             }
             cache.insert(key, points);
         }
+        let next_serial = reader.u64()?;
+        let slot_count = reader.count(limits.bodies.max(bodies.len()) * 2 + 1, 4)?;
+        let mut slot_generations = Vec::with_capacity(slot_count);
+        for _ in 0..slot_count {
+            slot_generations.push(reader.u32()?);
+        }
         if !reader.bytes.is_empty() {
             return Err(CheckpointError::InvalidData);
         }
         validate(config, elapsed, last_h, &bodies, &cache)?;
+        let mut keys = std::collections::BTreeSet::new();
+        if bodies.iter().any(|b| {
+            slot_generations.get(b.id.slot() as usize) != Some(&b.id.generation())
+                || b.key.is_some_and(|k| !keys.insert(k))
+                || (b.key.is_none() && (b.order.0 as u64) >= next_serial)
+        }) {
+            return Err(CheckpointError::InvalidData);
+        }
         Ok(Self {
             context,
             config,
@@ -308,6 +343,8 @@ impl Checkpoint {
             last_h,
             bodies,
             cache,
+            slot_generations,
+            next_serial,
         })
     }
 }
@@ -317,7 +354,7 @@ fn validate(
     elapsed: Scalar,
     last_h: Scalar,
     bodies: &[Body],
-    cache: &BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
+    cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
 ) -> Result<(), CheckpointError> {
     World::new(config).map_err(|_| CheckpointError::InvalidData)?;
     if !elapsed.is_finite()
@@ -327,7 +364,7 @@ fn validate(
         || !(0.0..=widen_time(substep_length(0.1, config.substeps))).contains(&last_h)
         // `last_h` is the narrowed substep; rounding is monotonic, so compare at that width.
         || (last_h > 0.0 && narrow_time(elapsed) < narrow_time(last_h))
-        || bodies.windows(2).any(|p| p[0].id >= p[1].id)
+        || bodies.windows(2).any(|p| p[0].order >= p[1].order)
     {
         return Err(CheckpointError::InvalidData);
     }
@@ -349,7 +386,7 @@ fn validate(
             || points.is_empty()
             || [a, b]
                 .into_iter()
-                .any(|id| bodies.binary_search_by_key(&id, |b| b.id).is_err())
+                .any(|id| bodies.binary_search_by_key(&id, |b| b.order).is_err())
             || points.iter().any(|p| {
                 !p.a.finite()
                     || !p.b.finite()
@@ -422,7 +459,18 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
     out.push(position);
 }
 fn encode_body(out: &mut Vec<u8>, b: &Body) {
-    out.extend_from_slice(&b.id.0.to_le_bytes());
+    out.extend_from_slice(&b.id.to_bits().to_le_bytes());
+    // The key, or the creation serial of a keyless body: together they give its order.
+    match b.key {
+        Some(key) => {
+            out.push(1);
+            out.extend_from_slice(&key.to_le_bytes());
+        }
+        None => {
+            out.push(0);
+            out.extend_from_slice(&(b.order.0 as u64).to_le_bytes());
+        }
+    }
     vector(out, b.position);
     vector(out, b.velocity);
     for x in [
@@ -507,6 +555,9 @@ impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32, CheckpointError> {
         Ok(u32::from_le_bytes(self.array()?))
     }
+    fn u128(&mut self) -> Result<u128, CheckpointError> {
+        Ok(u128::from_le_bytes(self.array()?))
+    }
     fn u64(&mut self) -> Result<u64, CheckpointError> {
         Ok(u64::from_le_bytes(self.array()?))
     }
@@ -583,7 +634,12 @@ impl<'a> Reader<'a> {
         Ok(config)
     }
     fn body(&mut self) -> Result<Body, CheckpointError> {
-        let id = BodyId(self.u64()?);
+        let id = BodyId::from_bits(self.u64()?);
+        let (key, serial) = match self.u8()? {
+            0 => (None, self.u64()?),
+            1 => (Some(self.u64()?), 0),
+            _ => return Err(CheckpointError::InvalidData),
+        };
         let position = self.vector()?;
         let velocity = self.vector()?;
         let orientation = Quaternion(
@@ -600,7 +656,10 @@ impl<'a> Reader<'a> {
             3 => Shape::Wedge(self.vector()?),
             _ => return Err(CheckpointError::InvalidData),
         };
-        let mut body = Body::new(id, shape, position, self.scalar()?);
+        let mut body = Body::new(shape, position, self.scalar()?);
+        body.id = id;
+        body.key = key;
+        body.order = Order::new(key, serial);
         body.velocity = velocity;
         body.orientation = orientation;
         body.angular_velocity = angular_velocity;

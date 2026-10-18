@@ -1,5 +1,5 @@
 use physics_engine::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, Config,
         ConvergenceScope, PositionCorrection, Quaternion, Report, Shape, Vector as V, World,
@@ -66,16 +66,16 @@ fn semantic(report: &Report) -> String {
 fn fixture(config: Config) -> World {
     let mut world = World::new(config).unwrap();
     world
-        .add_body(Body::new(
-            BodyId(0),
+        .add_body(Body::keyed(
+            0,
             Shape::Box(V(100.0, 0.1, 100.0)),
             V(0.0, -0.1, 0.0),
             0.0,
         ))
         .unwrap();
     for id in 1..=6 {
-        let mut b = Body::new(
-            BodyId(id),
+        let mut b = Body::keyed(
+            id,
             Shape::Box(V(0.5, 0.5, 0.5)),
             V(id as Real * 3.0, 0.5, 0.0),
             1.0,
@@ -88,30 +88,25 @@ fn fixture(config: Config) -> World {
         (21, Shape::capsule(0.3, 0.25), -10.0),
         (22, Shape::Wedge(V(0.5, 0.5, 0.5)), -30.0),
     ] {
-        let mut b = Body::new(BodyId(id), shape, V(x, 1.0, 0.0), 0.75);
+        let mut b = Body::keyed(id, shape, V(x, 1.0, 0.0), 0.75);
         b.rotation_locked = id == 22;
         b.friction = 0.43;
         b.restitution = 0.12;
         b.layers = CollisionLayers3d::new(2, 2);
         world.add_body(b).unwrap();
     }
-    let mut rotating = Body::new(
-        BodyId(30),
-        Shape::Box(V(0.4, 0.6, 0.7)),
-        V(0.0, 4.0, 10.0),
-        1.25,
-    );
+    let mut rotating = Body::keyed(30, Shape::Box(V(0.4, 0.6, 0.7)), V(0.0, 4.0, 10.0), 1.25);
     rotating.orientation = Quaternion(1.0, 2.0, 3.0, 4.0);
     rotating.angular_velocity = V(0.3, 0.2, -0.1);
     rotating.sleep_allowed = false;
     world.add_body(rotating).unwrap();
-    let mut external = Body::new(BodyId(31), Shape::capsule(0.3, 0.3), V(20.0, 0.6, 0.0), 2.5);
+    let mut external = Body::keyed(31, Shape::capsule(0.3, 0.3), V(20.0, 0.6, 0.0), 2.5);
     external.external = true;
     external.velocity = V(0.01, 0.0, 0.0);
     external.linear_support = Some(V::Y);
     external.rotation_locked = true;
     world.add_body(external).unwrap();
-    let mut sensor = Body::new(BodyId(32), Shape::Sphere(0.7), V(3.0, 0.5, 0.0), 0.0);
+    let mut sensor = Body::keyed(32, Shape::Sphere(0.7), V(3.0, 0.5, 0.0), 0.0);
     sensor.sensor = true;
     world.add_body(sensor).unwrap();
     world
@@ -157,11 +152,16 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
             for _ in 0..30 {
                 w.step(0.01).unwrap();
             }
-            assert!(w.has_support(BodyId(1)));
-            w.add_force(BodyId(1), V(0.2, 0.1, 0.0)).unwrap();
-            let position = w.body(BodyId(30)).unwrap().position;
-            w.apply_impulse(BodyId(30), V(0.3, 0.1, -0.2), position + V(0.3, 0.0, 0.0))
+            assert!(w.has_support(w.body_id(1).unwrap()));
+            w.add_force(w.body_id(1).unwrap(), V(0.2, 0.1, 0.0))
                 .unwrap();
+            let position = w.body_id(30).and_then(|id| w.body(id)).unwrap().position;
+            w.apply_impulse(
+                w.body_id(30).unwrap(),
+                V(0.3, 0.1, -0.2),
+                position + V(0.3, 0.0, 0.0),
+            )
+            .unwrap();
         }
         let saved = bytes(&captured);
         drop(captured);
@@ -173,20 +173,16 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
         for tick in 0..80 {
             for w in [&mut uninterrupted, &mut continued] {
                 if tick == 10 {
-                    w.remove_body(BodyId(0)).unwrap();
+                    w.remove_body(w.body_id(0).unwrap()).unwrap();
                 }
                 if tick == 15 {
-                    w.remove_body(BodyId(3)).unwrap();
-                    w.add_body(Body::new(
-                        BodyId(3),
-                        Shape::Sphere(0.37),
-                        V(-4.0, 3.0, 0.0),
-                        0.8,
-                    ))
-                    .unwrap();
+                    w.remove_body(w.body_id(3).unwrap()).unwrap();
+                    w.add_body(Body::keyed(3, Shape::Sphere(0.37), V(-4.0, 3.0, 0.0), 0.8))
+                        .unwrap();
                 }
                 if tick == 20 {
-                    w.add_force(BodyId(3), V(0.0, 0.2, 0.1)).unwrap();
+                    w.add_force(w.body_id(3).unwrap(), V(0.0, 0.2, 0.1))
+                        .unwrap();
                 }
             }
             if tick == 32 {
@@ -207,15 +203,15 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
 fn partial_quiet_timers_sleepers_and_support_removal_continue_identically() {
     let make = || {
         let mut w = World::new(config()).unwrap();
-        w.add_body(Body::new(
-            BodyId(0),
+        w.add_body(Body::keyed(
+            0,
             Shape::Box(V(10.0, 0.1, 10.0)),
             V(0.0, -0.1, 0.0),
             0.0,
         ))
         .unwrap();
-        w.add_body(Body::new(
-            BodyId(1),
+        w.add_body(Body::keyed(
+            1,
             Shape::Box(V(0.5, 0.5, 0.5)),
             V(0.0, 0.5, 0.0),
             1.0,
@@ -230,7 +226,13 @@ fn partial_quiet_timers_sleepers_and_support_removal_continue_identically() {
             w.step(0.01).unwrap();
         }
     }
-    assert!(!captured.body(BodyId(1)).unwrap().is_sleeping());
+    assert!(
+        !captured
+            .body_id(1)
+            .and_then(|id| captured.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     let saved = bytes(&captured);
     drop(captured);
     let mut actual = restore(&saved);
@@ -245,9 +247,9 @@ fn partial_quiet_timers_sleepers_and_support_removal_continue_identically() {
     drop(actual);
     let mut actual = restore(&saved);
     assert!(actual.is_quiescent());
-    assert!(actual.has_support(BodyId(1)));
+    assert!(actual.has_support(actual.body_id(1).unwrap()));
     for w in [&mut actual, &mut expected] {
-        w.remove_body(BodyId(0)).unwrap();
+        w.remove_body(w.body_id(0).unwrap()).unwrap();
     }
     assert!(!actual.is_quiescent());
     for _ in 0..20 {
@@ -266,27 +268,22 @@ fn failed_steps_retirement_and_repeated_restores_keep_the_same_boundary() {
             ..Config::default()
         })
         .unwrap();
-        w.add_body(Body::new(
-            BodyId(0),
-            Shape::Box(V(0.1, 2.0, 2.0)),
-            V::ZERO,
-            0.0,
-        ))
-        .unwrap();
-        let mut shot = Body::new(BodyId(1), Shape::Sphere(0.1), V(-1.0, 0.0, 0.0), 0.3);
+        w.add_body(Body::keyed(0, Shape::Box(V(0.1, 2.0, 2.0)), V::ZERO, 0.0))
+            .unwrap();
+        let mut shot = Body::keyed(1, Shape::Sphere(0.1), V(-1.0, 0.0, 0.0), 0.3);
         shot.ccd = true;
         shot.retire_on_impact = true;
         shot.velocity = V(40.0, 0.0, 0.0);
         w.add_body(shot).unwrap();
-        let mut bad = Body::new(
-            BodyId(99),
+        let mut bad = Body::keyed(
+            99,
             Shape::Sphere(0.1),
             V(1e12 - 0.075 * EDGE_SCALE, 0.0, 0.0),
             1.0,
         );
         bad.velocity = V(EDGE_SCALE, 0.0, 0.0);
         w.add_body(bad).unwrap();
-        w.add_force(BodyId(99), V(0.1 * EDGE_SCALE, 0.0, 0.0))
+        w.add_force(w.body_id(99).unwrap(), V(0.1 * EDGE_SCALE, 0.0, 0.0))
             .unwrap();
         w
     };
@@ -308,11 +305,12 @@ fn failed_steps_retirement_and_repeated_restores_keep_the_same_boundary() {
         actual = restore(&boundary);
     }
     for w in [&mut expected, &mut actual] {
-        w.remove_body(BodyId(99)).unwrap();
+        w.remove_body(w.body_id(99).unwrap()).unwrap();
     }
+    let retiring = actual.body_id(1).unwrap();
     let a = actual.step(0.1).unwrap();
     let e = expected.step(0.1).unwrap();
-    assert_eq!(a.retired, vec![BodyId(1)]);
+    assert_eq!(a.retired, vec![retiring]);
     assert_eq!(semantic(&a), semantic(&e));
     same(&actual, &expected);
     let saved = bytes(&actual);
@@ -336,8 +334,8 @@ fn simple() -> World {
     })
     .unwrap();
     for id in 1..=2 {
-        w.add_body(Body::new(
-            BodyId(id),
+        w.add_body(Body::keyed(
+            id,
             Shape::Sphere(0.5),
             V(id as Real * 3.0, 0.0, 0.0),
             1.0,
@@ -356,9 +354,10 @@ const CONFIG_BYTES: usize = 6 * W + 7;
 fn body_start() -> usize {
     config_start() + CONFIG_BYTES + 16 + 8
 }
-/// Sphere and box body records: 20 fixed bytes plus 30 or 32 physical scalars.
-const SPHERE_BODY_BYTES: usize = 20 + 30 * W;
-const BOX_BODY_BYTES: usize = 20 + 32 * W;
+/// Sphere and box body records: 29 fixed bytes (id, key tag, key or serial, ...) plus 30 or
+/// 32 physical scalars. Physical fields start 17 bytes into a record.
+const SPHERE_BODY_BYTES: usize = 29 + 30 * W;
+const BOX_BODY_BYTES: usize = 29 + 32 * W;
 
 #[test]
 fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_world() {
@@ -378,7 +377,8 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         );
     }
     for (offset, value, error) in [
-        (8, 3u32, CheckpointError::UnsupportedFormat(3)),
+        (8, 4u32, CheckpointError::UnsupportedFormat(4)),
+        (8, 2u32, CheckpointError::UnsupportedFormat(2)),
         (12, 9u32, CheckpointError::UnsupportedAlgorithm(9)),
         (12, 7u32, CheckpointError::UnsupportedAlgorithm(7)),
         (12, 6u32, CheckpointError::UnsupportedAlgorithm(6)),
@@ -430,16 +430,16 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
     let b = body_start();
     let c = config_start();
     for (offset, invalid) in [
-        (b + 8, Real::NAN),
-        (b + 8 + 3 * W, 1e12),
-        (b + 8 + 6 * W, Real::INFINITY),
-        (b + 8 + 6 * W, Real::MAX),
-        (b + 8 + 9 * W, 2.1),
-        (b + 9 + 14 * W, -1.0),
-        (b + 9 + 15 * W, 11.0),
-        (b + 9 + 16 * W, 1.1),
-        (b + 20 + 17 * W, -0.1),
-        (b + 20 + 18 * W, Real::NAN),
+        (b + 17, Real::NAN),
+        (b + 17 + 3 * W, 1e12),
+        (b + 17 + 6 * W, Real::INFINITY),
+        (b + 17 + 6 * W, Real::MAX),
+        (b + 17 + 9 * W, 2.1),
+        (b + 18 + 14 * W, -1.0),
+        (b + 18 + 15 * W, 11.0),
+        (b + 18 + 16 * W, 1.1),
+        (b + 29 + 17 * W, -0.1),
+        (b + 29 + 18 * W, Real::NAN),
         (c + 3 * W + 3, -0.1),
     ] {
         let mut bad = saved.clone();
@@ -452,9 +452,9 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
         );
     }
     for (offset, value) in [
-        (b + 8 + 13 * W, 99),
-        (b + 10 + 17 * W, 128),
-        (b + 19 + 17 * W, 2),
+        (b + 17 + 13 * W, 99),
+        (b + 19 + 17 * W, 128),
+        (b + 28 + 17 * W, 2),
         (c + 6 * W + 4, 2),
         (c + 6 * W + 5, 3),
     ] {
@@ -467,8 +467,9 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
         );
     }
     let mut duplicate = saved.clone();
-    duplicate[b + SPHERE_BODY_BYTES..b + SPHERE_BODY_BYTES + 8]
-        .copy_from_slice(&1u64.to_le_bytes());
+    // The second body's key repeats the first body's key.
+    let first_key: [u8; 8] = saved[b + 9..b + 17].try_into().unwrap();
+    duplicate[b + SPHERE_BODY_BYTES + 9..b + SPHERE_BODY_BYTES + 17].copy_from_slice(&first_key);
     rehash(&mut duplicate);
     assert_eq!(
         Checkpoint::from_bytes(&duplicate, CONTEXT, CheckpointLimits::default()).unwrap_err(),
@@ -506,16 +507,16 @@ fn warm_start_endpoints_points_and_resource_budgets_are_validated() {
     })
     .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(0),
+        .add_body(Body::keyed(
+            0,
             Shape::Box(V(10.0, 0.1, 10.0)),
             V(0.0, -0.1, 0.0),
             0.0,
         ))
         .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(1),
+        .add_body(Body::keyed(
+            1,
             Shape::Box(V(0.5, 0.5, 0.5)),
             V(0.0, 0.5, 0.0),
             1.0,
@@ -528,10 +529,10 @@ fn warm_start_endpoints_points_and_resource_budgets_are_validated() {
     let saved = checkpoint.to_bytes();
     let pair = body_start() + 2 * BOX_BODY_BYTES + 8;
     for (offset, value) in [
-        (pair + 24 + 6 * W, Real::NAN),
-        (pair + 24 + 6 * W, 65.0),
-        (pair + 24 + 9 * W, -0.1),
-        (pair + 24 + 10 * W, Real::INFINITY),
+        (pair + 40 + 6 * W, Real::NAN),
+        (pair + 40 + 6 * W, 65.0),
+        (pair + 40 + 9 * W, -0.1),
+        (pair + 40 + 10 * W, Real::INFINITY),
     ] {
         let mut bad = saved.clone();
         put(&mut bad, offset, value);
@@ -541,7 +542,7 @@ fn warm_start_endpoints_points_and_resource_budgets_are_validated() {
             CheckpointError::InvalidData
         );
     }
-    for (offset, value) in [(pair + 8, 999u64), (pair + 16, 0), (pair + 16, u64::MAX)] {
+    for (offset, value) in [(pair + 16, 999u64), (pair + 32, 0), (pair + 32, u64::MAX)] {
         let mut bad = saved.clone();
         bad[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
         rehash(&mut bad);
@@ -584,7 +585,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_two_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
+fn format_three_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         ..Config::default()
@@ -597,7 +598,7 @@ fn format_two_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "0dc81c7dda845d0ed3ab7d4214251b673128e9e04e5f06625b14e11c0938ec37"
+        "176f860fd66e36427ad05b7fe31a244f0dcf45ee7c514c910f377da8c6c7d52d"
     );
 }
 
@@ -653,7 +654,7 @@ fn checkpoints_from_the_other_scalar_width_are_rejected_before_parsing() {
 fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step() {
     let mut world = simple();
     world
-        .add_force(BodyId(1), V(Real::MAX / 2.0, 0.0, 0.0))
+        .add_force(world.body_id(1).unwrap(), V(Real::MAX / 2.0, 0.0, 0.0))
         .unwrap();
     let saved = bytes(&world);
     let mut restored = restore(&saved);
@@ -665,7 +666,7 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
     same(&restored, &world);
 
     let mut zero_orientation = simple();
-    let mut legacy = Body::new(BodyId(u64::MAX), Shape::Sphere(0.5), V(0.0, 0.0, 10.0), 1.0);
+    let mut legacy = Body::keyed(u64::MAX, Shape::Sphere(0.5), V(0.0, 0.0, 10.0), 1.0);
     legacy.orientation = Quaternion(Real::MAX, 0.0, 0.0, 0.0);
     zero_orientation.add_body(legacy).unwrap();
     let saved = bytes(&zero_orientation);
@@ -678,8 +679,8 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
     assert_eq!(bytes(&restored), saved);
 
     let mut tiny_orientation = simple();
-    let mut tiny = Body::new(
-        BodyId(u64::MAX),
+    let mut tiny = Body::keyed(
+        u64::MAX,
         Shape::Box(V(0.5, 0.5, 0.5)),
         V(0.0, 0.0, 10.0),
         1.0,
@@ -703,7 +704,7 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
     }
 
     let mut invalid = World::new(config()).unwrap();
-    let mut body = Body::new(BodyId(u64::MAX), Shape::Sphere(0.5), V::ZERO, 1.0);
+    let mut body = Body::keyed(u64::MAX, Shape::Sphere(0.5), V::ZERO, 1.0);
     // This compatibility input is accepted by the existing body construction API;
     // a physical checkpoint must reject it rather than serialize NaN authority.
     body.linear_support = Some(V(Real::NAN, 0.0, 0.0));
@@ -715,7 +716,7 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
     assert_eq!(invalid.elapsed_seconds(), 0.0);
     assert!(
         invalid
-            .body(BodyId(u64::MAX))
+            .body(invalid.body_id(u64::MAX).unwrap())
             .unwrap()
             .linear_support
             .unwrap()

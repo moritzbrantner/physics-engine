@@ -110,8 +110,11 @@ impl World {
         stats.output_capacity_bytes = (hits.capacity() * size_of::<RayHit>()) as u64;
         match result {
             Ok(()) => {
+                let order = |id| self.index(id).map(|i| self.bodies[i].order).ok();
                 hits.sort_unstable_by(|a, b| {
-                    a.fraction.total_cmp(&b.fraction).then(a.body.cmp(&b.body))
+                    a.fraction
+                        .total_cmp(&b.fraction)
+                        .then_with(|| order(a.body).cmp(&order(b.body)))
                 });
                 Ok(stats)
             }
@@ -220,7 +223,11 @@ impl World {
             }
             // First hit: earliest fraction wins; equal fractions keep the lower BodyId.
             if hits.best().is_some_and(|best| {
-                best.fraction < fraction || (best.fraction == fraction && best.body < target.id)
+                best.fraction < fraction
+                    || (best.fraction == fraction
+                        && self
+                            .index(best.body)
+                            .is_ok_and(|i| self.bodies[i].order < target.order))
             }) {
                 return Ok(());
             }

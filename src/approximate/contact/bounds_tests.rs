@@ -1,6 +1,5 @@
 use super::super::{Config, Quaternion, Real, World};
 use super::{Body, Shape, V, bounds};
-use crate::BodyId;
 
 fn surface_extrema(body: &Body) -> Vec<V> {
     let mut points = Vec::new();
@@ -68,12 +67,8 @@ fn rounded_pose_bounds_enclose_independently_rotated_surface_extrema() {
             Quaternion(component(), component(), component(), component()).normalized();
         for scale in [1e-6, 1.0, 1e6] {
             for shape in shapes(scale) {
-                let mut body = Body::new(
-                    BodyId(1),
-                    shape,
-                    V(-11.0 * scale, 4.0 * scale, 3.0 * scale),
-                    0.0,
-                );
+                let mut body =
+                    Body::fixture(1, shape, V(-11.0 * scale, 4.0 * scale, 3.0 * scale), 0.0);
                 body.orientation = orientation;
                 let extents = bounds(&body);
                 for point in surface_extrema(&body) {
@@ -96,12 +91,8 @@ fn real_sweep_rows_cover_endpoint_rounding_for_large_displacements() {
                     ..Config::default()
                 })
                 .unwrap();
-                let mut moving = Body::new(
-                    BodyId(1),
-                    shape,
-                    V(-11.0 * scale, 4.0 * scale, 3.0 * scale),
-                    1.0,
-                );
+                let mut moving =
+                    Body::fixture(1, shape, V(-11.0 * scale, 4.0 * scale, 3.0 * scale), 1.0);
                 moving.orientation = Quaternion(0.2, 0.3, 0.1, 0.9).normalized();
                 moving.rotation_locked = true;
                 moving.velocity = velocity;
@@ -109,7 +100,10 @@ fn real_sweep_rows_cover_endpoint_rounding_for_large_displacements() {
                 world.add_body(moving).unwrap();
                 world.step(1.0 / 60.0).unwrap();
                 let row = &world.bookkeeping.bounds[0];
-                for body in [&initial, world.body(BodyId(1)).unwrap()] {
+                for body in [
+                    &initial,
+                    world.body_id(1).and_then(|id| world.body(id)).unwrap(),
+                ] {
                     for point in surface_extrema(body) {
                         contains((row.lo, row.hi), point);
                     }

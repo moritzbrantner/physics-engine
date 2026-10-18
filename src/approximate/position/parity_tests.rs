@@ -1,7 +1,7 @@
 //! Frozen scalar scan from ca394b3f, independent of prepared views/frames/clipping buffers.
 use super::*;
 use crate::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{Config, Quaternion},
 };
 
@@ -147,8 +147,8 @@ fn world() -> World {
         ..Config::default()
     })
     .unwrap();
-    w.add_body(Body::new(
-        BodyId(10),
+    w.add_body(Body::fixture(
+        10,
         Shape::Box(Vector(50.0, 1.0, 50.0)),
         Vector(0.0, -1.0, 0.0),
         0.0,
@@ -167,8 +167,8 @@ fn prepared_position_matches_original_scan_over_rotated_shapes_and_filters() {
     let mut seed = 91624u64;
     for case in 0..1200 {
         let mut w = world();
-        let mut fixed = Body::new(
-            BodyId(30),
+        let mut fixed = Body::fixture(
+            30,
             Shape::Box(Vector(3.0, 1.0, 2.0)),
             Vector(0.0, 2.5, 0.0),
             0.0,
@@ -189,7 +189,7 @@ fn prepared_position_matches_original_scan_over_rotated_shapes_and_filters() {
             } else {
                 Shape::Box(Vector(2.0, 1.0, 0.75))
             };
-            let mut b = Body::new(BodyId(id as u64), shape, v * 2.0, 3.0);
+            let mut b = Body::fixture(id as u64, shape, v * 2.0, 3.0);
             b.orientation = Quaternion(v.0, v.1, v.2, 1.0).normalized();
             b.velocity = v;
             b.angular_velocity = v * 0.3;
@@ -216,15 +216,15 @@ fn prepared_position_matches_original_scan_over_rotated_shapes_and_filters() {
 fn correction_discovers_a_later_collider_entered_during_the_same_pass() {
     let mut w = world();
     w.config.fixed_position_iterations = 1;
-    w.add_body(Body::new(
-        BodyId(30),
+    w.add_body(Body::fixture(
+        30,
         Shape::Box(Vector(50.0, 1.0, 50.0)),
         Vector(0.0, 2.6, 0.0),
         0.0,
     ))
     .unwrap();
-    w.add_body(Body::new(
-        BodyId(20),
+    w.add_body(Body::fixture(
+        20,
         Shape::Sphere(1.0),
         Vector(0.0, 0.5, 0.0),
         1.0,
@@ -236,15 +236,15 @@ fn correction_discovers_a_later_collider_entered_during_the_same_pass() {
     assert_eq!(r.corrections, 2);
     assert_eq!(r.contact_tests, 2);
     assert!(
-        (a.body(BodyId(20)).unwrap().position.1 - 0.62).abs()
+        (a.body_id(20).and_then(|id| a.body(id)).unwrap().position.1 - 0.62).abs()
             < crate::approximate::rounding_tolerance(1e-12, 16.0, 1.0)
     );
 }
 #[test]
 fn fixed_index_invalidates_for_id_reuse_shape_rotation_sensor_and_index_shifts() {
     let mut w = world();
-    w.add_body(Body::new(
-        BodyId(20),
+    w.add_body(Body::fixture(
+        20,
         Shape::Box(Vector(1.0, 1.0, 1.0)),
         Vector(0.0, 0.4, 0.0),
         1.0,
@@ -254,9 +254,9 @@ fn fixed_index_invalidates_for_id_reuse_shape_rotation_sensor_and_index_shifts()
     correct_pair(&mut a, &mut b);
     for variant in 0..4 {
         for w in [&mut a, &mut b] {
-            w.remove_body(BodyId(10)).unwrap();
-            let mut f = Body::new(
-                BodyId(10),
+            w.remove_body(w.body_id(10).unwrap()).unwrap();
+            let mut f = Body::fixture(
+                10,
                 Shape::Box(Vector(3.0, 1.0, 4.0)),
                 Vector(0.0, 0.0, 0.0),
                 0.0,
@@ -268,8 +268,8 @@ fn fixed_index_invalidates_for_id_reuse_shape_rotation_sensor_and_index_shifts()
                 _ => f.layers = CollisionLayers3d::new(0, 0),
             }
             w.add_body(f).unwrap();
-            w.add_body(Body::new(
-                BodyId(0),
+            w.add_body(Body::fixture(
+                0,
                 Shape::Sphere(0.5),
                 Vector(100.0, 0.0, 0.0),
                 1.0,
@@ -278,7 +278,7 @@ fn fixed_index_invalidates_for_id_reuse_shape_rotation_sensor_and_index_shifts()
         }
         assert_eq!(correct_pair(&mut a, &mut b).fixed_index_rebuilds, 1);
         for w in [&mut a, &mut b] {
-            w.remove_body(BodyId(0)).unwrap();
+            w.remove_body(w.body_id(0).unwrap()).unwrap();
         }
         assert_eq!(correct_pair(&mut a, &mut b).fixed_index_rebuilds, 1);
     }
@@ -287,8 +287,8 @@ fn fixed_index_invalidates_for_id_reuse_shape_rotation_sensor_and_index_shifts()
 fn complete_steps_preserve_rotation_impulses_contacts_sleep_and_projectile_retirement() {
     let mut w = world();
     for id in 0..4 {
-        let mut b = Body::new(
-            BodyId(20 + id),
+        let mut b = Body::fixture(
+            20 + id,
             Shape::Box(Vector(2.0, 1.0, 1.0)),
             Vector(0.0, 1.0 + 2.0 * id as Real, 0.0),
             3.0,
@@ -297,7 +297,7 @@ fn complete_steps_preserve_rotation_impulses_contacts_sleep_and_projectile_retir
         w.add_body(b).unwrap();
     }
     // A projectile with an earlier ID removes a row before every retained fixed/dynamic index.
-    let mut shot = Body::new(BodyId(0), Shape::Sphere(0.4), Vector(0.0, 12.0, 0.0), 1.0);
+    let mut shot = Body::fixture(0, Shape::Sphere(0.4), Vector(0.0, 12.0, 0.0), 1.0);
     shot.velocity = Vector(0.0, -100.0, 0.0);
     shot.ccd = true;
     shot.retire_on_impact = true;
@@ -307,8 +307,12 @@ fn complete_steps_preserve_rotation_impulses_contacts_sleep_and_projectile_retir
     for tick in 0..600 {
         if tick == 100 {
             for w in [&mut a, &mut b] {
-                w.apply_impulse(BodyId(20), Vector(10.0, 3.0, -2.0), Vector(1.0, 0.0, 0.0))
-                    .unwrap();
+                w.apply_impulse(
+                    w.body_id(20).unwrap(),
+                    Vector(10.0, 3.0, -2.0),
+                    Vector(1.0, 0.0, 0.0),
+                )
+                .unwrap();
             }
         }
         let dt = if tick % 2 == 0 {
@@ -316,11 +320,12 @@ fn complete_steps_preserve_rotation_impulses_contacts_sleep_and_projectile_retir
         } else {
             1.0 / 120.0
         };
+        let projectile = a.body_id(0);
         let ar = a.step(dt).unwrap();
         let br = b.step(dt).unwrap();
         same(&a, &b, &ar.position, &br.position);
         assert_eq!(ar.retired, br.retired);
-        retired |= ar.retired.contains(&BodyId(0));
+        retired |= projectile.is_some_and(|p| ar.retired.contains(&p));
         assert_eq!(ar.bookkeeping, br.bookkeeping);
         assert_eq!(ar.geometry, br.geometry);
         assert_eq!(
@@ -349,8 +354,8 @@ fn warmed_position_work_ignores_sleeping_bodies_and_reuses_fixed_frames() {
     for count in [32, 128, 512] {
         let mut w = world();
         for id in 0..count {
-            let mut b = Body::new(
-                BodyId(100 + id),
+            let mut b = Body::fixture(
+                100 + id,
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
                 Vector(100.0 + id as Real * 3.0, 1.0, 0.0),
                 1.0,
@@ -358,8 +363,8 @@ fn warmed_position_work_ignores_sleeping_bodies_and_reuses_fixed_frames() {
             b.sleeping = true;
             w.add_body(b).unwrap();
         }
-        w.add_body(Body::new(
-            BodyId(20),
+        w.add_body(Body::fixture(
+            20,
             Shape::Box(Vector(1.0, 1.0, 1.0)),
             Vector(0.0, 0.99, 0.0),
             1.0,
@@ -389,8 +394,8 @@ fn warmed_position_work_ignores_sleeping_bodies_and_reuses_fixed_frames() {
 #[test]
 fn zero_quiescent_and_disabled_steps_preserve_work_and_report_retained_payload() {
     let mut w = world();
-    w.add_body(Body::new(
-        BodyId(20),
+    w.add_body(Body::fixture(
+        20,
         Shape::Box(Vector(1.0, 1.0, 1.0)),
         Vector(0.0, 0.99, 0.0),
         1.0,
@@ -416,7 +421,7 @@ fn zero_quiescent_and_disabled_steps_preserve_work_and_report_retained_payload()
         assert_eq!(p.scratch_retained_bytes, bytes);
     }
     let mut w = World::new(Config::default()).unwrap();
-    w.add_body(Body::new(BodyId(1), Shape::Sphere(1.0), Vector::ZERO, 1.0))
+    w.add_body(Body::fixture(1, Shape::Sphere(1.0), Vector::ZERO, 1.0))
         .unwrap();
     assert_eq!(
         w.step(1.0 / 60.0).unwrap().position.scratch_retained_bytes,
@@ -431,8 +436,8 @@ fn position_preparation_scaling_benchmark() {
     for sleeping in [32, 128, 512] {
         let mut w = world();
         for id in 0..sleeping {
-            let mut b = Body::new(
-                BodyId(100 + id),
+            let mut b = Body::fixture(
+                100 + id,
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
                 Vector(100.0 + id as Real * 3.0, 1.0, 0.0),
                 1.0,
@@ -441,8 +446,8 @@ fn position_preparation_scaling_benchmark() {
             w.add_body(b).unwrap();
         }
         for id in 0..32 {
-            w.add_body(Body::new(
-                BodyId(1000 + id),
+            w.add_body(Body::fixture(
+                1000 + id,
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
                 Vector((id % 8) as Real * 3.0, 0.99, (id / 8) as Real * 3.0),
                 1.0,

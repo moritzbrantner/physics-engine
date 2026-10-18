@@ -1,16 +1,11 @@
 use super::*;
 use crate::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{Config, Real, Shape, Vector as V, World},
 };
 
 fn body(id: u64, mass: Real) -> Body {
-    Body::new(
-        BodyId(id),
-        Shape::Sphere(1.0),
-        V(id as Real * 4.0, 1.0, 0.0),
-        mass,
-    )
+    Body::fixture(id, Shape::Sphere(1.0), V(id as Real * 4.0, 1.0, 0.0), mass)
 }
 fn row(a: usize, b: usize) -> Constraint {
     Constraint {
@@ -290,8 +285,8 @@ fn mixed_world(scope: ConvergenceScope, easy: usize, sleeping: bool) -> World {
         ..Config::default()
     })
     .unwrap();
-    let mut ground = Body::new(
-        BodyId(0),
+    let mut ground = Body::fixture(
+        0,
         Shape::Box(V(5000.0, 10.0, 5000.0)),
         V(0.0, -10.0, 0.0),
         0.0,
@@ -302,8 +297,8 @@ fn mixed_world(scope: ConvergenceScope, easy: usize, sleeping: bool) -> World {
         for x in 0..4 {
             for z in 0..2 {
                 let id = 1 + level * 8 + x * 2 + z;
-                let mut b = Body::new(
-                    BodyId(id),
+                let mut b = Body::fixture(
+                    id,
                     Shape::Box(V(18.0, 18.0, 18.0)),
                     V(
                         x as Real * 36.0,
@@ -319,8 +314,8 @@ fn mixed_world(scope: ConvergenceScope, easy: usize, sleeping: bool) -> World {
         }
     }
     for n in 0..easy {
-        let mut b = Body::new(
-            BodyId(100 + n as u64),
+        let mut b = Body::fixture(
+            100 + n as u64,
             Shape::Box(V(18.0, 18.0, 18.0)),
             V(
                 500.0 + (n % 16) as Real * 80.0,
@@ -347,7 +342,7 @@ fn real_mixed_scene_reduces_work_preserves_difficult_island_and_near_miss() {
     let mut isolated = mixed_world(ConvergenceScope::ContactIslands, 0, false);
     let mut easy_only = local.clone();
     for id in 1..=32 {
-        easy_only.remove_body(BodyId(id));
+        easy_only.remove_body(easy_only.body_id(id).unwrap());
     }
     let mut local_work = 0;
     let mut global_work = 0;
@@ -356,7 +351,7 @@ fn real_mixed_scene_reduces_work_preserves_difficult_island_and_near_miss() {
             let j = V(80.0, 0.0, 0.0);
             let p = V(0.0, 18.0, 0.0);
             for w in [&mut local, &mut global, &mut isolated] {
-                w.apply_impulse(BodyId(1), j, p).unwrap();
+                w.apply_impulse(w.body_id(1).unwrap(), j, p).unwrap();
             }
         }
         if tick == 90 {
@@ -388,17 +383,17 @@ fn real_mixed_scene_reduces_work_preserves_difficult_island_and_near_miss() {
         for id in 1..=32 {
             // Same difficult subsystem behaves identically with or without unrelated islands.
             assert_eq!(
-                local.body(BodyId(id)),
-                isolated.body(BodyId(id)),
+                local.body_id(id).and_then(|id| local.body(id)),
+                isolated.body(local.body_id(id).unwrap()),
                 "tick{tick} body{id}"
             );
         }
         for id in 100..132 {
-            let l = local.body(BodyId(id)).unwrap();
-            let g = global.body(BodyId(id)).unwrap();
+            let l = local.body_id(id).and_then(|id| local.body(id)).unwrap();
+            let g = global.body_id(id).and_then(|id| global.body(id)).unwrap();
             // Deferred grouping can give an easy island four passes instead of its standalone
             // two. Use the same predeclared paired bound, not a false bit-identity claim.
-            let alone = easy_only.body(BodyId(id)).unwrap();
+            let alone = easy_only.body(local.body_id(id).unwrap()).unwrap();
             within(l.position, alone.position, 1e-4);
             within(l.velocity, alone.velocity, 1e-4);
             within(l.position, g.position, 1e-4);
@@ -420,27 +415,30 @@ fn sleeping_isolation_support_removal_and_new_projectile_contact_remain_real() {
     }
     assert!(w.is_quiescent());
     let before: Vec<_> = (100..104)
-        .map(|id| w.body(BodyId(id)).unwrap().clone())
+        .map(|id| w.body_id(id).and_then(|id| w.body(id)).unwrap().clone())
         .collect();
-    let mut p = Body::new(BodyId(2000), Shape::Sphere(4.0), V(-150.0, 40.0, 0.0), 0.2);
+    let mut p = Body::fixture(2000, Shape::Sphere(4.0), V(-150.0, 40.0, 0.0), 0.2);
     p.velocity = V(2000.0, 0.0, 0.0);
     p.ccd = true;
     p.retire_on_impact = true;
-    w.add_body(p).unwrap();
+    let projectile = w.add_body(p).unwrap();
     let mut saw_wake = false;
     let mut saw_hit = false;
     for _ in 0..120 {
         let r = w.step(1.0 / 60.0).unwrap();
         saw_wake |= r.woken_bodies > 0;
-        saw_hit |= r.retired.contains(&BodyId(2000));
+        saw_hit |= r.retired.contains(&projectile);
         for (i, b) in before.iter().enumerate() {
-            assert_eq!(w.body(BodyId(100 + i as u64)).unwrap(), b);
+            assert_eq!(
+                w.body_id(100 + i as u64).and_then(|id| w.body(id)).unwrap(),
+                b
+            );
         }
     }
     assert!(saw_wake && saw_hit);
-    w.remove_body(BodyId(0));
+    w.remove_body(w.body_id(0).unwrap());
     w.step(1.0 / 60.0).unwrap();
-    assert!(w.body(BodyId(100)).unwrap().velocity.1 < 0.0);
+    assert!(w.body_id(100).and_then(|id| w.body(id)).unwrap().velocity.1 < 0.0);
 }
 
 #[test]
@@ -452,7 +450,7 @@ fn single_island_and_fixed_reference_keep_original_counters_and_momentum() {
     })
     .unwrap();
     for (id, x, v) in [(1, -1.0, 10.0), (2, 1.0, -10.0)] {
-        let mut b = Body::new(BodyId(id), Shape::Sphere(1.0), V(x, 0.0, 0.0), 1.0);
+        let mut b = Body::fixture(id, Shape::Sphere(1.0), V(x, 0.0, 0.0), 1.0);
         b.velocity = V(v, 0.0, 0.0);
         b.restitution = 1.0;
         local.add_body(b).unwrap();
@@ -491,7 +489,17 @@ fn deterministic_replay_insertion_order_dt_changes_and_no_work_paths() {
     {
         let ra = a.step(dt).unwrap();
         let rb = b.step(dt).unwrap();
-        assert_eq!(a.bodies, b.bodies);
+        // Handles differ with insertion order; state and order (by key) must not.
+        let strip = |w: &World| {
+            w.bodies
+                .iter()
+                .map(|b| Body {
+                    id: crate::BodyId::NONE,
+                    ..b.clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(strip(&a), strip(&b));
         assert_eq!(ra.convergence, rb.convergence);
         assert_eq!(ra.islands, rb.islands);
         assert_eq!(a.elapsed, b.elapsed);
@@ -504,13 +512,14 @@ fn deterministic_replay_insertion_order_dt_changes_and_no_work_paths() {
     })
     .unwrap();
     w.add_body(body(1, 1.0)).unwrap();
-    w.add_force(BodyId(1), V(2.0, 0.0, 0.0)).unwrap();
+    w.add_force(w.body_id(1).unwrap(), V(2.0, 0.0, 0.0))
+        .unwrap();
     let r = w.step(1.0 / 60.0).unwrap();
     assert_eq!(r.islands.partition_builds, 0);
     assert_eq!(r.impulse_iterations, 0);
     assert_eq!(r.convergence.empty_substeps, 4);
     within(
-        w.body(BodyId(1)).unwrap().velocity,
+        w.body_id(1).and_then(|id| w.body(id)).unwrap().velocity,
         V(2.0 / 60.0, -10.0 / 60.0, 0.0),
         1e-14,
     );
@@ -541,12 +550,12 @@ fn globally_converged_or_tiny_budgets_do_not_pay_for_partitioning() {
     for limit in [1, 2, 3, 4, 8] {
         let mut w = mixed_world(ConvergenceScope::ContactIslands, 32, false);
         for id in 1..=32 {
-            w.remove_body(BodyId(id));
+            w.remove_body(w.body_id(id).unwrap());
         }
         w.config.velocity_iterations = limit;
         // Isolated spheres have an exact one-row solution; two passes certify it globally.
         for id in 100..132 {
-            w.remove_body(BodyId(id));
+            w.remove_body(w.body_id(id).unwrap());
         }
         for id in 1..33 {
             let mut b = body(id, 1.0);

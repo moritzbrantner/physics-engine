@@ -1,6 +1,6 @@
 //! Derived membership, contact adjacency and reusable traversal storage.
 //! Body state and cached contact keys remain authoritative. No contact admission or solver math here.
-use super::{Body, BodyId, CachedPoint, Real, Vector};
+use super::{Body, CachedPoint, Order, Real, Vector};
 use std::collections::BTreeMap;
 
 /// Source-level bookkeeping work. Capacity gauges exclude allocator overhead and contact geometry.
@@ -81,7 +81,7 @@ impl Adjacency {
     pub fn ensure(
         &mut self,
         bodies: &[Body],
-        cache: &BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
+        cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
         work: &mut BookkeepingStats,
     ) {
         if !self.dirty && self.offsets.len() == bodies.len() + 1 {
@@ -96,10 +96,10 @@ impl Adjacency {
         self.edges.clear();
         for &(a, b) in cache.keys() {
             let a = bodies
-                .binary_search_by_key(&a, |b| b.id)
+                .binary_search_by_key(&a, |b| b.order)
                 .expect("live contact endpoint");
             let b = bodies
-                .binary_search_by_key(&b, |b| b.id)
+                .binary_search_by_key(&b, |b| b.order)
                 .expect("live contact endpoint");
             self.offsets[a + 1] += 1;
             self.offsets[b + 1] += 1;
@@ -279,9 +279,9 @@ pub(super) struct Scratch {
     pub traversal: Traversal,
     pub work: BookkeepingStats,
     pub bounds: Vec<SweepRow>,
-    pub roots: Vec<BodyId>,
+    pub roots: Vec<Order>,
     pub used: Vec<usize>,
-    pub retired: Vec<BodyId>,
+    pub retired: Vec<Order>,
     pub support: SupportPropagation,
     pub supported: Vec<bool>,
     pub support_edges: Vec<(usize, usize)>,
@@ -294,7 +294,7 @@ pub(super) struct Scratch {
     pub ccd_start: Vec<Real>,
     pub ccd_excluded: Vec<usize>,
     /// Retirements admitted by remaining-time impacts, merged after the contact solve.
-    pub ccd_retired: Vec<BodyId>,
+    pub ccd_retired: Vec<Order>,
     /// Incremented by every layout change; the query index records the one it was built for.
     pub generation: u64,
 }
@@ -309,7 +309,7 @@ impl Scratch {
     pub fn ensure_graph(
         &mut self,
         bodies: &[Body],
-        cache: &BTreeMap<(BodyId, BodyId), Vec<CachedPoint>>,
+        cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
     ) {
         self.graph.ensure(bodies, cache, &mut self.work);
     }

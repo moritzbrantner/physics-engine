@@ -29,8 +29,8 @@ fn conservative_bounds_match_exhaustive_current_geometry_for_seeded_rotated_shap
         })
         .unwrap();
         for id in 0..32 {
-            let mut body = Body::new(
-                BodyId(id),
+            let mut body = Body::fixture(
+                id,
                 shape(id),
                 V(
                     coordinate(&mut seed),
@@ -56,7 +56,7 @@ fn conservative_bounds_match_exhaustive_current_geometry_for_seeded_rotated_shap
             };
             let filter = QueryFilter {
                 include_sensors: true,
-                exclude: Some(BodyId(index)),
+                exclude: Some(world.body_id(index).unwrap()),
                 ..Default::default()
             };
             for cast in [
@@ -96,8 +96,8 @@ fn warmed_query_outputs_reuse_capacity_and_prune_unrelated_geometry() {
     .unwrap();
     for id in 0..512 {
         world
-            .add_body(Body::new(
-                BodyId(id),
+            .add_body(Body::fixture(
+                id,
                 Shape::Sphere(0.5),
                 V(id as Real * 10.0, 0.0, 0.0),
                 0.0,
@@ -121,7 +121,7 @@ fn warmed_query_outputs_reuse_capacity_and_prune_unrelated_geometry() {
         assert_eq!(stats.output_capacity_growths, 0);
         assert_eq!(hits.capacity(), capacity);
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].body, BodyId(0));
+        assert_eq!(hits[0].body, world.body_id(0).unwrap());
     }
 }
 
@@ -137,8 +137,8 @@ fn paired_query_workload_evidence() {
         .unwrap();
         for id in 0..512 {
             world
-                .add_body(Body::new(
-                    BodyId(id),
+                .add_body(Body::fixture(
+                    id,
                     shape(id),
                     V(id as Real * 10.0, 0.0, 0.0),
                     0.0,

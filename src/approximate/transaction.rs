@@ -2,8 +2,8 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use super::{
-    Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Quaternion, Real, Report, Vector,
-    World,
+    Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Order, Quaternion, Real, Report,
+    Vector, World,
 };
 
 /// Rollback work for one attempted positive-duration step. Vector capacity
@@ -103,7 +103,7 @@ impl Motion {
     }
 }
 
-type Pair = (BodyId, BodyId);
+type Pair = (Order, Order);
 #[derive(Clone, Debug, Default)]
 pub(super) struct Journal {
     active: bool,
@@ -188,7 +188,7 @@ impl Journal {
         for body in self.removed.drain(..) {
             let index = world
                 .bodies
-                .binary_search_by_key(&body.id, |b| b.id)
+                .binary_search_by_key(&body.order, |b| b.order)
                 .expect_err("retired body is absent during this step");
             world.bodies.insert(index, body);
         }

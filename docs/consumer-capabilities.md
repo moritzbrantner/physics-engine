@@ -18,7 +18,7 @@ over the integer `World`; no consumer enables it).
 | --- | --- | --- | --- | --- | --- |
 | C1 | Static boxes added and removed at runtime (walls, pillars, doors) | ARPG, MMORPG | `ColliderBuilder::cuboid`, `colliders.insert`, `remove_collider` | **parity** (`static-queries`) | — |
 | C2 | Infinite floor plane | ARPG, MMORPG | `SharedShape::halfspace(Y)` | missing | — |
-| C3 | Capsule kinematic bodies with stable ids | MMORPG, ARPG | `RigidBodyBuilder::kinematic_position_based`, `Capsule::new_y`, `set_translation`, game key → handle map | partial: capsule shape and external motion; ids are caller-chosen but reuse is not prevented | #296 |
+| C3 | Capsule kinematic bodies with stable ids | MMORPG, ARPG | `RigidBodyBuilder::kinematic_position_based`, `Capsule::new_y`, `set_translation`, game key → handle map | **parity**: capsule shape, external motion, generational never-reused ids, game keys with `body_id(key)` lookup | #296 |
 | C4 | Kinematic character move with slide; no motion under zero desired motion; exact rest against walls and ceilings | MMORPG, ARPG (monsters planar, player 3D) | `KinematicCharacterController::move_shape` (offset 0.0025 m, slide, slopes π/4, no autostep) | missing | #294, #295, #303, #306, #307 |
 | C5 | Grounded/support state with snap-to-ground and slope limit; static-only support; exact support on box tops; rest under gravity | MMORPG, ARPG | controller `snap_to_ground`, `movement.grounded`; `cast_shape` with `only_fixed` + slope check | partial: `has_support` predicate only | #293, #304, #305, #309 |
 | C6 | Planar (2.5D) movement constraint | ARPG | game zeroes y around `move_shape` | missing | #293 |
@@ -29,7 +29,7 @@ over the integer `World`; no consumer enables it).
 | C11 | Ray cast against static geometry (line of sight, ground height, projectiles) | ARPG, MMORPG | `QueryPipeline::cast_ray` with `only_fixed`, `Cuboid::cast_ray` | **parity** within `static-queries` (`cast_ray_first`); rays alone still ~1.7× Rapier's cost | — |
 | C12 | Shape overlap / penetration test (placement, door occupancy) | ARPG, MMORPG | `intersect_shape` + `contact` depth | **parity** (`static-queries`; ~0.3× Rapier's cost) | — |
 | C13 | Length-unit-relative tolerances | MMORPG, ARPG | none (absolute metre tolerances; game converts units) | missing | #291 |
-| C14 | Query ties broken by stable id; save → load → continue matches | MMORPG (rebuilds ~1,150 colliders per tick), ARPG | none (game rebuilds the world every tick) | partial: stable-id ordering; not proven across rebuilds | #292 |
+| C14 | Query ties broken by stable id; save → load → continue matches | MMORPG (rebuilds ~1,150 colliders per tick), ARPG | none (game rebuilds the world every tick) | **parity** for queries/characters: ties by key, independent of slot and insertion history (no per-tick rebuild needed) | #292 |
 | C15 | Whole-tick cost at or below Rapier (ARPG: ~18 µs native, ~27 µs WASM, 2.68 MB WASM; MMORPG: WASM 1.76 → 3.29 MB, debug combat ~31 s → ~41 s) | MMORPG, ARPG | — | not measured | #310, #297 |
 | C16 | Characters separate and slide around each other (bounded pushing) | MMORPG | none (head-on contact blocks both) | missing | #308 |
 

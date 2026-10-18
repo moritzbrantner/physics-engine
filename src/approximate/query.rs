@@ -34,7 +34,7 @@ impl QueryPose {
         {
             return None;
         }
-        let mut body = Body::new(BodyId(0), self.shape, self.position, 0.0);
+        let mut body = Body::new(self.shape, self.position, 0.0);
         body.orientation = self.orientation;
         Some(body)
     }
@@ -191,8 +191,11 @@ impl World {
         stats.output_capacity_bytes = (hits.capacity() * size_of::<QueryHit>()) as u64;
         match result {
             Ok(()) => {
+                let order = |id| self.index(id).map(|i| self.bodies[i].order).ok();
                 hits.sort_unstable_by(|a, b| {
-                    a.fraction.total_cmp(&b.fraction).then(a.body.cmp(&b.body))
+                    a.fraction
+                        .total_cmp(&b.fraction)
+                        .then_with(|| order(a.body).cmp(&order(b.body)))
                 });
                 Ok(stats)
             }

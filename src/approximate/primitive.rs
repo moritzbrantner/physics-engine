@@ -323,7 +323,7 @@ mod tests {
     use crate::approximate::Quaternion;
 
     fn body(id: u64, shape: Shape, position: V) -> Body {
-        Body::new(crate::BodyId(id), shape, position, 0.0)
+        Body::fixture(id, shape, position, 0.0)
     }
 
     #[test]
@@ -346,12 +346,7 @@ mod tests {
 
     #[test]
     fn fast_capsule_shared_sweep_reaches_thin_wedge() {
-        let mut capsule = Body::new(
-            crate::BodyId(1),
-            Shape::capsule(0.5, 0.1),
-            V(-1.0, -1.0, 10.0),
-            1.0,
-        );
+        let mut capsule = Body::fixture(1, Shape::capsule(0.5, 0.1), V(-1.0, -1.0, 10.0), 1.0);
         capsule.velocity = V(0.0, 0.0, -10_000.0);
         let wedge = body(2, Shape::wedge(V(4.0, 4.0, 0.02)), V::ZERO);
         let mut work = GeometryStats::default();

@@ -1,11 +1,8 @@
 use super::*;
-use crate::{
-    BodyId,
-    approximate::{Config, Error, Shape, Vector as V, World},
-};
+use crate::approximate::{Config, Error, Shape, Vector as V, World};
 
 fn sphere(id: u64, x: Real, mass: Real) -> Body {
-    Body::new(BodyId(id), Shape::Sphere(1.0), V(x, 0.0, 0.0), mass)
+    Body::fixture(id, Shape::Sphere(1.0), V(x, 0.0, 0.0), mass)
 }
 fn row(a: usize, b: usize) -> Constraint {
     Constraint {
@@ -210,8 +207,9 @@ fn empty_contacts_skip_passes_without_dropping_forces_impulses_or_time() {
     })
     .unwrap();
     w.add_body(sphere(1, 0.0, 2.0)).unwrap();
-    w.add_force(BodyId(1), V(4.0, 0.0, 0.0)).unwrap();
-    w.apply_impulse(BodyId(1), V(2.0, 0.0, 0.0), V::ZERO)
+    w.add_force(w.body_id(1).unwrap(), V(4.0, 0.0, 0.0))
+        .unwrap();
+    w.apply_impulse(w.body_id(1).unwrap(), V(2.0, 0.0, 0.0), V::ZERO)
         .unwrap();
     let mut fixed = w.clone();
     fixed.config.convergence = None;
@@ -267,16 +265,16 @@ fn tolerance_and_stopping_decisions_repeat_through_warm_start_dt_changes_and_sup
         ..Config::default()
     })
     .unwrap();
-    a.add_body(Body::new(
-        BodyId(1),
+    a.add_body(Body::fixture(
+        1,
         Shape::Box(V(10.0, 1.0, 10.0)),
         V(0.0, -1.0, 0.0),
         0.0,
     ))
     .unwrap();
     for id in 2..6 {
-        let mut body = Body::new(
-            BodyId(id),
+        let mut body = Body::fixture(
+            id,
             Shape::Box(V(1.0, 1.0, 1.0)),
             V(0.0, 1.0 + 2.0 * (id - 2) as Real, 0.0),
             1.0,
@@ -292,8 +290,8 @@ fn tolerance_and_stopping_decisions_repeat_through_warm_start_dt_changes_and_sup
         assert_eq!(ra.convergence, rb.convergence);
     }
     assert!(a.is_quiescent());
-    a.remove_body(BodyId(1));
-    b.remove_body(BodyId(1));
+    a.remove_body(a.body_id(1).unwrap());
+    b.remove_body(b.body_id(1).unwrap());
     for dt in [1.0 / 30.0, 1.0 / 120.0, 1.0 / 60.0, 0.01] {
         let ra = a.step(dt).unwrap();
         let rb = b.step(dt).unwrap();
@@ -304,7 +302,7 @@ fn tolerance_and_stopping_decisions_repeat_through_warm_start_dt_changes_and_sup
             u64::from(ra.substeps) * 8
         );
     }
-    assert!(a.body(BodyId(2)).unwrap().velocity.1 < 0.0);
+    assert!(a.body_id(2).and_then(|id| a.body(id)).unwrap().velocity.1 < 0.0);
 }
 
 #[test]
@@ -316,19 +314,14 @@ fn mass_ratio_friction_and_offcenter_contacts_keep_fixed_reference_quality() {
                 ..Config::default()
             })
             .unwrap();
-            a.add_body(Body::new(
-                BodyId(1),
+            a.add_body(Body::fixture(
+                1,
                 Shape::Box(V(100.0, 1.0, 100.0)),
                 V(0.0, -1.0, 0.0),
                 0.0,
             ))
             .unwrap();
-            let mut body = Body::new(
-                BodyId(2),
-                Shape::Box(V(1.0, 1.0, 1.0)),
-                V(0.0, 1.0, 0.0),
-                mass,
-            );
+            let mut body = Body::fixture(2, Shape::Box(V(1.0, 1.0, 1.0)), V(0.0, 1.0, 0.0), mass);
             body.rotation_locked = locked;
             body.velocity = V(5.0, -1.0, 0.0);
             body.friction = 0.8;
@@ -338,7 +331,10 @@ fn mass_ratio_friction_and_offcenter_contacts_keep_fixed_reference_quality() {
             for _ in 0..60 {
                 a.step(1.0 / 60.0).unwrap();
                 fixed.step(1.0 / 60.0).unwrap();
-                let (a, b) = (a.body(BodyId(2)).unwrap(), fixed.body(BodyId(2)).unwrap());
+                let (a, b) = (
+                    a.body_id(2).and_then(|id| a.body(id)).unwrap(),
+                    fixed.body(a.body_id(2).unwrap()).unwrap(),
+                );
                 assert!(
                     (a.position - b.position).length() < 0.001,
                     "mass={mass}, locked={locked}"

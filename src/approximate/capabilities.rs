@@ -14,7 +14,7 @@ mod tests {
         Body, Quaternion, Report, Shape, Vector as V, contact, primitive::PrimitivePair,
     };
     use super::PRIMITIVE_CAPABILITIES_JSON;
-    use crate::BodyId;
+
     use serde_json::Value;
 
     #[test]
@@ -134,12 +134,8 @@ mod tests {
                 Shape::capsule(2.0 * scale, scale),
                 Shape::wedge(V(scale, 2.0 * scale, 3.0 * scale)),
             ] {
-                let mut body = Body::new(
-                    BodyId(1),
-                    shape,
-                    V(-11.0 * scale, 4.0 * scale, 3.0 * scale),
-                    0.0,
-                );
+                let mut body =
+                    Body::fixture(1, shape, V(-11.0 * scale, 4.0 * scale, 3.0 * scale), 0.0);
                 body.orientation = Quaternion(0.2, 0.3, 0.1, 0.9).normalized();
                 let (low, high) = contact::bounds(&body);
                 let mut points = Vec::new();

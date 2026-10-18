@@ -136,7 +136,7 @@ impl World {
                     continue;
                 }
                 report.narrow_tests += 1;
-                let first = probe.id < target.id;
+                let first = probe.order < target.order;
                 let (a, b) = if first {
                     (&probe, &target)
                 } else {
@@ -199,7 +199,7 @@ impl World {
             // An admitted closing impact is wake evidence; real mass/inertia (and the parked
             // body's skipped forces) are active before its impulse.
             if self.bodies[j].sleeping && self.bodies[j].movable() {
-                let id = self.bodies[j].id;
+                let id = self.bodies[j].order;
                 let woke = self.wake_contact_island::<PREPARED>(id, h, report);
                 report.woken_bodies += woke;
             }
@@ -246,7 +246,7 @@ impl World {
                 let s = &mut self.bookkeeping;
                 for index in [i, j] {
                     if self.bodies[index].retire_on_impact {
-                        push(&mut s.ccd_retired, self.bodies[index].id, &mut s.work);
+                        push(&mut s.ccd_retired, self.bodies[index].order, &mut s.work);
                     }
                 }
             }

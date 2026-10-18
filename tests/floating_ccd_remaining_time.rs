@@ -2,7 +2,6 @@
 //! at its time of impact and travels the rest of the substep along the response velocity,
 //! re-swept against every candidate.
 use physics_engine::{
-    BodyId,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Real, Report, Shape,
         Vector as V, World,
@@ -17,14 +16,14 @@ const CONTEXT: CheckpointContext = CheckpointContext {
 };
 
 fn fixed(id: u64, half: V, position: V, restitution: Real, friction: Real) -> Body {
-    let mut b = Body::new(BodyId(id), Shape::Box(half), position, 0.0);
+    let mut b = Body::keyed(id, Shape::Box(half), position, 0.0);
     b.restitution = restitution;
     b.friction = friction;
     b
 }
 
 fn elastic_sphere(id: u64, position: V, velocity: V) -> Body {
-    let mut b = Body::new(BodyId(id), Shape::Sphere(0.25), position, 1.0);
+    let mut b = Body::keyed(id, Shape::Sphere(0.25), position, 1.0);
     b.velocity = velocity;
     b.restitution = 1.0;
     b.friction = 0.0;
@@ -64,7 +63,7 @@ fn elastic_wall() -> (World, Report) {
 fn elastic_wall_responds_at_impact_and_travels_the_remaining_substep() {
     let (mut w, report) = elastic_wall();
     let tolerance: Real = (1e-9 as Real).max(4096.0 * Real::EPSILON);
-    let ball = w.body(BodyId(2)).unwrap();
+    let ball = w.body_id(2).and_then(|id| w.body(id)).unwrap();
     let expected = -0.5 - 4000.0 * (H as Real - 5.5 / 4000.0);
     assert!(
         close(ball.position.0, expected, tolerance),
@@ -84,7 +83,7 @@ fn elastic_wall_responds_at_impact_and_travels_the_remaining_substep() {
     assert_eq!(report.position.passes, 0);
     let before = ball.position.0;
     w.step(H).unwrap();
-    let ball = w.body(BodyId(2)).unwrap();
+    let ball = w.body_id(2).and_then(|id| w.body(id)).unwrap();
     assert!(close(ball.velocity.0, -4000.0, tolerance));
     assert!(close(
         ball.position.0,
@@ -100,8 +99,8 @@ fn parked_target() -> World {
         .unwrap();
     w.add_body(fixed(2, V(0.25, 5.0, 5.0), V(0.0, 5.0, 0.0), 1.0, 0.0))
         .unwrap();
-    w.add_body(Body::new(
-        BodyId(10),
+    w.add_body(Body::keyed(
+        10,
         Shape::Box(V(1.0, 1.0, 1.0)),
         V(-10.0, 1.0, 0.0),
         2.0,
@@ -110,10 +109,20 @@ fn parked_target() -> World {
     for _ in 0..120 {
         w.step(1.0 / 60.0).unwrap();
     }
-    assert!(w.body(BodyId(10)).unwrap().is_sleeping());
+    assert!(
+        w.body_id(10)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     w.add_body(elastic_sphere(100, V(-6.0, 1.0, 0.0), V(4000.0, 0.0, 0.0)))
         .unwrap();
-    assert!(w.body(BodyId(10)).unwrap().is_sleeping());
+    assert!(
+        w.body_id(10)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     w
 }
 
@@ -129,13 +138,13 @@ fn returning_ricochet_wakes_and_pushes_the_parked_target_in_the_same_call() {
     assert!(report.retired.is_empty());
     assert!(report.woken_bodies >= 1);
     assert!(report.swept_contacts >= 2, "wall and target impacts");
-    let target = w.body(BodyId(10)).unwrap();
+    let target = w.body_id(10).and_then(|id| w.body(id)).unwrap();
     assert!(
         !target.is_sleeping(),
         "returning CCD contact must wake target"
     );
     assert!(target.velocity.0 < -100.0, "{:?}", target.velocity);
-    let sphere = w.body(BodyId(100)).unwrap();
+    let sphere = w.body_id(100).and_then(|id| w.body(id)).unwrap();
     assert!(sphere.velocity.0 < 0.0);
     // No tunnelling into the target: the sphere stays on the wall side of its face.
     assert!(
@@ -153,9 +162,20 @@ fn returning_ricochet_wakes_and_pushes_the_parked_target_in_the_same_call() {
         for b in w.bodies() {
             assert!(b.position.finite() && b.velocity.finite());
         }
-        assert!(!w.body(BodyId(10)).unwrap().is_sleeping());
+        assert!(
+            !w.body_id(10)
+                .and_then(|id| w.body(id))
+                .unwrap()
+                .is_sleeping()
+        );
     }
-    let speed = w.body(BodyId(10)).unwrap().velocity.0.abs();
+    let speed = w
+        .body_id(10)
+        .and_then(|id| w.body(id))
+        .unwrap()
+        .velocity
+        .0
+        .abs();
     assert!(speed < initial - 1.0, "{speed} vs {initial}");
 }
 
@@ -181,7 +201,7 @@ fn corridor_exhausting_the_pass_budget_falls_back_without_tunnelling() {
         let report = w.step(H).unwrap();
         assert!((w.elapsed_seconds() - before - H).abs() < 1e-12);
         fallbacks += report.geometry.ccd_budget_fallbacks;
-        let ball = w.body(BodyId(3)).unwrap();
+        let ball = w.body_id(3).and_then(|id| w.body(id)).unwrap();
         let slop = Config::default().contact_slop;
         assert!(
             ball.position.0.abs() <= 0.5 + slop,
@@ -233,7 +253,10 @@ fn head_on_ccd_pair_both_travel_only_the_remaining_substep() {
     let tolerance: Real = (1e-9 as Real).max(4096.0 * Real::EPSILON);
     let impact = 11.5 / 8000.0;
     let expected = 0.25 + 4000.0 * (H as Real - impact);
-    let (a, b) = (w.body(BodyId(1)).unwrap(), w.body(BodyId(2)).unwrap());
+    let (a, b) = (
+        w.body_id(1).and_then(|id| w.body(id)).unwrap(),
+        w.body_id(2).and_then(|id| w.body(id)).unwrap(),
+    );
     assert!(close(a.velocity.0, -4000.0, tolerance), "{:?}", a.velocity);
     assert!(close(b.velocity.0, 4000.0, tolerance), "{:?}", b.velocity);
     assert!(
@@ -268,7 +291,7 @@ fn separating_touch_does_not_consume_the_ccd_budget() {
         .unwrap();
     let report = w.step(H).unwrap();
     assert_eq!(report.geometry.ccd_budget_fallbacks, 0);
-    let ball = w.body(BodyId(3)).unwrap();
+    let ball = w.body_id(3).and_then(|id| w.body(id)).unwrap();
     let tolerance: Real = (1e-9 as Real).max(4096.0 * Real::EPSILON);
     let expected = 10.5 - 4000.0 * (H as Real - 10.5 / 4000.0);
     assert!(

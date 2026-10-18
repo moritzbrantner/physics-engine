@@ -1,6 +1,6 @@
 //! Captured fixed-floor interval misses, through the public stepping/checkpoint seam.
 use physics_engine::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Quaternion as Q, Shape,
         Vector as V, World,
@@ -12,16 +12,16 @@ const CONTEXT: CheckpointContext = CheckpointContext {
     content: [243; 32],
 };
 
-fn falling(id: BodyId, case: usize) -> Body {
+fn falling(id: u64, case: usize) -> Body {
     let mut b = if case == 0 {
-        Body::new(
+        Body::keyed(
             id,
             Shape::Box(V(18.0, 18.0, 18.0)),
             V(-19.23665366661797, 28.924543517247148, 37.82350256733405),
             4.0,
         )
     } else {
-        Body::new(
+        Body::keyed(
             id,
             Shape::Box(V(18.0, 18.0, 18.0)),
             V(-43.55331673101809, 19.97465206813004, 75.01477503981347),
@@ -79,13 +79,13 @@ pub fn run() -> [Real; 6] {
                             ..Config::default()
                         };
                         let mut world = World::new(config).unwrap();
-                        let mut floor = Body::new(
-                            BodyId(ids[0]),
+                        let mut floor = Body::keyed(
+                            ids[0],
                             Shape::Box(V(500.0, 16.0, 500.0)),
                             V(0.0, -16.0, 0.0),
                             0.0,
                         );
-                        let mut body = falling(BodyId(ids[1]), case);
+                        let mut body = falling(ids[1], case);
                         if mode == 1 {
                             body.position.1 += 1000.0;
                         }
@@ -98,9 +98,9 @@ pub fn run() -> [Real; 6] {
                         }
                         let initial = body.clone();
                         assert_eq!(floor_error(&initial), 0.0);
-                        world.add_body(floor.clone()).unwrap();
-                        world.add_body(body).unwrap();
-                        let floor = world.body(floor.id).unwrap().clone();
+                        let floor_id = world.add_body(floor.clone()).unwrap();
+                        let body_id = world.add_body(body).unwrap();
+                        let floor = world.body(floor_id).unwrap().clone();
                         let mut replay = world.clone();
                         let mut reference_position = initial.position;
                         let mut reference_velocity = initial.velocity;
@@ -126,7 +126,7 @@ pub fn run() -> [Real; 6] {
                             assert!(report.impulse_iterations <= passes * u64::from(substeps));
                             assert_eq!(report.woken_bodies, 0);
                             assert!(report.retired.is_empty());
-                            let b = world.body(initial.id).unwrap();
+                            let b = world.body(body_id).unwrap();
                             assert!(
                                 b.position.finite()
                                     && b.velocity.finite()
@@ -190,15 +190,15 @@ pub fn finite_floor_retains_actual_contacts() -> Real {
         })
         .unwrap();
         world
-            .add_body(Body::new(
-                BodyId(ids[0]),
+            .add_body(Body::keyed(
+                ids[0],
                 Shape::Box(V(18.0, 9.0, 18.0)),
                 V::ZERO,
                 0.0,
             ))
             .unwrap();
-        let mut body = Body::new(
-            BodyId(ids[1]),
+        let mut body = Body::keyed(
+            ids[1],
             Shape::Box(V(18.0, 18.0, 18.0)),
             V(-1.4180084689188672, 36.00023777180524, -5.57869237669652),
             2.0,
@@ -213,7 +213,7 @@ pub fn finite_floor_retains_actual_contacts() -> Real {
         let initial_energy = body.kinetic_energy();
         world.add_body(body).unwrap();
         let report = world.step(1.0 / 240.0).unwrap();
-        let body = world.body(BodyId(ids[1])).unwrap();
+        let body = world.body_id(ids[1]).and_then(|id| world.body(id)).unwrap();
         assert!(
             body.velocity.1 > 0.0,
             "the approaching actual corner must receive a normal impulse: {body:?}"
