@@ -358,7 +358,7 @@ mod engine {
 
 #[cfg(feature = "rapier")]
 mod rapier {
-    use super::super::mmorpg_queries::UprightShapes;
+    use super::super::upright_queries::UprightShapes;
     use super::*;
     use rapier3d::control::{CharacterLength, KinematicCharacterController};
     use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher, ShapeCastOptions};
