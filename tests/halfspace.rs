@@ -96,6 +96,50 @@ fn capsule_overlap_and_cast_against_plane() {
 }
 
 #[test]
+fn box_and_wedge_queries_meet_the_plane_at_their_deepest_point() {
+    let (w, plane) = floor(0.0);
+    let mut hits = Vec::new();
+    // A door-probe box resting into the floor overlaps it; one above does not.
+    let probe = |y| QueryPose::new(Shape::Box(V(1.0, 1.0, 0.1)), V(3.0, y, 0.0));
+    w.overlap_shape(probe(0.9), QueryFilter::default(), &mut hits)
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].body, plane);
+    assert!((hits[0].separation + 0.1).abs() < 1e-5);
+    w.overlap_shape(probe(1.1), QueryFilter::default(), &mut hits)
+        .unwrap();
+    assert!(hits.is_empty());
+    // A tilted box lands on its lowest corner.
+    let mut pose = QueryPose::new(Shape::Box(V(0.5, 0.5, 0.5)), V(0.0, 3.0, 0.0));
+    // 45° about z: (0, 0, sin 22.5°, cos 22.5°).
+    pose.orientation = physics_engine::approximate::Quaternion(0.0, 0.0, 0.382_683_43, 0.923_879_5);
+    w.cast_shape(
+        ShapeCast::new(pose, V(0.0, -4.0, 0.0)),
+        QueryFilter::default(),
+        &mut hits,
+    )
+    .unwrap();
+    // Rotated 45° about z: the lowest edge is 0.5·√2 below the centre.
+    let expected = (3.0 - 0.5 * std::f32::consts::SQRT_2) / 4.0;
+    assert!(
+        (hits[0].fraction - expected).abs() < 1e-4,
+        "{}",
+        hits[0].fraction
+    );
+    // A wedge sliding sideways above the floor never meets it.
+    w.cast_shape(
+        ShapeCast::new(
+            QueryPose::new(Shape::wedge(V(1.0, 0.5, 1.0)), V(0.0, 0.6, 0.0)),
+            V(10.0, 0.0, 0.0),
+        ),
+        QueryFilter::default(),
+        &mut hits,
+    )
+    .unwrap();
+    assert!(hits.is_empty());
+}
+
+#[test]
 fn characters_stand_and_walk_on_the_plane() {
     let (mut w, plane) = floor(0.0);
     let (half, radius) = (0.5, 0.3);
@@ -143,15 +187,6 @@ fn halfspace_rejects_misuse_and_removes_cleanly() {
     assert!(
         w.add_body(Body::new(Shape::HalfSpace, V::ZERO, 1.0))
             .is_err()
-    );
-    // Box queries are not supported against a halfspace.
-    assert!(
-        w.overlap_shape(
-            QueryPose::new(Shape::Box(V(1.0, 1.0, 1.0)), V(0.0, 0.0, 0.0)),
-            QueryFilter::default(),
-            &mut Vec::new(),
-        )
-        .is_err()
     );
     // Stepping with a dynamic body is fine; halfspaces take no part in rigid contacts.
     w.add_body(Body::new(Shape::Sphere(0.5), V(0.0, 10.0, 0.0), 1.0))
