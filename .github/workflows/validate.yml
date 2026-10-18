@@ -88,3 +88,14 @@ jobs:
       artifact_paths: pages-dist
       reuse_across_runs: true
       artifact_retention_days: 7
+
+  merge-ready:
+    name: merge-ready
+    if: ${{ always() }}
+    needs: [validate, build-pages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@b0f25f241d76af2584dfc9e375084ff5c5cb97da
+        with:
+          needs: ${{ toJSON(needs) }}
+          required: '["validate", "build-pages"]'

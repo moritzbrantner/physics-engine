@@ -59,7 +59,7 @@
   "merge": {
     "authority": "hosted",
     "requiredChecks": [
-      "validate"
+      "merge-ready"
     ]
   }
 }
