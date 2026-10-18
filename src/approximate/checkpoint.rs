@@ -114,7 +114,11 @@ pub struct Checkpoint {
 impl World {
     /// Capture exact floating state/history, including queued input. This explicit
     /// product copies all bodies and contact history; ordinary step never calls it.
+    /// Worlds with heightfield terrain are not checkpointed (`InvalidData`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
+        if !self.terrains.is_empty() {
+            return Err(CheckpointError::InvalidData);
+        }
         validate(
             self.config,
             self.elapsed,
@@ -504,6 +508,7 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             out.push(3);
             vector(out, h);
         }
+        Shape::Heightfield { .. } => unreachable!("terrain worlds are not checkpointed"),
     }
     for x in [b.mass, b.friction, b.restitution] {
         scalar(out, x);

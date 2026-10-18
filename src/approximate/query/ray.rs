@@ -202,7 +202,22 @@ impl World {
             stats.exact_candidates += 1;
             stats.geometry_preparations += 1;
             let mut work = PrimitiveRayWork3::default();
-            let result = primitive::snapshot_ray(target, cast.origin, cast.displacement, &mut work);
+            let result = if let Shape::Heightfield { terrain, .. } = target.shape {
+                let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
+                let end = [end.0, end.1, end.2].map(f64::from);
+                work.queries += 1;
+                Ok(self.terrain(terrain).cast_segment(start, end).map(|hit| {
+                    geometry_kernels::primitive3::PrimitiveRayHit3 {
+                        fraction: hit.fraction,
+                        point: hit.point,
+                        normal: hit.normal,
+                        feature: RayFeature::HeightfieldTriangle(hit.triangle),
+                        starts_inside: false,
+                    }
+                }))
+            } else {
+                primitive::snapshot_ray(target, cast.origin, cast.displacement, &mut work)
+            };
             stats.ray_queries += work.queries;
             stats.ray_planes_tested += work.planes_tested;
             stats.ray_quadratic_tests += work.quadratic_tests;

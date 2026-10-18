@@ -67,7 +67,9 @@ use geometry::GeometryCache;
 pub use geometry::GeometryStats;
 mod ccd;
 mod character;
+mod terrain;
 pub use character::{CharacterMove, CharacterMoveResult, CharacterSettings};
+pub use terrain::{HeightfieldDesc, TerrainId};
 mod math;
 mod response;
 use crate::{BodyId, CollisionLayers3d, numeric};
@@ -98,6 +100,12 @@ pub enum Shape {
     },
     /// Right triangular prism inside the local bounding box. The ramp rises toward -X.
     Wedge(Vector),
+    /// Static terrain created by [`World::add_heightfield`]; `half_extents` bounds it around
+    /// the body position.
+    Heightfield {
+        terrain: TerrainId,
+        half_extents: Vector,
+    },
 }
 impl Shape {
     pub const fn capsule(half_segment: Real, radius: Real) -> Self {
@@ -111,7 +119,11 @@ impl Shape {
     }
     pub fn radius(self) -> Real {
         match self {
-            Self::Box(h) | Self::Wedge(h) => h.length(),
+            Self::Box(h)
+            | Self::Wedge(h)
+            | Self::Heightfield {
+                half_extents: h, ..
+            } => h.length(),
             Self::Sphere(r) => r,
             Self::Capsule {
                 half_segment,
@@ -121,7 +133,11 @@ impl Shape {
     }
     pub fn half_extents(self) -> Vector {
         match self {
-            Self::Box(h) | Self::Wedge(h) => h,
+            Self::Box(h)
+            | Self::Wedge(h)
+            | Self::Heightfield {
+                half_extents: h, ..
+            } => h,
             Self::Sphere(r) => Vector(r, r, r),
             Self::Capsule {
                 half_segment,
@@ -135,6 +151,9 @@ impl Shape {
                 h.finite() && h.min_component() >= 1e-6 && h.max_component() < 1e12
             }
             Self::Sphere(radius) => radius.is_finite() && (1e-6..1e12).contains(&radius),
+            Self::Heightfield {
+                half_extents: h, ..
+            } => h.finite() && h.max_component() < 1e12,
             Self::Capsule {
                 half_segment,
                 radius,
@@ -183,8 +202,8 @@ impl Shape {
                 narrow(1.0 / radial, 1.0 / axial, 1.0 / radial)
             }
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
-            // wedge inertia/pose contract is introduced.
-            Self::Wedge(_) => None,
+            // wedge inertia/pose contract is introduced. Terrain is static.
+            Self::Wedge(_) | Self::Heightfield { .. } => None,
         }
     }
 }
@@ -511,6 +530,7 @@ pub struct World {
     transaction: transaction::Journal,
     last_transaction: TransactionStats,
     query_tree: query::QueryTree,
+    terrains: Vec<terrain::Terrain>,
     slots: Vec<Slot>,
     /// Free slots, descending: `pop` returns the lowest.
     free: Vec<u32>,
@@ -556,6 +576,7 @@ impl World {
             transaction: transaction::Journal::default(),
             last_transaction: TransactionStats::default(),
             query_tree: query::QueryTree::default(),
+            terrains: Vec::new(),
             slots: Vec::new(),
             free: Vec::new(),
             keys: BTreeMap::new(),
@@ -640,7 +661,13 @@ impl World {
     }
     /// Adds a body and returns its new id. `body.key`, when set, must be unique among live
     /// bodies; `body.id` is ignored.
-    pub fn add_body(&mut self, mut body: Body) -> Result<BodyId, Error> {
+    pub fn add_body(&mut self, body: Body) -> Result<BodyId, Error> {
+        if matches!(body.shape, Shape::Heightfield { .. }) {
+            return Err(Error::InvalidInput);
+        }
+        self.insert_body(body)
+    }
+    fn insert_body(&mut self, mut body: Body) -> Result<BodyId, Error> {
         body.orientation = body.orientation.normalized();
         if !body.valid() || self.slots.len() >= u32::MAX as usize - 1 {
             return Err(Error::InvalidInput);
@@ -669,19 +696,21 @@ impl World {
         self.next_serial += 1;
         let i = self.bodies.partition_point(|b| b.order < body.order);
         // Local topology change: only a genuine new fixed overlap can disturb a sleeper.
-        let wake = if body.mass == 0.0 && !body.sensor {
-            self.bodies
-                .iter()
-                .filter(|b| {
-                    b.sleeping
-                        && b.layers.collides_with(body.layers)
-                        && contact::current(b, &body, 0.0).is_some()
-                })
-                .map(|b| b.order)
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let wake =
+            if body.mass == 0.0 && !body.sensor && !matches!(body.shape, Shape::Heightfield { .. })
+            {
+                self.bodies
+                    .iter()
+                    .filter(|b| {
+                        b.sleeping
+                            && b.layers.collides_with(body.layers)
+                            && contact::current(b, &body, 0.0).is_some()
+                    })
+                    .map(|b| b.order)
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
         for id in wake {
             self.wake_island(id);
         }
@@ -1664,6 +1693,9 @@ impl World {
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
                 if a.sensor
                     || b.sensor
+                    // Terrain answers queries and character moves; it has no rigid contacts.
+                    || matches!(a.shape, Shape::Heightfield { .. })
+                    || matches!(b.shape, Shape::Heightfield { .. })
                     || !a.layers.collides_with(b.layers)
                     || (a.inverse_mass() == 0.0
                         && b.inverse_mass() == 0.0

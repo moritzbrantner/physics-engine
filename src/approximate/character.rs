@@ -426,6 +426,13 @@ impl World {
             };
             pose.position += direction * travel;
             let rest = remaining - direction * travel;
+            // On walkable ground, downward intent stops instead of sliding down the slope;
+            // horizontal intent follows the surface.
+            let rest = if !planar && normal.dot(up) >= min_up && rest.dot(up) < 0.0 {
+                V(rest.0, 0.0, rest.2)
+            } else {
+                rest
+            };
             remaining = flat(rest - normal * rest.dot(normal));
             // Head-on against another character: sidestep to the right instead of locking.
             if approach > HEAD_ON_COS && self.characters.contains(hit.body) {

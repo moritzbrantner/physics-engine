@@ -133,5 +133,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::arpg_planar::scenario(),
         scenarios::crowd::scenario(),
         scenarios::capsule_normals::scenario(),
+        scenarios::terrain::scenario(),
     ]
 }

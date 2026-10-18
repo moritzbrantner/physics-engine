@@ -342,6 +342,46 @@ impl World {
             }
             stats.exact_candidates += 1;
             query.position = pose.position;
+            if let Shape::Heightfield { terrain, .. } = target.shape {
+                let field = self.terrain(terrain);
+                let Some((p, q, r)) = super::terrain::capsule_of(&query) else {
+                    // Terrain answers sphere and capsule queries only.
+                    return Err(failure(SweepFailure::InvalidGeometryInput));
+                };
+                let initial = field.capsule_contact(p, q, r, 0.0);
+                let (fraction, contact) = match (initial, cast) {
+                    (Some(c), _) => (0.0, c),
+                    (None, Some(cast)) => {
+                        let d = [displacement.0, displacement.1, displacement.2].map(f64::from);
+                        stats.sweep_iterations += 1;
+                        match field
+                            .capsule_sweep(p, q, r, d, cast.max_iterations.max(64))
+                            .map_err(|_| failure(SweepFailure::NonFiniteComputation))?
+                        {
+                            Some(hit) => (primitive::toward_zero(hit.fraction), hit.contact),
+                            None => continue,
+                        }
+                    }
+                    (None, None) => continue,
+                };
+                let (separation, normal, point) = super::terrain::narrow(contact);
+                let capacity = hits.capacity();
+                hits.push(QueryHit {
+                    body: target.id,
+                    fraction,
+                    distance: distance * fraction,
+                    normal,
+                    query_point: point + normal * separation,
+                    target_point: point,
+                    separation,
+                    starts_overlapping: initial.is_some_and(|c| c.separation < 0.0),
+                    support_velocity: V::ZERO,
+                    sensor: target.sensor,
+                });
+                stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
+                stats.hits_admitted += 1;
+                continue;
+            }
             let initial = current(&query, target, stats).map_err(failure)?;
             let fraction = if initial.separation <= 0.0 {
                 0.0
