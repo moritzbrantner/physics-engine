@@ -300,3 +300,37 @@ fn overlapping_characters_separate_half_each() {
     assert!(out[0].depenetration.0 > 0.0 && out[1].depenetration.0 < 0.0);
     assert_eq!(out[0].translation, V::ZERO);
 }
+
+#[test]
+fn overlap_is_resolved_after_a_door_closes_or_the_game_places_a_character() {
+    let mut w = world();
+    let c = character(&mut w, 10, V(70.0, FOOT + OFFSET, 0.0));
+    let other = character(&mut w, 11, V(75.0, FOOT + OFFSET, 0.0));
+    for _ in 0..3 {
+        assert_eq!(step(&mut w, c, V::ZERO).depenetration, V::ZERO);
+    }
+    // A door closes onto the resting character.
+    w.add_body(Body::keyed(
+        50,
+        Shape::Box(V(0.25, 2.0, 2.0)),
+        V(70.2, 2.0, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    let r = step(&mut w, c, V::ZERO);
+    assert!(r.depenetration.0 < -0.1, "{r:?}");
+    // The game places the other character into this one.
+    w.set_kinematic_position(other, V(69.7, FOOT + OFFSET, 0.0))
+        .unwrap();
+    let mut out = Vec::new();
+    w.move_characters(
+        &[CharacterMove {
+            body: c,
+            desired: V::ZERO,
+        }],
+        &mut out,
+    )
+    .unwrap();
+    let d = (position(&w, c).0 - position(&w, other).0).abs();
+    assert!(d >= 2.0 * RADIUS + OFFSET - 1e-4, "{d}");
+}
