@@ -81,9 +81,11 @@ impl QueryTree {
         self.index_of[slot as usize] = index as u32;
         let leaf = self.leaf(slot, &bodies[index]);
         self.tree.insert(leaf);
+        crate::work::add(crate::work::Counter::TreeInserts, 1);
         // Rebuild once inserts reach half the tree: amortized O(log n) per insert.
         self.inserts += 1;
         if self.inserts >= 16.max(self.slots.len() / 2) {
+            crate::work::add(crate::work::Counter::TreeInserts, self.slots.len() as u64);
             self.tree.rebuild();
             self.inserts = 0;
         }

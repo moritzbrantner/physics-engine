@@ -7,6 +7,8 @@
 
 mod body;
 pub mod numeric;
+#[doc(hidden)]
+pub mod work;
 
 pub use body::{BodyId, CollisionLayers3d};
 

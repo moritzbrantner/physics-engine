@@ -286,13 +286,14 @@ impl World {
                     sweep_bounds.1 + V(pad, pad, pad),
                 );
                 let mut found = Candidates::default();
-                tree.tree().visit_aabb(
+                let nodes = tree.tree().visit_aabb(
                     spatial_kernels::Aabb {
                         min: [lo.0, lo.1, lo.2],
                         max: [hi.0, hi.1, hi.2],
                     },
                     |leaf| found.push(tree.index_of(leaf.id) as u32),
                 );
+                crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
                 found.sort();
                 found
             });
@@ -341,6 +342,7 @@ impl World {
                 }
             }
             stats.exact_candidates += 1;
+            crate::work::add(crate::work::Counter::ExactTests, 1);
             query.position = pose.position;
             if let Shape::Heightfield { terrain, .. } = target.shape {
                 let field = self.terrain(terrain);
@@ -348,21 +350,37 @@ impl World {
                     // Terrain answers sphere and capsule queries only.
                     return Err(failure(SweepFailure::InvalidGeometryInput));
                 };
-                let initial = field.capsule_contact(p, q, r, 0.0);
-                let (fraction, contact) = match (initial, cast) {
-                    (Some(c), _) => (0.0, c),
+                let mut terrain_work = geometry_kernels::heightfield::HeightfieldWork3::default();
+                let initial = field.capsule_contact_counted(p, q, r, 0.0, &mut terrain_work);
+                let outcome = match (initial, cast) {
+                    (Some(c), _) => Some((0.0, c)),
                     (None, Some(cast)) => {
                         let d = [displacement.0, displacement.1, displacement.2].map(f64::from);
                         stats.sweep_iterations += 1;
-                        match field
-                            .capsule_sweep(p, q, r, d, cast.max_iterations.max(64))
+                        field
+                            .capsule_sweep_counted(
+                                p,
+                                q,
+                                r,
+                                d,
+                                cast.max_iterations.max(64),
+                                &mut terrain_work,
+                            )
                             .map_err(|_| failure(SweepFailure::NonFiniteComputation))?
-                        {
-                            Some(hit) => (primitive::toward_zero(hit.fraction), hit.contact),
-                            None => continue,
-                        }
+                            .map(|hit| (primitive::toward_zero(hit.fraction), hit.contact))
                     }
-                    (None, None) => continue,
+                    (None, None) => None,
+                };
+                crate::work::add(
+                    crate::work::Counter::TerrainCells,
+                    terrain_work.cells_visited,
+                );
+                crate::work::add(
+                    crate::work::Counter::TerrainTriangles,
+                    terrain_work.triangles_tested,
+                );
+                let Some((fraction, contact)) = outcome else {
+                    continue;
                 };
                 let (separation, normal, point) = super::terrain::narrow(contact);
                 let capacity = hits.capacity();

@@ -200,21 +200,34 @@ impl World {
                 return Err(failure(SweepFailure::InvalidGeometryInput));
             }
             stats.exact_candidates += 1;
+            crate::work::add(crate::work::Counter::ExactTests, 1);
             stats.geometry_preparations += 1;
             let mut work = PrimitiveRayWork3::default();
             let result = if let Shape::Heightfield { terrain, .. } = target.shape {
                 let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
                 let end = [end.0, end.1, end.2].map(f64::from);
                 work.queries += 1;
-                Ok(self.terrain(terrain).cast_segment(start, end).map(|hit| {
-                    geometry_kernels::primitive3::PrimitiveRayHit3 {
+                let mut terrain_work = geometry_kernels::heightfield::HeightfieldWork3::default();
+                let hit = self
+                    .terrain(terrain)
+                    .cast_segment_counted(start, end, &mut terrain_work);
+                crate::work::add(
+                    crate::work::Counter::TerrainCells,
+                    terrain_work.cells_visited,
+                );
+                crate::work::add(
+                    crate::work::Counter::TerrainTriangles,
+                    terrain_work.triangles_tested,
+                );
+                Ok(
+                    hit.map(|hit| geometry_kernels::primitive3::PrimitiveRayHit3 {
                         fraction: hit.fraction,
                         point: hit.point,
                         normal: hit.normal,
                         feature: RayFeature::HeightfieldTriangle(hit.triangle),
                         starts_inside: false,
-                    }
-                }))
+                    }),
+                )
             } else {
                 primitive::snapshot_ray(target, cast.origin, cast.displacement, &mut work)
             };
@@ -270,7 +283,7 @@ impl World {
             // Covers every per-target pad above: leaf coordinates are bounded by `magnitude`.
             let pad = 64.0 * Real::EPSILON * (1.0 + ray_magnitude.max(2.0 * tree.magnitude));
             let mut failure = None;
-            tree.tree().visit_segment(
+            let nodes = tree.tree().visit_segment(
                 [cast.origin.0, cast.origin.1, cast.origin.2],
                 [
                     cast.displacement.0,
@@ -295,6 +308,7 @@ impl World {
                     }
                 },
             );
+            crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
             failure.map_or(Ok(()), Err)
         } else {
             (0..self.bodies.len()).try_for_each(|i| test(i, hits))
