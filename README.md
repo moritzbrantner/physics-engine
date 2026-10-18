@@ -1,288 +1,58 @@
 # physics-engine
 
-Integration status and opt-in studies: [physics improvement reconciliation](docs/improvement-reconciliation.md).
+A physics engine for the owner's games, built to match and beat [Rapier](https://rapier.rs) on the
+capabilities those games actually use.
 
-Reusable deterministic physics simulation kernel extracted from the physics work that had accumulated inside `ecs-lab`.
+The games (ARPG, MMORPG, game-server) run on Rapier today. This repository records which Rapier
+functions they rely on, provides them through its own performance-oriented API, and checks every
+capability against Rapier: same scenario, behaviour invariants, and a CI gate that fails when
+Physics Engine is slower than Rapier. See [technical decisions](docs/technical-decisions.md).
 
-The repository is intentionally a **physics engine, not a game engine**. It owns simulation semantics; ECS storage, rendering, input, audio, scenes, game loops and editor concerns remain consumers.
+## Shape of the engine
 
-Reusable collision mathematics is consumed from [`rust-kernels`](https://github.com/moritzbrantner/rust-kernels) when it is domain-neutral. Physics Engine remains authoritative for simulation policy, contact persistence, response, sleeping/waking, and how continuous collision participates in stepping.
+- **One world:** `approximate::World` with `f32` physical state. The legacy integer `World` and
+  `RotatingWorld3d` are being removed; their consumers stay on their current git pin.
+- **Own API:** primitives shaped by consumer usage rather than a Rapier clone — batched
+  multi-character moves, stable never-reused ids, depenetration reported separately,
+  length-unit-relative tolerances, stable-id tie-breaking, plane constraints and grounded state.
+- **Rapier as oracle:** a shared scenario harness runs each scenario on both engines natively and
+  in WASM.
+- **Pages sandbox:** `site/` + `demo-wasm/` show the parity scenarios side by side with Rapier.
 
-## Floating-point default
-
-CPU simulation math defaults to **`f64`** through `numeric::Scalar`. Floating point is supported
-and preferred; there is no "no floating point anywhere" requirement. `f32` is appropriate where
-an explicit precision budget permits it, such as GPU/storage boundaries. The floating solver
-(`approximate::World`) uses `approximate::Real`: f64 by default, f32 with the whole-build
-`f32-physics` Cargo feature, the production target for game consumers within the documented
-[f32 precision envelope](docs/numerics.md#f32-floating-physics-build).
-
-The default time-composition and shared scaled-arithmetic path no longer stores large exact
-fractions. The optional `exact-reference` Cargo feature exists only for diagnostic comparisons
-with the historical implementation; it is not used by Pages. The existing integer body and
-geometry APIs remain compatibility surfaces in this first migration, not the model for new work.
-
-Read [the numerical policy and migration boundary](docs/numerics.md). The canonical Tower Stability
-scenario uses the bounded floating-state solver and passes its recorded volley acceptance. The separate legacy frame-38 tower regression now passes its original 240-frame acceptance; see
-[the contact-continuation repair](docs/legacy-contact-continuation.md). General dense-contact quality
-remains under issue #193 and [the tower runtime contract](docs/tower-stability.md).
-
-For consumer API selection, current capability status, and integer-tick to persistent-f64 conversion,
-read [the supported world APIs and migration contract](docs/world-api-contract.md). A dependency update
-does not itself migrate a consumer to another world surface.
-For the Rapier reference, external-first selection for new consumers, and migration-evidence policies, see [technical decisions](docs/technical-decisions.md). See also the measured
-[translational maintenance improvements](docs/translational-maintenance.md) for the existing `World` API.
-
-## Fixed-step comparison
-
-The optional `approximate::World` uses persistent f64 state, semi-implicit Euler integration,
-clipped box contact manifolds and bounded warm-started sequential impulses. It does not replace
-`RotatingWorld3d` silently. Returned numerical errors preserve the prior physical boundary through a
-[touched-state transaction](docs/floating-step-transactions.md). Shared capsule/wedge
-[search failures](docs/checked-primitive-sweeps.md) return errors with the original 128-iteration limit. Explicit
-[physical checkpoints](docs/floating-checkpoints.md) preserve continuation on a supported build/target. Open `scenarios/fixed-step/` on Pages to compare direct hits and near
-misses. See [the algorithm, limits and benchmark instructions](docs/fixed-step-approximation.md).
-
-## Current foundation
-
-The existing compatibility foundation includes:
-
-- 3D translational axis-aligned rigid bodies;
-- fixed and dynamic body kinds with stable engine-local IDs;
-- legacy integer public state and translational Q32.32 compatibility timeline; new simulation math uses `f64`;
-- gravity and deterministic body ordering;
-- swept AABB continuous collision detection and time of impact;
-- globally earliest translational collision-event stepping with remaining-time continuation;
-- deterministic overlap stabilization and mass-aware separation;
-- restitution for dynamic/fixed and dynamic/dynamic impacts;
-- bounded translational collision events per step;
-- deterministic swept sweep-and-prune broad-phase candidate generation;
-- snapshot overlap, swept-AABB and ray queries ordered by TOI and body ID;
-- physics-native AABB and sphere compatibility collider geometry with exact integer contact evidence;
-- engine-owned [machine-checkable primitive capabilities and pair ledger](docs/primitive-capabilities.md), with explicit motion restrictions and partial reference coverage;
-- f64 fixed-step capsule geometry with analytic support/distance, capsule inertia and translation CCD, protected by [independent row and actual-work acceptance](docs/capsule-row-acceptance.md);
-- checked [uniform mass products](docs/shape-mass-properties.md) for existing sphere/box/capsule/wedge shapes, including local COM and full inertia tensors;
-- [conservative floating candidate bounds](docs/floating-conservative-bounds.md) with numerical admission guards independent of physical contact slop;
-- read-only f64 primitive overlaps and translation-only shape casts with filters, stable hit ordering, contact witnesses and explicit failure work; see [query limits](docs/floating-shape-queries.md);
-- f64 oriented triangular-prism wedge geometry with six-vertex support, fixed-axis SAT and translation CCD;
-- deterministic fixed-point quaternion orientation and angular-velocity integration;
-- exact box principal inertia ratios and off-center angular impulse evidence;
-- quantized oriented-box vertices and exact SAT contact seeds with stable support masks;
-- conservative rotational sweep bounds for endpoint-bounded translational intervals;
-- engine-native rotating cuboid state over the existing translational `RigidBody` contract;
-- direct deterministic rotating-box free-flight sampling with acceleration-aware conservative sweep bounds;
-- deterministic rotational broad-phase candidate pairs;
-- sampled rotating OBB first-contact search plus strictly-positive clear/re-contact search;
-- shared first-contact and strictly-positive re-contact frontier reconstruction;
-- deterministic OBB/frontier response with coupled simultaneous-contact handling and precision-preserving angular inertia math;
-- deterministic Coulomb-limited tangential OBB friction using fixed-point material coefficients and rotation-aware contact velocity;
-- bounded repeated sampled rotating-event advancement with f64 remaining-time composition by default;
-- a rotating-box world that consumes persistent/resting-contact tails deterministically under an explicit slice bound;
-- integration tests specifically proving fast bodies do not tunnel through thin walls and broad-phase pruning does not change collision truth.
-
-This is the clean ownership replacement for putting physics semantics directly inside `ecs-lab`. The existing ECS experiments remain valuable evidence and a migration source, but ECS entity snapshots are no longer part of the engine contract.
-
-The current `World` simulation deliberately remains AABB-only and translational. Rotational state, OBB contact geometry, rotational broad phase/search/frontiers, frontier response, repeated sampled-event advancement, frictional OBB response, and persistent-tail consumption live in the separate engine-owned rotating-cuboid path and do not change the established translational contract.
-
-The rotational contact path is deliberately sampled. First-contact search can detect and refine contact observed by its coarse grid. Re-contact search adds the state transition needed by repeated events: a pair already touching at the interval start is ignored until a coarse sample proves it clear and a later sample observes contact again. Persistent time-zero contact therefore cannot hide every later event merely by being rediscovered first. This still does not become analytic rotational CCD: a clear interval or contact island that exists wholly between adjacent coarse samples can be missed, and refinement only sharpens an already observed clear/contact bracket.
-
-First-contact and re-contact hits use one shared frontier reconstruction authority. A persistent pair may be ineligible to select the next positive event, but if it is still touching when another pair selects that event, it is included again in the shared frontier and remains visible to simultaneous response.
-
-`advance_repeated_rotating_events` chains those foundations vertically. It resolves the first admitted frontier, reduces the remaining timestep in the selected numerical backend, searches the new segment for a strictly-positive re-contact frontier, resolves it, and repeats under an explicit event bound. Recorded event times are segment-relative. If no later sampled event is found, the low-level function returns the unconsumed tail rather than assuming free flight is safe.
-
-`RotatingWorld3d` owns the next solver layer: it consumes that tail in bounded persistent-contact slices, keeps contact response active across the remaining segment, and fails closed when its configured bound cannot safely consume the requested step. The split is intentional: repeated-event advancement remains reusable evidence about discovered events and remaining time, while world stepping owns frame completion under resting-contact constraints.
+Consumer API, units and query conventions: [world API contract](docs/world-api-contract.md).
+Precision rules: [numerics](docs/numerics.md).
 
 ## Example
 
 ```rust
-use physics_engine::{BodyId, RigidBody, Vec3i, World, WorldConfig};
+use physics_engine::{
+    BodyId,
+    approximate::{Body, Config, Shape, Vector, World},
+};
 
-let mut world = World::new(WorldConfig {
-    gravity: Vec3i::new(0, -10, 0),
-    ..WorldConfig::default()
-});
-
-world.add_body(RigidBody::dynamic(
-    BodyId(1),
-    Vec3i::new(0, 20, 0),
-    Vec3i::new(0, -30, 0),
-    Vec3i::new(1, 1, 1),
-))?;
-world.add_body(RigidBody::fixed(
-    BodyId(2),
-    Vec3i::ZERO,
-    Vec3i::new(100, 1, 100),
-))?;
-
-let report = world.step(1)?;
-# Ok::<(), physics_engine::PhysicsError>(())
+let mut world = World::new(Config::default())?;
+let id = BodyId(1);
+let mut body = Body::new(id, Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 1.0);
+body.velocity = Vector(60.0, 0.0, 0.0);
+world.add_body(body)?;
+world.step(1.0 / 60.0)?;
+# Ok::<(), physics_engine::approximate::Error>(())
 ```
-
-## Parkour world
-
-The Pages catalog includes a larger first-person parkour scenario under `scenarios/parkour/`.
-It contains 48 engine-visible bodies across an elevated course, including six externally driven
-moving platforms/blockers. The demo owns only their deterministic ping-pong routes; the moving
-bodies themselves use the engine's external-motion policy so swept collision detection, relative
-contact velocity, collision response, and authoritative body state stay in Rust.
-
-## Focused physics scenarios
-
-The shared Rust/WASM browser harness also serves CCD Gauntlet, Collision Query Lab,
-Off-Centre Impact, Rotating Box Lab, Compact Stack, and Sleeping World. Each route selects
-one Rust-owned fixture; the query gallery uses the engine's nearest AABB ray query over
-borrowed fixed targets. The General Sandbox, canonical floating-point Tower, and Parkour
-routes remain available. The compact legacy stack is a focused fixture, not the canonical
-tower acceptance. The larger legacy tower regression is covered separately by
-[the contact-continuation repair](docs/legacy-contact-continuation.md).
-
-## Interactive acceptance sandbox
-
-GitHub Pages now builds a small first-person acceptance world through `demo-wasm`. The adapter depends on this crate and exposes only the state needed by the browser consumer; it does not reimplement collision detection or response in JavaScript.
-
-The fixture currently exercises:
-
-- WASD-controlled horizontal movement with engine-owned gravity and collision response;
-- grounded queries and jumping;
-- stacked dynamic boxes and fixed platforms/steps;
-- high-speed projectile bodies fired at a deliberately thin wall so swept-AABB CCD is directly observable;
-- pause, reset and single-step controls for inspecting deterministic behavior;
-- lightweight per-tick collision/broad-phase evidence from the actual `World` step report.
-
-The General Sandbox player remains a rotation-locked box on `RotatingWorld3d`. The original translational
-`World` is a separate compatibility API used by existing games. The f64 fixed-step engine now owns capsule and wedge/ramp collision geometry; wiring those primitives into a dedicated character-controller scenario remains a consumer-facing follow-up rather than renderer-owned collision logic. Rotating OBB friction belongs to `RotatingWorld3d` and is not simulated in JavaScript.
-
-## Contact-triggered parked-body activation
-
-Settled crates remain collision-testable without integrating or re-solving the tower for a nearby
-projectile. The existing swept/analytic collision query admits a contact before the affected dynamic
-island is restored. Same-step ricochets remain covered; unrelated projectile removal preserves sleep.
-The near-miss acceptance matrix checks all 32 crates after every tick, including retirement.
-See [the activation contract and tests](docs/contact-wake.md). This is separate from the ongoing
-floating-state box-contact solver migration and direct-impact tower acceptance.
-
-## Portable performance logs
-
-The default `performance-counters` Cargo feature controls rotating-world reports and analytic
-projectile work counters. Builds with `--no-default-features` return empty diagnostic reports while
-preserving physical state, events and errors. `node scripts/check-instrumentation-neutrality.mjs`
-compares both builds; the canonical fast tier also runs this comparison. Translational `World`
-and floating-state solver instrumentation remain independently instrumented.
-
-The Pages sandbox can record an opt-in interactive performance session. Start the log, reproduce the
-slowdown or frame spike, then stop it to download a bounded JSON file. The session contains raw frame,
-rendering and physics-step timing arrays, scenario settings, the deployed engine revision and WASM hash,
-and browser/device metadata. It is created locally and is never uploaded automatically.
-
-To combine one or more downloaded sessions with the repository's deterministic release benchmarks:
-
-```bash
-bash scripts/collect-performance-log.sh ~/Downloads/physics-browser-session-*.json
-```
-
-The command produces `physics-performance-log-<revision>.tar.gz`. Attach that single archive in a later
-conversation for analysis. It contains:
-
-- `README.md`, `manifest.json`, `provenance.json` and `SHA256SUMS` as the handoff contract;
-- unchanged deterministic sandbox workloads with raw per-step timings and replay hashes;
-- independent character-response and fixed-geometry comparisons;
-- raw release-test command logs, including `/usr/bin/time -v` resource evidence;
-- `physics-wasm.cpuprofile` and `profile-summary.json` for locating sampled WASM/JavaScript hot paths;
-- any supplied interactive browser sessions.
-
-The `Performance Evidence` workflow creates the same portable archive for pull requests. Timings stay
-advisory: shared CI runners and interactive browser sessions are not stable enough for wall-clock pass/fail
-thresholds. Correctness remains fail-closed through the ordinary deterministic tests and replay hashes.
-Because browser exports contain browser and hardware metadata, review them before sharing if those details
-are sensitive.
 
 ## Ownership boundary
 
-```text
-ECS / game / simulation consumer
-          |
-          v
-    physics-engine
-          |
-          +-- body/world state
-          +-- collider geometry
-          +-- broad phase
-          +-- collision detection
-          +-- CCD / time of impact
-          +-- contact response
-          +-- rotational state / inertia
-          +-- OBB contact geometry
-          +-- OBB tangential friction
-          +-- rotational/free-flight sweep bounds
-          +-- direct rotating-box free flight
-          +-- sampled first-contact / re-contact search
-          +-- shared first-contact / re-contact frontier
-          +-- coupled rotating frontier response
-          +-- repeated sampled event advancement
-          +-- floating-point repeated-event time accounting
-          +-- rotating-world persistent-tail solver
-          +-- spatial queries
-```
+Physics Engine owns body/world state, collision detection, CCD, contact response, sleeping and
+spatial/character queries. Domain-neutral geometry kernels come from
+[`rust-kernels`](https://github.com/moritzbrantner/rust-kernels). ECS storage, rendering, input,
+game loops, scenes and gameplay rules stay in consumers; the engine never depends on them.
 
-`physics-engine` must never depend on `ecs-lab`, a renderer, Three.js/WebGPU, or a game runtime.
-
-## Next extraction slices
-
-The existing `ecs-lab` experiments already contain useful evidence for more advanced physics. They should move here incrementally rather than being copied wholesale with ECS ownership attached:
-
-1. fuller contact-manifold constraints beyond the current deterministic reduced contact-point normal/friction response;
-2. physics-native collider attachment plus sphere/sphere and sphere/OBB response and mixed-shape continuous collision detection;
-3. joints/constraints and sleeping/islands;
-4. a thin ECS adapter that maps entity IDs/components to engine bodies;
-5. general-purpose WASM bindings beyond the narrow acceptance-demo adapter.
-6. consumer-oriented character-support queries: capsule/sphere casts where the collider foundation permits them, plus stable support/contact point, normal, support identity and slope evidence for character controllers and procedural animation consumers. The engine supplies physical truth only; IK, skeletal pose, foot locking, pelvis correction, motion warping and animation timing remain outside this repository.
-7. composable analytic/implicit collision geometry: extend the primitive foundation with Boolean shape composition (`union`, `intersection`, and `difference`) so holes, shells and other concave forms can stay engine-owned geometry rather than game logic or triangle-mesh approximations. Start with a generic deterministic reference path, then recognize common compositions such as concentric sphere subtraction (spherical shells) and concentric cylinder subtraction (pipes) as dedicated analytic shapes. Keep collision filtering/gameplay permissions separate from geometric subtraction. Promote primitive-pair and composed-shape specializations when differential/fuzz correctness checks and deterministic operation-count benchmarks prove them worthwhile; the number of specialized kernels is not itself a reason to avoid specialization.
-
-Fast-body CCD must continue to account for motion across the interval rather than rely on frame-end overlap. This does not require ordinary resting boxes to use repeated impact-event stepping. Sampled rotational search must remain explicitly described as sampled until analytic rotational CCD is actually implemented.
-
-## Performance architecture roadmap
-
-Performance work should prefer eliminating or reordering whole stages before optimizing inner-loop math. Each slice should add deterministic operation-count evidence and keep wall-clock timings advisory.
-
-The [2026-09-20 architecture review](docs/architecture-review.md) records the collision fixes, indexed
-ballistic queries, wake-propagation improvements, removed search copies, and remaining ownership limits.
-The [performance ratchet](docs/performance-ratchet.md) protects those improvements with deterministic
-work ceilings, repeated replay checks, and an append-only measurement history enforced by CI.
-
-1. **Response-authority partitioning** — admit physical pairs only when at least one participant is a physics-owned dynamic body; reject fixed↔fixed, external↔fixed, and external↔external pairs before sampled CCD/response, and bypass the entire rigid solver when no body can receive solver mutation.
-2. **Parked-body spatial wake index** — replace awake×parked wake scans with spatial queries from awake sweeps into a retained parked-body index; propagate wake only from newly awakened bodies.
-3. **Generation-driven contact/support graph** — replace full-world fingerprints and repeated sleep/support discovery with pose/layer/membership generations and incrementally maintained contact/support edges.
-4. **Persistent solver/lifecycle partitions** — retain active-solid, overlap-only, external/kinematic, parked, and fixed memberships across frames so normal steps do not rediscover their admission sets. Implemented by the current structural sequence.
-5. **Delta-driven broad-phase bounds** — retain exact sweep bounds and recompute them only for bodies whose pose, velocity, angular state, collision layers, solver participation, or motion authority changed.
-6. **Persistent contact-search scratch** — reuse body indices, prepared geometry, candidate sets, and sampled rows across repeated events when their dependencies remain valid.
-7. **Dense active-category execution matrix** — compact active interaction categories to stable indices and resolve hot pair execution plans by matrix lookup instead of repeated tree-map resolution.
-8. **Accuracy-aware CCD admission** — route analytic projectiles, rotation-locked/linear bodies, sufficiently slow discrete candidates, and genuinely rotating CCD into separate deterministic lanes before sampled rotational search.
-9. **Admission-funnel Performance Evidence** — report the full work funnel (world bodies → active bodies → solver-authority bodies → candidate pairs → sampled/exact tests → contacts → solver/stabilization work) so structural waste is visible before wall-clock profiling.
-10. **Static/dynamic broad-phase separation** — retain immutable fixed-body bounds independently of dynamic sweep horizons and recompute dynamic bounds for the current query only. Implemented by the current structural sequence.
-11. **Incremental contact/support adjacency** — update contact edges only around changed bodies using the retained current broad phase, preserving local adjacency across pose generations instead of rebuilding the whole contact graph. Implemented by the current structural sequence.
-12. **Event-driven sleep reevaluation** — retain a sleep-candidate set driven by changed bodies and active stability deadlines so ordinary steps do not rediscover every dynamic sleep candidate. Implemented by the current structural sequence.
-13. **World-owned persistent search scratch** — retain BodyId indices and reusable response/search scratch across events/frames while invalidating only the dependencies that changed. Implemented for response BodyId indexing; sampled-search scratch can extend the same boundary.
-14. **Spatial ballistic target index** — query projectile sweeps against a retained target BVH instead of checking every prepared rigid target for every ballistic sphere.
-15. **Local topology invalidation** — replace conservative global sleeper wake-up after scene topology changes only when a dependency-complete local wake rule can preserve the existing replay semantics and improve induced-work evidence.
-
-Current structural sequence: persistent solver/lifecycle partitions → static/dynamic broad phase → incremental contact/support adjacency → event-driven sleep reevaluation → persistent response scratch → sampled-search scratch → ballistic target indexing.
-
-
-### Near-term implementation sequence
-
-1. **Floating-point numerical foundation** — f64 time/scaled arithmetic is the default; retire the blanket integer-only constraint. Keep the exact implementation opt-in for diagnostic replay. See `docs/numerics.md` for the remaining compatibility boundary.
-2. **Floating-state box-contact solver** — retain f64 state, persistent multi-point contact manifolds and accumulated normal/friction impulses; warm-start bounded constraint iterations instead of repeatedly solving resting contacts as chronological impacts.
-3. **Tower acceptance through the real Pages API** — free and upright crates, sphere/arrow/rigid projectiles, physical/linear character options, settling, impact, collapse and recovery. `scripts/benchmark-tower.mjs` records this matrix and returns failure while any case remains broken.
-4. **Targeted fast-body CCD** — keep swept/continuous handling for projectiles without making the entire resting stack pay for repeated sampled rotational search.
-5. **Local contact and wake work** — fixed supports must not connect otherwise independent dynamic solver islands; update topology and wake only affected bodies with dependency-complete checks.
-6. **Separate correctness and performance evidence** — preserve stable ordering and within-build replay, validate finite state and physical constraints, and report advisory timings only for comparable completed workloads. Do not raise event budgets or relax failing physical assertions to make evidence green.
-
-## Nix development environment
-
-Linux development can use the repository-local Nix shell:
+## Development
 
 ```sh
-nix develop
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+bash scripts/build-pages.sh
 ```
 
-Nix owns the surrounding CLI environment. The repository's existing `rust-toolchain.toml` remains the Rust-version authority, so the `rustup` proxy supplied by Nix resolves that toolchain instead of duplicating the compiler version in `flake.nix`. Existing Cargo lockfiles and validation commands remain authoritative.
+[AGENTS.md](AGENTS.md) lists the full command set and repository rules.
