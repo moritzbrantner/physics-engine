@@ -114,6 +114,8 @@ pub fn scenario() -> Scenario {
         engine: || Box::new(engine::Sim::new()),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new()),
+        #[cfg(feature = "rapier")]
+        rapier_raw: None,
         check,
     }
 }

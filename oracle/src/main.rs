@@ -26,8 +26,8 @@ fn median(mut v: Vec<f64>) -> f64 {
 fn main() -> ExitCode {
     let mut failed = false;
     println!(
-        "{:<20} {:<12} {:>14} {:>14} {:>7}  result",
-        "scenario", "capability", "engine µs/tick", "rapier µs/tick", "ratio"
+        "{:<20} {:<12} {:>14} {:>14} {:>7} {:>11}  result",
+        "scenario", "capability", "engine µs/tick", "rapier µs/tick", "ratio", "rapier raw"
     );
     for scenario in all() {
         if let Err(error) = scenario.verify() {
@@ -44,15 +44,23 @@ fn main() -> ExitCode {
             rapier.push(time(&scenario, Side::Rapier));
         }
         let (e, r) = (median(engine), median(rapier));
+        // Rapier without the consumer's workarounds, printed for reference only.
+        let raw = scenario.rapier_raw.map_or("-".to_string(), |_| {
+            let samples = (0..SAMPLES)
+                .map(|_| time(&scenario, Side::RapierRaw))
+                .collect();
+            format!("{:.2}", median(samples))
+        });
         let slow = e > r * MARGIN;
         failed |= slow;
         println!(
-            "{:<20} {:<12} {:>14.2} {:>14.2} {:>7.2}  {}",
+            "{:<20} {:<12} {:>14.2} {:>14.2} {:>7.2} {:>11}  {}",
             scenario.name,
             scenario.capabilities,
             e,
             r,
             e / r,
+            raw,
             if slow { "SLOWER THAN RAPIER" } else { "ok" }
         );
     }

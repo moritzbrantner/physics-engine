@@ -12,6 +12,9 @@ consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 Format 3 stores each body's handle, key (or creation serial), the slot generations and the
 next creation serial, so restored ids stay valid and stale ids stay rejected.
 
+Character registrations (`add_character` settings and grounded state) are not part of a
+checkpoint; register the characters again after `restore`.
+
 ## Interface and compatibility
 
 ```rust

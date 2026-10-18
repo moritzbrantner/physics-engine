@@ -66,6 +66,8 @@ use bookkeeping::{Scratch, SweepRow, push, reserve};
 use geometry::GeometryCache;
 pub use geometry::GeometryStats;
 mod ccd;
+mod character;
+pub use character::{CharacterMove, CharacterMoveResult, CharacterSettings};
 mod math;
 mod response;
 use crate::{BodyId, CollisionLayers3d, numeric};
@@ -510,6 +512,7 @@ pub struct World {
     keys: BTreeMap<u64, BodyId>,
     /// Creation serial of the next keyless body (its order after every keyed body).
     next_serial: u64,
+    characters: std::collections::HashMap<BodyId, character::CharacterState>,
     failed_work: Option<FailedStepWork>,
     elapsed: Scalar,
 }
@@ -550,6 +553,7 @@ impl World {
             free: Vec::new(),
             keys: BTreeMap::new(),
             next_serial: 0,
+            characters: std::collections::HashMap::new(),
             failed_work: None,
             elapsed: 0.0,
         })
@@ -695,6 +699,7 @@ impl World {
     }
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let i = self.index(id).ok()?;
+        self.characters.remove(&id);
         self.bookkeeping.ensure_graph(&self.bodies, &self.cache);
         let neighbors = self
             .bookkeeping
@@ -729,6 +734,22 @@ impl World {
                 .sync(&self.bodies, self.bookkeeping.generation);
         }
         Some(removed)
+    }
+    /// Places an external (kinematic) body at `position` without resolving contact.
+    pub fn set_kinematic_position(&mut self, id: BodyId, position: Vector) -> Result<(), Error> {
+        let i = self.index(id)?;
+        if !self.bodies[i].external || !position.finite() || position.abs().max_component() >= 1e12
+        {
+            return Err(Error::InvalidInput);
+        }
+        let body = &mut self.bodies[i];
+        body.position = position;
+        body.cached_bounds = contact::bounds(body);
+        self.bookkeeping.poses_changed();
+        if self.query_tree.current(self.bookkeeping.generation) {
+            self.query_tree.moved(&self.bodies, i);
+        }
+        Ok(())
     }
     pub fn set_velocity(&mut self, id: BodyId, v: Vector) -> Result<(), Error> {
         if !v.finite() || v.abs().max_component() >= 1e12 {
