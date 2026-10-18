@@ -1,6 +1,6 @@
 use physics_engine::approximate::Real;
 use physics_engine::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{
         Body, Config, QueryFailureReason, QueryFilter, QueryPose, Shape, ShapeCast, Vector as V,
         World,
@@ -27,12 +27,7 @@ fn sphere(position: V) -> QueryPose {
 fn sphere_cast_hits_a_thin_wall_across_the_full_interval_with_outward_normal() {
     let mut world = world();
     world
-        .add_body(Body::new(
-            BodyId(7),
-            Shape::Box(V(0.01, 2.0, 2.0)),
-            V::ZERO,
-            0.0,
-        ))
+        .add_body(Body::keyed(7, Shape::Box(V(0.01, 2.0, 2.0)), V::ZERO, 0.0))
         .unwrap();
     let mut hits = Vec::new();
     let stats = world
@@ -44,7 +39,7 @@ fn sphere_cast_hits_a_thin_wall_across_the_full_interval_with_outward_normal() {
         .unwrap();
     assert_eq!(hits.len(), 1);
     let hit = hits[0];
-    assert_eq!(hit.body, BodyId(7));
+    assert_eq!(hit.body, world.body_id(7).unwrap());
     assert!((hit.fraction - 0.4745).abs() < rounding(1e-8, 1.0));
     assert!((hit.distance - 9.49).abs() < rounding(1e-7, 16.0));
     assert!((hit.normal + V::X).length() < rounding(1e-12, 1.0));
@@ -58,9 +53,11 @@ fn sphere_cast_hits_a_thin_wall_across_the_full_interval_with_outward_normal() {
 fn initial_overlap_touching_and_zero_motion_are_explicit_and_queries_do_not_step() {
     let mut world = world();
     world
-        .add_body(Body::new(BodyId(3), Shape::Sphere(0.5), V::ZERO, 1.0))
+        .add_body(Body::keyed(3, Shape::Sphere(0.5), V::ZERO, 1.0))
         .unwrap();
-    world.add_force(BodyId(3), V(2.0, 0.0, 0.0)).unwrap();
+    world
+        .add_force(world.body_id(3).unwrap(), V(2.0, 0.0, 0.0))
+        .unwrap();
     let before = world.bodies().cloned().collect::<Vec<_>>();
     let mut hits = Vec::new();
     world
@@ -87,7 +84,7 @@ fn initial_overlap_touching_and_zero_motion_are_explicit_and_queries_do_not_step
 fn ties_filter_sensors_and_same_id_replacement_use_current_authority() {
     let mut world = world();
     for id in [9, 2] {
-        let mut body = Body::new(BodyId(id), Shape::Sphere(0.5), V::ZERO, 0.0);
+        let mut body = Body::keyed(id, Shape::Sphere(0.5), V::ZERO, 0.0);
         body.layers = CollisionLayers3d::new(2, 1);
         body.sensor = id == 9;
         world.add_body(body).unwrap();
@@ -102,13 +99,13 @@ fn ties_filter_sensors_and_same_id_replacement_use_current_authority() {
     world.cast_shape(cast, filter, &mut hits).unwrap();
     assert_eq!(
         hits.iter().map(|hit| hit.body).collect::<Vec<_>>(),
-        [BodyId(2), BodyId(9)]
+        [world.body_id(2).unwrap(), world.body_id(9).unwrap()]
     );
     world
         .cast_shape(
             cast,
             QueryFilter {
-                exclude: Some(BodyId(2)),
+                exclude: Some(world.body_id(2).unwrap()),
                 ..filter
             },
             &mut hits,
@@ -127,7 +124,7 @@ fn ties_filter_sensors_and_same_id_replacement_use_current_authority() {
         )
         .unwrap();
     assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].body, BodyId(2));
+    assert_eq!(hits[0].body, world.body_id(2).unwrap());
     world
         .cast_shape(
             cast,
@@ -139,14 +136,9 @@ fn ties_filter_sensors_and_same_id_replacement_use_current_authority() {
         )
         .unwrap();
     assert!(hits.is_empty());
-    world.remove_body(BodyId(2)).unwrap();
+    world.remove_body(world.body_id(2).unwrap()).unwrap();
     world
-        .add_body(Body::new(
-            BodyId(2),
-            Shape::Sphere(0.5),
-            V(40.0, 0.0, 0.0),
-            0.0,
-        ))
+        .add_body(Body::keyed(2, Shape::Sphere(0.5), V(40.0, 0.0, 0.0), 0.0))
         .unwrap();
     world
         .cast_shape(cast, QueryFilter::default(), &mut hits)
@@ -158,15 +150,10 @@ fn ties_filter_sensors_and_same_id_replacement_use_current_authority() {
 fn failed_search_clears_partial_hits_and_reports_discarded_work() {
     let mut world = world();
     world
-        .add_body(Body::new(
-            BodyId(1),
-            Shape::Sphere(0.5),
-            V(-4.0, 0.0, 0.0),
-            0.0,
-        ))
+        .add_body(Body::keyed(1, Shape::Sphere(0.5), V(-4.0, 0.0, 0.0), 0.0))
         .unwrap();
     world
-        .add_body(Body::new(BodyId(2), Shape::Sphere(0.5), V::ZERO, 0.0))
+        .add_body(Body::keyed(2, Shape::Sphere(0.5), V::ZERO, 0.0))
         .unwrap();
     let mut cast = ShapeCast::new(sphere(V(-4.0, 0.0, 0.0)), V(8.0, 0.0, 0.0));
     cast.max_iterations = 1;
@@ -177,7 +164,7 @@ fn failed_search_clears_partial_hits_and_reports_discarded_work() {
     assert_eq!(
         failure.reason,
         QueryFailureReason::Search {
-            body: BodyId(2),
+            body: world.body_id(2).unwrap(),
             reason: physics_engine::approximate::SweepFailure::IterationLimit
         }
     );
@@ -200,8 +187,8 @@ fn all_supported_query_shapes_have_thin_obstacle_sweeps_and_rotated_capsule_boun
     for shape in shapes {
         let mut world = world();
         world
-            .add_body(Body::new(
-                BodyId(1),
+            .add_body(Body::keyed(
+                1,
                 Shape::wedge(V(2.0, 2.0, 0.01)),
                 V::ZERO,
                 0.0,
@@ -224,12 +211,7 @@ fn all_supported_query_shapes_have_thin_obstacle_sweeps_and_rotated_capsule_boun
     }
     let mut world = world();
     world
-        .add_body(Body::new(
-            BodyId(1),
-            Shape::Sphere(0.2),
-            V(1.0, 0.0, 0.0),
-            0.0,
-        ))
+        .add_body(Body::keyed(1, Shape::Sphere(0.2), V(1.0, 0.0, 0.0), 0.0))
         .unwrap();
     let mut pose = QueryPose::new(Shape::capsule(1.0, 0.2), V::ZERO);
     pose.orientation = physics_engine::approximate::Quaternion(
@@ -250,12 +232,7 @@ fn all_supported_query_shapes_have_thin_obstacle_sweeps_and_rotated_capsule_boun
 fn ramp_normal_and_support_velocity_come_from_current_physical_geometry() {
     let mut ramp_world = world();
     ramp_world
-        .add_body(Body::new(
-            BodyId(1),
-            Shape::wedge(V(2.0, 2.0, 2.0)),
-            V::ZERO,
-            0.0,
-        ))
+        .add_body(Body::keyed(1, Shape::wedge(V(2.0, 2.0, 2.0)), V::ZERO, 0.0))
         .unwrap();
     let mut hits = Vec::new();
     ramp_world
@@ -277,7 +254,7 @@ fn ramp_normal_and_support_velocity_come_from_current_physical_geometry() {
     assert!((hits[0].target_point.0 + hits[0].target_point.1).abs() < rounding(1e-8, 16.0));
 
     let mut moving_world = world();
-    let mut body = Body::new(BodyId(2), Shape::Sphere(1.0), V::ZERO, 1.0);
+    let mut body = Body::keyed(2, Shape::Sphere(1.0), V::ZERO, 1.0);
     body.velocity = V(3.0, 0.0, 0.0);
     body.angular_velocity = V(0.0, 0.0, 2.0);
     moving_world.add_body(body).unwrap();
@@ -299,9 +276,9 @@ fn invalid_inputs_clear_output_without_touching_pending_commands_or_contact_hist
     use physics_engine::approximate::{CheckpointContext, Quaternion};
     let mut world = world();
     world
-        .add_body(Body::new(BodyId(1), Shape::Sphere(0.5), V::ZERO, 1.0))
+        .add_body(Body::keyed(1, Shape::Sphere(0.5), V::ZERO, 1.0))
         .unwrap();
-    world.add_force(BodyId(1), V::Y).unwrap();
+    world.add_force(world.body_id(1).unwrap(), V::Y).unwrap();
     let context = CheckpointContext {
         build: [7; 32],
         content: [9; 32],
@@ -350,12 +327,7 @@ fn translated_scale_controls_preserve_hits_and_real_near_misses() {
         let center = V(-100.0 * scale, 37.0 * scale, -12.0 * scale);
         let mut world = world();
         world
-            .add_body(Body::new(
-                BodyId(1),
-                Shape::Sphere(0.5 * scale),
-                center,
-                0.0,
-            ))
+            .add_body(Body::keyed(1, Shape::Sphere(0.5 * scale), center, 0.0))
             .unwrap();
         let shape = Shape::capsule(0.5 * scale, 0.5 * scale);
         let pose = QueryPose::new(shape, center + V(-4.0 * scale, 0.0, 0.0));

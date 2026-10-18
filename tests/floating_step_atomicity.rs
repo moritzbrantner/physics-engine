@@ -1,7 +1,4 @@
-use physics_engine::{
-    BodyId,
-    approximate::{Body, Config, Error, Shape, Vector, World},
-};
+use physics_engine::approximate::{Body, Config, Error, Shape, Vector, World};
 use physics_engine::{
     approximate::{REAL_BITS, Real},
     numeric::Scalar,
@@ -16,8 +13,8 @@ fn bodies(world: &World) -> Vec<Body> {
 }
 
 fn failing_body(id: u64, distance: Real, speed: Real) -> Body {
-    let mut body = Body::new(
-        BodyId(id),
+    let mut body = Body::keyed(
+        id,
         Shape::Sphere(0.1),
         Vector(1e12 - distance * EDGE_SCALE, 0.0, 0.0),
         1.0,
@@ -34,11 +31,11 @@ fn failed_step_preserves_physical_state_and_pending_input() {
         ..Config::default()
     })
     .unwrap();
-    let id = BodyId(1);
     let position = Vector(1e12 - EDGE_SCALE, 0.0, 0.0);
-    let mut body = Body::new(id, Shape::Sphere(1.0), position, 1.0);
+    let mut body = Body::keyed(1, Shape::Sphere(1.0), position, 1.0);
     body.velocity = Vector(20.0 * EDGE_SCALE, 0.0, 0.0);
     world.add_body(body).unwrap();
+    let id = world.body_id(1).unwrap();
     world.add_force(id, Vector(1.0, 0.0, 0.0)).unwrap();
     world
         .apply_impulse(id, Vector(1.0, 0.0, 0.0), position)
@@ -46,7 +43,7 @@ fn failed_step_preserves_physical_state_and_pending_input() {
     let before = world.body(id).unwrap().clone();
     assert!(matches!(
         world.step(0.1),
-        Err(Error::NonFiniteState(BodyId(1)))
+        Err(Error::NonFiniteState(found)) if Some(found) == world.body_id(1)
     ));
     assert_eq!(world.body(id), Some(&before));
     assert_eq!(world.elapsed_seconds(), 0.0);
@@ -62,12 +59,18 @@ fn repeated_failures_restore_earlier_bodies_and_do_not_consume_input_twice() {
     })
     .unwrap();
     world
-        .add_body(Body::new(BodyId(1), Shape::Sphere(0.1), Vector::ZERO, 1.0))
+        .add_body(Body::keyed(1, Shape::Sphere(0.1), Vector::ZERO, 1.0))
         .unwrap();
     world
-        .apply_impulse(BodyId(1), Vector(2.0, 0.0, 0.0), Vector::ZERO)
+        .apply_impulse(
+            world.body_id(1).unwrap(),
+            Vector(2.0, 0.0, 0.0),
+            Vector::ZERO,
+        )
         .unwrap();
-    world.add_force(BodyId(1), Vector(3.0, 0.0, 0.0)).unwrap();
+    world
+        .add_force(world.body_id(1).unwrap(), Vector(3.0, 0.0, 0.0))
+        .unwrap();
     world.add_body(failing_body(99, 0.03, 1.0)).unwrap();
     let mut reference = world.clone();
     let before = bodies(&world);
@@ -75,14 +78,16 @@ fn repeated_failures_restore_earlier_bodies_and_do_not_consume_input_twice() {
     for _ in 0..3 {
         assert!(matches!(
             world.step(0.1),
-            Err(Error::NonFiniteState(BodyId(99)))
+            Err(Error::NonFiniteState(found)) if Some(found) == world.body_id(99)
         ));
         assert_eq!(bodies(&world), before);
         assert_eq!(format!("{:?}", world.last_report), report);
         assert_eq!(world.elapsed_seconds(), 0.0);
     }
-    world.remove_body(BodyId(99)).unwrap();
-    reference.remove_body(BodyId(99)).unwrap();
+    world.remove_body(world.body_id(99).unwrap()).unwrap();
+    reference
+        .remove_body(reference.body_id(99).unwrap())
+        .unwrap();
     for _ in 0..20 {
         world.step(0.01).unwrap();
         reference.step(0.01).unwrap();
@@ -102,16 +107,16 @@ fn position_correction_failure_restores_pose_and_new_contact_history() {
         })
         .unwrap();
         world
-            .add_body(Body::new(
-                BodyId(0),
+            .add_body(Body::keyed(
+                0,
                 Shape::Box(Vector(10.0, 20.0, 20.0) * EDGE_SCALE),
                 Vector(1e12 - 8.0 * EDGE_SCALE, 0.0, 0.0),
                 0.0,
             ))
             .unwrap();
         world
-            .add_body(Body::new(
-                BodyId(1),
+            .add_body(Body::keyed(
+                1,
                 Shape::Box(Vector(2.0, 10.0, 10.0) * EDGE_SCALE),
                 Vector(1e12 - EDGE_SCALE, 0.0, 0.0),
                 1.0,
@@ -125,7 +130,7 @@ fn position_correction_failure_restores_pose_and_new_contact_history() {
     let before = bodies(&world);
     assert!(matches!(
         world.step(0.01),
-        Err(Error::NonFiniteState(BodyId(1)))
+        Err(Error::NonFiniteState(found)) if Some(found) == world.body_id(1)
     ));
     assert_eq!(bodies(&world), before);
     assert_eq!(world.elapsed_seconds(), 0.0);
@@ -141,26 +146,29 @@ fn retirement_before_a_later_substep_error_restores_membership_and_identity() {
     })
     .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(0),
+        .add_body(Body::keyed(
+            0,
             Shape::Box(Vector(0.1, 5.0, 5.0)),
             Vector::ZERO,
             0.0,
         ))
         .unwrap();
-    let mut projectile = Body::new(BodyId(1), Shape::Sphere(0.1), Vector(-1.0, 0.0, 0.0), 1.0);
+    let mut projectile = Body::keyed(1, Shape::Sphere(0.1), Vector(-1.0, 0.0, 0.0), 1.0);
     projectile.velocity = Vector(40.0, 0.0, 0.0);
     projectile.ccd = true;
     projectile.retire_on_impact = true;
     world.add_body(projectile).unwrap();
     world.add_body(failing_body(99, 0.075, 1.0)).unwrap();
     let mut reference = world.clone();
-    reference.remove_body(BodyId(99)).unwrap();
-    assert_eq!(reference.step(0.1).unwrap().retired, [BodyId(1)]);
+    reference
+        .remove_body(reference.body_id(99).unwrap())
+        .unwrap();
+    let retiring_1 = reference.body_id(1).unwrap();
+    assert_eq!(reference.step(0.1).unwrap().retired, [retiring_1]);
     let before = bodies(&world);
     assert!(matches!(
         world.step(0.1),
-        Err(Error::NonFiniteState(BodyId(99)))
+        Err(Error::NonFiniteState(found)) if Some(found) == world.body_id(99)
     ));
     assert_eq!(bodies(&world), before);
     assert_eq!(world.last_step_transaction().retired_bodies, 1);
@@ -168,8 +176,9 @@ fn retirement_before_a_later_substep_error_restores_membership_and_identity() {
         world.last_failed_step_work().unwrap().retirement_attempts,
         1
     );
-    world.remove_body(BodyId(99)).unwrap();
-    assert_eq!(world.step(0.1).unwrap().retired, [BodyId(1)]);
+    world.remove_body(world.body_id(99).unwrap()).unwrap();
+    let retiring_2 = world.body_id(1).unwrap();
+    assert_eq!(world.step(0.1).unwrap().retired, [retiring_2]);
     assert_eq!(bodies(&world), bodies(&reference));
 }
 
@@ -183,8 +192,8 @@ fn sleeping_world(count: u64) -> World {
     })
     .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(0),
+        .add_body(Body::keyed(
+            0,
             Shape::Box(Vector(500.0, 0.1, 10.0)),
             Vector(0.0, -0.1, 0.0),
             0.0,
@@ -192,8 +201,8 @@ fn sleeping_world(count: u64) -> World {
         .unwrap();
     for index in 0..count {
         world
-            .add_body(Body::new(
-                BodyId(index + 1),
+            .add_body(Body::keyed(
+                index + 1,
                 Shape::Box(Vector(0.5, 0.5, 0.5)),
                 Vector(index as Real * 3.0, 0.5, 0.0),
                 1.0,
@@ -215,22 +224,22 @@ fn sleeping_world(count: u64) -> World {
 #[test]
 fn failed_wake_restores_sleep_timers_warm_starts_and_changed_timestep_continuation() {
     let mut world = sleeping_world(1);
-    assert!(world.has_support(BodyId(1)));
-    let mut projectile = Body::new(BodyId(2), Shape::Sphere(0.2), Vector(-2.0, 0.5, 0.0), 1.0);
+    assert!(world.has_support(world.body_id(1).unwrap()));
+    let mut projectile = Body::keyed(2, Shape::Sphere(0.2), Vector(-2.0, 0.5, 0.0), 1.0);
     projectile.velocity = Vector(20.0, 0.0, 0.0);
     projectile.ccd = true;
     world.add_body(projectile).unwrap();
     world.add_body(failing_body(99, 0.075, 1.0)).unwrap();
     let mut reference = world.clone();
     let mut control = world.clone();
-    control.remove_body(BodyId(99)).unwrap();
+    control.remove_body(control.body_id(99).unwrap()).unwrap();
     assert!(control.step(0.1).unwrap().woken_bodies > 0);
     let before = bodies(&world);
     let elapsed = world.elapsed_seconds();
     let prior_report = format!("{:?}", world.last_report);
     assert!(matches!(
         world.step(0.1),
-        Err(Error::NonFiniteState(BodyId(99)))
+        Err(Error::NonFiniteState(found)) if Some(found) == world.body_id(99)
     ));
     assert_eq!(bodies(&world), before);
     assert_eq!(world.elapsed_seconds(), elapsed);
@@ -241,8 +250,10 @@ fn failed_wake_restores_sleep_timers_warm_starts_and_changed_timestep_continuati
     assert!(work.geometry.sweep_queries > 0);
     assert!(work.constraint_visits > 0);
     assert!(work.transaction.rolled_back);
-    world.remove_body(BodyId(99)).unwrap();
-    reference.remove_body(BodyId(99)).unwrap();
+    world.remove_body(world.body_id(99).unwrap()).unwrap();
+    reference
+        .remove_body(reference.body_id(99).unwrap())
+        .unwrap();
     for tick in 0..100 {
         let dt = if tick % 2 == 0 { 0.02 } else { 0.01 };
         let actual = world.step(dt as Scalar).unwrap();
@@ -259,14 +270,14 @@ fn local_step_does_not_journal_unrelated_sleepers() {
     let mut world = sleeping_world(128);
     let before = bodies(&world);
     world
-        .set_velocity(BodyId(1), Vector(0.2, 0.0, 0.0))
+        .set_velocity(world.body_id(1).unwrap(), Vector(0.2, 0.0, 0.0))
         .unwrap();
     world.step(0.01).unwrap();
     let work = world.last_step_transaction();
     assert_eq!(work.journaled_bodies, 2); // one responding box and the floor
     assert_eq!(work.journaled_pairs, 1);
     assert!(!work.rolled_back);
-    for body in before.iter().filter(|b| b.id.0 > 1) {
+    for body in before.iter().filter(|b| b.key.unwrap() > 1) {
         assert_eq!(world.body(body.id), Some(body));
     }
 }
@@ -295,15 +306,15 @@ fn quiet_and_invalid_attempts_do_no_journaling_and_scratch_release_preserves_con
     }
     world.release_transaction_scratch();
     assert_eq!(world.last_step_transaction().vector_capacity_bytes, 0);
-    assert!(world.has_support(BodyId(1)));
+    assert!(world.has_support(world.body_id(1).unwrap()));
     for step in 0..32 {
         if step == 0 || step == 16 {
             let speed = if step == 0 { 0.2 } else { -0.2 };
             world
-                .set_velocity(BodyId(1), Vector(speed, 0.0, 0.0))
+                .set_velocity(world.body_id(1).unwrap(), Vector(speed, 0.0, 0.0))
                 .unwrap();
             reference
-                .set_velocity(BodyId(1), Vector(speed, 0.0, 0.0))
+                .set_velocity(reference.body_id(1).unwrap(), Vector(speed, 0.0, 0.0))
                 .unwrap();
         }
         world.step(0.01).unwrap();

@@ -283,7 +283,7 @@ impl World {
 mod tests {
     use super::*;
     use crate::{
-        BodyId, CollisionLayers3d,
+        CollisionLayers3d,
         approximate::{Body, Config, Quaternion, Shape, Vector},
     };
 
@@ -293,8 +293,8 @@ mod tests {
             ..Config::default()
         })
         .unwrap();
-        w.add_body(Body::new(
-            BodyId(1),
+        w.add_body(Body::fixture(
+            1,
             Shape::Box(Vector(50.0, 1.0, 50.0)),
             Vector(0.0, -1.0, 0.0),
             0.0,
@@ -305,8 +305,8 @@ mod tests {
     #[test]
     fn residual_overlap_correction_does_not_add_velocity_or_advance_time() {
         let mut w = fixture();
-        let mut b = Body::new(
-            BodyId(2),
+        let mut b = Body::fixture(
+            2,
             Shape::Box(Vector(2.0, 1.0, 1.0)),
             Vector(0.0, 0.6, 0.0),
             3.0,
@@ -340,16 +340,11 @@ mod tests {
         })
         .unwrap();
         let q = Quaternion(0.0, 0.0, (0.25 as Real).sin(), (0.25 as Real).cos());
-        let mut fixed = Body::new(
-            BodyId(1),
-            Shape::Box(Vector(30.0, 1.0, 30.0)),
-            Vector::ZERO,
-            0.0,
-        );
+        let mut fixed = Body::fixture(1, Shape::Box(Vector(30.0, 1.0, 30.0)), Vector::ZERO, 0.0);
         fixed.orientation = q;
         let n = q.rotate(Vector::Y);
         w.add_body(fixed).unwrap();
-        let mut b = Body::new(BodyId(2), Shape::Box(Vector(1.0, 1.0, 1.0)), n * 1.5, 1.0);
+        let mut b = Body::fixture(2, Shape::Box(Vector(1.0, 1.0, 1.0)), n * 1.5, 1.0);
         b.orientation = q;
         w.add_body(b).unwrap();
         let old = w.bodies[1].position;
@@ -367,8 +362,8 @@ mod tests {
     fn no_correction_for_sensors_disabled_layers_sleepers_or_external_authority() {
         for mode in 0..4 {
             let mut w = fixture();
-            let mut b = Body::new(
-                BodyId(2),
+            let mut b = Body::fixture(
+                2,
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
                 Vector(0.0, 0.5, 0.0),
                 1.0,
@@ -393,8 +388,8 @@ mod tests {
     #[test]
     fn separation_and_default_mode_do_not_apply_positional_work() {
         let mut w = fixture();
-        w.add_body(Body::new(
-            BodyId(2),
+        w.add_body(Body::fixture(
+            2,
             Shape::Sphere(1.0),
             Vector(0.0, 4.0, 0.0),
             1.0,
@@ -430,8 +425,8 @@ mod tests {
         .unwrap();
         for (id, x, mass) in [(1, 0.0, 1.0), (2, 2.0, 3.0)] {
             world
-                .add_body(Body::new(
-                    BodyId(id),
+                .add_body(Body::fixture(
+                    id,
                     Shape::Sphere(1.0),
                     Vector(x, 0.0, 0.0),
                     mass,
@@ -475,7 +470,7 @@ mod tests {
     #[test]
     fn material_position_correction_resets_quiet_time_before_island_sleep() {
         let mut w = fixture();
-        let mut b = Body::new(BodyId(2), Shape::Sphere(1.0), Vector(0.0, 0.5, 0.0), 1.0);
+        let mut b = Body::fixture(2, Shape::Sphere(1.0), Vector(0.0, 0.5, 0.0), 1.0);
         b.quiet_time = 1.0;
         w.add_body(b).unwrap();
         w.correct_positions(1.0 / 240.0, &mut PositionReport::default())

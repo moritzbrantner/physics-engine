@@ -1,9 +1,6 @@
 //! Natural external-support parking with default-policy restart and dependency loss.
-use physics_engine::{
-    BodyId,
-    approximate::{
-        Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
-    },
+use physics_engine::approximate::{
+    Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -58,8 +55,8 @@ fn initial(case: Case, ids: [u64; 2], substeps: u8, external: bool) -> World {
     })
     .unwrap();
     let shared = matches!(case, Case::SharedSideContact);
-    let mut floor = Body::new(
-        BodyId(ids[0]),
+    let mut floor = Body::keyed(
+        ids[0],
         Shape::Box(V(if shared { 12.0 } else { 4.0 }, 0.5, 4.0)),
         V::ZERO,
         if external { 1.0 } else { 0.0 },
@@ -67,8 +64,8 @@ fn initial(case: Case, ids: [u64; 2], substeps: u8, external: bool) -> World {
     floor.external = external;
     w.add_body(floor).unwrap();
     if !shared {
-        w.add_body(Body::new(
-            BodyId(200),
+        w.add_body(Body::keyed(
+            200,
             Shape::Box(V(4.0, 0.5, 4.0)),
             V(20.0, -0.5, 20.0),
             0.0,
@@ -86,7 +83,7 @@ fn initial(case: Case, ids: [u64; 2], substeps: u8, external: bool) -> World {
             },
         ),
     ] {
-        let mut b = Body::new(BodyId(id), Shape::Sphere(1.0), p, 2.0);
+        let mut b = Body::keyed(id, Shape::Sphere(1.0), p, 2.0);
         if shared {
             b.friction = 0.0;
         } // Floor .6 / wall0 under maximum coefficient mixing.
@@ -101,8 +98,16 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> (World, Real) {
     for _ in 0..32 {
         w.step(1.0 / 60.0).unwrap();
         fixed.step(1.0 / 60.0).unwrap();
-        assert_eq!(w.body(BodyId(ids[1])), fixed.body(BodyId(ids[1])));
-        if w.body(BodyId(ids[1])).unwrap().is_sleeping() && parked.is_none() {
+        assert_eq!(
+            w.body_id(ids[1]).and_then(|id| w.body(id)),
+            fixed.body(w.body_id(ids[1]).unwrap())
+        );
+        if w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+            && parked.is_none()
+        {
             parked = Some(w.elapsed_seconds());
         }
     }
@@ -112,14 +117,30 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> (World, Real) {
     let time_tolerance = 32.0 * Real::EPSILON as Scalar * parked.max(sleep_seconds);
     assert!(parked + time_tolerance >= sleep_seconds);
     assert!(parked <= sleep_seconds + 1.0 / 60.0 + 1e-12);
-    assert!(w.has_support(BodyId(ids[1])));
-    assert!(w.body(BodyId(40)).unwrap().is_sleeping());
-    w.set_velocity(BodyId(ids[0]), case.command()).unwrap();
-    assert!(w.body(BodyId(ids[1])).unwrap().is_sleeping());
+    assert!(w.has_support(w.body_id(ids[1]).unwrap()));
+    assert!(
+        w.body_id(40)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
+    w.set_velocity(w.body_id(ids[0]).unwrap(), case.command())
+        .unwrap();
+    assert!(
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     if case.removed() {
-        w.remove_body(BodyId(ids[0])).unwrap();
-        assert!(!w.body(BodyId(ids[1])).unwrap().is_sleeping());
-        assert!(!w.has_support(BodyId(ids[1])));
+        w.remove_body(w.body_id(ids[0]).unwrap()).unwrap();
+        assert!(
+            !w.body_id(ids[1])
+                .and_then(|id| w.body(id))
+                .unwrap()
+                .is_sleeping()
+        );
+        assert!(!w.has_support(w.body_id(ids[1]).unwrap()));
     }
     if matches!(
         case,
@@ -138,21 +159,31 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> (World, Real) {
             ),
             _ => (Shape::Sphere(1.0), V(100.0, 100.0, 100.0), V::ZERO),
         };
-        let mut b = Body::new(BodyId(20), shape, p, 1.0);
+        let mut b = Body::keyed(20, shape, p, 1.0);
         b.external = true;
         b.friction = 0.0;
         w.add_body(b).unwrap();
-        w.set_velocity(BodyId(20), v).unwrap();
+        w.set_velocity(w.body_id(20).unwrap(), v).unwrap();
         if matches!(case, Case::UnrelatedRemoval) {
-            w.remove_body(BodyId(20)).unwrap();
+            w.remove_body(w.body_id(20).unwrap()).unwrap();
         }
-        assert!(w.body(BodyId(ids[1])).unwrap().is_sleeping());
+        assert!(
+            w.body_id(ids[1])
+                .and_then(|id| w.body(id))
+                .unwrap()
+                .is_sleeping()
+        );
     }
-    assert!(w.body(BodyId(40)).unwrap().is_sleeping());
+    assert!(
+        w.body_id(40)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     (w, parked as Real)
 }
 fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
-    let b = w.body(BodyId(ids[1])).unwrap();
+    let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
     let t = H * n as Real;
     let fall = if matches!(case, Case::HorizontalDeparture) {
         n - 1
@@ -197,12 +228,12 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     assert_eq!(b.is_sleeping(), case.sleeping());
     assert_eq!(b.mass, 2.0);
     assert!(b.position.finite() && b.velocity.finite() && b.angular_velocity.finite());
-    if let Some(floor) = w.body(BodyId(ids[0])) {
+    if let Some(floor) = w.body_id(ids[0]).and_then(|id| w.body(id)) {
         assert!(floor.external);
         assert_eq!(floor.velocity, case.command());
         assert!((floor.position - case.command() * t).length() <= rounding(1e-10, 8.0));
     }
-    let neighbor = w.body(BodyId(40)).unwrap();
+    let neighbor = w.body_id(40).and_then(|id| w.body(id)).unwrap();
     assert!(neighbor.is_sleeping());
     assert_eq!(
         neighbor.position,
@@ -213,7 +244,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
         }
     );
     assert_eq!(neighbor.velocity, V::ZERO);
-    if let Some(driver) = w.body(BodyId(20)) {
+    if let Some(driver) = w.body_id(20).and_then(|id| w.body(id)) {
         let start = if matches!(case, Case::NearMiss) {
             V(0.0, -0.015, 0.0)
         } else {
@@ -269,7 +300,7 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 21] {
                 assert_eq!(r.contact_points, 0);
                 assert_eq!(r.convergence.constraint_visits, 0);
             }
-            let b = w.body(BodyId(ids[1])).unwrap();
+            let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
             let energy =
                 b.velocity.dot(b.velocity) + 0.4 * b.angular_velocity.dot(b.angular_velocity);
             let work = match case {
@@ -301,7 +332,12 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 21] {
                 (w.elapsed_seconds() - before) as Real,
                 0.0,
                 Real::from(u8::from(b.is_sleeping())),
-                Real::from(u8::from(w.body(BodyId(40)).unwrap().is_sleeping())),
+                Real::from(u8::from(
+                    w.body_id(40)
+                        .and_then(|id| w.body(id))
+                        .unwrap()
+                        .is_sleeping(),
+                )),
                 parked,
             ]);
         }
@@ -310,7 +346,7 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 21] {
         case,
         Case::DownwardDeparture | Case::HorizontalDeparture | Case::Removal
     ) {
-        assert!(!w.has_support(BodyId(ids[1])));
+        assert!(!w.has_support(w.body_id(ids[1]).unwrap()));
     }
     assert!((w.elapsed_seconds() - before - 5.0 * dt as Scalar).abs() <= 1e-12);
     let mut values = first.unwrap();

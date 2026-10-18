@@ -4,7 +4,9 @@
 //! still run SAT and clipping, but unchanged orientations reuse frames and support projections.
 //! Retained ordinary geometry has no velocity/timestep key. Moving fixed-box interval manifolds
 //! use fresh motion and never retain pair results; CCD also always runs fresh after a miss.
-use super::{Body, BodyId, Quaternion, Real, Shape, SweepFailure, Vector, contact, primitive};
+use super::{
+    Body, BodyId, Order, Quaternion, Real, Shape, SweepFailure, Vector, contact, primitive,
+};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -111,7 +113,7 @@ struct Pair {
 #[derive(Clone, Debug, Default)]
 pub(super) struct GeometryCache {
     frames: Vec<Option<Frame>>,
-    pairs: BTreeMap<(BodyId, BodyId), Pair>,
+    pairs: BTreeMap<(Order, Order), Pair>,
     clipping: contact::ClipScratch,
     epoch: u64,
     retained_bytes: usize,
@@ -253,7 +255,7 @@ impl GeometryCache {
         work: &mut GeometryStats,
     ) -> Option<contact::Manifold> {
         let [a, b] = bodies;
-        let id = (a.id, b.id);
+        let id = (a.order, b.order);
         let keys = [ShapeKey::new(a), ShapeKey::new(b)];
         let positions = [vector_bits(a.position), vector_bits(b.position)];
         work.current_queries += 1;
@@ -330,7 +332,7 @@ impl GeometryCache {
         self.retained_bytes = self.measure_retained_bytes();
         work.retained_bytes = self.retained_bytes as u64;
     }
-    pub fn remove(&mut self, id: BodyId) {
+    pub fn remove(&mut self, id: Order) {
         self.pairs.retain(|&(a, b), _| a != id && b != id);
         // Body indices may all move, including remove/reinsert with the same length and id.
         self.frames.clear();
@@ -346,7 +348,7 @@ impl GeometryCache {
                 .pairs
                 .values()
                 .map(|p| {
-                    std::mem::size_of::<((BodyId, BodyId), Pair)>()
+                    std::mem::size_of::<((Order, Order), Pair)>()
                         + p.projections.retained_bytes()
                         + p.current
                             .as_ref()

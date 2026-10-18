@@ -7,9 +7,8 @@ use physics_engine::{
 };
 use std::cell::RefCell;
 
-const PLAYER_ID: BodyId = BodyId(1);
+const PLAYER_KEY: u64 = 1;
 const CRATE_ID_START: u64 = 100;
-const PROJECTILE_ID_START: u64 = 1_000;
 const MAX_PROJECTILES: usize = 48;
 /// Floats per snapshot row: role, position (3), half extents (3), orientation (4).
 pub const SNAPSHOT_STRIDE: usize = 11;
@@ -23,7 +22,6 @@ enum Projectile {
 
 struct Lab {
     world: World,
-    next_id: u64,
     kind: Projectile,
     projectiles: Vec<(BodyId, Projectile)>,
     snapshot: Vec<f64>,
@@ -35,8 +33,8 @@ fn with_lab<T>(default: T, f: impl FnOnce(&mut Lab) -> T) -> T {
     LAB.with(|lab| lab.borrow_mut().as_mut().map_or(default, f))
 }
 
-fn fixed(id: u64, position: Vector, half: Vector) -> Body {
-    Body::new(BodyId(id), Shape::Box(half), position, 0.0)
+fn fixed(key: u64, position: Vector, half: Vector) -> Body {
+    Body::keyed(key, Shape::Box(half), position, 0.0)
 }
 
 /// Builds the 32-crate tower in a walled room with a rotation-locked player box.
@@ -59,8 +57,8 @@ pub fn tower(upright_crates: bool) -> Result<World, physics_engine::approximate:
     for (id, position, half) in room {
         world.add_body(fixed(id, position, half))?;
     }
-    let mut player = Body::new(
-        PLAYER_ID,
+    let mut player = Body::keyed(
+        PLAYER_KEY,
         Shape::Box(Vector(12.0, 20.0, 12.0)),
         Vector(0.0, 38.0, 320.0),
         4.0,
@@ -76,12 +74,7 @@ pub fn tower(upright_crates: bool) -> Result<World, physics_engine::approximate:
                     18.0 + level as Real * 36.0,
                     82.0 + depth as Real * 36.0,
                 );
-                let mut body = Body::new(
-                    BodyId(id),
-                    Shape::Box(Vector(18.0, 18.0, 18.0)),
-                    position,
-                    2.0,
-                );
+                let mut body = Body::keyed(id, Shape::Box(Vector(18.0, 18.0, 18.0)), position, 2.0);
                 body.friction = 1.0;
                 body.rotation_locked = upright_crates;
                 world.add_body(body)?;
@@ -100,7 +93,6 @@ pub extern "C" fn lab_reset(upright: i32) -> i32 {
             LAB.with(|lab| {
                 *lab.borrow_mut() = Some(Lab {
                     world,
-                    next_id: PROJECTILE_ID_START,
                     kind: Projectile::Arrow,
                     projectiles: Vec::new(),
                     snapshot: Vec::new(),
@@ -135,7 +127,11 @@ pub extern "C" fn lab_shoot(x: f32, y: f32, z: f32) -> i32 {
         if !direction.finite() || direction == Vector::ZERO {
             return -1;
         }
-        let Some(player) = lab.world.body(PLAYER_ID) else {
+        let Some(player) = lab
+            .world
+            .body_id(PLAYER_KEY)
+            .and_then(|id| lab.world.body(id))
+        else {
             return -1;
         };
         let unit = direction.unit();
@@ -144,9 +140,7 @@ pub extern "C" fn lab_shoot(x: f32, y: f32, z: f32) -> i32 {
             Projectile::Arrow => Shape::Box(Vector(2.0, 2.0, 12.0)),
             Projectile::Rigid => Shape::Box(Vector(3.0, 3.0, 3.0)),
         };
-        let id = BodyId(lab.next_id);
         let mut body = Body::new(
-            id,
             shape,
             player.position + Vector(0.0, 12.0, 0.0) + unit * 40.0,
             1.0,
@@ -166,16 +160,15 @@ pub extern "C" fn lab_shoot(x: f32, y: f32, z: f32) -> i32 {
             };
             body.rotation_locked = true;
         }
-        if lab.world.add_body(body).is_err() {
+        let Ok(id) = lab.world.add_body(body) else {
             return -1;
-        }
-        lab.next_id += 1;
+        };
         lab.projectiles.push((id, lab.kind));
         if lab.projectiles.len() > MAX_PROJECTILES {
             let (oldest, _) = lab.projectiles.remove(0);
             lab.world.remove_body(oldest);
         }
-        id.0 as i32
+        id.slot() as i32
     })
 }
 
@@ -208,9 +201,9 @@ pub extern "C" fn lab_refresh_snapshot() -> usize {
     with_lab(0, |lab| {
         lab.snapshot.clear();
         for b in lab.world.bodies() {
-            let role = if b.id == PLAYER_ID {
+            let role = if b.key == Some(PLAYER_KEY) {
                 1.0
-            } else if b.id.0 >= PROJECTILE_ID_START {
+            } else if b.key.is_none() {
                 match lab
                     .projectiles
                     .iter()
@@ -221,7 +214,7 @@ pub extern "C" fn lab_refresh_snapshot() -> usize {
                     Some(Projectile::Arrow) => 4.0,
                     _ => 5.0,
                 }
-            } else if b.id.0 >= CRATE_ID_START {
+            } else if b.key.is_some_and(|k| k >= CRATE_ID_START) {
                 2.0
             } else {
                 0.0
@@ -261,7 +254,7 @@ pub extern "C" fn lab_awake_crates() -> u32 {
     with_lab(0, |lab| {
         lab.world
             .bodies()
-            .filter(|b| (CRATE_ID_START..PROJECTILE_ID_START).contains(&b.id.0) && !b.is_sleeping())
+            .filter(|b| b.key.is_some_and(|k| k >= CRATE_ID_START) && !b.is_sleeping())
             .count() as u32
     })
 }
@@ -278,7 +271,7 @@ mod tests {
         }
         for kind in 0..3 {
             assert_eq!(lab_set_projectile(kind), 0);
-            assert!(lab_shoot(0.0, 0.0, -1.0) >= PROJECTILE_ID_START as i32);
+            assert!(lab_shoot(0.0, 0.0, -1.0) >= 0);
         }
         for _ in 0..240 {
             assert_eq!(lab_step(), 0);

@@ -1,7 +1,6 @@
 //! Analytic public-API controls shared by native tests and the existing WASM driver.
-use physics_engine::{
-    BodyId,
-    approximate::{Body, CheckpointContext, Config, Error, Shape, Vector as V, World},
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Error, Shape, Vector as V, World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -34,7 +33,7 @@ fn world(gravity: V, warm_start: bool) -> World {
 }
 
 fn sphere(id: u64, position: V, mass: Real, velocity: V) -> Body {
-    let mut body = Body::new(BodyId(id), Shape::Sphere(1.0), position, mass);
+    let mut body = Body::keyed(id, Shape::Sphere(1.0), position, mass);
     body.velocity = velocity;
     body.friction = 0.0;
     body.rotation_locked = true;
@@ -70,8 +69,8 @@ pub fn restitution_combination_threshold_and_mass_scaling() {
                     w.add_body(b).unwrap();
                     w.add_body(a).unwrap();
                     step(&mut w);
-                    let a = w.body(BodyId(left_id)).unwrap();
-                    let b = w.body(BodyId(right_id)).unwrap();
+                    let a = w.body_id(left_id).and_then(|id| w.body(id)).unwrap();
+                    let b = w.body_id(right_id).and_then(|id| w.body(id)).unwrap();
                     // Independent one-dimensional impulse/momentum solution.
                     let e = if speed > 1.0 {
                         left_e.min(right_e)
@@ -112,9 +111,13 @@ pub fn fixed_target_restitution_and_speculative_contact() {
             moving.ccd = true;
             w.add_body(fixed).unwrap();
             w.add_body(moving).unwrap();
-            let fixed = w.body(BodyId(fixed_id)).unwrap().clone();
+            let fixed = w
+                .body_id(fixed_id)
+                .and_then(|id| w.body(id))
+                .unwrap()
+                .clone();
             step(&mut w);
-            let moving = w.body(BodyId(dynamic_id)).unwrap();
+            let moving = w.body_id(dynamic_id).and_then(|id| w.body(id)).unwrap();
             // A separated current (within-slop) speculative contact permits arrival, never
             // premature restitution. A swept CCD impact beyond the slop responds at its time of
             // impact with the combined restitution and travels the remaining substep.
@@ -127,7 +130,7 @@ pub fn fixed_target_restitution_and_speculative_contact() {
                 let impact = gap / 4.0;
                 close(moving.position.0, -1.0 + gap - 2.0 * (DT - impact));
             }
-            assert_eq!(w.body(BodyId(fixed_id)), Some(&fixed));
+            assert_eq!(w.body_id(fixed_id).and_then(|id| w.body(id)), Some(&fixed));
         }
     }
 }
@@ -141,26 +144,38 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
             w.add_body(body).unwrap();
         }
         step(&mut w); // Establish a touching pair with zero impulse.
-        w.set_velocity(BodyId(1), V::X * 2.0).unwrap();
-        w.set_velocity(BodyId(2), -V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(1).unwrap(), V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(2).unwrap(), -V::X * 2.0).unwrap();
         step(&mut w);
-        assert_eq!(w.body(BodyId(1)).unwrap().velocity, V::ZERO);
-        assert_eq!(w.body(BodyId(2)).unwrap().velocity, V::ZERO);
+        assert_eq!(
+            w.body_id(1).and_then(|id| w.body(id)).unwrap().velocity,
+            V::ZERO
+        );
+        assert_eq!(
+            w.body_id(2).and_then(|id| w.body(id)).unwrap().velocity,
+            V::ZERO
+        );
 
         // An actual clear interval removes history; the next contact can bounce again.
-        w.set_velocity(BodyId(1), -V::X * 2.0).unwrap();
-        w.set_velocity(BodyId(2), V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(1).unwrap(), -V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(2).unwrap(), V::X * 2.0).unwrap();
         for _ in 0..3 {
             w.step(DT as Scalar).unwrap();
         }
-        w.set_velocity(BodyId(1), V::X * 2.0).unwrap();
-        w.set_velocity(BodyId(2), -V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(1).unwrap(), V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(2).unwrap(), -V::X * 2.0).unwrap();
         w.step(DT as Scalar).unwrap();
         w.step(DT as Scalar).unwrap();
         w.step(DT as Scalar).unwrap();
         step(&mut w);
-        close(w.body(BodyId(1)).unwrap().velocity.0, -2.0);
-        close(w.body(BodyId(2)).unwrap().velocity.0, 2.0);
+        close(
+            w.body_id(1).and_then(|id| w.body(id)).unwrap().velocity.0,
+            -2.0,
+        );
+        close(
+            w.body_id(2).and_then(|id| w.body(id)).unwrap().velocity.0,
+            2.0,
+        );
 
         // Same-ID replacement removes the old pair's restitution history as well.
         let mut w = world(V::ZERO, warm_start);
@@ -170,13 +185,19 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
             w.add_body(body).unwrap();
         }
         step(&mut w);
-        let removed = w.remove_body(BodyId(1)).unwrap();
+        let removed = w.remove_body(w.body_id(1).unwrap()).unwrap();
         w.add_body(removed).unwrap();
-        w.set_velocity(BodyId(1), V::X * 2.0).unwrap();
-        w.set_velocity(BodyId(2), -V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(1).unwrap(), V::X * 2.0).unwrap();
+        w.set_velocity(w.body_id(2).unwrap(), -V::X * 2.0).unwrap();
         step(&mut w);
-        close(w.body(BodyId(1)).unwrap().velocity.0, -2.0);
-        close(w.body(BodyId(2)).unwrap().velocity.0, 2.0);
+        close(
+            w.body_id(1).and_then(|id| w.body(id)).unwrap().velocity.0,
+            -2.0,
+        );
+        close(
+            w.body_id(2).and_then(|id| w.body(id)).unwrap().velocity.0,
+            2.0,
+        );
     }
 }
 
@@ -189,7 +210,7 @@ fn sliding_sphere(
     ids: [u64; 2],
 ) -> World {
     let mut w = world(-V::Y * 10.0, true);
-    let mut floor = Body::new(BodyId(ids[0]), Shape::Box(V(100.0, 1.0, 100.0)), -V::Y, 0.0);
+    let mut floor = Body::keyed(ids[0], Shape::Box(V(100.0, 1.0, 100.0)), -V::Y, 0.0);
     floor.friction = friction[0];
     let mut body = sphere(ids[1], V::Y, mass, velocity);
     body.friction = friction[1];
@@ -207,7 +228,7 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
             for friction in [[0.0, 0.0], [0.2, 0.8], [0.8, 0.2], [0.0, 0.8]] {
                 let initial = V(3.0, 0.0, 4.0);
                 let w = sliding_sphere(mass, friction, initial, true, false, ids);
-                let body = w.body(BodyId(ids[1])).unwrap();
+                let body = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
                 let mu = friction[0].max(friction[1]);
                 let speed = initial.length() - mu * 10.0 * DT;
                 close(body.velocity.0, speed * 0.6);
@@ -219,9 +240,20 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
             }
             let initial = V::X * 0.02;
             let locked = sliding_sphere(mass, [0.8, 0.0], initial, true, false, ids);
-            close(locked.body(BodyId(ids[1])).unwrap().velocity.0, 0.0);
+            close(
+                locked
+                    .body_id(ids[1])
+                    .and_then(|id| locked.body(id))
+                    .unwrap()
+                    .velocity
+                    .0,
+                0.0,
+            );
             let rolling = sliding_sphere(mass, [0.8, 0.0], initial, false, false, ids);
-            let body = rolling.body(BodyId(ids[1])).unwrap();
+            let body = rolling
+                .body_id(ids[1])
+                .and_then(|id| rolling.body(id))
+                .unwrap();
             // Solid sphere I = 2/5 m r^2; the friction impulse stops contact slip.
             close(body.velocity.0, 5.0 / 7.0 * initial.0);
             close(body.angular_velocity.2, -5.0 / 7.0 * initial.0);
@@ -235,7 +267,13 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
             );
             let linear = sliding_sphere(mass, [0.8, 0.8], V::X * 3.0, true, true, ids);
             close(
-                (linear.body(BodyId(ids[1])).unwrap().velocity - V::X * 3.0).length(),
+                (linear
+                    .body_id(ids[1])
+                    .and_then(|id| linear.body(id))
+                    .unwrap()
+                    .velocity
+                    - V::X * 3.0)
+                    .length(),
                 0.0,
             );
         }
@@ -245,7 +283,7 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
 pub fn invalid_materials_and_mass_leave_checkpoint_unchanged() {
     let mut w = world(V::ZERO, true);
     w.add_body(sphere(1, V::ZERO, 1.0, V::ZERO)).unwrap();
-    w.add_force(BodyId(1), V::X).unwrap();
+    w.add_force(w.body_id(1).unwrap(), V::X).unwrap();
     let context = CheckpointContext {
         build: [22; 32],
         content: [1; 32],
@@ -302,8 +340,8 @@ pub fn penetration_bias_and_same_target_replay() {
         w.add_body(sphere(1, -V::X * 0.975, 1.0, V::ZERO)).unwrap();
         w.add_body(sphere(2, V::X * 0.975, 3.0, V::ZERO)).unwrap();
         step(&mut w);
-        let a = w.body(BodyId(1)).unwrap();
-        let b = w.body(BodyId(2)).unwrap();
+        let a = w.body_id(1).and_then(|id| w.body(id)).unwrap();
+        let b = w.body_id(2).and_then(|id| w.body(id)).unwrap();
         let separating_speed = 0.2 * (0.05 - w.config().contact_slop) / DT;
         close(b.velocity.0 - a.velocity.0, separating_speed);
         close(a.velocity.0 + 3.0 * b.velocity.0, 0.0);
@@ -341,8 +379,8 @@ pub fn linear_support_direction_and_spin_with_dynamic_endpoints() {
                 w.add_body(left).unwrap();
                 w.add_body(right).unwrap();
                 step(&mut w);
-                let left = w.body(BodyId(ids[0])).unwrap();
-                let right = w.body(BodyId(ids[1])).unwrap();
+                let left = w.body_id(ids[0]).and_then(|id| w.body(id)).unwrap();
+                let right = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
                 // A support pointing through the pair makes only that endpoint respond.
                 let expected = if support_on_left && direction == V::X {
                     [-2.0, -2.0]
@@ -371,8 +409,8 @@ pub fn linear_support_direction_and_spin_with_dynamic_endpoints() {
     w.add_body(left).unwrap();
     w.add_body(right).unwrap();
     step(&mut w);
-    let left = w.body(BodyId(1)).unwrap();
-    let right = w.body(BodyId(2)).unwrap();
+    let left = w.body_id(1).and_then(|id| w.body(id)).unwrap();
+    let right = w.body_id(2).and_then(|id| w.body(id)).unwrap();
     // Both inverse masses plus two r^2/I contributions give contact effective mass 1/7.
     close(left.velocity.1, 3.0 - 3.0 / 7.0);
     close(right.velocity.1, 3.0 / 7.0);
@@ -417,8 +455,8 @@ pub fn reciprocal_current_contact_momentum() -> [Real; 4] {
                             let fixture = || {
                                 let mut w = world(V::ZERO, true);
                                 for i in 0..2 {
-                                    let mut body = Body::new(
-                                        BodyId(ids[i]),
+                                    let mut body = Body::keyed(
+                                        ids[i],
                                         shapes[i],
                                         V(0.0, i as Real * (36.0 - penetration), 0.0),
                                         mass * if i == 0 { 1.0 } else { ratio },
@@ -481,7 +519,14 @@ pub fn reciprocal_current_contact_momentum() -> [Real; 4] {
                                     && energy_ratio <= 1.0 + rounding(1e-10, 1.0)
                             );
                             if friction > 0.0 {
-                                assert!(w.body(BodyId(ids[1])).unwrap().velocity.0 < 10.0 - 1e-8);
+                                assert!(
+                                    w.body_id(ids[1])
+                                        .and_then(|id| w.body(id))
+                                        .unwrap()
+                                        .velocity
+                                        .0
+                                        < 10.0 - 1e-8
+                                );
                             }
                             measurements[0] = measurements[0].max(linear_error);
                             measurements[1] = measurements[1].max(angular_error);

@@ -1,6 +1,6 @@
 //! Tangential wake authority after strict geometry; no external support-root changes.
 use physics_engine::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
     },
@@ -77,33 +77,33 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
     .unwrap();
     // In the cold-load reference the external pair precedes this redundant fixed floor.
     // Default warm-start controls retain the fixed floor's existing normal load.
-    w.add_body(Body::new(
-        BodyId(100),
+    w.add_body(Body::keyed(
+        100,
         Shape::Box(V(12.0, 0.5, 4.0)),
         V(0.0, -0.5, 0.0),
         0.0,
     ))
     .unwrap();
     for (id, x) in [(ids[1], 0.0), (30, 10.0)] {
-        w.add_body(Body::new(
-            BodyId(id),
-            Shape::Sphere(1.0),
-            V(x, 1.0, 0.0),
-            2.0,
-        ))
-        .unwrap();
+        w.add_body(Body::keyed(id, Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0))
+            .unwrap();
     }
     for _ in 0..32 {
         w.step(1.0 / 60.0).unwrap();
     }
-    assert!(w.body(BodyId(ids[1])).unwrap().is_sleeping());
-    assert!(w.body(BodyId(30)).unwrap().is_sleeping());
-    let mut platform = Body::new(
-        BodyId(ids[0]),
-        Shape::Box(V(4.0, 0.5, 4.0)),
-        case.origin(),
-        1.0,
+    assert!(
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
     );
+    assert!(
+        w.body_id(30)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
+    let mut platform = Body::keyed(ids[0], Shape::Box(V(4.0, 0.5, 4.0)), case.origin(), 1.0);
     platform.external = true;
     platform.sensor = matches!(case, Case::Sensor);
     if matches!(case, Case::Layers) {
@@ -113,12 +113,18 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
         platform.angular_velocity = V(0.0, 3.0, 0.0);
     }
     w.add_body(platform).unwrap();
-    w.set_velocity(BodyId(ids[0]), case.command()).unwrap();
-    assert!(w.body(BodyId(ids[1])).unwrap().is_sleeping());
+    w.set_velocity(w.body_id(ids[0]).unwrap(), case.command())
+        .unwrap();
+    assert!(
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     w
 }
 fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
-    let b = w.body(BodyId(ids[1])).unwrap();
+    let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
     let t = H * n as Real;
     let (v, p, spin) = if case.loaded() {
         (
@@ -142,13 +148,13 @@ fn observe(w: &World, case: Case, ids: [u64; 2], n: u32) -> Real {
     assert_eq!(b.is_sleeping(), !case.admitted());
     assert_eq!(b.mass, 2.0);
     assert!(b.position.finite() && b.velocity.finite() && b.angular_velocity.finite());
-    let driver = w.body(BodyId(ids[0])).unwrap();
+    let driver = w.body_id(ids[0]).and_then(|id| w.body(id)).unwrap();
     assert!(driver.external);
     assert_eq!(driver.velocity, case.command());
     assert!(
         (driver.position - (case.origin() + case.command() * t)).length() <= rounding(1e-10, 8.0)
     );
-    let neighbor = w.body(BodyId(30)).unwrap();
+    let neighbor = w.body_id(30).and_then(|id| w.body(id)).unwrap();
     assert!(neighbor.is_sleeping());
     assert_eq!(neighbor.position, V(10.0, 1.0, 0.0));
     assert_eq!(neighbor.velocity, V::ZERO);
@@ -197,7 +203,7 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 20] {
                 assert_eq!(r.contact_points, 0);
                 assert_eq!(r.convergence.constraint_visits, 0);
             }
-            let b = w.body(BodyId(ids[1])).unwrap();
+            let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
             let energy =
                 b.velocity.dot(b.velocity) + 0.4 * b.angular_velocity.dot(b.angular_velocity);
             let work = if case.loaded() {
@@ -229,7 +235,12 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 20] {
                 (w.elapsed_seconds() - before) as Real,
                 0.0,
                 Real::from(u8::from(b.is_sleeping())),
-                Real::from(u8::from(w.body(BodyId(30)).unwrap().is_sleeping())),
+                Real::from(u8::from(
+                    w.body_id(30)
+                        .and_then(|id| w.body(id))
+                        .unwrap()
+                        .is_sleeping(),
+                )),
             ]);
         }
     }

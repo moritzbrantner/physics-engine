@@ -1,8 +1,5 @@
 use physics_engine::approximate::Real;
-use physics_engine::{
-    BodyId,
-    approximate::{Body, Config, Quaternion, Shape, Vector as V, World},
-};
+use physics_engine::approximate::{Body, Config, Quaternion, Shape, Vector as V, World};
 fn world(g: V) -> World {
     World::new(Config {
         gravity: g,
@@ -11,26 +8,28 @@ fn world(g: V) -> World {
     .unwrap()
 }
 fn cuboid(id: u64, p: V, h: V, m: Real) -> Body {
-    Body::new(BodyId(id), Shape::Box(h), p, m)
+    Body::keyed(id, Shape::Box(h), p, m)
 }
 #[test]
 fn forces_and_impulses_accumulate_and_updated_velocity_survives_the_next_tick() {
     let mut w = world(V::ZERO);
     w.add_body(cuboid(1, V::ZERO, V(1.0, 1.0, 1.0), 2.0))
         .unwrap();
-    w.apply_impulse(BodyId(1), V(2.0, 0.0, 0.0), V::ZERO)
+    w.apply_impulse(w.body_id(1).unwrap(), V(2.0, 0.0, 0.0), V::ZERO)
         .unwrap();
-    w.apply_impulse(BodyId(1), V(0.0, 4.0, 0.0), V::ZERO)
+    w.apply_impulse(w.body_id(1).unwrap(), V(0.0, 4.0, 0.0), V::ZERO)
         .unwrap();
-    w.add_force(BodyId(1), V(6.0, 0.0, 0.0)).unwrap();
-    w.add_force(BodyId(1), V(4.0, 0.0, 0.0)).unwrap();
+    w.add_force(w.body_id(1).unwrap(), V(6.0, 0.0, 0.0))
+        .unwrap();
+    w.add_force(w.body_id(1).unwrap(), V(4.0, 0.0, 0.0))
+        .unwrap();
     w.step(0.1).unwrap();
-    let b = w.body(BodyId(1)).unwrap();
+    let b = w.body_id(1).and_then(|id| w.body(id)).unwrap();
     assert!((b.velocity.0 - 1.5).abs() < 1e-12);
     assert_eq!(b.velocity.1, 2.0);
     let p = b.position;
     w.step(0.1).unwrap();
-    let b = w.body(BodyId(1)).unwrap();
+    let b = w.body_id(1).and_then(|id| w.body(id)).unwrap();
     assert_eq!(b.velocity, V(1.5, 2.0, 0.0));
     // Rounding-only tolerance: the displacement is exact up to a few ulps.
     assert!((b.position.0 - p.0 - 0.15).abs() < (1e-12 as Real).max(16.0 * Real::EPSILON));
@@ -40,23 +39,23 @@ fn invalid_values_are_rejected_without_changing_state() {
     let mut w = world(V::ZERO);
     w.add_body(cuboid(1, V::ZERO, V(1.0, 1.0, 1.0), 1.0))
         .unwrap();
-    let b = w.body(BodyId(1)).unwrap().clone();
+    let b = w.body_id(1).and_then(|id| w.body(id)).unwrap().clone();
     assert!(w.step(f64::NAN).is_err());
     assert!(
-        w.apply_impulse(BodyId(1), V(Real::INFINITY, 0.0, 0.0), V::ZERO)
+        w.apply_impulse(w.body_id(1).unwrap(), V(Real::INFINITY, 0.0, 0.0), V::ZERO)
             .is_err()
     );
-    assert_eq!(w.body(BodyId(1)), Some(&b));
+    assert_eq!(w.body_id(1).and_then(|id| w.body(id)), Some(&b));
 }
 #[test]
 fn off_center_impulse_changes_rotation_without_quantizing_state() {
     let mut w = world(V::ZERO);
     w.add_body(cuboid(1, V::ZERO, V(1.0, 1.0, 1.0), 2.0))
         .unwrap();
-    w.apply_impulse(BodyId(1), V(0.5, 0.0, 0.0), V(0.0, 1.0, 0.0))
+    w.apply_impulse(w.body_id(1).unwrap(), V(0.5, 0.0, 0.0), V(0.0, 1.0, 0.0))
         .unwrap();
     w.step(1.0 / 60.0).unwrap();
-    let b = w.body(BodyId(1)).unwrap();
+    let b = w.body_id(1).and_then(|id| w.body(id)).unwrap();
     assert_eq!(b.velocity.0, 0.25);
     assert!(b.angular_velocity.2 < 0.0);
     assert_ne!(b.orientation, Quaternion::IDENTITY);
@@ -68,13 +67,13 @@ fn fast_arrow_and_sphere_do_not_cross_a_thin_wall() {
         let mut w = world(V::ZERO);
         w.add_body(cuboid(1, V::ZERO, V(10.0, 10.0, 0.02), 0.0))
             .unwrap();
-        let mut p = Body::new(BodyId(2), shape, V(0.0, 0.0, 10.0), 1.0);
+        let mut p = Body::keyed(2, shape, V(0.0, 0.0, 10.0), 1.0);
         p.velocity = V(0.0, 0.0, -10000.0);
         p.ccd = true;
         p.retire_on_impact = true;
-        w.add_body(p).unwrap();
+        let projectile = w.add_body(p).unwrap();
         let r = w.step(1.0 / 60.0).unwrap();
-        assert_eq!(r.retired, vec![BodyId(2)]);
+        assert_eq!(r.retired, vec![projectile]);
         assert!(r.swept_contacts > 0);
     }
 }
@@ -83,13 +82,13 @@ fn swept_sphere_corner_near_miss_is_not_an_expanded_aabb_hit() {
     let mut w = world(V::ZERO);
     w.add_body(cuboid(1, V::ZERO, V(1.0, 1.0, 1.0), 0.0))
         .unwrap();
-    let mut p = Body::new(BodyId(2), Shape::Sphere(0.5), V(1.4, 1.4, 5.0), 1.0);
+    let mut p = Body::keyed(2, Shape::Sphere(0.5), V(1.4, 1.4, 5.0), 1.0);
     p.velocity = V(0.0, 0.0, -1000.0);
     p.ccd = true;
     p.retire_on_impact = true;
     w.add_body(p).unwrap();
     w.step(1.0 / 60.0).unwrap();
-    assert!(w.body(BodyId(2)).unwrap().position.2 < -1.0);
+    assert!(w.body_id(2).and_then(|id| w.body(id)).unwrap().position.2 < -1.0);
 }
 #[test]
 fn symmetric_impact_conserves_linear_momentum() {
@@ -101,8 +100,8 @@ fn symmetric_impact_conserves_linear_momentum() {
         w.add_body(b).unwrap();
     }
     w.step(1.0 / 60.0).unwrap();
-    let a = w.body(BodyId(1)).unwrap();
-    let b = w.body(BodyId(2)).unwrap();
+    let a = w.body_id(1).and_then(|id| w.body(id)).unwrap();
+    let b = w.body_id(2).and_then(|id| w.body(id)).unwrap();
     assert!((a.velocity + b.velocity).length() < 1e-9);
     assert!(a.velocity.0 < 0.0 && b.velocity.0 > 0.0);
 }
@@ -134,15 +133,15 @@ fn touching_thirty_two_box_tower_settles_and_misses_do_not_wake_it() {
     }
     let asleep = w
         .bodies()
-        .filter(|b| b.id.0 >= 100 && b.is_sleeping())
+        .filter(|b| b.key.unwrap() >= 100 && b.is_sleeping())
         .count();
     assert_eq!(asleep, 32);
     let before = w
         .bodies()
-        .filter(|b| b.id.0 >= 100)
+        .filter(|b| b.key.unwrap() >= 100)
         .cloned()
         .collect::<Vec<_>>();
-    let mut p = Body::new(BodyId(1000), Shape::Sphere(3.0), V(140.0, 50.0, 300.0), 1.0);
+    let mut p = Body::keyed(1000, Shape::Sphere(3.0), V(140.0, 50.0, 300.0), 1.0);
     p.velocity = V(0.0, 0.0, -5760.0);
     p.ccd = true;
     p.retire_on_impact = true;
@@ -167,13 +166,13 @@ fn nearer_wall_shields_target_regardless_of_body_id_order() {
                 .unwrap();
             w.add_body(cuboid(target_id, V::ZERO, V(1.0, 1.0, 1.0), 2.0))
                 .unwrap();
-            let mut projectile = Body::new(BodyId(9), shape, V(0.0, 0.0, 10.0), 1.0);
+            let mut projectile = Body::keyed(9, shape, V(0.0, 0.0, 10.0), 1.0);
             projectile.velocity = V(0.0, 0.0, -10000.0);
             projectile.ccd = true;
             projectile.retire_on_impact = true;
             w.add_body(projectile).unwrap();
             w.step(1.0 / 60.0).unwrap();
-            let target = w.body(BodyId(target_id)).unwrap();
+            let target = w.body_id(target_id).and_then(|id| w.body(id)).unwrap();
             assert_eq!(
                 target.velocity,
                 V::ZERO,
@@ -194,10 +193,15 @@ fn removal_of_support_wakes_a_sleeping_box() {
     for _ in 0..240 {
         w.step(1.0 / 60.0).unwrap();
     }
-    assert!(w.body(BodyId(2)).unwrap().is_sleeping());
-    w.remove_body(BodyId(1));
+    assert!(
+        w.body_id(2)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
+    w.remove_body(w.body_id(1).unwrap());
     w.step(1.0 / 60.0).unwrap();
-    assert!(w.body(BodyId(2)).unwrap().velocity.1 < 0.0);
+    assert!(w.body_id(2).and_then(|id| w.body(id)).unwrap().velocity.1 < 0.0);
 }
 
 #[test]
@@ -207,22 +211,16 @@ fn fast_capsule_does_not_tunnel_through_thin_box_or_wedge() {
         Shape::wedge(V(10.0, 10.0, 0.02)),
     ] {
         let mut w = world(V::ZERO);
-        w.add_body(Body::new(BodyId(1), target, V::ZERO, 0.0))
-            .unwrap();
+        w.add_body(Body::keyed(1, target, V::ZERO, 0.0)).unwrap();
 
-        let mut projectile = Body::new(
-            BodyId(2),
-            Shape::capsule(0.5, 0.1),
-            V(-5.0, -5.0, 10.0),
-            1.0,
-        );
+        let mut projectile = Body::keyed(2, Shape::capsule(0.5, 0.1), V(-5.0, -5.0, 10.0), 1.0);
         projectile.velocity = V(0.0, 0.0, -10_000.0);
         projectile.ccd = true;
         projectile.retire_on_impact = true;
-        w.add_body(projectile).unwrap();
+        let projectile = w.add_body(projectile).unwrap();
 
         let report = w.step(1.0 / 60.0).unwrap();
-        assert_eq!(report.retired, vec![BodyId(2)]);
+        assert_eq!(report.retired, vec![projectile]);
         assert!(report.swept_contacts > 0);
         assert!(report.geometry.primitive_queries > 0);
     }
@@ -231,15 +229,15 @@ fn fast_capsule_does_not_tunnel_through_thin_box_or_wedge() {
 #[test]
 fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
     let mut w = world(V::ZERO);
-    let wedge = Body::new(BodyId(1), Shape::wedge(V(2.0, 1.0, 3.0)), V::ZERO, 1.0);
+    let wedge = Body::keyed(1, Shape::wedge(V(2.0, 1.0, 3.0)), V::ZERO, 1.0);
     assert!(w.add_body(wedge.clone()).is_err());
 
     let mut locked = wedge;
     locked.rotation_locked = true;
     w.add_body(locked).unwrap();
 
-    w.add_body(Body::new(
-        BodyId(2),
+    w.add_body(Body::keyed(
+        2,
         Shape::wedge(V(2.0, 1.0, 3.0)),
         V(10.0, 0.0, 0.0),
         0.0,
@@ -250,12 +248,12 @@ fn wedge_requires_locked_rotation_only_for_solver_owned_dynamic_bodies() {
 #[test]
 fn capsule_off_center_impulse_uses_capsule_inertia_without_quantization() {
     let mut w = world(V::ZERO);
-    w.add_body(Body::new(BodyId(1), Shape::capsule(1.5, 0.5), V::ZERO, 2.0))
+    w.add_body(Body::keyed(1, Shape::capsule(1.5, 0.5), V::ZERO, 2.0))
         .unwrap();
-    w.apply_impulse(BodyId(1), V(0.5, 0.0, 0.0), V(0.0, 1.0, 0.0))
+    w.apply_impulse(w.body_id(1).unwrap(), V(0.5, 0.0, 0.0), V(0.0, 1.0, 0.0))
         .unwrap();
     w.step(1.0 / 60.0).unwrap();
-    let body = w.body(BodyId(1)).unwrap();
+    let body = w.body_id(1).and_then(|id| w.body(id)).unwrap();
     assert!(body.angular_velocity.2 < 0.0);
     assert_ne!(body.orientation, Quaternion::IDENTITY);
 }

@@ -20,10 +20,7 @@ fn floating_contact_material_contract() {
 
 #[test]
 fn rotated_reciprocal_contacts_preserve_momentum() {
-    use physics_engine::{
-        BodyId,
-        approximate::{Body, Config, Quaternion, Shape, Vector as V, World},
-    };
+    use physics_engine::approximate::{Body, Config, Quaternion, Shape, Vector as V, World};
     // Cube inertia is isotropic, so this independent angular-momentum sum remains
     // valid after rotating the whole fixture; no engine inertia helper is used.
     let momentum = |w: &World| {
@@ -51,8 +48,8 @@ fn rotated_reciprocal_contacts_preserve_momentum() {
                     })
                     .unwrap();
                     for (i, id) in ids.into_iter().enumerate() {
-                        let mut b = Body::new(
-                            BodyId(id),
+                        let mut b = Body::keyed(
+                            id,
                             Shape::Box(V(18.0, 18.0, 18.0)),
                             origin + q.rotate(V(0.0, i as Real * 35.99, 0.0)),
                             2.0,
@@ -100,10 +97,7 @@ fn rotated_reciprocal_contacts_preserve_momentum() {
 
 #[test]
 fn generic_support_witnesses_keep_the_full_reciprocal_midpoint() {
-    use physics_engine::{
-        BodyId,
-        approximate::{Body, Config, Shape, Vector as V, World},
-    };
+    use physics_engine::approximate::{Body, Config, Shape, Vector as V, World};
     for ids in [[1, 2], [2, 1]] {
         let mut world = World::new(Config {
             gravity: V::ZERO,
@@ -112,9 +106,9 @@ fn generic_support_witnesses_keep_the_full_reciprocal_midpoint() {
             ..Config::default()
         })
         .unwrap();
-        let mut cube = Body::new(BodyId(ids[0]), Shape::Box(V(1.0, 1.0, 1.0)), V::ZERO, 2.0);
-        let mut wedge = Body::new(
-            BodyId(ids[1]),
+        let mut cube = Body::keyed(ids[0], Shape::Box(V(1.0, 1.0, 1.0)), V::ZERO, 2.0);
+        let mut wedge = Body::keyed(
+            ids[1],
             Shape::wedge(V(1.0, 1.0, 1.0)),
             V(0.0, 1.99, 0.0),
             2.0,
@@ -129,7 +123,7 @@ fn generic_support_witnesses_keep_the_full_reciprocal_midpoint() {
         world.add_body(wedge).unwrap();
         let report = world.step(1.0 / 240.0).unwrap();
         assert!(report.contact_points > 0);
-        let cube = world.body(BodyId(ids[0])).unwrap();
+        let cube = world.body_id(ids[0]).and_then(|id| world.body(id)).unwrap();
         assert!(cube.velocity.1 < -1e-3, "normal response required");
         // Independent support vertices are (1,1,1) and (-1,.99,-1).
         // Their common midpoint lies on the cube's Y axis, giving zero torque.

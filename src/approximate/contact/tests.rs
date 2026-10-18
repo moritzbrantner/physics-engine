@@ -2,13 +2,8 @@ use super::*;
 
 #[test]
 fn box_edge_contact_keeps_the_midpoint_of_tied_support_features() {
-    let a = Body::new(crate::BodyId(1), Shape::Box(V(1.0, 2.0, 3.0)), V::ZERO, 1.0);
-    let b = Body::new(
-        crate::BodyId(2),
-        Shape::Box(V(1.0, 2.0, 3.0)),
-        V(1.9, 0.0, 0.0),
-        1.0,
-    );
+    let a = Body::fixture(1, Shape::Box(V(1.0, 2.0, 3.0)), V::ZERO, 1.0);
+    let b = Body::fixture(2, Shape::Box(V(1.0, 2.0, 3.0)), V(1.9, 0.0, 0.0), 1.0);
     let mut work = GeometryStats::default();
     let manifold = box_points(
         &a,
@@ -140,14 +135,14 @@ fn primitive_shape(kind: primitive::PrimitiveKind) -> Shape {
 
 fn pair_bodies(pair: primitive::PrimitivePair) -> (Body, Body) {
     let (left, right) = pair.kinds();
-    let mut a = Body::new(
-        crate::BodyId(100 + pair.index() as u64 * 2),
+    let mut a = Body::fixture(
+        100 + pair.index() as u64 * 2,
         primitive_shape(left),
         V::ZERO,
         1.0,
     );
-    let mut b = Body::new(
-        crate::BodyId(101 + pair.index() as u64 * 2),
+    let mut b = Body::fixture(
+        101 + pair.index() as u64 * 2,
         primitive_shape(right),
         V(1.0, 0.2, -0.1),
         1.0,

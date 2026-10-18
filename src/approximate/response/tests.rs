@@ -1,5 +1,4 @@
 use super::*;
-use crate::BodyId;
 use crate::approximate::{Config, Quaternion, Shape, World};
 
 fn vector_bits(v: Vector) -> [u64; 3] {
@@ -15,7 +14,7 @@ fn prepared_response_is_bit_identical_to_original_formula() {
                 Quaternion(0.2, -0.3, 0.4, 0.8).normalized(),
             ] {
                 for mode in 0..4 {
-                    let mut b = Body::new(BodyId(1), shape, Vector::ZERO, mass);
+                    let mut b = Body::fixture(1, shape, Vector::ZERO, mass);
                     b.orientation = q;
                     b.rotation_locked = mode == 1;
                     b.external = mode == 2;
@@ -80,16 +79,16 @@ fn rotating_bodies_force_torque_and_impulses_match_unprepared_replay() {
         ..Config::default()
     })
     .unwrap();
-    w.add_body(Body::new(
-        BodyId(1),
+    w.add_body(Body::fixture(
+        1,
         Shape::Box(Vector(20.0, 1.0, 20.0)),
         Vector(0.0, -1.0, 0.0),
         0.0,
     ))
     .unwrap();
     for id in 2..6 {
-        let mut b = Body::new(
-            BodyId(id),
+        let mut b = Body::fixture(
+            id,
             Shape::Box(Vector(0.8, 1.0, 1.2)),
             Vector((id - 2) as Real * 2.1, 2.0, 0.0),
             id as Real,
@@ -107,13 +106,23 @@ fn rotating_bodies_force_torque_and_impulses_match_unprepared_replay() {
     for tick in 0..100 {
         for world in [&mut w, &mut reference] {
             if tick % 17 == 0 {
-                world.add_force(BodyId(2), Vector(2.0, 0.0, -0.4)).unwrap();
-                let p = world.body(BodyId(2)).unwrap().position;
                 world
-                    .apply_impulse(BodyId(2), Vector(0.5, 0.2, 0.0), p + Vector(0.0, 0.6, 0.0))
+                    .add_force(world.body_id(2).unwrap(), Vector(2.0, 0.0, -0.4))
+                    .unwrap();
+                let p = world
+                    .body_id(2)
+                    .and_then(|id| world.body(id))
+                    .unwrap()
+                    .position;
+                world
+                    .apply_impulse(
+                        world.body_id(2).unwrap(),
+                        Vector(0.5, 0.2, 0.0),
+                        p + Vector(0.0, 0.6, 0.0),
+                    )
                     .unwrap();
                 // Torque has no public setter yet; exercise the same force integration field internally.
-                let i = world.index(BodyId(2)).unwrap();
+                let i = world.index(world.body_id(2).unwrap()).unwrap();
                 world.bodies[i].torque = Vector(0.3, -0.2, 0.1);
             }
         }
@@ -136,25 +145,27 @@ fn contact_wake_prepares_real_mass_before_response_and_retirement() {
         ..Config::default()
     })
     .unwrap();
-    let mut target = Body::new(
-        BodyId(10),
-        Shape::Box(Vector(1.0, 1.0, 1.0)),
-        Vector::ZERO,
-        2.0,
-    );
+    let mut target = Body::fixture(10, Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 2.0);
     target.sleeping = true;
     w.add_body(target).unwrap();
-    let mut p = Body::new(BodyId(20), Shape::Sphere(0.2), Vector(-4.0, 0.4, 0.0), 1.0);
+    let mut p = Body::fixture(20, Shape::Sphere(0.2), Vector(-4.0, 0.4, 0.0), 1.0);
     p.velocity = Vector(600.0, 0.0, 0.0);
     p.ccd = true;
     p.retire_on_impact = true;
-    w.add_body(p).unwrap();
+    let projectile = w.add_body(p).unwrap();
     let mut reference = w.clone();
     let r = compare_step(&mut w, &mut reference, 1.0 / 60.0);
     assert_eq!(r.woken_bodies, 1);
-    assert_eq!(r.retired, vec![BodyId(20)]);
-    assert!(w.body(BodyId(10)).unwrap().velocity.0 > 0.0);
-    assert!(w.body(BodyId(10)).unwrap().angular_velocity.length() > 0.0);
+    assert_eq!(r.retired, vec![projectile]);
+    assert!(w.body_id(10).and_then(|id| w.body(id)).unwrap().velocity.0 > 0.0);
+    assert!(
+        w.body_id(10)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .angular_velocity
+            .length()
+            > 0.0
+    );
     assert!(r.inertia_preparations >= 2);
     compare_step(&mut w, &mut reference, 1.0 / 60.0);
 }
@@ -171,20 +182,16 @@ fn slow_current_contact_keeps_sleeping_anchor_response_like_fixed_anchor() {
                 ..Config::default()
             })
             .unwrap();
-            let mut anchor = Body::new(
-                BodyId(ids[0]),
+            let mut anchor = Body::fixture(
+                ids[0],
                 Shape::Sphere(18.0),
                 Vector::ZERO,
                 if sleeping_anchor { 2.0 } else { 0.0 },
             );
             anchor.sleeping = sleeping_anchor;
             w.add_body(anchor).unwrap();
-            let mut moving = Body::new(
-                BodyId(ids[1]),
-                Shape::Sphere(18.0),
-                Vector(0.0, 35.99, 0.0),
-                2.0,
-            );
+            let mut moving =
+                Body::fixture(ids[1], Shape::Sphere(18.0), Vector(0.0, 35.99, 0.0), 2.0);
             moving.velocity = Vector(0.25, -0.25, 0.0);
             moving.sleep_allowed = false;
             w.add_body(moving).unwrap();
@@ -198,15 +205,21 @@ fn slow_current_contact_keeps_sleeping_anchor_response_like_fixed_anchor() {
             assert_eq!(report.swept_contacts, 0);
             assert_eq!(report.contact_points, 1);
         }
-        assert!(sleeping.body(BodyId(ids[0])).unwrap().sleeping);
+        assert!(
+            sleeping
+                .body_id(ids[0])
+                .and_then(|id| sleeping.body(id))
+                .unwrap()
+                .sleeping
+        );
         assert_eq!(
-            sleeping.body(BodyId(ids[1])),
-            fixed.body(BodyId(ids[1])),
+            sleeping.body_id(ids[1]).and_then(|id| sleeping.body(id)),
+            fixed.body_id(ids[1]).and_then(|id| fixed.body(id)),
             "an anchor with inactive mass/inertia must retain the original witness"
         );
         assert!(
             sleeping
-                .body(BodyId(ids[1]))
+                .body(sleeping.body_id(ids[1]).unwrap())
                 .unwrap()
                 .angular_velocity
                 .length()
@@ -223,8 +236,8 @@ fn lifecycle_rebuilds_response_indices_and_shape_mass_lock_state() {
     })
     .unwrap();
     for id in [20, 40] {
-        w.add_body(Body::new(
-            BodyId(id),
+        w.add_body(Body::fixture(
+            id,
             Shape::Sphere(1.0),
             Vector(id as Real, 0.0, 0.0),
             2.0,
@@ -234,17 +247,13 @@ fn lifecycle_rebuilds_response_indices_and_shape_mass_lock_state() {
     let mut reference = w.clone();
     compare_step(&mut w, &mut reference, 1.0 / 60.0);
     for world in [&mut w, &mut reference] {
-        world.remove_body(BodyId(20)).unwrap();
-        let mut replacement = Body::new(
-            BodyId(20),
-            Shape::Box(Vector(1.0, 2.0, 4.0)),
-            Vector::ZERO,
-            5.0,
-        );
+        world.remove_body(world.body_id(20).unwrap()).unwrap();
+        let mut replacement =
+            Body::fixture(20, Shape::Box(Vector(1.0, 2.0, 4.0)), Vector::ZERO, 5.0);
         replacement.orientation = Quaternion(0.2, 0.3, -0.4, 1.0).normalized();
         world.add_body(replacement).unwrap();
-        let mut inserted = Body::new(
-            BodyId(5),
+        let mut inserted = Body::fixture(
+            5,
             Shape::Box(Vector(1.0, 1.0, 1.0)),
             Vector(-10.0, 0.0, 0.0),
             3.0,
@@ -252,16 +261,30 @@ fn lifecycle_rebuilds_response_indices_and_shape_mass_lock_state() {
         inserted.rotation_locked = true;
         world.add_body(inserted).unwrap();
         world
-            .apply_impulse(BodyId(20), Vector(0.7, 0.2, -0.3), Vector(0.0, 1.0, 0.0))
+            .apply_impulse(
+                world.body_id(20).unwrap(),
+                Vector(0.7, 0.2, -0.3),
+                Vector(0.0, 1.0, 0.0),
+            )
             .unwrap();
         world
-            .apply_impulse(BodyId(5), Vector(3.0, 0.0, 0.0), Vector(-10.0, 1.0, 0.0))
+            .apply_impulse(
+                world.body_id(5).unwrap(),
+                Vector(3.0, 0.0, 0.0),
+                Vector(-10.0, 1.0, 0.0),
+            )
             .unwrap();
     }
     for _ in 0..10 {
         compare_step(&mut w, &mut reference, 1.0 / 60.0);
     }
-    assert_eq!(w.body(BodyId(5)).unwrap().angular_velocity, Vector::ZERO);
+    assert_eq!(
+        w.body_id(5)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .angular_velocity,
+        Vector::ZERO
+    );
 }
 
 #[test]
@@ -278,8 +301,8 @@ fn preparation_work_depends_on_bodies_not_iteration_count() {
         })
         .unwrap();
         for (id, x, v) in [(1, -1.0, 2.0), (2, 1.0, -2.0)] {
-            let mut b = Body::new(
-                BodyId(id),
+            let mut b = Body::fixture(
+                id,
                 Shape::Box(Vector(1.0, 1.0, 1.0)),
                 Vector(x, 0.0, 0.0),
                 1.0,
@@ -301,7 +324,7 @@ fn preparation_work_depends_on_bodies_not_iteration_count() {
 #[test]
 fn quiescent_and_zero_steps_do_not_prepare_response() {
     let mut w = World::new(Config::default()).unwrap();
-    let mut b = Body::new(BodyId(1), Shape::Sphere(1.0), Vector::ZERO, 2.0);
+    let mut b = Body::fixture(1, Shape::Sphere(1.0), Vector::ZERO, 2.0);
     b.sleeping = true;
     w.add_body(b).unwrap();
     for dt in [0.0, 1.0 / 60.0] {
@@ -321,20 +344,25 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
         ..Config::default()
     })
     .unwrap();
-    w.add_body(Body::new(
-        BodyId(0),
+    w.add_body(Body::fixture(
+        0,
         Shape::Box(Vector(4.0, 0.5, 4.0)),
         Vector(0.0, -0.5, 0.0),
         0.0,
     ))
     .unwrap();
-    let mut target = Body::new(BodyId(10), Shape::Sphere(1.0), Vector(0.0, 1.0, 0.0), 2.0);
+    let mut target = Body::fixture(10, Shape::Sphere(1.0), Vector(0.0, 1.0, 0.0), 2.0);
     target.friction = 0.0;
     w.add_body(target).unwrap();
     for _ in 0..32 {
         w.step(1.0 / 60.0).unwrap();
     }
-    assert!(w.body(BodyId(10)).unwrap().is_sleeping());
+    assert!(
+        w.body_id(10)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
     for (id, half, position, velocity) in [
         (
             1,
@@ -349,14 +377,14 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
             Vector(0.0, 0.0, 3.0),
         ),
     ] {
-        let mut wall = Body::new(BodyId(id), Shape::Box(half), position, 1.0);
+        let mut wall = Body::fixture(id, Shape::Box(half), position, 1.0);
         wall.external = true;
         wall.friction = 0.0;
         wall.velocity = velocity;
         w.add_body(wall).unwrap();
     }
     // Exercise accepted queued history internally; the public force setter wakes immediately.
-    let target = w.index(BodyId(10)).unwrap();
+    let target = w.index(w.body_id(10).unwrap()).unwrap();
     w.bodies[target].force = Vector(0.0, -20.0, 0.0);
     w.bodies[target].torque = Vector(0.0, 0.8, 0.0);
     let mut unprepared = w.clone();
@@ -368,7 +396,7 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
     assert_eq!(w.cache, uncached.cache);
     assert_eq!(report.woken_bodies, 1);
     assert_eq!(report.response_preparations, 1);
-    let b = w.body(BodyId(10)).unwrap();
+    let b = w.body_id(10).and_then(|id| w.body(id)).unwrap();
     assert_eq!(b.velocity, Vector(3.0, 0.0, 3.0));
     // Total downward acceleration20 supplies friction spin30h; torque/I supplies yaw h.
     let tolerance = crate::approximate::rounding_tolerance(1e-10, 16.0, 30.0 * h as Real);

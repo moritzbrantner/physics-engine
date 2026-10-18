@@ -1,7 +1,6 @@
 use physics_engine::approximate::Real;
-use physics_engine::{
-    BodyId,
-    approximate::{Body, CheckpointContext, Config, Error, Shape, SweepFailure, Vector, World},
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Error, Shape, SweepFailure, Vector, World,
 };
 
 #[test]
@@ -13,19 +12,19 @@ fn computed_nonfinite_sweep_input_returns_an_atomic_error_instead_of_panicking()
     })
     .unwrap();
     world
-        .add_body(Body::new(BodyId(0), Shape::Sphere(1.0), Vector::ZERO, 0.0))
+        .add_body(Body::keyed(0, Shape::Sphere(1.0), Vector::ZERO, 0.0))
         .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(1),
+        .add_body(Body::keyed(
+            1,
             Shape::capsule(0.0, 1.0),
             Vector(-4.0, 0.0, 0.0),
             0.1,
         ))
         .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(2),
+        .add_body(Body::keyed(
+            2,
             Shape::Sphere(0.1),
             Vector(20.0, 0.0, 0.0),
             1.0,
@@ -33,10 +32,14 @@ fn computed_nonfinite_sweep_input_returns_an_atomic_error_instead_of_panicking()
         .unwrap();
     world.step(0.01).unwrap();
     world
-        .add_force(BodyId(1), Vector(Real::MAX, 0.0, 0.0))
+        .add_force(world.body_id(1).unwrap(), Vector(Real::MAX, 0.0, 0.0))
         .unwrap();
     world
-        .apply_impulse(BodyId(2), Vector(1.0, 0.0, 0.0), Vector(20.0, 0.0, 0.0))
+        .apply_impulse(
+            world.body_id(2).unwrap(),
+            Vector(1.0, 0.0, 0.0),
+            Vector(20.0, 0.0, 0.0),
+        )
         .unwrap();
     let context = CheckpointContext {
         build: [17; 32],
@@ -50,7 +53,7 @@ fn computed_nonfinite_sweep_input_returns_an_atomic_error_instead_of_panicking()
         assert_eq!(
             world.step(0.1).unwrap_err(),
             Error::CollisionSearchFailed {
-                bodies: [BodyId(0), BodyId(1)],
+                bodies: [world.body_id(0).unwrap(), world.body_id(1).unwrap()],
                 reason: SweepFailure::InvalidGeometryInput,
             }
         );
@@ -72,7 +75,7 @@ fn computed_nonfinite_sweep_input_returns_an_atomic_error_instead_of_panicking()
     // impulse must still apply once, exactly as in a world that never attempted the failed step.
     for world in [&mut world, &mut control] {
         world
-            .add_force(BodyId(1), Vector(-Real::MAX, 0.0, 0.0))
+            .add_force(world.body_id(1).unwrap(), Vector(-Real::MAX, 0.0, 0.0))
             .unwrap();
     }
     for _ in 0..16 {
@@ -103,11 +106,11 @@ fn finite_velocities_with_overflowing_relative_motion_fail_without_admitting_con
     ] {
         let position = Vector(x, 0.0, 0.0);
         world
-            .add_body(Body::new(BodyId(id), shape, position, 1.0))
+            .add_body(Body::keyed(id, shape, position, 1.0))
             .unwrap();
         world
             .apply_impulse(
-                BodyId(id),
+                world.body_id(id).unwrap(),
                 Vector(if id == 1 { Real::MAX } else { -Real::MAX }, 0.0, 0.0),
                 position,
             )
@@ -122,7 +125,7 @@ fn finite_velocities_with_overflowing_relative_motion_fail_without_admitting_con
         assert_eq!(
             world.step(0.1).unwrap_err(),
             Error::CollisionSearchFailed {
-                bodies: [BodyId(1), BodyId(2)],
+                bodies: [world.body_id(1).unwrap(), world.body_id(2).unwrap()],
                 reason: SweepFailure::NonFiniteComputation,
             }
         );

@@ -21,10 +21,27 @@ the oracle harness (D4). The per-capability parity status is tracked in
 - `apply_impulse(id, J, point)` changes linear velocity by `J / mass` before the first substep;
   the off-centre component adds angular impulse through the lever arm.
 
+## Body ids and keys
+
+- `add_body(body)` returns the body's `BodyId`: a 32-bit slot and a 32-bit generation packed in a
+  `u64`. Slots are pooled (the lowest free slot is reused) and every reuse bumps the generation,
+  so the id of a removed body is rejected (`MissingBody`) and never aliases a newer body. Lookup
+  is a direct slot index. `BodyId::{slot, generation, to_bits, from_bits}` serve adapters.
+- `Body::keyed(key, ..)` (or `body.key = Some(key)`) attaches the game's stable entity id.
+  Keys are unique among live bodies (`DuplicateKey`); `World::body_id(key)` finds the live body.
+- Ids are handles, not an order (`BodyId` has no `Ord`). Engine ids are never meant to be saved:
+  games rebuild physics from game state on load.
+
 ## Ordering and determinism
 
-- Body ids are stable. Pair traversal, events and query hits are ordered by stable id after the
-  primary key (time of impact or distance), so ties are deterministic.
+- Every traversal, pair orientation and tie (equal time of impact or distance) follows body
+  order: keyed bodies first, by key, then keyless bodies by creation serial within the run.
+  Results therefore depend on keys and the current contents, not on slot reuse or the insertion
+  order of keyed bodies; a world rebuilt from game state answers queries and character moves
+  exactly as the uninterrupted one. Give a body a key when its ties must survive save/load;
+  keyless bodies (projectiles and other transient objects) are deterministic within a run only.
+  Persistent contact warm-start state is not part of a rebuild; use checkpoints to continue
+  dynamics bit-exactly.
 - Results are identical across worker counts on the same build and target. There is no
   cross-target bit-identity claim.
 

@@ -1,7 +1,6 @@
 //! Analytic translating-support controls; no character or rotational platform policy.
-use physics_engine::{
-    BodyId,
-    approximate::{Body, CheckpointContext, Config, Quaternion, Shape, Vector as V, World},
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Quaternion, Shape, Vector as V, World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -30,18 +29,13 @@ fn fixture(ids: [u64; 2], substeps: u8) -> World {
         ..Config::default()
     })
     .unwrap();
-    let mut platform = Body::new(BodyId(ids[0]), Shape::Box(V(4.0, 0.5, 4.0)), V::ZERO, 1.0);
+    let mut platform = Body::keyed(ids[0], Shape::Box(V(4.0, 0.5, 4.0)), V::ZERO, 1.0);
     platform.external = true;
     platform.velocity = V(2.0, 0.0, 0.0);
     platform.rotation_locked = true;
     platform.sleep_allowed = false;
     w.add_body(platform).unwrap();
-    let mut rider = Body::new(
-        BodyId(ids[1]),
-        Shape::Box(V(1.0, 1.0, 1.0)),
-        V(0.0, 1.5, 0.0),
-        2.0,
-    );
+    let mut rider = Body::keyed(ids[1], Shape::Box(V(1.0, 1.0, 1.0)), V(0.0, 1.5, 0.0), 2.0);
     rider.rotation_locked = true;
     w.add_body(rider).unwrap();
     w
@@ -51,8 +45,9 @@ fn command(w: &mut World, case: Case, ids: [u64; 2], m: &mut Metrics) {
     match case {
         Case::Carry => (),
         Case::Departure => {
-            w.set_velocity(BodyId(ids[1]), V(2.0, 3.0, 0.0)).unwrap();
-            let rider = w.body(BodyId(ids[1])).unwrap();
+            w.set_velocity(w.body_id(ids[1]).unwrap(), V(2.0, 3.0, 0.0))
+                .unwrap();
+            let rider = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
             // Capture the instantaneous imposed input as well as later physical steps.
             let energy = rider.velocity.dot(rider.velocity);
             m.peak_energy = m.peak_energy.max(energy);
@@ -60,8 +55,8 @@ fn command(w: &mut World, case: Case, ids: [u64; 2], m: &mut Metrics) {
             assert!(energy + 20.0 * rider.position.1 <= 39.0 + m.external_work + 1e-9);
         }
         Case::Removal => {
-            assert!(w.remove_body(BodyId(ids[0])).unwrap().external);
-            assert!(!w.has_support(BodyId(ids[1])));
+            assert!(w.remove_body(w.body_id(ids[0]).unwrap()).unwrap().external);
+            assert!(!w.has_support(w.body_id(ids[1]).unwrap()));
         }
     }
 }
@@ -105,7 +100,7 @@ fn advance(w: &mut World, substeps: u32, m: &mut Metrics) {
 }
 
 fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
-    let rider = w.body(BodyId(ids[1])).unwrap();
+    let rider = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
     assert_eq!(rider.mass, 2.0);
     assert_eq!(rider.shape, Shape::Box(V(1.0, 1.0, 1.0)));
     assert!(rider.position.finite() && rider.velocity.finite());
@@ -158,7 +153,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         mechanical.is_finite()
             && mechanical <= 30.0 + m.external_work + departure_input + rounding(1e-9, 64.0)
     );
-    let supported = if let Some(platform) = w.body(BodyId(ids[0])) {
+    let supported = if let Some(platform) = w.body_id(ids[0]).and_then(|id| w.body(id)) {
         assert!(platform.external && !platform.is_sleeping());
         assert_eq!(platform.mass, 1.0);
         assert_eq!(platform.shape, Shape::Box(V(4.0, 0.5, 4.0)));
@@ -186,7 +181,7 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         m.departure_samples += 1;
     }
     if case == Case::Carry || step <= COMMAND_STEP {
-        assert!(supported && w.has_support(BodyId(ids[1])));
+        assert!(supported && w.has_support(w.body_id(ids[1]).unwrap()));
     }
     if case == Case::Departure && step > COMMAND_STEP {
         let gap = rider.position.1 - 1.5;
@@ -195,13 +190,13 @@ fn observe(w: &World, case: Case, ids: [u64; 2], step: u32, m: &mut Metrics) {
         let airborne = 2.0 * w.config().contact_slop + 3.0 * H + 1e-9;
         if gap > airborne {
             assert!(
-                !w.has_support(BodyId(ids[1])),
+                !w.has_support(w.body_id(ids[1]).unwrap()),
                 "stale airborne support at step {step}"
             );
         }
         if supported && rider.velocity.1.abs() <= rounding(1e-9, 16.0) {
             assert!(
-                w.has_support(BodyId(ids[1])),
+                w.has_support(w.body_id(ids[1]).unwrap()),
                 "missing settled recontact at step {step}"
             );
         }

@@ -1,7 +1,6 @@
 //! Bounded axial-reference contacts, not a general geometry or rotation oracle.
-use physics_engine::{
-    BodyId,
-    approximate::{Body, CheckpointContext, Config, Quaternion, Report, Shape, Vector as V, World},
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Quaternion, Report, Shape, Vector as V, World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -38,8 +37,8 @@ fn fixture(
     })
     .unwrap();
     for i in 0..2 {
-        let mut b = Body::new(
-            BodyId(ids[i]),
+        let mut b = Body::keyed(
+            ids[i],
             shapes[i],
             origin(shapes[i], if i == 0 { 0.0 } else { 2.0 - depth }),
             if i == 0 { 1.0 } else { mass },
@@ -111,7 +110,9 @@ pub fn run() -> [Real; 10] {
                             let expected = [V(0.0, 0.0, 3.0 - impulse), V(0.0, 0.0, impulse * inv)];
                             let expected_momentum = expected[0] + expected[1] * mass;
                             let observe = |world: &World, step: u32, values: &mut [Real; 10]| {
-                                let bodies = ids.map(|id| world.body(BodyId(id)).unwrap());
+                                let bodies = ids.map(|id| {
+                                    world.body_id(id).and_then(|id| world.body(id)).unwrap()
+                                });
                                 for i in 0..2 {
                                     let body = bodies[i];
                                     assert_eq!(body.shape, [a, b][i]);

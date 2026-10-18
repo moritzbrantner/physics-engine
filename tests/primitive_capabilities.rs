@@ -2,12 +2,9 @@
 use physics_engine::approximate::Real;
 use std::collections::BTreeSet;
 
-use physics_engine::{
-    BodyId,
-    approximate::{
-        Body, CheckpointContext, Config, Error, PRIMITIVE_CAPABILITIES_JSON, Quaternion,
-        QueryFilter, QueryPose, RayCast, Shape, ShapeCast, Vector as V, World,
-    },
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Error, PRIMITIVE_CAPABILITIES_JSON, Quaternion, QueryFilter,
+    QueryPose, RayCast, Shape, ShapeCast, Vector as V, World,
 };
 use serde_json::Value;
 
@@ -78,11 +75,11 @@ pub fn advertised_shape_queries_and_mass_cross_the_public_api() {
         );
         assert_eq!(properties.local_center_of_mass != V::ZERO, name == "wedge");
         let mut world = world();
-        let mut body = Body::new(BodyId(1), shape, V::ZERO, 1.0);
+        let mut body = Body::keyed(1, shape, V::ZERO, 1.0);
         body.rotation_locked = name == "wedge";
         body.orientation = Quaternion(0.0, 0.0, (0.3 as Real).sin(), (0.3 as Real).cos());
         world.add_body(body).unwrap();
-        world.add_force(BodyId(1), V::X).unwrap();
+        world.add_force(world.body_id(1).unwrap(), V::X).unwrap();
         let context = CheckpointContext {
             build: [183; 32],
             content: [1; 32],
@@ -148,12 +145,12 @@ pub fn every_advertised_pair_executes_its_dispatch_in_both_orders() {
         );
         for (a, b) in [(left, right), (right, left)] {
             let mut world = world();
-            let mut moving = Body::new(BodyId(1), shape(a), V::ZERO, 1.0);
+            let mut moving = Body::keyed(1, shape(a), V::ZERO, 1.0);
             moving.rotation_locked = true;
             moving.sleep_allowed = false;
             world.add_body(moving).unwrap();
             world
-                .add_body(Body::new(BodyId(2), shape(b), V(0.5, 0.0, 0.0), 0.0))
+                .add_body(Body::keyed(2, shape(b), V(0.5, 0.0, 0.0), 0.0))
                 .unwrap();
             let report = world.step(1.0 / 60.0).unwrap();
             assert!(report.contact_points > 0, "no physical contact for {a}/{b}");
@@ -220,7 +217,7 @@ pub fn restrictions_and_validation_remain_explicit() {
             }
         );
         assert_eq!(row["collapsedSkeleton"], name == "capsule");
-        let mut moving = Body::new(BodyId(1), shape(name), V::ZERO, 1.0);
+        let mut moving = Body::keyed(1, shape(name), V::ZERO, 1.0);
         let mut world = world();
         if name == "wedge" {
             assert_eq!(world.add_body(moving.clone()), Err(Error::InvalidInput));
@@ -234,7 +231,7 @@ pub fn restrictions_and_validation_remain_explicit() {
                 Shape::Capsule { .. } => Shape::capsule(0.0, dimension),
                 Shape::Wedge(_) => Shape::wedge(V(dimension, minimum, minimum)),
             };
-            let mut invalid = Body::new(BodyId(2), shape, V::ZERO, 0.0);
+            let mut invalid = Body::keyed(2, shape, V::ZERO, 0.0);
             invalid.rotation_locked = true;
             assert_eq!(world.add_body(invalid), Err(Error::InvalidInput));
             assert!(shape.mass_properties(1.0).is_err());
@@ -242,8 +239,8 @@ pub fn restrictions_and_validation_remain_explicit() {
     }
     let mut world = world();
     world
-        .add_body(Body::new(
-            BodyId(1),
+        .add_body(Body::keyed(
+            1,
             Shape::capsule(
                 validation["capsuleHalfSegmentMinimum"].as_f64().unwrap() as Real,
                 minimum,
@@ -256,18 +253,13 @@ pub fn restrictions_and_validation_remain_explicit() {
     let mass_maximum = validation["massMaximumExclusive"].as_f64().unwrap() as Real;
     for mass in [-1.0, Real::NAN, Real::INFINITY, mass_maximum] {
         assert_eq!(
-            world.add_body(Body::new(BodyId(3), Shape::Sphere(1.0), V::ZERO, mass)),
+            world.add_body(Body::keyed(3, Shape::Sphere(1.0), V::ZERO, mass)),
             Err(Error::InvalidInput)
         );
     }
     for half in [-1.0, Real::NAN, maximum] {
         assert_eq!(
-            world.add_body(Body::new(
-                BodyId(2),
-                Shape::capsule(half, minimum),
-                V::ZERO,
-                1.0
-            )),
+            world.add_body(Body::keyed(2, Shape::capsule(half, minimum), V::ZERO, 1.0)),
             Err(Error::InvalidInput)
         );
     }

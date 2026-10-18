@@ -3,16 +3,14 @@ use crate::approximate::{Config, Quaternion, Shape, World};
 use std::collections::BTreeSet;
 
 fn body(id: u64, position: Vector, mass: Real) -> Body {
-    Body::new(
-        BodyId(id),
-        Shape::Box(Vector(1.0, 1.0, 1.0)),
-        position,
-        mass,
-    )
+    Body::fixture(id, Shape::Box(Vector(1.0, 1.0, 1.0)), position, mass)
+}
+fn ord(key: u64) -> Order {
+    Order::new(Some(key), 0)
 }
 fn link(w: &mut World, a: u64, b: u64) {
     w.cache.insert(
-        (BodyId(a), BodyId(b)),
+        (ord(a), ord(b)),
         vec![CachedPoint {
             a: Vector::ZERO,
             b: Vector::ZERO,
@@ -24,7 +22,7 @@ fn link(w: &mut World, a: u64, b: u64) {
     w.bookkeeping.graph.dirty = true;
 }
 // Independent oracle: the original repeated full-edge scan, including its stack ordering.
-fn reference_component(w: &World, root: BodyId) -> Vec<usize> {
+fn reference_component(w: &World, root: Order) -> Vec<usize> {
     let mut stack = vec![root];
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -32,7 +30,7 @@ fn reference_component(w: &World, root: BodyId) -> Vec<usize> {
         if !seen.insert(id) {
             continue;
         }
-        let Ok(i) = w.index(id) else {
+        let Some(i) = w.index_of_order(id) else {
             continue;
         };
         if !w.bodies[i].movable() {
@@ -52,7 +50,7 @@ fn reference_component(w: &World, root: BodyId) -> Vec<usize> {
 fn check_components(w: &mut World) {
     w.bookkeeping.ensure_graph(&w.bodies, &w.cache);
     for i in 0..w.bodies.len() {
-        let want = reference_component(w, w.bodies[i].id);
+        let want = reference_component(w, w.bodies[i].order);
         let s = &mut w.bookkeeping;
         s.traversal.begin(w.bodies.len(), &mut s.work);
         s.traversal.collect(i, &w.bodies, &s.graph, &mut s.work);
@@ -88,9 +86,9 @@ fn adjacency_matches_full_edge_scan_and_does_not_bridge_fixed_or_external_bodies
     let mut w = graph_fixture();
     check_components(&mut w);
     assert_eq!(w.bookkeeping.work.adjacency_rebuilds, 1);
-    assert_eq!(w.wake_island(BodyId(10)), 2);
-    assert!(w.body(BodyId(20)).unwrap().sleeping);
-    assert!(w.body(BodyId(21)).unwrap().sleeping);
+    assert_eq!(w.wake_island(ord(10)), 2);
+    assert!(w.body_id(20).and_then(|id| w.body(id)).unwrap().sleeping);
+    assert!(w.body_id(21).and_then(|id| w.body(id)).unwrap().sleeping);
     assert_eq!(w.bookkeeping.work.adjacency_rebuilds, 1);
     check_activity(&mut w);
 }
@@ -99,18 +97,18 @@ fn contact_removal_and_same_id_reinsertion_invalidate_indexed_adjacency() {
     let mut w = graph_fixture();
     check_components(&mut w);
     // Public removal discards incident contacts and wakes only the correct neighbors.
-    w.remove_body(BodyId(10)).unwrap();
-    assert!(!w.body(BodyId(11)).unwrap().sleeping);
-    assert!(w.body(BodyId(20)).unwrap().sleeping);
+    w.remove_body(w.body_id(10).unwrap()).unwrap();
+    assert!(!w.body_id(11).and_then(|id| w.body(id)).unwrap().sleeping);
+    assert!(w.body_id(20).and_then(|id| w.body(id)).unwrap().sleeping);
     let mut replacement = body(10, Vector(-10.0, 5.0, 0.0), 3.0);
     replacement.shape = Shape::Sphere(0.5);
     w.add_body(replacement).unwrap();
     w.add_body(body(0, Vector(-100.0, 0.0, 0.0), 0.0)).unwrap();
     check_components(&mut w);
-    assert!(reference_component(&w, BodyId(10)).len() == 1);
+    assert!(reference_component(&w, ord(10)).len() == 1);
     check_activity(&mut w);
     // Contact topology can change without body membership changing.
-    w.cache.remove(&(BodyId(20), BodyId(21)));
+    w.cache.remove(&(ord(20), ord(21)));
     link(&mut w, 11, 21);
     check_components(&mut w);
     let before = w.bookkeeping.work.adjacency_rebuilds;
@@ -161,7 +159,7 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
     check_activity(&mut w);
     assert!(w.step(f64::NAN).is_err());
     check_activity(&mut w);
-    w.add_force(BodyId(10), Vector::X).unwrap();
+    w.add_force(w.body_id(10).unwrap(), Vector::X).unwrap();
     check_activity(&mut w);
     assert!(!w.is_quiescent());
     w.step(0.01).unwrap();
@@ -170,11 +168,11 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
     b.external = true;
     w.add_body(b).unwrap();
     check_activity(&mut w);
-    w.set_velocity(BodyId(2), Vector::Y).unwrap();
+    w.set_velocity(w.body_id(2).unwrap(), Vector::Y).unwrap();
     w.step(0.01).unwrap();
     check_activity(&mut w);
-    w.remove_body(BodyId(10));
-    w.remove_body(BodyId(2));
+    w.remove_body(w.body_id(10).unwrap());
+    w.remove_body(w.body_id(2).unwrap());
     check_activity(&mut w);
     assert!(w.is_quiescent());
 }
@@ -206,7 +204,7 @@ fn check_bounds(w: &mut World, h: Real) {
     expected.sort_by(|a, b| {
         a.1.0
             .total_cmp(&b.1.0)
-            .then_with(|| w.bodies[a.0].id.cmp(&w.bodies[b.0].id))
+            .then_with(|| w.bodies[a.0].order.cmp(&w.bodies[b.0].order))
     });
     let got = w
         .bookkeeping
@@ -226,19 +224,20 @@ fn retained_sweeps_refresh_on_wake_sleep_dt_change_and_same_length_layout_change
     w.add_body(rotating).unwrap();
     check_bounds(&mut w, 0.01);
     check_bounds(&mut w, 0.02);
-    w.set_velocity(BodyId(20), Vector(7.0, -3.0, 2.0)).unwrap();
+    w.set_velocity(w.body_id(20).unwrap(), Vector(7.0, -3.0, 2.0))
+        .unwrap();
     check_bounds(&mut w, 0.02);
     // A public physics step updates cached current bounds and contact graph.
     w.step(0.01).unwrap();
     check_bounds(&mut w, 0.01);
-    w.remove_body(BodyId(4)).unwrap();
+    w.remove_body(w.body_id(4).unwrap()).unwrap();
     w.add_body(body(4, Vector(100.0, 10.0, 20.0), 0.0)).unwrap();
     check_bounds(&mut w, 0.001);
 }
 fn tower_pair() -> World {
     let mut w = World::new(Config::default()).unwrap();
-    w.add_body(Body::new(
-        BodyId(1),
+    w.add_body(Body::fixture(
+        1,
         Shape::Box(Vector(800.0, 16.0, 800.0)),
         Vector(0.0, -16.0, 0.0),
         0.0,
@@ -249,8 +248,8 @@ fn tower_pair() -> World {
             for row in 0..2 {
                 for col in 0..4 {
                     let id = 100 + tower * 100 + level * 8 + row * 4 + col;
-                    let mut b = Body::new(
-                        BodyId(id),
+                    let mut b = Body::fixture(
+                        id,
                         Shape::Box(Vector(18.0, 18.0, 18.0)),
                         Vector(
                             tower as Real * 400.0 - 54.0 + col as Real * 36.0,
@@ -284,12 +283,7 @@ fn separate_sleeping_towers_stay_independent_through_miss_hit_and_support_remova
     let mut w = tower_pair();
     let mut removed_support = w.clone();
     let original = w.bodies.clone();
-    let mut miss = Body::new(
-        BodyId(1000),
-        Shape::Sphere(3.0),
-        Vector(140.0, 250.0, 100.0),
-        1.0,
-    );
+    let mut miss = Body::fixture(1000, Shape::Sphere(3.0), Vector(140.0, 250.0, 100.0), 1.0);
     miss.velocity = Vector(0.0, 0.0, -5760.0);
     miss.ccd = true;
     w.add_body(miss).unwrap();
@@ -297,14 +291,9 @@ fn separate_sleeping_towers_stay_independent_through_miss_hit_and_support_remova
         let r = w.step(1.0 / 60.0).unwrap();
         assert_eq!(r.woken_bodies, 0);
     }
-    w.remove_body(BodyId(1000)).unwrap();
+    w.remove_body(w.body_id(1000).unwrap()).unwrap();
     assert_eq!(w.bodies, original);
-    let mut shot = Body::new(
-        BodyId(1000),
-        Shape::Sphere(3.0),
-        Vector(-140.0, 50.0, 82.0),
-        1.0,
-    );
+    let mut shot = Body::fixture(1000, Shape::Sphere(3.0), Vector(-140.0, 50.0, 82.0), 1.0);
     shot.velocity = Vector(5760.0, 0.0, 0.0);
     shot.ccd = true;
     shot.retire_on_impact = true;
@@ -314,13 +303,21 @@ fn separate_sleeping_towers_stay_independent_through_miss_hit_and_support_remova
         woke += w.step(1.0 / 60.0).unwrap().woken_bodies;
     }
     assert!(woke > 0);
-    for b in original.iter().filter(|b| b.id.0 >= 200) {
+    for b in original.iter().filter(|b| b.key.unwrap() >= 200) {
         assert_eq!(w.body(b.id), Some(b));
     }
-    removed_support.remove_body(BodyId(100)).unwrap();
+    removed_support
+        .remove_body(removed_support.body_id(100).unwrap())
+        .unwrap();
     removed_support.step(1.0 / 60.0).unwrap();
-    assert!(!removed_support.body(BodyId(108)).unwrap().sleeping);
-    for b in original.iter().filter(|b| b.id.0 >= 200) {
+    assert!(
+        !removed_support
+            .body_id(108)
+            .and_then(|id| removed_support.body(id))
+            .unwrap()
+            .sleeping
+    );
+    for b in original.iter().filter(|b| b.key.unwrap() >= 200) {
         assert_eq!(removed_support.body(b.id), Some(b));
     }
     check_activity(&mut w);
@@ -339,11 +336,11 @@ fn stationary_contact_keys_and_point_storage_survive_updated_impulses() {
     b.sleep_allowed = false;
     w.add_body(b).unwrap();
     w.step(1.0 / 60.0).unwrap();
-    let ptr = w.cache[&(BodyId(1), BodyId(2))].as_ptr();
+    let ptr = w.cache[&(ord(1), ord(2))].as_ptr();
     for _ in 0..20 {
         let r = w.step(1.0 / 60.0).unwrap();
         assert_eq!(r.bookkeeping.adjacency_rebuilds, 0);
-        assert_eq!(w.cache[&(BodyId(1), BodyId(2))].as_ptr(), ptr);
+        assert_eq!(w.cache[&(ord(1), ord(2))].as_ptr(), ptr);
     }
 }
 fn sleeping_neighborhood(count: u64) -> World {

@@ -174,20 +174,22 @@ mod engine {
         },
     };
 
-    const FLOOR_ID: BodyId = BodyId(1);
+    const FLOOR_KEY: u64 = 1;
     const DOOR_BASE: u64 = 10_000;
 
     fn v(a: [f32; 3]) -> Vector {
         Vector(a[0], a[1], a[2])
     }
-    fn fixed(id: u64, (c, h): BoxSpec) -> Body {
-        Body::new(BodyId(id), Shape::Box(v(h)), v(c), 0.0)
+    fn fixed(key: u64, (c, h): BoxSpec) -> Body {
+        Body::keyed(key, Shape::Box(v(h)), v(c), 0.0)
     }
 
     pub struct Sim {
         world: World,
+        floor: BodyId,
         doors: Vec<BoxSpec>,
-        open: Vec<bool>,
+        /// The live door bodies (`None` while open), as the game keeps them.
+        door_ids: Vec<Option<BodyId>>,
         hits: Vec<QueryHit>,
     }
     impl Sim {
@@ -197,19 +199,21 @@ mod engine {
                 ..Config::default()
             })
             .unwrap();
-            world.add_body(fixed(FLOOR_ID.0, FLOOR)).unwrap();
+            let floor = world.add_body(fixed(FLOOR_KEY, FLOOR)).unwrap();
             let (walls, doors) = layout();
             for (i, w) in walls.into_iter().enumerate() {
                 world.add_body(fixed(100 + i as u64, w)).unwrap();
             }
-            for (i, d) in doors.iter().enumerate() {
-                world.add_body(fixed(DOOR_BASE + i as u64, *d)).unwrap();
-            }
-            let open = vec![false; doors.len()];
+            let door_ids = doors
+                .iter()
+                .enumerate()
+                .map(|(i, d)| Some(world.add_body(fixed(DOOR_BASE + i as u64, *d)).unwrap()))
+                .collect();
             Self {
                 world,
+                floor,
                 doors,
-                open,
+                door_ids,
                 hits: Vec::new(),
             }
         }
@@ -224,17 +228,20 @@ mod engine {
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
             if let Some(door) = door_toggle(tick) {
-                let id = BodyId(DOOR_BASE + door as u64);
-                if self.open[door] {
-                    self.world.add_body(fixed(id.0, self.doors[door])).unwrap();
-                } else {
-                    self.world.remove_body(id);
-                }
-                self.open[door] = !self.open[door];
+                self.door_ids[door] = match self.door_ids[door].take() {
+                    Some(id) => {
+                        self.world.remove_body(id);
+                        None
+                    }
+                    None => {
+                        let body = fixed(DOOR_BASE + door as u64, self.doors[door]);
+                        Some(self.world.add_body(body).unwrap())
+                    }
+                };
             }
             let q = queries(tick);
             let no_floor = QueryFilter {
-                exclude: Some(FLOOR_ID),
+                exclude: Some(self.floor),
                 ..QueryFilter::default()
             };
             for (o, d) in q.los {

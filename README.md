@@ -29,17 +29,15 @@ Precision rules: [numerics](docs/numerics.md).
 ## Example
 
 ```rust
-use physics_engine::{
-    BodyId,
-    approximate::{Body, Config, Shape, Vector, World},
-};
+use physics_engine::approximate::{Body, Config, Shape, Vector, World};
 
 let mut world = World::new(Config::default())?;
-let id = BodyId(1);
-let mut body = Body::new(id, Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 1.0);
+// The game's entity id 7 is the body's key; the engine returns a generational handle.
+let mut body = Body::keyed(7, Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 1.0);
 body.velocity = Vector(60.0, 0.0, 0.0);
-world.add_body(body)?;
+let id = world.add_body(body)?;
 world.step(1.0 / 60.0)?;
+assert_eq!(world.body_id(7), Some(id));
 # Ok::<(), physics_engine::approximate::Error>(())
 ```
 

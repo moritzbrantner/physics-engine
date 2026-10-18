@@ -3,12 +3,7 @@ use super::*;
 
 #[test]
 fn interval_points_preserve_ordinary_admission_witnesses_and_fallbacks() {
-    let floor = Body::new(
-        BodyId(1),
-        Shape::Box(Vector(1.0, 0.5, 1.0)),
-        Vector::ZERO,
-        0.0,
-    );
+    let floor = Body::fixture(1, Shape::Box(Vector(1.0, 0.5, 1.0)), Vector::ZERO, 0.0);
     let mut seed = 243_u64;
     let mut value = || {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -16,8 +11,8 @@ fn interval_points_preserve_ordinary_admission_witnesses_and_fallbacks() {
     };
     let (mut admitted, mut fallbacks) = (0_u32, 0_u32);
     for _ in 0..2000 {
-        let mut body = Body::new(
-            BodyId(2),
+        let mut body = Body::fixture(
+            2,
             Shape::Box(Vector(1.0, 1.0, 1.0)),
             Vector(value() * 2.0, 1.5 + value(), value() * 2.0),
             2.0,
@@ -69,15 +64,15 @@ fn fixed_interval_contacts_match_fresh_geometry_and_response() {
         })
         .unwrap();
         world
-            .add_body(Body::new(
-                BodyId(ids[0]),
+            .add_body(Body::fixture(
+                ids[0],
                 Shape::Box(Vector(4.0, 0.5, 4.0)),
                 Vector(0.0, -0.5, 0.0),
                 0.0,
             ))
             .unwrap();
-        let mut body = Body::new(
-            BodyId(ids[1]),
+        let mut body = Body::fixture(
+            ids[1],
             Shape::Box(Vector(1.0, 1.0, 1.0)),
             Vector(0.0, 1.19, 0.0),
             2.0,
@@ -106,14 +101,9 @@ fn fixed_interval_contacts_match_fresh_geometry_and_response() {
 
 fn pair() -> [Body; 2] {
     [
-        Body::new(
-            BodyId(1),
-            Shape::Box(Vector(3.0, 1.0, 2.0)),
-            Vector::ZERO,
-            0.0,
-        ),
-        Body::new(
-            BodyId(2),
+        Body::fixture(1, Shape::Box(Vector(3.0, 1.0, 2.0)), Vector::ZERO, 0.0),
+        Body::fixture(
+            2,
             Shape::Box(Vector(1.0, 1.0, 1.0)),
             Vector(0.0, 1.99, 0.0),
             2.0,
@@ -270,14 +260,14 @@ fn rotation_shape_margin_and_signed_zero_are_dependency_changes() {
 #[test]
 fn cached_negative_contact_does_not_suppress_changed_velocity_or_dt_ccd() {
     let mut w = World::new(Config::default()).unwrap();
-    w.add_body(Body::new(
-        BodyId(1),
+    w.add_body(Body::fixture(
+        1,
         Shape::Box(Vector(1.0, 1.0, 1.0)),
         Vector::ZERO,
         0.0,
     ))
     .unwrap();
-    let mut projectile = Body::new(BodyId(2), Shape::Sphere(0.1), Vector(-3.0, 1.12, 0.0), 1.0);
+    let mut projectile = Body::fixture(2, Shape::Sphere(0.1), Vector(-3.0, 1.12, 0.0), 1.0);
     projectile.ccd = true;
     projectile.rotation_locked = true; // Exercise a cache-eligible projectile.
     projectile.velocity = Vector(40.0, 0.0, 0.0);
@@ -286,7 +276,8 @@ fn cached_negative_contact_does_not_suppress_changed_velocity_or_dt_ccd() {
     w.manifolds::<true>(0.1, &mut Report::default(), &mut out)
         .unwrap();
     assert!(out.is_empty(), "rounded corner near miss must stay a miss");
-    w.set_velocity(BodyId(2), Vector(40.0, -2.0, 0.0)).unwrap();
+    w.set_velocity(w.body_id(2).unwrap(), Vector(40.0, -2.0, 0.0))
+        .unwrap();
     let mut report = Report::default();
     w.manifolds::<true>(0.1, &mut report, &mut out).unwrap();
     assert_eq!(report.geometry.negative_hits, 1);
@@ -316,14 +307,16 @@ fn absent_pairs_removal_reused_ids_and_epoch_wrap_cannot_resurrect_geometry() {
     assert_eq!(work.pair_invalidations, 1);
     assert!(cache.pairs.is_empty());
     query(&mut cache, &b, 0.02);
-    cache.remove(BodyId(2));
+    cache.remove(Order::new(Some(2), 0));
     assert!(cache.pairs.is_empty());
     assert_eq!(query(&mut cache, &b, 0.02).1.manifold_hits, 0);
     cache.epoch = u64::MAX;
     assert_eq!(query(&mut cache, &b, 0.02).1.manifold_hits, 0);
     let mut changed = b.clone();
-    changed[0].id = BodyId(100);
-    changed[1].id = BodyId(101);
+    for (body, key) in changed.iter_mut().zip([100, 101]) {
+        body.id = crate::BodyId::from_bits(key);
+        body.order = Order::new(Some(key), 0);
+    }
     assert_eq!(query(&mut cache, &changed, 0.02).1.frame_preparations, 2);
     assert_eq!(
         cache.pairs.len(),
@@ -372,16 +365,16 @@ fn cached_and_uncached_worlds_preserve_complete_motion_and_contact_impulses() {
             })
             .unwrap();
             candidate
-                .add_body(Body::new(
-                    BodyId(1),
+                .add_body(Body::fixture(
+                    1,
                     Shape::Box(Vector(50.0, 1.0, 50.0)),
                     Vector(0.0, -1.0, 0.0),
                     0.0,
                 ))
                 .unwrap();
             for i in 0..4 {
-                let mut b = Body::new(
-                    BodyId(10 + i),
+                let mut b = Body::fixture(
+                    10 + i,
                     Shape::Box(Vector(2.0, 2.0, 2.0)),
                     Vector(0.0, 2.0 + 4.0 * i as Real, 0.0),
                     2.0 + i as Real,
@@ -393,12 +386,13 @@ fn cached_and_uncached_worlds_preserve_complete_motion_and_contact_impulses() {
             for tick in 0..400 {
                 if tick == 200 {
                     for w in [&mut candidate, &mut reference] {
-                        w.set_velocity(BodyId(12), Vector(10.0, 0.0, 0.0)).unwrap();
+                        w.set_velocity(w.body_id(12).unwrap(), Vector(10.0, 0.0, 0.0))
+                            .unwrap();
                     }
                 }
                 if tick == 300 {
-                    candidate.remove_body(BodyId(10));
-                    reference.remove_body(BodyId(10));
+                    candidate.remove_body(candidate.body_id(10).unwrap());
+                    reference.remove_body(reference.body_id(10).unwrap());
                 }
                 let mut actual = candidate
                     .step_with_geometry::<true, true>(1.0 / 60.0)
@@ -451,8 +445,8 @@ fn rotating_pairs_share_frames_without_retaining_pair_payloads() {
     let mut cache = GeometryCache::default();
     let mut bodies = (0..4)
         .map(|i| {
-            let mut b = Body::new(
-                BodyId(i + 1),
+            let mut b = Body::fixture(
+                i + 1,
                 Shape::Box(Vector(3.0, 1.0, 2.0)),
                 Vector(i as Real, 0.0, 0.0),
                 2.0,
@@ -485,7 +479,7 @@ fn rotating_pairs_share_frames_without_retaining_pair_payloads() {
             "rotating pairs must not allocate pair entries"
         );
     }
-    cache.remove(BodyId(2));
+    cache.remove(Order::new(Some(2), 0));
     bodies[1].shape = Shape::Box(Vector(1.1, 0.8, 2.5));
     cache.begin(bodies.len());
     let mut work = GeometryStats::default();
@@ -562,14 +556,9 @@ fn rotating_frame_and_sweep_reuse_matches_uncached_oracle() {
 #[test]
 fn prepared_sweeps_preserve_thin_wall_and_changed_interval() {
     let mut cache = GeometryCache::default();
-    let wall = Body::new(
-        BodyId(1),
-        Shape::Box(Vector(0.01, 10.0, 10.0)),
-        Vector::ZERO,
-        0.0,
-    );
-    let mut projectile = Body::new(
-        BodyId(2),
+    let wall = Body::fixture(1, Shape::Box(Vector(0.01, 10.0, 10.0)), Vector::ZERO, 0.0);
+    let mut projectile = Body::fixture(
+        2,
         Shape::Box(Vector(0.1, 0.1, 0.5)),
         Vector(-3.0, 0.0, 0.0),
         1.0,

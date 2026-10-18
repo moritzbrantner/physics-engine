@@ -1,6 +1,6 @@
 //! Contact admission for a translating external body and naturally parked dynamics.
 use physics_engine::{
-    BodyId, CollisionLayers3d,
+    CollisionLayers3d,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
     },
@@ -69,33 +69,33 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
         ..Config::default()
     })
     .unwrap();
-    w.add_body(Body::new(
-        BodyId(0),
+    w.add_body(Body::keyed(
+        0,
         Shape::Box(V(12.0, 0.5, 4.0)),
         V(0.0, -0.5, 0.0),
         0.0,
     ))
     .unwrap();
     for (id, x) in [(ids[1], 0.0), (30, 10.0)] {
-        w.add_body(Body::new(
-            BodyId(id),
-            Shape::Sphere(1.0),
-            V(x, 1.0, 0.0),
-            2.0,
-        ))
-        .unwrap();
+        w.add_body(Body::keyed(id, Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0))
+            .unwrap();
     }
     for _ in 0..32 {
         w.step(1.0 / 60.0).unwrap();
     }
-    assert!(w.body(BodyId(ids[1])).unwrap().is_sleeping());
-    assert!(w.body(BodyId(30)).unwrap().is_sleeping());
-    let mut driven = Body::new(
-        BodyId(ids[0]),
-        Shape::Box(V(4.0, 0.5, 4.0)),
-        case.position(),
-        1.0,
+    assert!(
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
     );
+    assert!(
+        w.body_id(30)
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping()
+    );
+    let mut driven = Body::keyed(ids[0], Shape::Box(V(4.0, 0.5, 4.0)), case.position(), 1.0);
     driven.external = true;
     driven.sensor = matches!(case, Case::Sensor);
     if matches!(case, Case::Layers) {
@@ -103,13 +103,19 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
     }
     w.add_body(driven).unwrap();
     assert!(
-        w.body(BodyId(ids[1])).unwrap().is_sleeping(),
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping(),
         "creation is not wake evidence"
     );
-    w.set_velocity(BodyId(ids[0]), V(0.0, case.speed(), 0.0))
+    w.set_velocity(w.body_id(ids[0]).unwrap(), V(0.0, case.speed(), 0.0))
         .unwrap();
     assert!(
-        w.body(BodyId(ids[1])).unwrap().is_sleeping(),
+        w.body_id(ids[1])
+            .and_then(|id| w.body(id))
+            .unwrap()
+            .is_sleeping(),
         "a command is not wake evidence"
     );
     w
@@ -141,17 +147,17 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
     assert!(report.convergence.constraint_visits <= 8 * report.contact_points);
     assert_eq!(report.position.passes, 0);
     assert!(report.retired.is_empty());
-    let driven = w.body(BodyId(ids[0])).unwrap();
+    let driven = w.body_id(ids[0]).and_then(|id| w.body(id)).unwrap();
     assert!(driven.external && !driven.is_sleeping());
     assert_eq!(driven.velocity, V(0.0, case.speed(), 0.0));
     assert!(
         (driven.position - (case.position() + driven.velocity * h)).length()
             <= rounding(1e-12, 8.0)
     );
-    let rider = w.body(BodyId(ids[1])).unwrap();
+    let rider = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
     assert_eq!(rider.mass, 2.0);
     assert!(rider.position.finite() && rider.velocity.finite() && rider.angular_velocity.finite());
-    let neighbor = w.body(BodyId(30)).unwrap();
+    let neighbor = w.body_id(30).and_then(|id| w.body(id)).unwrap();
     assert!(
         neighbor.is_sleeping(),
         "a shared fixed floor must not bridge parked islands"

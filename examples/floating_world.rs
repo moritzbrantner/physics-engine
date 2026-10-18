@@ -1,9 +1,6 @@
 use std::error::Error;
 
-use physics_engine::{
-    BodyId,
-    approximate::{Body, Config, Shape, Vector, World},
-};
+use physics_engine::approximate::{Body, Config, Shape, Vector, World};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut world = World::new(Config {
@@ -12,11 +9,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         velocity_iterations: 1,
         ..Config::default()
     })?;
-    let id = BodyId(1);
-    let mut body = Body::new(id, Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 1.0);
+    let mut body = Body::new(Shape::Box(Vector(1.0, 1.0, 1.0)), Vector::ZERO, 1.0);
     body.velocity = Vector(60.0, 0.0, 0.0);
-
-    world.add_body(body)?;
+    let id = world.add_body(body)?;
     world.step(1.0 / 60.0)?;
 
     let position = world.body(id).expect("body remains").position;

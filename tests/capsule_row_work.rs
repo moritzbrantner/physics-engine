@@ -1,11 +1,8 @@
 //! Capsule row work must reach public world/query reports on native and WASM.
 use physics_engine::approximate::Real;
-use physics_engine::{
-    BodyId,
-    approximate::{
-        Body, CheckpointContext, Config, Error, QueryFailureReason, QueryFilter, QueryPose, Shape,
-        ShapeCast, SweepFailure, Vector as V, World,
-    },
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Error, QueryFailureReason, QueryFilter, QueryPose, Shape,
+    ShapeCast, SweepFailure, Vector as V, World,
 };
 
 /// Rounding-only bound: the f64 reference, or 16 ulps of `scale` when larger (f32 state).
@@ -20,9 +17,9 @@ fn world(shape: Shape) -> World {
     })
     .unwrap();
     world
-        .add_body(Body::new(BodyId(17), shape, V::ZERO, 1.0))
+        .add_body(Body::keyed(17, shape, V::ZERO, 1.0))
         .unwrap();
-    world.add_force(BodyId(17), V::X).unwrap();
+    world.add_force(world.body_id(17).unwrap(), V::X).unwrap();
     world
 }
 fn context() -> CheckpointContext {
@@ -102,7 +99,7 @@ pub fn failed_capsule_search_retains_discarded_distance_work() {
     assert_eq!(
         failure.reason,
         QueryFailureReason::Search {
-            body: BodyId(17),
+            body: world.body_id(17).unwrap(),
             reason: SweepFailure::IterationLimit
         }
     );
@@ -127,10 +124,8 @@ pub fn capsule_contacts_report_distance_work_through_physical_steps() {
             ..Config::default()
         })
         .unwrap();
-        world
-            .add_body(Body::new(BodyId(1), shape, V::ZERO, 0.0))
-            .unwrap();
-        let mut moving = Body::new(BodyId(2), Shape::capsule(0.5, 0.25), V(0.74, 0.0, 0.0), 1.0);
+        world.add_body(Body::keyed(1, shape, V::ZERO, 0.0)).unwrap();
+        let mut moving = Body::keyed(2, Shape::capsule(0.5, 0.25), V(0.74, 0.0, 0.0), 1.0);
         moving.rotation_locked = true;
         world.add_body(moving).unwrap();
         let report = world.step(1.0 / 60.0).unwrap();
@@ -161,25 +156,27 @@ pub fn failed_capsule_step_retains_discarded_distance_work() {
     })
     .unwrap();
     world
-        .add_body(Body::new(BodyId(1), Shape::Sphere(1.0), V::ZERO, 0.0))
+        .add_body(Body::keyed(1, Shape::Sphere(1.0), V::ZERO, 0.0))
         .unwrap();
     world
-        .add_body(Body::new(
-            BodyId(2),
+        .add_body(Body::keyed(
+            2,
             Shape::capsule(0.5, 1.0),
             V(-4.0, 0.0, 0.0),
             0.1,
         ))
         .unwrap();
     world.step(0.01).unwrap();
-    world.add_force(BodyId(2), V(Real::MAX, 0.0, 0.0)).unwrap();
+    world
+        .add_force(world.body_id(2).unwrap(), V(Real::MAX, 0.0, 0.0))
+        .unwrap();
     let before = world.checkpoint(context()).unwrap().to_bytes();
     let prior_report = format!("{:?}", world.last_report);
     for _ in 0..3 {
         assert_eq!(
             world.step(0.1).unwrap_err(),
             Error::CollisionSearchFailed {
-                bodies: [BodyId(1), BodyId(2)],
+                bodies: [world.body_id(1).unwrap(), world.body_id(2).unwrap()],
                 reason: SweepFailure::InvalidGeometryInput,
             }
         );

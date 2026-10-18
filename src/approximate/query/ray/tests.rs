@@ -13,12 +13,12 @@ fn world() -> World {
 fn native_contract_has_stable_ties_features_support_velocity_and_no_state_changes() {
     let mut w = world();
     for id in [9, 3] {
-        let mut b = Body::new(BodyId(id), Shape::Box(V(0.01, 2.0, 2.0)), V::ZERO, 1.0);
+        let mut b = Body::fixture(id, Shape::Box(V(0.01, 2.0, 2.0)), V::ZERO, 1.0);
         b.velocity = V::Y;
         b.angular_velocity = V(0.0, 0.0, 2.0);
         w.add_body(b).unwrap();
     }
-    w.add_force(BodyId(3), V::X).unwrap();
+    w.add_force(w.body_id(3).unwrap(), V::X).unwrap();
     let before: Vec<Body> = w.bodies().cloned().collect();
     let cast = RayCast::new(V(-100.0, 0.0, 0.0), V(200.0, 0.0, 0.0));
     let mut hits = Vec::new();
@@ -27,7 +27,7 @@ fn native_contract_has_stable_ties_features_support_velocity_and_no_state_change
     assert_eq!(stats.ray_planes_tested, 12);
     assert_eq!(
         hits.iter().map(|h| h.body).collect::<Vec<_>>(),
-        [BodyId(3), BodyId(9)]
+        [w.body_id(3).unwrap(), w.body_id(9).unwrap()]
     );
     for h in &hits {
         assert!((h.fraction - 0.49995).abs() < 1e-14);
@@ -66,7 +66,7 @@ fn native_contract_has_stable_ties_features_support_velocity_and_no_state_change
 #[test]
 fn filters_lifecycle_and_invalid_requests_cannot_reuse_stale_results() {
     let mut w = world();
-    let mut b = Body::new(BodyId(1), Shape::Sphere(1.0), V::ZERO, 0.0);
+    let mut b = Body::fixture(1, Shape::Sphere(1.0), V::ZERO, 0.0);
     b.sensor = true;
     b.layers = CollisionLayers3d::new(2, 2);
     w.add_body(b).unwrap();
@@ -82,7 +82,7 @@ fn filters_lifecycle_and_invalid_requests_cannot_reuse_stale_results() {
     assert!(hits[0].sensor);
     for filter in [
         QueryFilter {
-            exclude: Some(BodyId(1)),
+            exclude: w.body_id(1),
             ..filter
         },
         QueryFilter {
@@ -93,9 +93,9 @@ fn filters_lifecycle_and_invalid_requests_cannot_reuse_stale_results() {
         w.cast_ray(cast, filter, &mut hits).unwrap();
         assert!(hits.is_empty());
     }
-    w.remove_body(BodyId(1)).unwrap();
-    w.add_body(Body::new(
-        BodyId(1),
+    w.remove_body(w.body_id(1).unwrap()).unwrap();
+    w.add_body(Body::fixture(
+        1,
         Shape::wedge(V(1.0, 1.0, 1.0)),
         V(30.0, 0.0, 0.0),
         0.0,
@@ -124,14 +124,9 @@ fn filters_lifecycle_and_invalid_requests_cannot_reuse_stale_results() {
 #[test]
 fn partial_work_and_hits_are_reported_when_support_velocity_fails() {
     let mut w = world();
-    w.add_body(Body::new(
-        BodyId(1),
-        Shape::Sphere(1.0),
-        V(-3.0, 0.0, 0.0),
-        0.0,
-    ))
-    .unwrap();
-    w.add_body(Body::new(BodyId(2), Shape::Sphere(2.0), V::ZERO, 0.0))
+    w.add_body(Body::fixture(1, Shape::Sphere(1.0), V(-3.0, 0.0, 0.0), 0.0))
+        .unwrap();
+    w.add_body(Body::fixture(2, Shape::Sphere(2.0), V::ZERO, 0.0))
         .unwrap();
     // Deliberately corrupt otherwise validated state to test the numerical error boundary.
     w.bodies[1].angular_velocity = V(0.0, Real::MAX, 0.0);
@@ -146,7 +141,7 @@ fn partial_work_and_hits_are_reported_when_support_velocity_fails() {
     assert_eq!(
         error.reason,
         QueryFailureReason::Search {
-            body: BodyId(2),
+            body: w.body_id(2).unwrap(),
             reason: SweepFailure::NonFiniteComputation
         }
     );
@@ -174,7 +169,7 @@ fn seeded_pruned_rays_match_exhaustive_rotated_geometry() {
                 2 => Shape::capsule(0.7, 0.3),
                 _ => Shape::wedge(V(1.0, 0.7, 0.5)),
             };
-            let mut b = Body::new(BodyId(id), shape, V(next(), next(), next()), 0.0);
+            let mut b = Body::fixture(id, shape, V(next(), next(), next()), 0.0);
             let angle = next() * 0.1;
             b.orientation = Quaternion(0.0, (angle * 0.5).sin(), 0.0, (angle * 0.5).cos());
             b.sensor = id % 5 == 0;
@@ -187,7 +182,7 @@ fn seeded_pruned_rays_match_exhaustive_rotated_geometry() {
             );
             let filter = QueryFilter {
                 include_sensors: true,
-                exclude: Some(BodyId(i)),
+                exclude: w.body_id(i),
                 ..Default::default()
             };
             w.cast_ray(cast, filter, &mut pruned).unwrap();
@@ -201,8 +196,8 @@ fn seeded_pruned_rays_match_exhaustive_rotated_geometry() {
 fn sparse_work_is_bounded_and_warmed_output_retains_capacity() {
     let mut w = world();
     for id in 0..512 {
-        w.add_body(Body::new(
-            BodyId(id),
+        w.add_body(Body::fixture(
+            id,
             Shape::Sphere(0.5),
             V(0.0, id as Real * 4.0, 0.0),
             0.0,
@@ -244,8 +239,7 @@ fn paired_ray_workload_evidence() {
                 } else {
                     V(0.0, id as Real * 4.0, 0.0)
                 };
-                w.add_body(Body::new(BodyId(id), shape, position, 0.0))
-                    .unwrap();
+                w.add_body(Body::fixture(id, shape, position, 0.0)).unwrap();
             }
             let y = if scenario == "sparse_miss" {
                 -10.0
@@ -316,19 +310,19 @@ fn first_hit_matches_the_first_of_all_hits_after_layout_changes() {
         } else {
             Shape::Sphere(0.8)
         };
-        w.add_body(Body::new(BodyId(id), shape, V(x, 0.0, z), 0.0))
+        w.add_body(Body::fixture(id, shape, V(x, 0.0, z), 0.0))
             .unwrap();
     }
     // Duplicate geometry at one place: equal fractions must keep the lower BodyId.
-    w.add_body(Body::new(
-        BodyId(500),
+    w.add_body(Body::fixture(
+        500,
         Shape::Box(V(1.0, 1.0, 0.5)),
         V(-18.0, 0.0, -15.0),
         0.0,
     ))
     .unwrap();
     for removed in [3, 40, 77] {
-        w.remove_body(BodyId(removed));
+        w.remove_body(w.body_id(removed).unwrap());
     }
     let mut hits = Vec::new();
     for i in 0..200 {

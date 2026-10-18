@@ -2,15 +2,14 @@
 use super::box_fixture_oracle;
 use physics_engine::{approximate::Real, numeric::Scalar};
 
-use physics_engine::{
-    BodyId,
-    approximate::{Body, CheckpointContext, Config, PositionCorrection, Shape, Vector as V, World},
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, PositionCorrection, Shape, Vector as V, World,
 };
 
 const DT: Scalar = 1.0 / 60.0;
 const TICKS: usize = 600;
-const BOX: BodyId = BodyId(10);
-const SUPPORT: BodyId = BodyId(2);
+const BOX: u64 = 10;
+const SUPPORT: u64 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Case {
@@ -29,16 +28,16 @@ fn fixture(case: Case, substeps: u8) -> World {
     })
     .unwrap();
     for (id, half, position) in [
-        (BodyId(1), V(500.0, 16.0, 500.0), V(0.0, -116.0, 0.0)),
+        (1, V(500.0, 16.0, 500.0), V(0.0, -116.0, 0.0)),
         (SUPPORT, V(4.0, 16.0, 30.0), V(0.0, -16.0, 0.0)),
     ] {
-        let mut body = Body::new(id, Shape::Box(half), position, 0.0);
+        let mut body = Body::keyed(id, Shape::Box(half), position, 0.0);
         body.friction = 0.6;
         body.restitution = 0.0;
         world.add_body(body).unwrap();
     }
     let x = if case == Case::OffCenter { 10.0 } else { 0.0 };
-    let mut body = Body::new(BOX, Shape::Box(V(18.0, 18.0, 18.0)), V(x, 18.0, 0.0), 2.0);
+    let mut body = Body::keyed(BOX, Shape::Box(V(18.0, 18.0, 18.0)), V(x, 18.0, 0.0), 2.0);
     body.friction = 0.6;
     body.restitution = 0.0;
     body.ccd = true;
@@ -66,7 +65,7 @@ struct Metrics {
 }
 
 fn observe(world: &World, case: Case, tail: bool, metrics: &mut Metrics) {
-    let body = world.body(BOX).unwrap();
+    let body = world.body_id(BOX).and_then(|id| world.body(id)).unwrap();
     assert!(body.position.finite());
     assert!(body.velocity.finite());
     assert!(body.angular_velocity.finite());
@@ -132,10 +131,21 @@ fn run_case(case: Case) -> Measurements {
     let mut substep_metrics = Metrics::default();
     for tick in 0..TICKS {
         if case == Case::Removal && tick == 120 {
-            assert!(world.body(BOX).unwrap().is_sleeping());
+            assert!(
+                world
+                    .body_id(BOX)
+                    .and_then(|id| world.body(id))
+                    .unwrap()
+                    .is_sleeping()
+            );
             for w in [&mut world, &mut replay, &mut observed] {
-                assert!(w.remove_body(SUPPORT).is_some());
-                assert!(!w.body(BOX).unwrap().is_sleeping());
+                assert!(w.remove_body(w.body_id(SUPPORT).unwrap()).is_some());
+                assert!(
+                    !w.body_id(BOX)
+                        .and_then(|id| w.body(id))
+                        .unwrap()
+                        .is_sleeping()
+                );
             }
         }
         advance(&mut world, DT, 4, &mut metrics);
@@ -184,7 +194,7 @@ fn run_case(case: Case) -> Measurements {
         substep_metrics.tail_angular_speed * 54.0 <= 1.0,
         "{case:?}: {substep_metrics:?}"
     );
-    let body = world.body(BOX).unwrap();
+    let body = world.body_id(BOX).and_then(|id| world.body(id)).unwrap();
     match case {
         Case::Balanced => {
             assert!(!metrics.support_departure);

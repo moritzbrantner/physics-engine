@@ -1,7 +1,6 @@
 //! Minimized broad-phase rejection: narrow phase admits this rotated corner contact.
-use physics_engine::{
-    BodyId,
-    approximate::{Body, Config, Quaternion, REAL_BITS, Real, Shape, Vector as V, World},
+use physics_engine::approximate::{
+    Body, Config, Quaternion, REAL_BITS, Real, Shape, Vector as V, World,
 };
 
 /// The f64 build keeps the original sub-ulp fixture (radius 1e-6 at |x| near 11). With f32
@@ -24,12 +23,7 @@ pub fn rotated_corner_contact_survives_sub_ulp_contact_slop() {
         ..Config::default()
     })
     .unwrap();
-    let mut fixed = Body::new(
-        BodyId(1),
-        Shape::Box(V(1.0, 2.0, 3.0)),
-        V(-11.0, 4.0, 3.0),
-        0.0,
-    );
+    let mut fixed = Body::keyed(1, Shape::Box(V(1.0, 2.0, 3.0)), V(-11.0, 4.0, 3.0), 0.0);
     fixed.orientation = Quaternion(0.2, 0.3, 0.1, 0.9).normalized();
     let (radius, inset, gap) = fixture();
     let corner = fixed.position + fixed.orientation.rotate(V(-1.0, -2.0, 3.0));
@@ -39,7 +33,7 @@ pub fn rotated_corner_contact_survives_sub_ulp_contact_slop() {
     }
     world.add_body(fixed).unwrap();
     world
-        .add_body(Body::new(BodyId(2), Shape::Sphere(radius), center, 1.0))
+        .add_body(Body::keyed(2, Shape::Sphere(radius), center, 1.0))
         .unwrap();
     let report = world.step(1.0 / 60.0).unwrap();
     assert!(
@@ -51,14 +45,28 @@ pub fn rotated_corner_contact_survives_sub_ulp_contact_slop() {
     assert_eq!(world.elapsed_seconds(), 1.0 / 60.0);
     // The numerical guard also admits a nearby separated candidate. Its narrow-phase
     // result must remain a miss: bound padding is not physical contact slop.
-    world.remove_body(BodyId(2)).unwrap();
+    world.remove_body(world.body_id(2).unwrap()).unwrap();
     let separated = center - V::Y * gap;
     world
-        .add_body(Body::new(BodyId(2), Shape::Sphere(radius), separated, 1.0))
+        .add_body(Body::keyed(2, Shape::Sphere(radius), separated, 1.0))
         .unwrap();
     let report = world.step(1.0 / 60.0).unwrap();
     assert!(report.narrow_tests > 0);
     assert_eq!(report.contact_points, 0);
-    assert_eq!(world.body(BodyId(2)).unwrap().position, separated);
-    assert_eq!(world.body(BodyId(2)).unwrap().velocity, V::ZERO);
+    assert_eq!(
+        world
+            .body_id(2)
+            .and_then(|id| world.body(id))
+            .unwrap()
+            .position,
+        separated
+    );
+    assert_eq!(
+        world
+            .body_id(2)
+            .and_then(|id| world.body(id))
+            .unwrap()
+            .velocity,
+        V::ZERO
+    );
 }

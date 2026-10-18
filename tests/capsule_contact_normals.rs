@@ -1,11 +1,7 @@
 //! Public capsule query normals must separate the solids by their reported depth.
 use physics_engine::approximate::Real;
-use physics_engine::{
-    BodyId,
-    approximate::{
-        Body, CheckpointContext, Config, Quaternion, QueryFilter, QueryPose, Shape, Vector as V,
-        World,
-    },
+use physics_engine::approximate::{
+    Body, CheckpointContext, Config, Quaternion, QueryFilter, QueryPose, Shape, Vector as V, World,
 };
 
 // Independent capsule/sphere support formula, without contact-kernel helpers.
@@ -33,10 +29,10 @@ fn certify_query_clearance(target: QueryPose, mut query: QueryPose, scale: Real)
         ..Config::default()
     })
     .unwrap();
-    let mut body = Body::new(BodyId(17), target.shape, target.position, 1.0);
+    let mut body = Body::keyed(17, target.shape, target.position, 1.0);
     body.orientation = target.orientation;
     world.add_body(body).unwrap();
-    world.add_force(BodyId(17), V::X).unwrap();
+    world.add_force(world.body_id(17).unwrap(), V::X).unwrap();
     let context = CheckpointContext {
         build: [173; 32],
         content: [17; 32],
