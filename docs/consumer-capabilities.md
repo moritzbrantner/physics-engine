@@ -17,7 +17,7 @@ over the integer `World`; no consumer enables it).
 | # | Capability | Consumers | Rapier API used today | Engine status | Issues |
 | --- | --- | --- | --- | --- | --- |
 | C1 | Static boxes added and removed at runtime (walls, pillars, doors) | ARPG, MMORPG | `ColliderBuilder::cuboid`, `colliders.insert`, `remove_collider` | **parity** (`static-queries`) | — |
-| C2 | Infinite floor plane | ARPG, MMORPG | `SharedShape::halfspace(Y)` | missing | — |
+| C2 | Infinite floor plane | ARPG, MMORPG | `SharedShape::halfspace(Y)` | **parity** (`character-move`, `arpg-planar`, `crowd`): `Shape::HalfSpace` (static, normal = local +Y), closed-form rays, sphere/capsule queries, characters; no rigid contacts, not checkpointed | — |
 | C3 | Capsule kinematic bodies with stable ids | MMORPG, ARPG | `RigidBodyBuilder::kinematic_position_based`, `Capsule::new_y`, `set_translation`, game key → handle map | **parity**: capsule shape, external motion, generational never-reused ids, game keys with `body_id(key)` lookup | #296 |
 | C4 | Kinematic character move with slide; no motion under zero desired motion; exact rest against walls and ceilings | MMORPG, ARPG (monsters planar, player 3D) | `KinematicCharacterController::move_shape` (offset 0.0025 m, slide, slopes π/4, no autostep) | **parity** (`character-move`) | #294, #295, #303, #306, #307 |
 | C5 | Grounded/support state with snap-to-ground and slope limit; static-only support; exact support on box tops; rest under gravity | MMORPG, ARPG | controller `snap_to_ground`, `movement.grounded`; `cast_shape` with `only_fixed` + slope check | **parity** (`character-move`): static-only support, exact box-top support, snap, rest under gravity | #293, #304, #305, #309 |

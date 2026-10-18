@@ -140,7 +140,7 @@ mod tests {
                 let (low, high) = contact::bounds(&body);
                 let mut points = Vec::new();
                 match shape {
-                    Shape::Heightfield { .. } => unreachable!("primitives only"),
+                    Shape::Heightfield { .. } | Shape::HalfSpace => unreachable!("primitives only"),
                     Shape::Sphere(radius) => {
                         for direction in [V::X, V::Y, V::Z] {
                             points.extend([

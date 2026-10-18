@@ -37,7 +37,7 @@ fn desired(direction: [f32; 2]) -> [f32; 3] {
 pub fn scenario() -> Scenario {
     Scenario {
         name: "crowd",
-        capabilities: "C7 C16",
+        capabilities: "C2 C7 C16",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: || Box::new(engine::Sim::new()),
@@ -119,12 +119,7 @@ mod engine {
             })
             .unwrap();
             world
-                .add_body(Body::keyed(
-                    1,
-                    Shape::Box(Vector(100.0, 0.5, 100.0)),
-                    Vector(0.0, -0.5, 0.0),
-                    0.0,
-                ))
+                .add_body(Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0))
                 .unwrap();
             let settings = CharacterSettings {
                 offset: OFFSET,

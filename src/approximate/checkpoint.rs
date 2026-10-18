@@ -114,9 +114,9 @@ pub struct Checkpoint {
 impl World {
     /// Capture exact floating state/history, including queued input. This explicit
     /// product copies all bodies and contact history; ordinary step never calls it.
-    /// Worlds with heightfield terrain are not checkpointed (`InvalidData`).
+    /// Worlds with heightfield terrain or halfspaces are not checkpointed (`InvalidData`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
-        if !self.terrains.is_empty() {
+        if !self.terrains.is_empty() || self.bodies.iter().any(|b| b.shape.query_only()) {
             return Err(CheckpointError::InvalidData);
         }
         validate(
@@ -508,7 +508,9 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             out.push(3);
             vector(out, h);
         }
-        Shape::Heightfield { .. } => unreachable!("terrain worlds are not checkpointed"),
+        Shape::Heightfield { .. } | Shape::HalfSpace => {
+            unreachable!("terrain and halfspace worlds are not checkpointed")
+        }
     }
     for x in [b.mass, b.friction, b.restitution] {
         scalar(out, x);

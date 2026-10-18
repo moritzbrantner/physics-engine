@@ -140,3 +140,12 @@ pub(super) fn narrow(contact: HeightfieldContact3) -> (Real, V, V) {
         ),
     )
 }
+
+/// A halfspace body's boundary point and outward unit normal (its local +Y).
+pub(super) fn plane_of(body: &Body) -> ([f64; 3], [f64; 3]) {
+    let n = body.orientation.rotate(V::Y);
+    (
+        [body.position.0, body.position.1, body.position.2].map(f64::from),
+        [n.0, n.1, n.2].map(f64::from),
+    )
+}

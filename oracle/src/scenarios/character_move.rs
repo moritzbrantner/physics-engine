@@ -1,9 +1,9 @@
 //! C4/C5 (MMORPG first): kinematic capsule characters in a Greyhaven-sized static town
-//! (~1,150 boxes): idle on a large floor box, pushing into walls, wandering through streets,
+//! (~1,150 boxes): idle on a halfspace ground, pushing into walls, wandering through streets,
 //! standing on platform tops and jumping into ceilings, with game-side gravity. Rapier mirrors
 //! MMORPG's call pattern: a full world rebuild in body-id order every tick (#292), then
 //! `KinematicCharacterController::move_shape` per character in id order, `set_translation` and `detect_collisions` after each move, a downward static-only
-//! support cast for grounded, and a halfspace ground (Rapier falls through the large floor box).
+//! support cast for grounded. Both engines stand on a halfspace ground, as MMORPG does (C2).
 
 use crate::{Obs, Rng, Scenario, Trace};
 
@@ -134,7 +134,7 @@ fn desired(role: Role, index: usize, tick: u32, grounded: bool, intent: &mut Int
 pub fn scenario() -> Scenario {
     Scenario {
         name: "character-move",
-        capabilities: "C4 C5",
+        capabilities: "C2 C4 C5",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: || Box::new(engine::Sim::new()),
@@ -276,7 +276,12 @@ mod engine {
             .unwrap();
             for (i, (c, h)) in layout().into_iter().enumerate() {
                 world
-                    .add_body(Body::keyed(1 + i as u64, Shape::Box(v(h)), v(c), 0.0))
+                    .add_body(if i == 0 {
+                        // The consumers' ground is a halfspace through the floor box's top.
+                        Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0)
+                    } else {
+                        Body::keyed(1 + i as u64, Shape::Box(v(h)), v(c), 0.0)
+                    })
                     .unwrap();
             }
             let settings = CharacterSettings {

@@ -181,7 +181,9 @@ fn shape(shape: Shape) -> PrimitiveShape3 {
             radius,
         } => PrimitiveShape3::capsule(widen(half_segment), widen(radius)),
         Shape::Wedge(half) => PrimitiveShape3::wedge(to_array(half)),
-        Shape::Heightfield { .. } => unreachable!("terrain is queried through its heightfield"),
+        Shape::Heightfield { .. } | Shape::HalfSpace => {
+            unreachable!("terrain and halfspaces are queried through their closed forms")
+        }
     }
 }
 
@@ -193,7 +195,7 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
             kernel_axes(body.orientation)[1],
             [0.0, 0.0, 1.0],
         ],
-        Shape::Box(_) | Shape::Wedge(_) | Shape::Heightfield { .. } => {
+        Shape::Box(_) | Shape::Wedge(_) | Shape::Heightfield { .. } | Shape::HalfSpace => {
             kernel_axes(body.orientation)
         }
     };

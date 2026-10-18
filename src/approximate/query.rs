@@ -3,7 +3,7 @@ use super::{
     Body, BodyId, Quaternion, Real, Shape, SweepFailure, Vector as V, World, contact, primitive,
 };
 use crate::CollisionLayers3d;
-use geometry_kernels::primitive3::PrimitiveWork3;
+use geometry_kernels::{halfspace, primitive3::PrimitiveWork3};
 use std::{error::Error, fmt, mem::size_of};
 
 mod ray;
@@ -291,9 +291,20 @@ impl World {
                         min: [lo.0, lo.1, lo.2],
                         max: [hi.0, hi.1, hi.2],
                     },
-                    |leaf| found.push(tree.index_of(leaf.id) as u32),
+                    |leaf| {
+                        let index = tree.index_of(leaf.id);
+                        if self.bodies[index].shape != Shape::HalfSpace {
+                            found.push(index as u32);
+                        }
+                    },
                 );
                 crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
+                // Halfspaces are unbounded: every query tests them.
+                for &id in &self.halfspaces {
+                    if let Ok(index) = self.index(id) {
+                        found.push(index as u32);
+                    }
+                }
                 found.sort();
                 found
             });
@@ -317,7 +328,7 @@ impl World {
             if !unit_orientation(target.orientation) {
                 return Err(failure(SweepFailure::InvalidGeometryInput));
             }
-            if prune {
+            if prune && target.shape != Shape::HalfSpace {
                 stats.bound_tests += 1;
                 // Cover floating-point addition rounding and the shared sweep admission tolerance.
                 let magnitude = pose
@@ -344,6 +355,52 @@ impl World {
             stats.exact_candidates += 1;
             crate::work::add(crate::work::Counter::ExactTests, 1);
             query.position = pose.position;
+            if target.shape == Shape::HalfSpace {
+                let Some((p, q, r)) = super::terrain::capsule_of(&query) else {
+                    return Err(failure(SweepFailure::InvalidGeometryInput));
+                };
+                let (point, normal) = super::terrain::plane_of(target);
+                let initial = halfspace::capsule_halfspace_contact(p, q, r, point, normal);
+                let outcome = if initial.separation <= 0.0 {
+                    Some((0.0, initial))
+                } else if cast.is_some() {
+                    let d = [displacement.0, displacement.1, displacement.2].map(f64::from);
+                    halfspace::capsule_halfspace_sweep(p, q, r, d, point, normal)
+                        .map(|(t, c)| (primitive::toward_zero(t), c))
+                } else {
+                    None
+                };
+                let Some((fraction, contact)) = outcome else {
+                    continue;
+                };
+                let n = V(
+                    primitive::nearest(normal[0]),
+                    primitive::nearest(normal[1]),
+                    primitive::nearest(normal[2]),
+                );
+                let point = V(
+                    primitive::nearest(contact.point[0]),
+                    primitive::nearest(contact.point[1]),
+                    primitive::nearest(contact.point[2]),
+                );
+                let separation = primitive::round_down(contact.separation);
+                let capacity = hits.capacity();
+                hits.push(QueryHit {
+                    body: target.id,
+                    fraction,
+                    distance: distance * fraction,
+                    normal: n,
+                    query_point: point + n * separation,
+                    target_point: point,
+                    separation,
+                    starts_overlapping: initial.separation < 0.0,
+                    support_velocity: V::ZERO,
+                    sensor: target.sensor,
+                });
+                stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
+                stats.hits_admitted += 1;
+                continue;
+            }
             if let Shape::Heightfield { terrain, .. } = target.shape {
                 let field = self.terrain(terrain);
                 let Some((p, q, r)) = super::terrain::capsule_of(&query) else {
