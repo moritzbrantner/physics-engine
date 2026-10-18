@@ -1,6 +1,8 @@
-//! MMORPG's query dispatcher, copied unchanged from moritzbrantner/mmorpg
-//! `crates/mmorpg-core/src/physics/queries.rs` (main at 0782d4b) so the `mmorpg-tick` scenario's
-//! Rapier side runs the consumer's exact call pattern. Its original notes follow.
+//! The consumers' query dispatcher, copied unchanged from moritzbrantner/mmorpg
+//! `crates/mmorpg-core/src/physics/queries.rs` (main at 0782d4b); ARPG's
+//! `crates/arpg-core/src/physics/queries.rs` (main at d4ff0ab) is byte-identical. The
+//! `mmorpg-tick` and `arpg-tick` scenarios' Rapier sides use it to run the consumers' exact call
+//! pattern. Its original notes follow.
 //!
 //! Exact contact and shape-cast queries for the shape pairs the character controller meets:
 //! an upright capsule against another upright capsule or against an axis-aligned box whose

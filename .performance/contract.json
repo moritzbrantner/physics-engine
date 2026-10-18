@@ -107,6 +107,21 @@
           "blocking": false
         }
       ]
+    },
+    {
+      "id": "arpg-tick",
+      "kind": "journey",
+      "description": "C15 ARPG's whole physics tick (#297): dungeon, players with jumps, planar monsters, doors, line of sight, projectiles and placement tests; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
     }
   ],
   "operations": [
