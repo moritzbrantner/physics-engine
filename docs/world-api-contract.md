@@ -66,6 +66,16 @@ the oracle harness (D4). The per-capability parity status is tracked in
   `remove_body` and `step`; it changes which bodies are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
+## Terrain
+
+`add_heightfield(HeightfieldDesc { origin, cell_size, columns, rows, heights }, key)` adds
+static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`) and
+returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same
+diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and casts, and
+character moves work against it; box and wedge queries return an error. Terrain takes no part
+in rigid-body contacts, and worlds with terrain are not checkpointed. `add_body` rejects
+heightfield shapes.
+
 ## Characters
 
 `add_character(id, CharacterSettings)` makes an external (kinematic) upright capsule body a
@@ -82,7 +92,8 @@ the order of the slice; each sees the earlier movers at their new positions, and
 the result of `moves[i]`. Characters of a batch that overlap each other are first separated
 horizontally, half each (a character overlapping one outside the batch moves the whole way);
 that separation is part of `depenetration`. A character blocked head-on by another character
-sidesteps to its right instead of locking. Characters do not push each other yet.
+sidesteps to its right instead of locking. Characters do not push each other yet. On walkable surfaces downward intent stops instead of
+sliding down the slope; horizontal intent follows the surface.
 `set_kinematic_position` places an external body without resolving contact.
 
 ## Failure behaviour

@@ -86,6 +86,10 @@ impl ShapeKey {
                 radius,
             } => [2, bits(half_segment), bits(radius), 0],
             Shape::Wedge(h) => [3, bits(h.0), bits(h.1), bits(h.2)],
+            Shape::Heightfield {
+                terrain,
+                half_extents: h,
+            } => [4 + u64::from(terrain.0), bits(h.0), bits(h.1), bits(h.2)],
         };
         Self {
             id: b.id,

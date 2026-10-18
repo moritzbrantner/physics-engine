@@ -4,6 +4,7 @@ use super::{Body, Shape, V, bounds};
 fn surface_extrema(body: &Body) -> Vec<V> {
     let mut points = Vec::new();
     match body.shape {
+        Shape::Heightfield { .. } => unreachable!("terrain bounds come from its grid"),
         Shape::Sphere(radius) => {
             for direction in [V::X, V::Y, V::Z] {
                 points.extend([

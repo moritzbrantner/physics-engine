@@ -7,9 +7,9 @@ rust-version = "1.98"
 description = "Physics engine for the owner's games, measured against Rapier"
 
 [dependencies]
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "444342e0b9510d0db28846d4fb318fd576dbc1e5" }
-bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "444342e0b9510d0db28846d4fb318fd576dbc1e5" }
-spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "444342e0b9510d0db28846d4fb318fd576dbc1e5" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "b8c094cd7dfa7b09938616effcc9167e7ab27bee" }
+bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "b8c094cd7dfa7b09938616effcc9167e7ab27bee" }
+spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "b8c094cd7dfa7b09938616effcc9167e7ab27bee" }
 sha2 = { version = "0.11.0", default-features = false, optional = true }
 
 [dev-dependencies]
@@ -99,4 +99,3 @@ required-features = ["checkpoints"]
 [[test]]
 name = "tangential_contact_wake"
 required-features = ["checkpoints"]
-

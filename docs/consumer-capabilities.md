@@ -32,7 +32,7 @@ over the integer `World`; no consumer enables it).
 | C14 | Query ties broken by stable id; save → load → continue matches | MMORPG (rebuilds ~1,150 colliders per tick), ARPG | none (game rebuilds the world every tick) | **parity** for queries/characters: ties by key, independent of slot and insertion history (no per-tick rebuild needed) | #292 |
 | C15 | Whole-tick cost at or below Rapier (ARPG: ~18 µs native, ~27 µs WASM, 2.68 MB WASM; MMORPG: WASM 1.76 → 3.29 MB, debug combat ~31 s → ~41 s) | MMORPG, ARPG | — | not measured | #310, #297 |
 | C16 | Characters separate and slide around each other (bounded pushing) | MMORPG | none (head-on contact blocks both) | partial (`crowd`): head-on sidestep and half-each separation; bounded pushing open (#308) | #308 |
-| C17 | Static heightfield terrain: capsule characters standing and walking on hills, ground rays | MMORPG (#159 step 2; caves later) | `SharedShape::heightfield`, KCC on terrain, `cast_ray` | missing | #195 |
+| C17 | Static heightfield terrain: capsule characters standing and walking on hills, ground rays | MMORPG (#159 step 2; caves later) | `SharedShape::heightfield`, KCC on terrain, `cast_ray` | **parity** (`terrain`): `add_heightfield`, parry diagonal, rays, sphere/capsule queries, characters; no rigid contacts, not checkpointed; holes/caves later | #195 |
 
 Scenarios live in `oracle/src/scenarios/`; `cargo run --release --manifest-path oracle/Cargo.toml`
 checks them natively (invariants + not more than 5% slower than Rapier) and

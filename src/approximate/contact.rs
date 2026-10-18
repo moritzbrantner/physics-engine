@@ -110,7 +110,10 @@ pub(super) struct Manifold {
 }
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
-    let e = primitive::bounds_extents(b);
+    let e = match b.shape {
+        Shape::Heightfield { half_extents, .. } => half_extents,
+        _ => primitive::bounds_extents(b),
+    };
     // Bounds admission must not depend on contact_slop covering arithmetic error.
     // Quaternion rotations, weighted extents and translation can differ by several ULPs.
     // Match the ray-pruning error budget using pose/extent magnitude; this only widens
@@ -131,6 +134,8 @@ fn radius(b: &Body, n: V) -> Real {
             let a = b.orientation.axes();
             n.dot(a[0]).abs() * h.0 + n.dot(a[1]).abs() * h.1 + n.dot(a[2]).abs() * h.2
         }
+        // Terrain never enters rigid contact pairs.
+        Shape::Heightfield { .. } => 0.0,
     }
 }
 fn axes(a: &Body, b: &Body) -> Vec<(V, usize)> {
