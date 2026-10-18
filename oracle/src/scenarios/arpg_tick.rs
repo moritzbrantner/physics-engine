@@ -146,7 +146,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
                     "player {c} grounded in the air at tick {tick}: {p:?}"
                 ));
             }
-            if tick % 20 == 0 {
+            if tick.is_multiple_of(20) {
                 for b in &walls {
                     if capsule_box_gap(p, *b) < -1e-3 {
                         return Err(format!("character {c} penetrates a wall at tick {tick}"));
@@ -157,7 +157,12 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         // Lines of sight depend on where each engine moved the monsters: not compared.
         at += MONSTERS;
         // Projectiles and placements are fixed inputs: both engines agree exactly.
-        let compared = PROJECTILES + if tick % 20 == 0 { PLACEMENTS } else { 0 };
+        let compared = PROJECTILES
+            + if tick.is_multiple_of(20) {
+                PLACEMENTS
+            } else {
+                0
+            };
         for k in 0..compared {
             if engine.0[at + k] != rapier.0[at + k] {
                 return Err(format!(
@@ -365,7 +370,7 @@ mod engine {
                     .unwrap();
                 trace.0.push(Obs::Blocked(hit.is_some()));
             }
-            if tick % 20 == 0 {
+            if tick.is_multiple_of(20) {
                 let statics = QueryFilter {
                     layers: CollisionLayers3d::new(1, 1),
                     ..QueryFilter::default()
@@ -631,7 +636,7 @@ mod rapier {
                     self.first_fixed_hit(origin, translation).is_some(),
                 ));
             }
-            if tick % 20 == 0 {
+            if tick.is_multiple_of(20) {
                 // ARPG's `penetrates_fixed`: static geometry, the floor included.
                 let queries = self.pipeline(QueryFilter::only_fixed());
                 for p in placements(tick) {
