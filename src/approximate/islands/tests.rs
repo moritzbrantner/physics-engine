@@ -491,8 +491,7 @@ fn deterministic_replay_insertion_order_dt_changes_and_no_work_paths() {
         let rb = b.step(dt).unwrap();
         // Handles differ with insertion order; state and order (by key) must not.
         let strip = |w: &World| {
-            w.bodies
-                .iter()
+            w.bodies()
                 .map(|b| Body {
                     id: crate::BodyId::NONE,
                     ..b.clone()

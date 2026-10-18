@@ -36,6 +36,9 @@ jobs:
       - name: Clippy without optional features
         run: cargo clippy --all-targets --locked -- -D warnings
 
+      - name: Test every suite on BodyStorage::Indexed
+        run: cargo test --locked --features checkpoints,indexed-storage
+
       - name: Test the Pages adapter
         run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
 

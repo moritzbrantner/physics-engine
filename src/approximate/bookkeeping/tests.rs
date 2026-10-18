@@ -48,6 +48,7 @@ fn reference_component(w: &World, root: Order) -> Vec<usize> {
     out
 }
 fn check_components(w: &mut World) {
+    w.settle_storage();
     w.bookkeeping.ensure_graph(&w.bodies, &w.cache);
     for i in 0..w.bodies.len() {
         let want = reference_component(w, w.bodies[i].order);
@@ -292,7 +293,7 @@ fn separate_sleeping_towers_stay_independent_through_miss_hit_and_support_remova
         assert_eq!(r.woken_bodies, 0);
     }
     w.remove_body(w.body_id(1000).unwrap()).unwrap();
-    assert_eq!(w.bodies, original);
+    assert_eq!(w.bodies().cloned().collect::<Vec<_>>(), original);
     let mut shot = Body::fixture(1000, Shape::Sphere(3.0), Vector(-140.0, 50.0, 82.0), 1.0);
     shot.velocity = Vector(5760.0, 0.0, 0.0);
     shot.ccd = true;

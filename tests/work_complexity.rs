@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use physics_engine::{
     BodyId,
     approximate::{
-        Body, CharacterMove, CharacterMoveResult, Config, HeightfieldDesc, QueryFilter, QueryHit,
-        QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
+        Body, BodyStorage, CharacterMove, CharacterMoveResult, Config, HeightfieldDesc,
+        QueryFilter, QueryHit, QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -149,15 +149,21 @@ const BOX: f32 = 0.5;
 
 /// `2^log2` unit boxes on a regular 2 m grid (constant density), keyed by grid index.
 fn town(log2: u32) -> World {
+    town_with(log2, BodyStorage::Ordered, 1)
+}
+
+/// `town` on `storage`, with keys `stride` apart (gaps for inserts in the middle of the order).
+fn town_with(log2: u32, storage: BodyStorage, stride: u64) -> World {
     let mut w = World::new(Config {
         gravity: V::ZERO,
+        body_storage: storage,
         ..Config::default()
     })
     .unwrap();
     let (cols, rows) = (1usize << log2.div_ceil(2), 1usize << (log2 / 2));
     for j in 0..rows {
         for i in 0..cols {
-            let key = (j * cols + i) as u64;
+            let key = (j * cols + i) as u64 * stride;
             let p = V(i as f32 * SPACING, BOX, j as f32 * SPACING);
             w.add_body(Body::keyed(key, Shape::Box(V(BOX, BOX, BOX)), p, 0.0))
                 .unwrap();
@@ -330,51 +336,113 @@ fn shape_queries_are_log_n_plus_k() {
     judge("cast-shape", &sweep, &bounds);
 }
 
+/// Per-operation work of `op` over `count` operations: (storage moves, tree inserts, order
+/// comparisons) averaged, and the worst single operation's total work.
+fn churn(
+    w: &mut World,
+    count: u64,
+    mut op: impl FnMut(&mut World, u64),
+) -> Vec<(&'static str, u64)> {
+    work::reset();
+    let mut worst = 0;
+    for k in 0..count {
+        let before = work::read();
+        op(w, k);
+        let after = work::read();
+        worst = worst.max(after.iter().zip(before).map(|(a, b)| a - b).sum());
+    }
+    vec![
+        (
+            "storage-shifts-per-op",
+            work::get(Counter::StorageShifts) / count,
+        ),
+        (
+            "tree-inserts-per-op",
+            work::get(Counter::TreeInserts) / count,
+        ),
+        (
+            "order-comparisons-per-op",
+            work::get(Counter::OrderComparisons) / count,
+        ),
+        ("worst-op-work", worst),
+    ]
+}
+
+fn churn_box(key: u64) -> Body {
+    Body::keyed(
+        key,
+        Shape::Box(V(BOX, BOX, BOX)),
+        cell(1, 1) + V(0.0, 5.0, 0.0),
+        0.0,
+    )
+}
+
+/// A scrambled key: consecutive `k` land all over the key range.
+fn scramble(k: u64, n: u64) -> u64 {
+    (k.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20) % n
+}
+
 #[test]
 fn body_churn_is_amortized_over_a_long_sequence() {
-    const OPS: u64 = 256;
-    let mut samples = Vec::new();
+    let mut ordered = Vec::new();
+    let mut middle = Vec::new();
+    let mut indexed = Vec::new();
     for &log2 in &SIZES {
-        let mut w = town(log2);
         let n = 1u64 << log2;
-        work::reset();
-        let mut worst = 0;
-        for k in 0..OPS {
-            let next_key = n + k;
-            let before = work::read();
-            // Remove a body from the middle of the order, add a new keyed one, place a kinematic one.
-            let victim = w
-                .body_id((k * 7919) % n)
-                .unwrap_or_else(|| w.body_id(next_key - 1).unwrap());
-            w.remove_body(victim).unwrap();
-            w.add_body(Body::keyed(
-                next_key,
-                Shape::Box(V(BOX, BOX, BOX)),
-                cell(1, 1) + V(0.0, 5.0, 0.0),
-                0.0,
-            ))
-            .unwrap();
-            let after = work::read();
-            let op: u64 = after.iter().zip(before).map(|(a, b)| a - b).sum();
-            worst = worst.max(op);
-        }
-        let shifts = work::get(Counter::StorageShifts);
-        let inserts = work::get(Counter::TreeInserts);
-        samples.push((
-            vec![("bodies", n)],
-            vec![
-                ("storage-shifts-per-op", shifts / OPS),
-                ("tree-inserts-per-op", inserts / OPS),
-                ("worst-op-work", worst),
-            ],
-        ));
+        // Ordered: remove from the middle of the order, add after every body. 4n operations,
+        // so the tombstone compactions (at half the records) are part of the average.
+        let mut w = town_with(log2, BodyStorage::Ordered, 1);
+        let mut live = (0..n).collect::<Vec<_>>();
+        let metrics = churn(&mut w, 4 * n, |w, k| {
+            let victim = live.swap_remove(scramble(k, live.len() as u64) as usize);
+            w.remove_body(w.body_id(victim).unwrap()).unwrap();
+            w.add_body(churn_box(n + k)).unwrap();
+            live.push(n + k);
+        });
+        ordered.push((vec![("bodies", n)], metrics));
+        // Ordered: add in the middle of the order (keys between existing ones).
+        let mut w = town_with(log2, BodyStorage::Ordered, 2);
+        let metrics = churn(&mut w, 64, |w, k| {
+            w.add_body(churn_box(n + 2 * k + 1)).unwrap();
+        });
+        middle.push((vec![("bodies", n)], metrics));
+        // Indexed: add and remove anywhere in the order.
+        let mut w = town_with(log2, BodyStorage::Indexed, 2);
+        let mut live = (0..n).map(|i| 2 * i).collect::<Vec<_>>();
+        let metrics = churn(&mut w, 4 * n, |w, k| {
+            let victim = live.swap_remove(scramble(k, live.len() as u64) as usize);
+            w.remove_body(w.body_id(victim).unwrap()).unwrap();
+            // Fresh keys in scrambled order: a bijection on each block of n (n is a power of
+            // two), shifted per block so keys stay unique and land all over the order.
+            let key = 2 * (k.wrapping_mul(2_654_435_761) % n) + 1 + 2 * n * (k / n);
+            w.add_body(churn_box(key)).unwrap();
+            live.push(key);
+        });
+        indexed.push((vec![("bodies", n)], metrics));
     }
     judge(
         "body-churn",
-        &samples,
+        &ordered,
         &[
+            ("storage-shifts-per-op", "bodies", "constant"),
             ("tree-inserts-per-op", "bodies", "constant"),
+            ("worst-op-work", "bodies", "linear"),
+        ],
+    );
+    judge(
+        "body-insert-middle",
+        &middle,
+        &[
             ("storage-shifts-per-op", "bodies", "linear"),
+            ("tree-inserts-per-op", "bodies", "constant"),
+        ],
+    );
+    judge(
+        "body-churn-indexed",
+        &indexed,
+        &[
+            ("storage-shifts-per-op", "bodies", "constant"),
+            ("tree-inserts-per-op", "bodies", "constant"),
         ],
     );
 }

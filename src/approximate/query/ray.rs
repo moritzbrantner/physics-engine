@@ -311,7 +311,7 @@ impl World {
                 1.0,
                 pad,
                 |leaf, _| {
-                    let index = tree.index_of(leaf.id);
+                    let index = self.slot_index(leaf.id);
                     if failure.is_none()
                         && self.bodies[index].shape != Shape::HalfSpace
                         && let Err(reason) = test(index, hits)
@@ -340,7 +340,9 @@ impl World {
             }
             Ok(())
         } else {
-            (0..self.bodies.len()).try_for_each(|i| test(i, hits))
+            self.ordered_positions()
+                .into_iter()
+                .try_for_each(|i| test(i, hits))
         }
     }
 }

@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Body, BodyId, CachedPoint, CollisionLayers3d, Config, Convergence, ConvergenceScope, Order,
-    PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, Vector, World, contact,
-    narrow_time, substep_length, widen_time,
+    Body, BodyId, BodyStorage, CachedPoint, CollisionLayers3d, Config, Convergence,
+    ConvergenceScope, Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape,
+    Vector, World, contact, narrow_time, substep_length, widen_time,
 };
 
 // Each scalar width has its own magic; the layout is otherwise shared. Physical
@@ -18,7 +18,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 4;
+const FORMAT: u32 = 5;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 8;
 const DIGEST_BYTES: usize = 32;
@@ -116,22 +116,18 @@ impl World {
     /// product copies all bodies and contact history; ordinary step never calls it.
     /// Worlds with heightfield terrain or halfspaces are not checkpointed (`InvalidData`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
-        if !self.terrains.is_empty() || self.bodies.iter().any(|b| b.shape.query_only()) {
+        if !self.terrains.is_empty() || self.bodies().any(|b| b.shape.query_only()) {
             return Err(CheckpointError::InvalidData);
         }
-        validate(
-            self.config,
-            self.elapsed,
-            self.last_h,
-            &self.bodies,
-            &self.cache,
-        )?;
+        // Live bodies in body order, whatever the storage holds between steps.
+        let bodies = self.bodies().cloned().collect::<Vec<_>>();
+        validate(self.config, self.elapsed, self.last_h, &bodies, &self.cache)?;
         Ok(Checkpoint {
             context,
             config: self.config,
             elapsed: self.elapsed,
             last_h: self.last_h,
-            bodies: self.bodies.clone(),
+            bodies,
             cache: self.cache.clone(),
             slot_generations: self.slots.iter().map(|s| s.generation).collect(),
             next_serial: self.next_serial,
@@ -461,7 +457,8 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
     scalar(out, config.length_unit);
     let position =
         u8::from(config.position_correction == PositionCorrection::AdmittedContacts) << 1;
-    out.push(position);
+    let storage = u8::from(config.body_storage == BodyStorage::Indexed) << 2;
+    out.push(position | storage);
 }
 fn encode_body(out: &mut Vec<u8>, b: &Body) {
     out.extend_from_slice(&b.id.to_bits().to_le_bytes());
@@ -628,14 +625,18 @@ impl<'a> Reader<'a> {
                 _ => return Err(CheckpointError::InvalidData),
             },
             length_unit: 1.0,
+            body_storage: BodyStorage::Ordered,
         };
         config.length_unit = self.scalar()?;
         let policies = self.u8()?;
-        if policies & !3 != 0 {
+        if policies & !7 != 0 {
             return Err(CheckpointError::InvalidData);
         }
         if policies & 2 != 0 {
             config.position_correction = PositionCorrection::AdmittedContacts;
+        }
+        if policies & 4 != 0 {
+            config.body_storage = BodyStorage::Indexed;
         }
         let soft = policies & 1 != 0;
         if soft {

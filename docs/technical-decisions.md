@@ -34,6 +34,21 @@ performance evidence; there are no shims or deprecation windows. Existing consum
 current git pin until they move to Rapier. The former f64 reference build and its feature split are
 dropped; Rapier is the independent reference (D1).
 
+## D3a — Two body storage modes, identical results
+
+The owner's answer to Q31 asks for two modes. `Config::body_storage` selects one when the world
+is created:
+
+- `Ordered` (the default) keeps tombstones and compacts them at the next step, and has an
+  append fast path.
+- `Indexed` keeps an unordered arena plus an order index.
+
+Results are identical between the modes. Both run the step on contiguous storage in body order:
+`Indexed` sorts its arena once before a step instead of iterating through the index. This was a
+performance tie-break. It keeps iteration cost equal and moves the difference into the cost of
+adding and removing bodies. Complexity contracts are declared per mode, and the Rapier oracle
+times both. See [world API contract](world-api-contract.md#body-storage).
+
 ## D4 — Rapier oracle in CI
 
 A shared scenario harness runs each scenario on Rapier (a dev-dependency) and on Physics Engine.

@@ -368,6 +368,23 @@ impl Body {
             && self.velocity.abs().max_component() < 1e12
     }
 }
+/// How a world stores its bodies; fixed when the world is created. Both modes give identical
+/// results for the same calls (every traversal and tie follows body order); they differ only
+/// in what adding and removing bodies costs. See docs/world-api-contract.md.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BodyStorage {
+    /// Bodies stay in body order in one array. Adding a body after every existing one and
+    /// removing any body are amortized O(1) (removal leaves a tombstone that the next step,
+    /// or a later removal once half the records are tombstones, compacts away); adding a body
+    /// in the middle of the order moves the later records, O(n).
+    #[default]
+    Ordered,
+    /// Bodies are appended to an unordered arena with a separate order index: adding and
+    /// removing any body is O(log n). The next step (or the next call that wakes an island)
+    /// sorts the arena back into body order once, O(n + k log k) for k out-of-order adds.
+    Indexed,
+}
+
 /// Eligible pairs in the bounded post-integration position stage.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PositionCorrection {
@@ -402,6 +419,8 @@ pub struct Config {
     /// that are lengths are defined in metres and scaled by it, e.g.
     /// [`World::character_settings`]; values the game passes explicitly stay in scene units.
     pub length_unit: Real,
+    /// Body storage layout, fixed for the world's lifetime.
+    pub body_storage: BodyStorage,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -418,6 +437,12 @@ impl Default for Config {
             convergence: Some(Convergence::default()),
             convergence_scope: ConvergenceScope::ContactIslands,
             length_unit: 1.0,
+            // The test-only `indexed-storage` feature runs every suite on `Indexed` storage.
+            body_storage: if cfg!(feature = "indexed-storage") {
+                BodyStorage::Indexed
+            } else {
+                BodyStorage::Ordered
+            },
         }
     }
 }
@@ -505,8 +530,21 @@ struct Constraint {
 /// Internal body order: keyed bodies first by key, then keyless bodies by creation serial.
 /// Every traversal, pair orientation and tie uses it, so results depend on game keys and the
 /// world's contents, not on slot reuse or insertion history of keyed bodies.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct Order(u128);
+impl Ord for Order {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        crate::work::add(crate::work::Counter::OrderComparisons, 1);
+        self.0.cmp(&other.0)
+    }
+}
+impl PartialOrd for Order {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 impl Order {
     pub(crate) fn new(key: Option<u64>, serial: u64) -> Self {
         Self(match key {
@@ -554,6 +592,14 @@ pub struct World {
     characters: character::Characters,
     failed_work: Option<FailedStepWork>,
     elapsed: Scalar,
+    /// Removed bodies still occupying a storage record (`id == BodyId::NONE`).
+    tombstones: usize,
+    /// Leading records in body order; `Indexed` appends out-of-order bodies after them.
+    sorted_len: usize,
+    /// `Indexed` only: every live body in body order.
+    order_index: BTreeMap<Order, BodyId>,
+    /// Reused merge buffer for sorting `Indexed` storage.
+    settle_scratch: Vec<Body>,
 }
 impl World {
     pub fn new(config: Config) -> Result<Self, Error> {
@@ -599,10 +645,106 @@ impl World {
             characters: character::Characters::default(),
             failed_work: None,
             elapsed: 0.0,
+            tombstones: 0,
+            sorted_len: 0,
+            order_index: BTreeMap::new(),
+            settle_scratch: Vec::new(),
         })
     }
+    /// Every live body, in body order (keyed bodies by key, then keyless ones by creation).
     pub fn bodies(&self) -> impl Iterator<Item = &Body> {
-        self.bodies.iter()
+        let indexed = self.config.body_storage == BodyStorage::Indexed;
+        let ordered = (!indexed).then(|| self.bodies.iter().filter(|b| b.id != BodyId::NONE));
+        let index = indexed.then(|| {
+            self.order_index
+                .values()
+                .map(|&id| &self.bodies[self.slot_index(id.slot())])
+        });
+        ordered
+            .into_iter()
+            .flatten()
+            .chain(index.into_iter().flatten())
+    }
+    /// Number of live bodies.
+    pub fn body_count(&self) -> usize {
+        self.bodies.len() - self.tombstones
+    }
+    /// Storage position of the live body in id slot `slot` (query-tree leaves are slots).
+    fn slot_index(&self, slot: u32) -> usize {
+        self.slots[slot as usize].index as usize
+    }
+    /// Storage positions follow body order (always for `Ordered`; for `Indexed` until a body
+    /// is added out of order). Tombstones may remain.
+    fn storage_sorted(&self) -> bool {
+        self.sorted_len == self.bodies.len()
+    }
+    /// Positions of every live body, in body order.
+    fn ordered_positions(&self) -> Vec<usize> {
+        if self.storage_sorted() {
+            (0..self.bodies.len())
+                .filter(|&i| self.bodies[i].id != BodyId::NONE)
+                .collect()
+        } else {
+            self.order_index
+                .values()
+                .map(|&id| self.slot_index(id.slot()))
+                .collect()
+        }
+    }
+    /// Removes tombstones and sorts storage into body order, so positions are body ranks;
+    /// O(1) when already settled. The step and island traversals need settled storage.
+    fn settle_storage(&mut self) {
+        if self.tombstones == 0 && self.storage_sorted() {
+            return;
+        }
+        let records = self.bodies.len();
+        let sorted_live = self.bodies[..self.sorted_len]
+            .iter()
+            .filter(|b| b.id != BodyId::NONE)
+            .count();
+        self.bodies.retain(|b| b.id != BodyId::NONE);
+        if sorted_live < self.bodies.len() {
+            // Indexed: merge the sorted prefix with the sorted out-of-order tail.
+            self.bodies[sorted_live..].sort_unstable_by_key(|b| b.order);
+            if sorted_live > 0
+                && self.bodies[sorted_live - 1].order > self.bodies[sorted_live].order
+            {
+                let scratch = &mut self.settle_scratch;
+                scratch.clear();
+                scratch.reserve(self.bodies.len());
+                let (head, tail) = self.bodies.split_at(sorted_live);
+                let (mut a, mut b) = (0, 0);
+                while a < head.len() && b < tail.len() {
+                    if head[a].order < tail[b].order {
+                        scratch.push(head[a].clone());
+                        a += 1;
+                    } else {
+                        scratch.push(tail[b].clone());
+                        b += 1;
+                    }
+                }
+                scratch.extend_from_slice(&head[a..]);
+                scratch.extend_from_slice(&tail[b..]);
+                std::mem::swap(&mut self.bodies, scratch);
+            }
+        }
+        crate::work::add(crate::work::Counter::StorageShifts, records as u64);
+        self.tombstones = 0;
+        self.sorted_len = self.bodies.len();
+        for (i, b) in self.bodies.iter().enumerate() {
+            self.slots[b.id.slot() as usize].index = i as u32;
+        }
+        // Positions moved; the bodies and the tree's slot-keyed leaves did not.
+        let from = self.bookkeeping.generation;
+        self.bookkeeping.layout_changed();
+        self.geometry.positions_moved();
+        self.query_tree.retag(from, self.bookkeeping.generation);
+    }
+    /// Island traversals binary-search storage by body order: sort `Indexed` storage first.
+    fn sort_storage(&mut self) {
+        if !self.storage_sorted() {
+            self.settle_storage();
+        }
     }
     pub fn body(&self, id: BodyId) -> Option<&Body> {
         self.index(id).ok().map(|i| &self.bodies[i])
@@ -659,6 +801,9 @@ impl World {
         }
         self.keys.clear();
         for (i, b) in self.bodies.iter().enumerate() {
+            if b.id == BodyId::NONE {
+                continue;
+            }
             self.slots[b.id.slot() as usize].index = i as u32;
             if let Some(key) = b.key {
                 self.keys.insert(key, b.id);
@@ -668,10 +813,18 @@ impl World {
             .rev()
             .filter(|&s| self.slots[s as usize].index == FREE_SLOT)
             .collect();
+        // Only ever called on settled storage (step-end retirement, rollback, restore).
+        debug_assert_eq!(self.tombstones, 0);
+        self.sorted_len = self.bodies.len();
+        if self.config.body_storage == BodyStorage::Indexed {
+            self.order_index = self.bodies.iter().map(|b| (b.order, b.id)).collect();
+        }
     }
     fn shift_slots(&mut self, from: usize) {
         for (i, b) in self.bodies.iter().enumerate().skip(from) {
-            self.slots[b.id.slot() as usize].index = i as u32;
+            if b.id != BodyId::NONE {
+                self.slots[b.id.slot() as usize].index = i as u32;
+            }
         }
     }
     /// Adds a body and returns its new id. `body.key`, when set, must be unique among live
@@ -709,75 +862,158 @@ impl World {
         };
         body.order = Order::new(body.key, self.next_serial);
         self.next_serial += 1;
-        let i = self.bodies.partition_point(|b| b.order < body.order);
-        // Local topology change: only a genuine new fixed overlap can disturb a sleeper.
-        let wake = if body.mass == 0.0 && !body.sensor && !body.shape.query_only() {
-            self.bodies
-                .iter()
-                .filter(|b| {
-                    b.sleeping
-                        && b.layers.collides_with(body.layers)
-                        && contact::current(b, &body, 0.0).is_some()
-                })
-                .map(|b| b.order)
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        for id in wake {
-            self.wake_island(id);
-        }
         body.cached_bounds = contact::bounds(&body);
+        // Local topology change: only a genuine new fixed overlap can disturb a sleeper.
+        if body.mass == 0.0 && !body.sensor && !body.shape.query_only() {
+            let wake = self.sleepers_touching(&body);
+            if !wake.is_empty() {
+                self.sort_storage();
+                for order in wake {
+                    self.wake_island(order);
+                }
+            }
+        }
         self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
         let synced = self.query_tree.current(self.bookkeeping.generation);
-        let (id, key) = (body.id, body.key);
+        let (id, key, order) = (body.id, body.key, body.order);
         if body.shape == Shape::HalfSpace {
             self.halfspaces.push(id);
         }
-        self.bodies.insert(i, body);
-        crate::work::add(
-            crate::work::Counter::StorageShifts,
-            (self.bodies.len() - 1 - i) as u64,
-        );
-        self.shift_slots(i);
+        let len = self.bodies.len();
+        let at = match self.config.body_storage {
+            BodyStorage::Ordered => {
+                let i = self.bodies.partition_point(|b| b.order < order);
+                // A tombstone next to the insertion point keeps the order sorted when reused.
+                let reuse = [i, i.wrapping_sub(1)]
+                    .into_iter()
+                    .find(|&j| j < len && self.bodies[j].id == BodyId::NONE);
+                if let Some(j) = reuse {
+                    self.bodies[j] = body;
+                    self.tombstones -= 1;
+                    j
+                } else {
+                    self.bodies.insert(i, body);
+                    crate::work::add(crate::work::Counter::StorageShifts, (len - i) as u64);
+                    self.shift_slots(i + 1);
+                    self.sorted_len += 1;
+                    i
+                }
+            }
+            BodyStorage::Indexed => {
+                // While storage is sorted, the records between the live neighbours in body order
+                // are tombstones: reusing one keeps it sorted (re-adding a removed door, say).
+                let gap = self.storage_sorted().then(|| {
+                    let position = |(_, id): (&Order, &BodyId)| self.slot_index(id.slot());
+                    let lo = self
+                        .order_index
+                        .range(..order)
+                        .next_back()
+                        .map_or(0, |p| position(p) + 1);
+                    let hi = self.order_index.range(order..).next().map_or(len, position);
+                    (lo, hi)
+                });
+                self.order_index.insert(order, id);
+                match gap {
+                    Some((lo, hi)) if lo < hi => {
+                        self.bodies[lo] = body;
+                        self.tombstones -= 1;
+                        lo
+                    }
+                    _ => {
+                        // Appended: still sorted only after every live body and tombstone.
+                        let in_order = gap.is_some()
+                            && self.bodies.last().is_none_or(|last| last.order < order);
+                        self.bodies.push(body);
+                        self.sorted_len += usize::from(in_order);
+                        len
+                    }
+                }
+            }
+        };
+        self.slots[id.slot() as usize].index = at as u32;
         if let Some(key) = key {
             self.keys.insert(key, id);
         }
         self.bookkeeping.layout_changed();
         if synced {
             self.query_tree
-                .inserted(&self.bodies, i, self.bookkeeping.generation);
+                .inserted(&self.bodies[at], self.bookkeeping.generation);
         } else {
             self.query_tree
                 .sync(&self.bodies, self.bookkeeping.generation);
         }
         Ok(id)
     }
+    /// Orders of sleeping bodies that `body` (not yet stored) touches, in body order.
+    fn sleepers_touching(&self, body: &Body) -> Vec<Order> {
+        let touches = |b: &Body| {
+            b.id != BodyId::NONE
+                && b.sleeping
+                && b.layers.collides_with(body.layers)
+                && contact::current(b, body, 0.0).is_some()
+        };
+        let mut wake = Vec::new();
+        if self.query_tree.current(self.bookkeeping.generation) {
+            let tree = &self.query_tree;
+            let (lo, hi) = body.cached_bounds;
+            let reach = tree
+                .magnitude
+                .max(lo.abs().max_component())
+                .max(hi.abs().max_component());
+            let pad = 64.0 * Real::EPSILON * (1.0 + reach);
+            tree.tree().visit_aabb(
+                spatial_kernels::Aabb {
+                    min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
+                    max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],
+                },
+                |leaf| {
+                    let b = &self.bodies[self.slot_index(leaf.id)];
+                    if touches(b) {
+                        wake.push(b.order);
+                    }
+                },
+            );
+            wake.sort_unstable();
+        } else {
+            for i in self.ordered_positions() {
+                if touches(&self.bodies[i]) {
+                    wake.push(self.bodies[i].order);
+                }
+            }
+        }
+        wake
+    }
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
-        let i = self.index(id).ok()?;
+        let order = self.bodies[self.index(id).ok()?].order;
         self.characters.remove(id);
         self.halfspaces.retain(|&h| h != id);
-        self.bookkeeping.ensure_graph(&self.bodies, &self.cache);
+        // Bodies in contact with the removed one wake (its contact pairs, in pair order).
         let neighbors = self
-            .bookkeeping
-            .graph
-            .neighbors(i)
-            .iter()
-            .map(|&j| self.bodies[j].order)
+            .cache
+            .keys()
+            .filter_map(|&(a, b)| {
+                (a == order)
+                    .then_some(b)
+                    .or_else(|| (b == order).then_some(a))
+            })
             .collect::<Vec<_>>();
-        for n in neighbors {
-            self.wake_island(n);
+        if !neighbors.is_empty() {
+            self.sort_storage();
+            for n in neighbors {
+                self.wake_island(n);
+            }
         }
-        let order = self.bodies[i].order;
+        // O(contact pairs), independent of the body count.
         self.geometry.remove(order);
         self.cache.retain(|&(a, b), _| a != order && b != order);
+        let i = self.index(id).ok()?;
         let synced = self.query_tree.current(self.bookkeeping.generation);
-        let removed = self.bodies.remove(i);
-        crate::work::add(
-            crate::work::Counter::StorageShifts,
-            (self.bodies.len() - i) as u64,
-        );
-        self.shift_slots(i);
+        let removed = self.bodies[i].clone();
+        self.bodies[i].id = BodyId::NONE;
+        self.tombstones += 1;
+        if self.config.body_storage == BodyStorage::Indexed {
+            self.order_index.remove(&order);
+        }
         let slot = id.slot();
         self.slots[slot as usize].index = FREE_SLOT;
         // Descending, so `pop` reuses the lowest free slot.
@@ -789,10 +1025,15 @@ impl World {
         self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
         self.bookkeeping.layout_changed();
         if synced {
-            self.query_tree.removed(i, self.bookkeeping.generation);
+            self.query_tree.removed(slot, self.bookkeeping.generation);
         } else {
             self.query_tree
                 .sync(&self.bodies, self.bookkeeping.generation);
+        }
+        // Tombstones are compacted by the next step, or here once they are half the records:
+        // amortized O(1) per removal.
+        if 2 * self.tombstones > self.bodies.len() {
+            self.settle_storage();
         }
         Some(removed)
     }
@@ -813,7 +1054,7 @@ impl World {
         body.cached_bounds = contact::bounds(body);
         self.bookkeeping.poses_changed();
         if self.query_tree.current(self.bookkeeping.generation) {
-            self.query_tree.moved(&self.bodies, i);
+            self.query_tree.moved(&self.bodies[i]);
         }
         Ok(())
     }
@@ -821,6 +1062,7 @@ impl World {
         if !v.finite() || v.abs().max_component() >= 1e12 {
             return Err(Error::InvalidInput);
         }
+        self.sort_storage();
         let i = self.index(id)?;
         if self.bodies[i].mass == 0.0 {
             return if v == Vector::ZERO {
@@ -844,6 +1086,7 @@ impl World {
         if !j.finite() || !world_point.finite() {
             return Err(Error::InvalidInput);
         }
+        self.sort_storage();
         let i = self.index(id)?;
         if !self.bodies[i].movable() {
             return Err(Error::InvalidInput);
@@ -865,6 +1108,7 @@ impl World {
         if !force.finite() {
             return Err(Error::InvalidInput);
         }
+        self.sort_storage();
         let i = self.index(id)?;
         if !self.bodies[i].movable() {
             return Err(Error::InvalidInput);
@@ -884,6 +1128,10 @@ impl World {
         self.bodies.binary_search_by_key(&order, |b| b.order).ok()
     }
     fn wake_island(&mut self, root: Order) -> u64 {
+        debug_assert!(
+            self.storage_sorted(),
+            "island traversal over unsorted storage"
+        );
         let Some(root) = self.index_of_order(root) else {
             return 0;
         };
@@ -979,6 +1227,8 @@ impl World {
             self.last_report = report.clone();
             return Ok(report);
         }
+        // The solver iterates positions as body ranks.
+        self.settle_storage();
         let layout = self.bookkeeping.generation;
         self.transaction.begin(self.bodies.len());
         let prior_h = self.last_h;

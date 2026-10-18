@@ -134,6 +134,9 @@ fn pair(w: World) -> (World, World) {
 fn correct_pair(a: &mut World, b: &mut World) -> PositionReport {
     let mut ar = PositionReport::default();
     let mut br = PositionReport::default();
+    // The step settles storage before position correction; this calls it directly.
+    a.settle_storage();
+    b.settle_storage();
     assert_eq!(
         a.correct_positions(1.0 / 240.0, &mut ar),
         b.correct_positions(1.0 / 240.0, &mut br)
@@ -230,6 +233,7 @@ fn correction_discovers_a_later_collider_entered_during_the_same_pass() {
         1.0,
     ))
     .unwrap();
+    w.settle_storage();
     assert!(w.bodies[1].cached_bounds.1.1 < w.bodies[2].cached_bounds.0.1);
     let (mut a, mut b) = pair(w);
     let r = correct_pair(&mut a, &mut b);

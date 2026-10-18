@@ -1,5 +1,6 @@
 // Rapier oracle on WASM: invariants, a 1.10× perf gate against both Rapier figures (consumer
-// pattern and bare) per scenario, and the WASM size of each engine's build.
+// pattern and bare) per scenario for both engine storage modes (Ordered, Indexed), and the WASM
+// size of each engine's build.
 import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 
@@ -23,22 +24,23 @@ const median = (v) => v.sort((a, b) => a - b)[v.length >> 1];
 // Fail when the engine's WASM median is more than 10% slower than either Rapier figure.
 const MARGIN = 1.1;
 let failed = false;
-console.log("scenario             engine µs/tick rapier µs/tick   ratio  rapier raw  invariants");
+console.log("scenario             engine µs/tick indexed µs/tick rapier µs/tick   ratio  rapier raw  invariants");
 for (let i = 0; i < e.oracle_scenarios(); i++) {
   const ok = e.oracle_check(i) === 0;
   failed ||= !ok;
   const hasRaw = e.oracle_has_raw(i) === 1;
-  const engine = [], rapier = [], bare = [];
+  const engine = [], indexed = [], rapier = [], bare = [];
   for (let s = 0; s < 11; s++) {
     engine.push(e.oracle_time(i, 0));
+    indexed.push(e.oracle_time(i, 3));
     rapier.push(e.oracle_time(i, 1));
     if (hasRaw) bare.push(e.oracle_time(i, 2));
   }
-  const [pe, ra] = [median(engine), median(rapier)];
+  const [pe, px, ra] = [median(engine), median(indexed), median(rapier)];
   const raw = hasRaw ? median(bare) : null;
-  const slow = pe > ra * MARGIN || (raw !== null && pe > raw * MARGIN);
+  const slow = [pe, px].some((t) => t > ra * MARGIN || (raw !== null && t > raw * MARGIN));
   failed ||= slow;
-  console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)} ${(raw === null ? "-" : raw.toFixed(2)).padStart(11)}  ${ok ? "ok" : "FAILED"}${slow ? " SLOWER THAN RAPIER" : ""}`);
+  console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${px.toFixed(2).padStart(15)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)} ${(raw === null ? "-" : raw.toFixed(2)).padStart(11)}  ${ok ? "ok" : "FAILED"}${slow ? " SLOWER THAN RAPIER" : ""}`);
 }
 console.log(`WASM size: engine ${(sizes.engine / 1e6).toFixed(2)} MB, rapier ${(sizes.rapier / 1e6).toFixed(2)} MB (scenario workloads included)`);
 process.exit(failed ? 1 : 0);
