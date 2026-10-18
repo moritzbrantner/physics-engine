@@ -2,6 +2,8 @@
 //! gravity (16 more stand idle on slopes) and 32 downward ground rays per tick. Rapier mirrors
 //! MMORPG: a world rebuild per tick, `SharedShape::heightfield`, `move_shape` per character,
 //! `detect_collisions` per move, a static-only support cast and `cast_ray` for ground height.
+//! Eight door-probe boxes per tick test overlap with the terrain (Rapier: `contact`, since
+//! parry's `intersection_test` does not support cuboid–heightfield).
 
 use crate::{Obs, Rng, Scenario, Trace};
 
@@ -19,6 +21,9 @@ const ORIGIN: f32 = -64.0;
 const WALKERS: usize = 48;
 const IDLE: usize = 16;
 const RAYS: usize = 32;
+const PROBES: usize = 8;
+/// A door leaf's half extents.
+const PROBE: [f32; 3] = [0.6, 1.0, 0.1];
 
 fn height_at_vertex(i: usize, j: usize) -> f32 {
     let (x, z) = (ORIGIN + CELL * i as f32, ORIGIN + CELL * j as f32);
@@ -86,6 +91,45 @@ fn ray(tick: u32, k: usize) -> [f32; 2] {
     [rng.range(-60.0, 60.0), rng.range(-60.0, 60.0)]
 }
 
+/// Door probe `k` at `tick`: centre and yaw. Some straddle the surface, some float, some are
+/// buried (a surface, not a solid: buried boxes touch nothing).
+fn probe(tick: u32, k: usize) -> ([f32; 3], f32) {
+    let mut rng = Rng(0xd00e + u64::from(tick) * 37 + k as u64);
+    let (x, z) = (rng.range(-55.0, 55.0), rng.range(-55.0, 55.0));
+    let lift = rng.range(-3.0, 3.0);
+    (
+        [x, ground(x, z) + lift, z],
+        rng.range(0.0, core::f32::consts::PI),
+    )
+}
+
+/// Whether probe `k` clearly crosses the surface (`Some(true)`), clearly misses it
+/// (`Some(false)`), or is too close to call.
+fn probe_reference(tick: u32, k: usize) -> Option<bool> {
+    let (c, yaw) = probe(tick, k);
+    let (s, co) = yaw.sin_cos();
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for i in 0..=8 {
+        for j in 0..=8 {
+            let (a, b) = (
+                PROBE[0] * (i as f32 / 4.0 - 1.0),
+                PROBE[2] * (j as f32 / 4.0 - 1.0),
+            );
+            let g = ground(c[0] + a * co + b * s, c[2] - a * s + b * co);
+            lo = lo.min(g);
+            hi = hi.max(g);
+        }
+    }
+    let (bottom, top) = (c[1] - PROBE[1], c[1] + PROBE[1]);
+    if bottom < lo - 0.05 && top > hi + 0.05 {
+        Some(true)
+    } else if bottom > hi + 0.05 || top < lo - 0.05 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 pub fn scenario() -> Scenario {
     Scenario {
         name: "terrain",
@@ -103,7 +147,7 @@ pub fn scenario() -> Scenario {
 
 fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let n = WALKERS + IDLE;
-    let per_tick = 2 * n + RAYS;
+    let per_tick = 2 * n + RAYS + PROBES;
     if engine.0.len() != rapier.0.len() || engine.0.len() != per_tick * TICKS as usize {
         return Err("trace lengths differ".into());
     }
@@ -150,6 +194,19 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
                 ref other => return Err(format!("ground ray {k} at tick {tick}: {other:?}")),
             }
         }
+        for k in 0..PROBES {
+            let at = base + 2 * n + RAYS + k;
+            let (Obs::Penetrates(e), Obs::Penetrates(r)) = (engine.0[at], rapier.0[at]) else {
+                return Err("unexpected probe observation".into());
+            };
+            if let Some(want) = probe_reference(tick as u32, k)
+                && (e != want || r != want)
+            {
+                return Err(format!(
+                    "door probe {k} at tick {tick}: engine {e}, rapier {r}, expected {want}"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -161,7 +218,7 @@ mod engine {
         BodyId, CollisionLayers3d,
         approximate::{
             Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, HeightfieldDesc,
-            QueryFilter, RayCast, Shape, Vector, World,
+            Quaternion, QueryFilter, QueryHit, QueryPose, RayCast, Shape, Vector, World,
         },
     };
 
@@ -176,6 +233,7 @@ mod engine {
         grounded: Vec<bool>,
         moves: Vec<CharacterMove>,
         results: Vec<CharacterMoveResult>,
+        hits: Vec<QueryHit>,
     }
     impl Sim {
         pub fn new() -> Self {
@@ -224,6 +282,7 @@ mod engine {
                 grounded: vec![false; n],
                 moves: Vec::new(),
                 results: Vec::new(),
+                hits: Vec::new(),
             }
         }
     }
@@ -263,6 +322,15 @@ mod engine {
                     hit.map(|h| (h.fraction, [h.normal.0, h.normal.1, h.normal.2])),
                 ));
             }
+            for k in 0..PROBES {
+                let (c, yaw) = probe(tick, k);
+                let mut pose = QueryPose::new(Shape::Box(v(PROBE)), v(c));
+                pose.orientation = Quaternion(0.0, (yaw * 0.5).sin(), 0.0, (yaw * 0.5).cos());
+                self.world
+                    .overlap_shape(pose, terrain_only, &mut self.hits)
+                    .unwrap();
+                trace.0.push(Obs::Penetrates(!self.hits.is_empty()));
+            }
         }
     }
 }
@@ -271,7 +339,7 @@ mod engine {
 mod rapier {
     use super::*;
     use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::{DefaultQueryDispatcher, ShapeCastOptions};
+    use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher, ShapeCastOptions};
     use rapier3d::parry::utils::Array2;
     use rapier3d::prelude::*;
 
@@ -430,6 +498,26 @@ mod rapier {
                 trace.0.push(Obs::Ray(hit.map(|(_, h)| {
                     (h.time_of_impact, [h.normal.x, h.normal.y, h.normal.z])
                 })));
+            }
+            // parry's `intersection_test` does not support cuboid–heightfield (Rapier's
+            // `intersect_shape` silently skips the terrain), so the probe asks `contact`.
+            let leaf = Cuboid::new(v(PROBE));
+            let centre = ORIGIN + CELL * (N - 1) as f32 * 0.5;
+            let terrain_pose = Pose::from_translation(Vector::new(centre, 0.0, centre));
+            for k in 0..PROBES {
+                let (c, yaw) = probe(tick, k);
+                let pose = Pose::from_parts(v(c), Rotation::from_axis_angle(Vector::Y, yaw));
+                let hit = dispatcher
+                    .contact(
+                        &pose.inv_mul(&terrain_pose),
+                        &leaf,
+                        self.terrain.as_ref(),
+                        0.0,
+                    )
+                    .ok()
+                    .flatten()
+                    .is_some_and(|contact| contact.dist <= 0.0);
+                trace.0.push(Obs::Penetrates(hit));
             }
         }
     }

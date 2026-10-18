@@ -428,15 +428,34 @@ impl World {
             }
             if let Shape::Heightfield { terrain, .. } = target.shape {
                 let field = self.terrain(terrain);
-                let Some((p, q, r)) = super::terrain::capsule_of(&query) else {
-                    // Terrain answers sphere and capsule queries only.
-                    return Err(failure(SweepFailure::InvalidGeometryInput));
-                };
                 let mut terrain_work = geometry_kernels::heightfield::HeightfieldWork3::default();
-                let initial = field.capsule_contact_counted(p, q, r, 0.0, &mut terrain_work);
-                let outcome = match (initial, cast) {
-                    (Some(c), _) => Some((0.0, c)),
-                    (None, Some(cast)) => {
+                let capsule = super::terrain::capsule_of(&query);
+                let initial = match (capsule, cast) {
+                    (Some((p, q, r)), _) => {
+                        field.capsule_contact_counted(p, q, r, 0.0, &mut terrain_work)
+                    }
+                    // Boxes and wedges: overlap only (door probes); terrain casts take
+                    // spheres and capsules.
+                    (None, None) => {
+                        let Some(polytope) = primitive::polytope_of(&query) else {
+                            return Err(failure(SweepFailure::InvalidGeometryInput));
+                        };
+                        field.polytope_contact_counted(
+                            geometry_kernels::heightfield::ConvexPolytope3 {
+                                vertices: &polytope.vertices,
+                                face_normals: &polytope.face_normals,
+                                edges: &polytope.edges,
+                            },
+                            &mut terrain_work,
+                        )
+                    }
+                    (None, Some(_)) => {
+                        return Err(failure(SweepFailure::InvalidGeometryInput));
+                    }
+                };
+                let outcome = match (initial, cast, capsule) {
+                    (Some(c), ..) => Some((0.0, c)),
+                    (None, Some(cast), Some((p, q, r))) => {
                         let d = [displacement.0, displacement.1, displacement.2].map(f64::from);
                         stats.sweep_iterations += 1;
                         field
@@ -451,7 +470,7 @@ impl World {
                             .map_err(|_| failure(SweepFailure::NonFiniteComputation))?
                             .map(|hit| (primitive::toward_zero(hit.fraction), hit.contact))
                     }
-                    (None, None) => None,
+                    _ => None,
                 };
                 crate::work::add(
                     crate::work::Counter::TerrainCells,

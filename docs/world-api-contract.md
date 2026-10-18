@@ -105,7 +105,10 @@ When to pick which:
 static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`) and
 returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same
 diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and casts, and
-character moves work against it; box and wedge queries return an error. Terrain takes no part
+character moves work against it. Box and wedge overlaps (door probes) are tested against the
+triangles by the separating-axis test: whether they overlap is exact, and the reported depth and
+normal come from the deepest triangle alone. The terrain is a surface, so a box wholly beneath
+it does not touch it. Box and wedge casts against terrain return an error. Terrain takes no part
 in rigid-body contacts, and worlds with terrain are not checkpointed. `add_body` rejects
 heightfield shapes.
 
