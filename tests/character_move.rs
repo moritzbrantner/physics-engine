@@ -162,3 +162,48 @@ fn penetration_is_resolved_and_reported_apart_from_motion() {
     assert_eq!(r.translation, V::ZERO);
     assert!(r.grounded);
 }
+
+#[test]
+fn planar_characters_keep_their_height_and_need_no_floor() {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(Body::keyed(
+        2,
+        Shape::Box(V(0.25, 3.0, 20.0)),
+        V(5.0, 3.0, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    let mut body = Body::keyed(10, Shape::capsule(HALF, RADIUS), V(3.0, 1.0, 0.0), 1.0);
+    body.external = true;
+    let c = w.add_body(body).unwrap();
+    let settings = CharacterSettings {
+        plane: Some(1.0),
+        ..CharacterSettings::default()
+    };
+    w.add_character(c, settings).unwrap();
+    for _ in 0..60 {
+        // Downward intent is ignored on the plane; the wall still blocks and slides.
+        let r = step(&mut w, c, V(0.1, -0.5, 0.05));
+        assert!(r.grounded);
+        assert_eq!(r.support, None);
+    }
+    let p = position(&w, c);
+    assert_eq!(p.1, 1.0);
+    assert!(p.2 > 2.0);
+    assert!((5.0 - 0.25 - (p.0 + RADIUS) - OFFSET).abs() < 1e-4, "{p:?}");
+}
+
+#[test]
+fn depenetration_ignores_other_characters() {
+    let mut w = world();
+    let a = character(&mut w, 10, V(30.0, FOOT + OFFSET, 0.0));
+    let b = character(&mut w, 11, V(30.3, FOOT + OFFSET, 0.0));
+    let r = step(&mut w, a, V::ZERO);
+    assert_eq!(r.depenetration, V::ZERO);
+    assert_eq!(position(&w, a).0, 30.0);
+    assert_eq!(position(&w, b).0, 30.3);
+}

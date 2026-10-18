@@ -147,7 +147,7 @@ pub fn scenario() -> Scenario {
 }
 
 /// Distance from a capsule (upright, centre `p`) to a box, minus the capsule radius.
-fn capsule_box_gap(p: [f32; 3], (c, h): BoxSpec) -> f32 {
+pub(crate) fn capsule_box_gap(p: [f32; 3], (c, h): BoxSpec) -> f32 {
     // The segment point nearest the box: the y ranges' overlap, else the nearer endpoint.
     let (lo, hi) = (p[1] - HALF, p[1] + HALF);
     let (bl, bh) = (c[1] - h[1], c[1] + h[1]);

@@ -24,6 +24,9 @@ pub struct CharacterSettings {
     pub snap_to_ground: Option<Real>,
     /// Collide-and-slide iterations per move.
     pub max_slides: u8,
+    /// Planar movement: the character stays at its height and moves only horizontally. Such a
+    /// character needs no floor collider and is always grounded, with `support` `None`.
+    pub plane: Option<Real>,
 }
 
 impl Default for CharacterSettings {
@@ -33,6 +36,7 @@ impl Default for CharacterSettings {
             max_slope: core::f32::consts::FRAC_PI_4,
             snap_to_ground: Some(0.05),
             max_slides: 4,
+            plane: None,
         }
     }
 }
@@ -81,7 +85,8 @@ impl World {
             && settings
                 .snap_to_ground
                 .is_none_or(|s| s.is_finite() && s >= 0.0)
-            && settings.max_slides > 0;
+            && settings.max_slides > 0
+            && settings.plane.is_none_or(Real::is_finite);
         let body = &self.bodies[i];
         if !valid || !matches!(body.shape, Shape::Capsule { .. }) || !body.external {
             return Err(Error::InvalidInput);
@@ -169,6 +174,9 @@ impl World {
         let s = state.settings;
         let up = V::Y;
         let min_up = s.max_slope.cos();
+        let planar = s.plane.is_some();
+        // Planar characters see only the horizontal part of motion and surface normals.
+        let flat = |v: V| if planar { V(v.0, 0.0, v.2) } else { v };
         let mut pose = self.character_pose(id)?;
         let start = pose.position;
         let mut hits = Vec::new();
@@ -181,23 +189,35 @@ impl World {
             contacts: 0,
         };
 
-        // Leave penetration first; reported apart from the requested motion.
-        self.overlap_shape(
-            pose,
-            QueryFilter {
-                exclude: Some(id),
-                ..QueryFilter::default()
-            },
-            &mut hits,
-        )
-        .map_err(|_| Error::InvalidInput)?;
-        for h in hits.iter().filter(|h| h.separation < 0.0) {
-            result.depenetration += h.normal * (s.offset - h.separation);
+        // Leave penetration first; reported apart from the requested motion. A few passes
+        // resolve overlap with several bodies at once (a pillar against a wall).
+        let filter = QueryFilter {
+            exclude: Some(id),
+            ..QueryFilter::default()
+        };
+        for _ in 0..4 {
+            self.overlap_shape(pose, filter, &mut hits)
+                .map_err(|_| Error::InvalidInput)?;
+            let mut push = V::ZERO;
+            // Other characters are separated by the character interaction rules, not here.
+            for h in hits
+                .iter()
+                .filter(|h| h.separation < 0.0 && !self.characters.contains_key(&h.body))
+            {
+                let n = flat(h.normal);
+                if n != V::ZERO {
+                    push += n.unit() * (s.offset - h.separation);
+                }
+            }
+            if push == V::ZERO {
+                break;
+            }
+            pose.position += push;
+            result.depenetration += push;
         }
-        pose.position += result.depenetration;
 
         // Collide and slide, keeping `offset` to every surface.
-        let mut remaining = desired;
+        let mut remaining = flat(desired);
         let mut support = None;
         for _ in 0..s.max_slides {
             let length = remaining.length();
@@ -212,7 +232,14 @@ impl World {
                 pose.position += remaining;
                 break;
             };
-            let approach = -direction.dot(hit.normal);
+            let normal = flat(hit.normal);
+            if normal == V::ZERO {
+                // A planar character meeting a purely horizontal surface: nothing blocks it.
+                pose.position += remaining;
+                break;
+            }
+            let normal = normal.unit();
+            let approach = -direction.dot(normal);
             // Stop `offset` short of the surface along its normal.
             let allowed = if approach > 0.0 {
                 (hit.fraction * reach - s.offset / approach).max(0.0)
@@ -232,12 +259,14 @@ impl World {
             };
             pose.position += direction * travel;
             let rest = remaining - direction * travel;
-            remaining = rest - hit.normal * rest.dot(hit.normal);
+            remaining = flat(rest - normal * rest.dot(normal));
         }
 
         // Grounded test and snapping: walkable static support within reach below.
         let reach = s.offset + s.snap_to_ground.unwrap_or(0.0) + s.offset;
-        if let Some(hit) = self.blocking_hit(id, pose, -up * reach, &mut hits, is_static)?
+        if planar {
+            // The plane is the support.
+        } else if let Some(hit) = self.blocking_hit(id, pose, -up * reach, &mut hits, is_static)?
             && hit.normal.dot(up) >= min_up
         {
             let gap = hit.fraction * reach;
@@ -252,7 +281,7 @@ impl World {
         }
 
         result.translation = pose.position - start - result.depenetration;
-        result.grounded = support.is_some();
+        result.grounded = planar || support.is_some();
         result.support = support;
         if pose.position != start {
             self.set_kinematic_position(id, pose.position)?;

@@ -17,6 +17,8 @@ pub enum Obs {
     Position([f32; 3]),
     /// Whether a character stands on static support after a tick.
     Grounded(bool),
+    /// Translation applied to leave penetration (zero where an engine does not report it).
+    Depenetration([f32; 3]),
 }
 
 /// Observations in the order a scenario recorded them.
@@ -93,7 +95,7 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
     for (i, obs) in trace.0.iter().enumerate() {
         let ok = match obs {
             Obs::Ray(Some((t, n))) => t.is_finite() && n.iter().all(|v| v.is_finite()),
-            Obs::Position(p) => p.iter().all(|v| v.is_finite()),
+            Obs::Position(p) | Obs::Depenetration(p) => p.iter().all(|v| v.is_finite()),
             _ => true,
         };
         if !ok {
@@ -124,5 +126,6 @@ pub fn all() -> Vec<Scenario> {
     vec![
         scenarios::static_queries::scenario(),
         scenarios::character_move::scenario(),
+        scenarios::arpg_planar::scenario(),
     ]
 }

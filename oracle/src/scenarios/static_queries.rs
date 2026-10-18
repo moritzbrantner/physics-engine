@@ -21,12 +21,12 @@ const DISTANCE_TOLERANCE: f32 = 1e-3;
 const NORMAL_COS: f32 = 0.999_847_7;
 
 /// A static box: centre and half extents.
-type BoxSpec = ([f32; 3], [f32; 3]);
+pub(crate) type BoxSpec = ([f32; 3], [f32; 3]);
 
-const FLOOR: BoxSpec = ([0.0, -0.5, 0.0], [40.0, 0.5, 40.0]);
+pub(crate) const FLOOR: BoxSpec = ([0.0, -0.5, 0.0], [40.0, 0.5, 40.0]);
 
 /// Walls on a 6x6 grid of 10 m rooms with doorway gaps, plus pillars; then the door boxes.
-fn layout() -> (Vec<BoxSpec>, Vec<BoxSpec>) {
+pub(crate) fn layout() -> (Vec<BoxSpec>, Vec<BoxSpec>) {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let mut walls = Vec::new();
     let mut gaps = Vec::new();

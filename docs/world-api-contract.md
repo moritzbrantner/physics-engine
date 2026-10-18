@@ -66,6 +66,9 @@ primitive: collide-and-slide that keeps `offset` to every surface it touches, th
 test against walkable static support within `offset + snap_to_ground` (snapping down when the
 character was grounded and does not move up). Zero desired motion never moves a character;
 penetration is resolved first and reported as `depenetration`, apart from `translation`.
+`CharacterSettings::plane: Some(height)` makes a planar character: it moves only horizontally
+at its height, needs no floor collider and is always grounded with `support` `None`.
+Depenetration leaves static and kinematic bodies, not other characters.
 Moves run in input order; each sees the earlier characters at their new positions.
 `set_kinematic_position` places an external body without resolving contact.
 
