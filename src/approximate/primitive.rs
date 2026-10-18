@@ -187,6 +187,16 @@ fn shape(shape: Shape) -> PrimitiveShape3 {
     }
 }
 
+/// The point of `body`'s shape deepest along `-normal` (its support point), in f64.
+pub(super) fn deepest_along(body: &Body, normal: [f64; 3]) -> [f64; 3] {
+    let mut work = PrimitiveWork3::default();
+    geometry_kernels::primitive3::support_point(
+        kernel_body(body),
+        [-normal[0], -normal[1], -normal[2]],
+        &mut work,
+    )
+}
+
 fn kernel_body(body: &Body) -> PrimitiveBody3 {
     let axes = match body.shape {
         Shape::Sphere(_) => identity_axes(),

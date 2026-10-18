@@ -373,10 +373,18 @@ impl World {
             crate::work::add(crate::work::Counter::ExactTests, 1);
             query.position = pose.position;
             if target.shape == Shape::HalfSpace {
-                let Some((p, q, r)) = super::terrain::capsule_of(&query) else {
+                let (point, normal) = super::terrain::plane_of(target);
+                // A box or wedge meets the plane first at its deepest point, which translation
+                // keeps deepest: a capsule with a collapsed segment and no radius there.
+                let polytope = || {
+                    matches!(query.shape, Shape::Box(_) | Shape::Wedge(_)).then(|| {
+                        let low = primitive::deepest_along(&query, normal);
+                        (low, low, 0.0)
+                    })
+                };
+                let Some((p, q, r)) = super::terrain::capsule_of(&query).or_else(polytope) else {
                     return Err(failure(SweepFailure::InvalidGeometryInput));
                 };
-                let (point, normal) = super::terrain::plane_of(target);
                 let initial = halfspace::capsule_halfspace_contact(p, q, r, point, normal);
                 let outcome = if initial.separation <= 0.0 {
                     Some((0.0, initial))

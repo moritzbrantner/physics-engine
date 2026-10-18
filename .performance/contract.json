@@ -92,6 +92,21 @@
           "blocking": false
         }
       ]
+    },
+    {
+      "id": "mmorpg-tick",
+      "kind": "journey",
+      "description": "C15 MMORPG's whole physics tick (#310): Greyhaven-sized town, characters, head-on pairs, doors and line of sight; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
     }
   ],
   "operations": [

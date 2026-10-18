@@ -21,6 +21,8 @@ pub enum Obs {
     Depenetration([f32; 3]),
     /// Signed separation and outward target normal of the deepest contact, if touching.
     Contact(Option<(f32, [f32; 3])>),
+    /// Whether a segment is blocked by static geometry (line of sight).
+    Blocked(bool),
 }
 
 /// Observations in the order a scenario recorded them.
@@ -164,5 +166,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::crowd::scenario(),
         scenarios::capsule_normals::scenario(),
         scenarios::terrain::scenario(),
+        scenarios::mmorpg_tick::scenario(),
     ]
 }

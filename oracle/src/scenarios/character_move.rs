@@ -8,23 +8,23 @@
 use crate::{Obs, Rng, Scenario, Trace};
 
 const TICKS: u32 = 240;
-const DT: f32 = 1.0 / 60.0;
-const GRAVITY: f32 = 9.81;
-const OFFSET: f32 = 0.0025;
-const SNAP: f32 = 0.05;
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
-const FOOT: f32 = HALF + RADIUS;
-const CEILING_UNDERSIDE: f32 = 2.5;
-const PLATFORM_TOP: f32 = 1.0;
+pub(crate) const DT: f32 = 1.0 / 60.0;
+pub(crate) const GRAVITY: f32 = 9.81;
+pub(crate) const OFFSET: f32 = 0.0025;
+pub(crate) const SNAP: f32 = 0.05;
+pub(crate) const HALF: f32 = 0.5;
+pub(crate) const RADIUS: f32 = 0.3;
+pub(crate) const FOOT: f32 = HALF + RADIUS;
+pub(crate) const CEILING_UNDERSIDE: f32 = 2.5;
+pub(crate) const PLATFORM_TOP: f32 = 1.0;
 /// Rapier sinks into box tops (#305) and nudges resting characters (#303): its resting
 /// positions may differ by this much.
 const RAPIER_REST_TOLERANCE: f32 = 0.05;
 
-type BoxSpec = ([f32; 3], [f32; 3]);
+pub(crate) type BoxSpec = ([f32; 3], [f32; 3]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Role {
+pub(crate) enum Role {
     Idle,
     Wall,
     Wander,
@@ -40,7 +40,7 @@ const ROLES: [(Role, usize); 5] = [
     (Role::Jumper, 8),
 ];
 
-fn cell(index: usize) -> (f32, f32) {
+pub(crate) fn cell(index: usize) -> (f32, f32) {
     (
         -115.0 + 10.0 * (index % 24) as f32,
         -115.0 + 10.0 * (index / 24) as f32,
@@ -48,7 +48,7 @@ fn cell(index: usize) -> (f32, f32) {
 }
 
 /// Floor, 576 buildings, 400 pillars, 150 platforms and 24 ceiling slabs.
-fn layout() -> Vec<BoxSpec> {
+pub(crate) fn layout() -> Vec<BoxSpec> {
     let mut rng = Rng(0x5eed_6eed_1234_5678);
     let mut boxes = vec![([0.0, -0.5, 0.0], [130.0, 0.5, 130.0])];
     for i in 0..576 {
@@ -72,7 +72,7 @@ fn layout() -> Vec<BoxSpec> {
 }
 
 /// Start position and role of every character, in id order.
-fn characters() -> Vec<([f32; 3], Role)> {
+pub(crate) fn characters() -> Vec<([f32; 3], Role)> {
     let mut out = Vec::new();
     let rest = FOOT + OFFSET;
     for (role, count) in ROLES {
@@ -119,7 +119,13 @@ fn desired(role: Role, index: usize, tick: u32, grounded: bool, intent: &mut Int
         }
     }
     intent.vy -= GRAVITY * DT;
-    let (vx, vz) = match role {
+    let (vx, vz) = walk(role, index, tick);
+    [vx * DT, intent.vy * DT, vz * DT]
+}
+
+/// Horizontal walking velocity (m/s) of character `index` with `role` at `tick`.
+pub(crate) fn walk(role: Role, index: usize, tick: u32) -> (f32, f32) {
+    match role {
         Role::Wall => (2.0, 0.0),
         Role::Wander => {
             let mut rng = Rng(0x77 + index as u64 * 1_000_003 + u64::from(tick / 60));
@@ -127,8 +133,7 @@ fn desired(role: Role, index: usize, tick: u32, grounded: bool, intent: &mut Int
             (3.0 * a.cos(), 3.0 * a.sin())
         }
         _ => (0.0, 0.0),
-    };
-    [vx * DT, intent.vy * DT, vz * DT]
+    }
 }
 
 pub fn scenario() -> Scenario {
