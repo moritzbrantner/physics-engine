@@ -1,3 +1,6 @@
 {
-  "extends": ["github>moritzbrantner/coding-agent-conventions"]
+  "extends": [
+    "github>moritzbrantner/coding-agent-conventions"
+  ],
+  "platformAutomerge": true
 }
