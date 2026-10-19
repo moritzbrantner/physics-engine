@@ -2,5 +2,12 @@
   "extends": [
     "github>moritzbrantner/coding-agent-conventions"
   ],
-  "platformAutomerge": true
+  "platformAutomerge": true,
+  "packageRules": [
+    {
+      "description": "rust-kernels crates share types and must move to the same revision together",
+      "matchPackageNames": ["geometry-kernels", "bvh-kernels", "spatial-kernels"],
+      "groupName": "rust-kernels"
+    }
+  ]
 }
