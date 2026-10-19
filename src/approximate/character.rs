@@ -376,25 +376,25 @@ impl World {
     fn shift_character(&mut self, id: BodyId, by: V) -> Result<(), Error> {
         let p = self.bodies[self.index(id)?].position + by;
         self.place_kinematic(id, p)?;
-        self.character_placed(id);
+        self.body_placed(id);
         Ok(())
     }
 
-    /// Character `id` was placed instead of moved, so it can overlap anything: it and every
-    /// character whose bounds it touches check for overlap again (all of them when the query
-    /// tree is stale).
-    pub(super) fn character_placed(&mut self, id: BodyId) {
-        let Some(state) = self.characters.get(id) else {
-            return;
-        };
+    /// Body `id` was placed instead of moved, so it can overlap anything: it (if a character)
+    /// and every character whose bounds it touches check for overlap again (all of them when
+    /// the query tree is stale).
+    pub(super) fn body_placed(&mut self, id: BodyId) {
         let Ok(i) = self.index(id) else {
             return;
+        };
+        let pad = match self.characters.get(id) {
+            Some(state) => state.settings.offset,
+            None => self.character_settings().offset,
         };
         if !self.query_tree.current(self.bookkeeping.generation) {
             self.characters.placed_all();
             return;
         }
-        let pad = state.settings.offset;
         let (lo, hi) = self.bodies[i].cached_bounds;
         let mut nearby = std::mem::take(&mut self.characters.nearby);
         nearby.clear();

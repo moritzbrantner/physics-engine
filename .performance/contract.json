@@ -64,6 +64,21 @@
       ]
     },
     {
+      "id": "platforms",
+      "kind": "journey",
+      "description": "C1/C4/C5 static platforms moved in place carrying characters through MMORPG's adapter pattern (#56); gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
       "id": "push",
       "kind": "journey",
       "description": "C16 bounded character pushing; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
@@ -906,6 +921,67 @@
           "unit": "nodes",
           "signal": "operation-count",
           "notes": "Constant in crowd size (#337): a placement marks only the placed character and characters whose bounds it touches for an overlap re-check, so the rest of the crowd stays known free of overlap. Before, every character re-checked (linear).",
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Only the re-checked neighbourhood is tested exactly.",
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "constant"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "place-static",
+      "description": "World::set_static_position on one static box beside a resting crowd, then a zero-motion move_characters batch of the whole crowd.",
+      "publicContract": "physics_engine::approximate::World::set_static_position",
+      "dimensions": {
+        "bodies": {
+          "description": "static bodies in the world"
+        },
+        "characters": {
+          "description": "characters in the crowd and the batch"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 4096,
+          "characters": 8
+        },
+        {
+          "bodies": 4096,
+          "characters": 16
+        },
+        {
+          "bodies": 4096,
+          "characters": 32
+        },
+        {
+          "bodies": 4096,
+          "characters": 64
+        },
+        {
+          "bodies": 4096,
+          "characters": 128
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "Constant in crowd size (#352): moving a static body in place keeps the layout, and marks only characters whose bounds it touches for an overlap re-check. Removing and re-adding it changes the layout, so every character re-checked (linear).",
           "growth": [
             {
               "dimension": "characters",

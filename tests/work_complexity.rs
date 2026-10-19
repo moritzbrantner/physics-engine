@@ -563,6 +563,40 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
     );
 }
 
+/// Moving a static body in place (#352) rechecks only the characters it reaches.
+#[test]
+fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
+    let mut samples = Vec::new();
+    let mut out: Vec<CharacterMoveResult> = Vec::new();
+    for m in [8u64, 16, 32, 64, 128] {
+        let (mut w, ids) = crowd(12, m, 1);
+        let rest: Vec<_> = ids
+            .iter()
+            .map(|&body| CharacterMove {
+                body,
+                desired: V::ZERO,
+            })
+            .collect();
+        w.move_characters(&rest, &mut out).unwrap();
+        w.move_characters(&rest, &mut out).unwrap();
+        let platform = w.body_id(0).unwrap();
+        let p = w.body(platform).unwrap().position + V(0.0, 0.001, 0.0);
+        let (n, e) = counted(|| {
+            w.set_static_position(platform, p).unwrap();
+            w.move_characters(&rest, &mut out).unwrap();
+        });
+        samples.push((
+            vec![("bodies", 1u64 << 12), ("characters", m)],
+            vec![("tree-nodes", n), ("exact-tests", e)],
+        ));
+    }
+    judge(
+        "place-static",
+        &samples,
+        &[("tree-nodes", "characters", "constant")],
+    );
+}
+
 fn terrain(cells: usize) -> World {
     let mut w = World::new(Config {
         gravity: V::ZERO,
