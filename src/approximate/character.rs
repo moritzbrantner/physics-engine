@@ -36,6 +36,19 @@ pub struct CharacterSettings {
     /// ceilings per move, in scene units; the pushed character keeps its gap to everything
     /// else, so it is never pushed into walls or other characters.
     pub max_push: Option<Real>,
+    /// Stepping up onto ledges low enough to climb without jumping (`None`: never), as
+    /// Rapier's `autostep` with dynamic bodies excluded. Only walking moves step: ones that
+    /// start on the ground and do not rise, so jumps and falls never step (ARPG's use).
+    pub autostep: Option<Autostep>,
+}
+
+/// Automatic step-up, in scene units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Autostep {
+    /// Highest step climbed, measured from the character's lowest point.
+    pub max_height: Real,
+    /// Free depth needed on top of the step.
+    pub min_width: Real,
 }
 
 impl Default for CharacterSettings {
@@ -47,6 +60,7 @@ impl Default for CharacterSettings {
             max_slides: 4,
             plane: None,
             max_push: None,
+            autostep: None,
         }
     }
 }
@@ -190,7 +204,13 @@ impl World {
                 .is_none_or(|s| s.is_finite() && s >= 0.0)
             && settings.max_slides > 0
             && settings.plane.is_none_or(Real::is_finite)
-            && settings.max_push.is_none_or(|p| p.is_finite() && p >= 0.0);
+            && settings.max_push.is_none_or(|p| p.is_finite() && p >= 0.0)
+            && settings.autostep.is_none_or(|a| {
+                a.max_height.is_finite()
+                    && a.max_height > 0.0
+                    && a.min_width.is_finite()
+                    && a.min_width >= 0.0
+            });
         let body = &self.bodies[i];
         if !valid || !matches!(body.shape, Shape::Capsule { .. }) || !body.external {
             return Err(Error::InvalidInput);
@@ -452,6 +472,73 @@ impl World {
         }))
     }
 
+    /// Rapier's step-up: room above, room on top of the step for `min_width`, and no
+    /// too-steep slope there. Returns the lift and the forward nudge onto the step, or `None`
+    /// when the character cannot step.
+    fn step_up(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        rest: V,
+        s: CharacterSettings,
+        step: Autostep,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<Option<V>, Error> {
+        let up = V::Y;
+        let min_width = step.min_width + s.offset;
+        let max_height = step.max_height + s.offset;
+        let horizontal = rest - up * rest.dot(up);
+        if horizontal == V::ZERO {
+            return Ok(None);
+        }
+        let forward = horizontal.unit();
+        let solid = |b: &Body| !b.movable();
+        // Stops `offset` short along a hit's normal, as a cast with Rapier's target distance.
+        let stop = |h: &QueryHit, direction: V, reach: Real| {
+            let approach = -direction.dot(h.normal);
+            if h.starts_overlapping || approach <= 0.0 {
+                0.0
+            } else {
+                (h.fraction * reach - s.offset / approach).max(0.0)
+            }
+        };
+        let reach = max_height + s.offset;
+        if self
+            .blocking_hit(id, pose, up * reach, hits, solid)?
+            .is_some_and(|h| stop(&h, up, reach) <= max_height)
+        {
+            return Ok(None);
+        }
+        let mut lifted = pose;
+        lifted.position += up * max_height;
+        let reach = min_width + s.offset;
+        if self
+            .blocking_hit(id, lifted, forward * reach, hits, solid)?
+            .is_some_and(|h| stop(&h, forward, reach) <= min_width)
+        {
+            return Ok(None);
+        }
+        let mut above = lifted;
+        above.position += forward * min_width;
+        let reach = max_height + s.offset;
+        let fall = match self.blocking_hit(id, above, -up * reach, hits, solid)? {
+            Some(h) => {
+                let n = h.normal;
+                if n.dot(up) < s.max_slope.cos() {
+                    let along = rest - n * rest.dot(n).min(0.0);
+                    if along.dot(up) >= 0.0 {
+                        return Ok(None);
+                    }
+                }
+                stop(&h, -up, reach).min(max_height)
+            }
+            None => max_height,
+        };
+        let lift = up * (max_height - fall);
+        let nudge = forward * forward.dot(rest - lift).min(min_width).max(0.0);
+        Ok(Some(lift + nudge))
+    }
+
     /// Whether `pose` stands on walkable static support (within twice the offset). Snapping
     /// asks this of the move's start, as Rapier does, so it depends on geometry alone and a
     /// world rebuilt from game state snaps exactly like the original.
@@ -462,13 +549,24 @@ impl World {
         s: CharacterSettings,
         hits: &mut Vec<QueryHit>,
     ) -> Result<bool, Error> {
+        self.on_ground_at(id, pose, s, s.max_slope.cos(), hits)
+    }
+
+    /// Whether `pose` has static ground within the ground prediction below whose normal points
+    /// up by at least `min_up`.
+    fn on_ground_at(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        s: CharacterSettings,
+        min_up: Real,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<bool, Error> {
         let predict = self.ground_prediction(s);
         let reach = predict + s.offset;
         Ok(self
             .blocking_hit(id, pose, -V::Y * reach, hits, is_static)?
-            .is_some_and(|hit| {
-                hit.normal.dot(V::Y) >= s.max_slope.cos() && hit.fraction * reach <= predict
-            }))
+            .is_some_and(|hit| hit.normal.dot(V::Y) >= min_up && hit.fraction * reach <= predict))
     }
 
     /// Distance below a character within which walkable ground counts as support: Rapier's
@@ -555,6 +653,10 @@ impl World {
         // Collide and slide, keeping `offset` to every surface.
         let mut translation = V::ZERO;
         let mut remaining = flat(desired);
+        // Whether the move starts on the ground (Rapier's grounded: any upward-facing static
+        // contact within the prediction, a step's rounded edge included), found once on the
+        // first step attempt.
+        let mut walking = None;
         let mut support = None;
         for _ in 0..s.max_slides {
             let length = remaining.length();
@@ -617,6 +719,24 @@ impl World {
             pose.position += direction * travel;
             translation += direction * travel;
             let rest = remaining - direction * travel;
+            // A low ledge in the way of a walking character is stepped onto instead of slid
+            // along. Jumps and falls never step (as ARPG uses Rapier's autostep).
+            if let Some(step) = s.autostep
+                && !planar
+                && normal.dot(up) >= 0.0
+                && normal.dot(up) < min_up
+                && desired.dot(up) <= 0.0
+                && self
+                    .index(hit.body)
+                    .is_ok_and(|i| !self.bodies[i].movable())
+                && *walking.get_or_insert(self.on_ground_at(id, start_pose, s, 1e-3, hits)?)
+                && let Some(lift) = self.step_up(id, pose, rest, s, step, hits)?
+            {
+                pose.position += lift;
+                translation += lift;
+                remaining = rest - lift;
+                continue;
+            }
             // On walkable ground, downward intent stops instead of sliding down the slope;
             // horizontal intent follows the surface.
             let rest = if !planar && normal.dot(up) >= min_up && rest.dot(up) < 0.0 {
@@ -702,8 +822,10 @@ impl World {
         {
             let gap = hit.fraction * reach;
             let snap = gap - s.offset;
+            // As Rapier: only a move that has not risen snaps (a step or a slide up an edge
+            // keeps its height).
             if gap > s.offset * 2.0
-                && desired.dot(up) <= 0.0
+                && translation.dot(up) <= 0.0
                 && s.snap_to_ground.is_some_and(|reach| snap <= reach)
                 && self.grounded_at(id, start_pose, s, hits)?
             {

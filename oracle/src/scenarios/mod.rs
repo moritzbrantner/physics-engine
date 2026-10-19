@@ -7,6 +7,7 @@ pub mod mmorpg_tick;
 pub mod platforms;
 pub mod push;
 pub mod slopes;
+pub mod stairs;
 pub mod static_queries;
 pub mod terrain;
 #[cfg(feature = "rapier")]

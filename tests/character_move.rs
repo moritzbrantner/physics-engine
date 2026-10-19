@@ -595,3 +595,68 @@ fn walking_into_a_too_steep_slope_does_not_climb_it() {
     let p = walk_into_wedge(1.1, 6.0);
     assert!(p.0 < 17.0, "climbed the shallow slope: {p:?}");
 }
+
+/// Five steps `rise` high rising toward -X from x = 18 (0.5 m deep, the top one a 4 m landing),
+/// and a character walking -X into them under gravity. Returns its final position.
+fn walk_into_stairs(rise: f32, autostep: Option<physics_engine::approximate::Autostep>) -> V {
+    let mut w = world();
+    for k in 0..5 {
+        let top = rise * (k + 1) as f32;
+        // The top step is a 4 m landing.
+        let depth = if k == 4 { 2.0 } else { 0.25 };
+        w.add_body(Body::keyed(
+            20 + k as u64,
+            Shape::Box(V(depth, top / 2.0, 2.0)),
+            V(18.0 - depth - 0.5 * k as f32, top / 2.0, 0.0),
+            0.0,
+        ))
+        .unwrap();
+    }
+    let mut body = Body::keyed(
+        10,
+        Shape::capsule(HALF, RADIUS),
+        V(19.5, FOOT + OFFSET, 0.0),
+        1.0,
+    );
+    body.external = true;
+    let c = w.add_body(body).unwrap();
+    w.add_character(
+        c,
+        CharacterSettings {
+            autostep,
+            ..CharacterSettings::default()
+        },
+    )
+    .unwrap();
+    let mut vy = 0.0;
+    for _ in 0..180 {
+        vy -= 9.81 / 60.0;
+        let r = step(&mut w, c, V(-2.0 / 60.0, vy / 60.0, 0.0));
+        if r.grounded {
+            vy = 0.0;
+        }
+    }
+    position(&w, c)
+}
+
+#[test]
+fn autostep_climbs_low_steps_but_not_high_ones() {
+    use physics_engine::approximate::Autostep;
+    let step = Some(Autostep {
+        max_height: 0.25,
+        min_width: 0.15,
+    });
+    // 0.2 m steps: climbed to the top one (1 m), resting on it.
+    let p = walk_into_stairs(0.2, step);
+    assert!(p.0 < 16.0, "climbed: {p:?}");
+    assert!(
+        (p.1 - (1.0 + FOOT + OFFSET)).abs() < 1e-3,
+        "on the top step: {p:?}"
+    );
+    // Without autostep the first riser stops the character.
+    let p = walk_into_stairs(0.2, None);
+    assert!(p.0 > 18.0 && (p.1 - (FOOT + OFFSET)).abs() < 1e-3, "{p:?}");
+    // 0.3 m steps are higher than the autostep.
+    let p = walk_into_stairs(0.3, step);
+    assert!(p.0 > 18.0 && (p.1 - (FOOT + OFFSET)).abs() < 1e-3, "{p:?}");
+}
