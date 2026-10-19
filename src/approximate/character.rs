@@ -497,6 +497,7 @@ impl World {
         }
 
         // Collide and slide, keeping `offset` to every surface.
+        let mut translation = V::ZERO;
         let mut remaining = flat(desired);
         let mut support = None;
         for _ in 0..s.max_slides {
@@ -509,12 +510,14 @@ impl World {
             let reach = length + s.offset;
             let Some(hit) = self.blocking_hit(id, pose, direction * reach, hits, |_| true)? else {
                 pose.position += remaining;
+                translation += remaining;
                 break;
             };
             let normal = flat(hit.normal);
             if normal == V::ZERO {
                 // A planar character meeting a purely horizontal surface: nothing blocks it.
                 pose.position += remaining;
+                translation += remaining;
                 break;
             }
             let normal = normal.unit();
@@ -527,6 +530,7 @@ impl World {
             };
             if allowed >= length {
                 pose.position += remaining;
+                translation += remaining;
                 break;
             }
             result.contacts += 1;
@@ -537,6 +541,7 @@ impl World {
                 allowed
             };
             pose.position += direction * travel;
+            translation += direction * travel;
             let rest = remaining - direction * travel;
             // On walkable ground, downward intent stops instead of sliding down the slope;
             // horizontal intent follows the surface.
@@ -587,6 +592,7 @@ impl World {
                             .min(rest.dot(direction))
                             .max(0.0);
                         pose.position += direction * follow;
+                        translation += direction * follow;
                         rest -= direction * follow;
                         remaining = flat(rest - normal * rest.dot(normal));
                     }
@@ -616,11 +622,13 @@ impl World {
                 support = Some(hit.body);
             } else if may_snap {
                 pose.position += -up * snap;
+                translation += -up * snap;
                 support = Some(hit.body);
             }
         }
 
-        result.translation = pose.position - start - result.depenetration;
+        // Accumulated, not a difference of positions, so a free move reports `desired` exactly.
+        result.translation = translation;
         result.grounded = planar || support.is_some();
         result.support = support;
         if pose.position != start {
