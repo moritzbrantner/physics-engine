@@ -20,7 +20,8 @@ use super::{
 pub struct CharacterSettings {
     /// Gap kept to everything the character touches, in scene units.
     pub offset: Real,
-    /// Steepest walkable slope, radians from up.
+    /// Steepest walkable slope, radians from up. Steeper surfaces are walls: sliding along one
+    /// never climbs it unless the desired motion rises.
     pub max_slope: Real,
     /// Distance below the character within which it follows the ground down while grounded
     /// (`None`: never). Also the reach of the grounded test beyond `offset`.
@@ -578,11 +579,29 @@ impl World {
             let normal = normal.unit();
             let approach = -direction.dot(normal);
             // Stop `offset` short of the surface along its normal.
-            let allowed = if approach > 0.0 {
+            let mut allowed = if approach > 0.0 {
                 (hit.fraction * reach - s.offset / approach).max(0.0)
             } else {
                 0.0
             };
+            // A later-touched surface approached at a shallow angle (the floor under a
+            // descending walk into a steep slope) may need the motion to stop sooner.
+            let first = hit.body;
+            let (mut hit, mut normal, mut approach) = (hit, normal, approach);
+            for other in hits.iter().filter(|h| h.body != first) {
+                let n = flat(other.normal);
+                if n == V::ZERO || other.starts_overlapping {
+                    continue;
+                }
+                let n = n.unit();
+                let a = -direction.dot(n);
+                if a > 0.0 {
+                    let stop = (other.fraction * reach - s.offset / a).max(0.0);
+                    if stop < allowed {
+                        (allowed, hit, normal, approach) = (stop, *other, n, a);
+                    }
+                }
+            }
             if allowed >= length {
                 pose.position += remaining;
                 translation += remaining;
@@ -606,6 +625,15 @@ impl World {
                 rest
             };
             remaining = flat(rest - normal * rest.dot(normal));
+            // A slope too steep to walk is a wall: the slide keeps no motion up along it
+            // unless the intent itself rises (as Rapier's `max_slope_climb_angle`).
+            if !planar && normal.dot(up) < min_up && desired.dot(up) <= 0.0 {
+                let uphill = up - normal * normal.dot(up);
+                if uphill != V::ZERO && remaining.dot(uphill) > 0.0 {
+                    let uphill = uphill.unit();
+                    remaining -= uphill * remaining.dot(uphill);
+                }
+            }
             if let Some(other) = self.characters.get(hit.body) {
                 let mut rest = rest;
                 let away = V(-normal.0, 0.0, -normal.2);
