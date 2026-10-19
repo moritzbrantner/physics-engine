@@ -79,7 +79,6 @@ pub struct CharacterMoveResult {
 #[derive(Clone, Copy, Debug)]
 struct CharacterState {
     settings: CharacterSettings,
-    grounded: bool,
 }
 
 /// Character state in dense arrays indexed by body slot (no hashing per move).
@@ -88,7 +87,6 @@ pub(super) struct Characters {
     /// Owning body per slot; [`BodyId::NONE`] where the slot has no character.
     ids: Vec<BodyId>,
     settings: Vec<CharacterSettings>,
-    grounded: Vec<bool>,
     /// Translation received from pushes in the current batch.
     pushed: Vec<V>,
     /// Layout generation at which the character was last known free of overlap
@@ -118,7 +116,6 @@ impl Characters {
     fn get(&self, id: BodyId) -> Option<CharacterState> {
         self.slot(id).map(|s| CharacterState {
             settings: self.settings[s],
-            grounded: self.grounded[s],
         })
     }
     fn insert(&mut self, id: BodyId, settings: CharacterSettings) {
@@ -126,13 +123,11 @@ impl Characters {
         if slot >= self.ids.len() {
             self.ids.resize(slot + 1, BodyId::NONE);
             self.settings.resize(slot + 1, CharacterSettings::default());
-            self.grounded.resize(slot + 1, false);
             self.pushed.resize(slot + 1, V::ZERO);
             self.clear.resize(slot + 1, DIRTY);
         }
         self.ids[slot] = id;
         self.settings[slot] = settings;
-        self.grounded[slot] = false;
         self.clear[slot] = DIRTY;
     }
     /// Whether the character is known free of overlap at layout `generation`.
@@ -157,11 +152,6 @@ impl Characters {
     }
     fn pushed(&mut self, id: BodyId) -> Option<&mut V> {
         self.slot(id).map(|s| &mut self.pushed[s])
-    }
-    fn set_grounded(&mut self, id: BodyId, grounded: bool) {
-        if let Some(slot) = self.slot(id) {
-            self.grounded[slot] = grounded;
-        }
     }
 }
 
@@ -266,7 +256,6 @@ impl World {
             let m = moves[n];
             let mut result = self.move_character(m.body, m.desired, state)?;
             result.depenetration += separation[n];
-            self.characters.set_grounded(m.body, result.grounded);
             out[n] = result;
         }
         for &(_, n, _) in batch.iter() {
@@ -459,6 +448,24 @@ impl World {
         }))
     }
 
+    /// Whether `pose` stands on walkable static support (within twice the offset). Snapping
+    /// asks this of the move's start, as Rapier does, so it depends on geometry alone and a
+    /// world rebuilt from game state snaps exactly like the original.
+    fn grounded_at(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        s: CharacterSettings,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<bool, Error> {
+        let reach = s.offset * 3.0;
+        Ok(self
+            .blocking_hit(id, pose, -V::Y * reach, hits, is_static)?
+            .is_some_and(|hit| {
+                hit.normal.dot(V::Y) >= s.max_slope.cos() && hit.fraction * reach <= s.offset * 2.0
+            }))
+    }
+
     fn move_character(
         &mut self,
         id: BodyId,
@@ -485,6 +492,7 @@ impl World {
         // Planar characters see only the horizontal part of motion and surface normals.
         let flat = |v: V| if planar { V(v.0, 0.0, v.2) } else { v };
         let mut pose = self.character_pose(id)?;
+        let start_pose = pose;
         let start = pose.position;
         let mut result = CharacterMoveResult {
             body: id,
@@ -648,10 +656,12 @@ impl World {
         {
             let gap = hit.fraction * reach;
             let snap = gap - s.offset;
-            let may_snap = state.grounded && desired.dot(up) <= 0.0 && s.snap_to_ground.is_some();
             if gap <= s.offset * 2.0 {
                 support = Some(hit.body);
-            } else if may_snap {
+            } else if desired.dot(up) <= 0.0
+                && s.snap_to_ground.is_some()
+                && self.grounded_at(id, start_pose, s, hits)?
+            {
                 pose.position += -up * snap;
                 translation += -up * snap;
                 support = Some(hit.body);
