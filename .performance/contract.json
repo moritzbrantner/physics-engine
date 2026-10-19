@@ -79,6 +79,21 @@
       ]
     },
     {
+      "id": "slopes",
+      "kind": "journey",
+      "description": "C4/C5 characters walking into climbable and too-steep wedge ramps (MMORPG #59); gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
       "id": "terrain-holes",
       "kind": "journey",
       "description": "C17 heightfield with removed flat cells over a floor plane (MMORPG); gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",

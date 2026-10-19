@@ -556,3 +556,42 @@ fn ground_within_the_prediction_is_support_without_snapping() {
         position(&w, c)
     );
 }
+
+/// A wedge rising toward -X from x = `run` / 2 (its foot) to height `2 * half_height`, and a
+/// character walking -X into it under gravity for 240 ticks. Returns its final position.
+fn walk_into_wedge(half_height: f32, run: f32) -> V {
+    let mut w = world();
+    w.add_body(Body::keyed(
+        9,
+        Shape::wedge(V(run / 2.0, half_height, 2.0)),
+        V(20.0, half_height, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    let c = character(&mut w, 10, V(20.0 + run / 2.0 + 1.0, FOOT + OFFSET, 0.0));
+    let mut vy = 0.0;
+    for _ in 0..240 {
+        vy -= 9.81 / 60.0;
+        let r = step(&mut w, c, V(-2.0 / 60.0, vy / 60.0, 0.0));
+        if r.grounded {
+            vy = 0.0;
+        }
+    }
+    position(&w, c)
+}
+
+/// Slopes steeper than `max_slope` are walls: walking into one keeps the character at its
+/// foot instead of climbing it and sliding back (as Rapier's `max_slope_climb_angle`).
+#[test]
+fn walking_into_a_too_steep_slope_does_not_climb_it() {
+    // 60°: 2.08 m over 1.2 m.
+    let p = walk_into_wedge(1.04, 1.2);
+    assert!(
+        (p.1 - (FOOT + OFFSET)).abs() < 1e-3,
+        "stays on the floor at the foot: {p:?}"
+    );
+    assert!(p.0 > 20.6, "{p:?}");
+    // 20°: 2.2 m over 6 m. Climbed and walked on beyond the top.
+    let p = walk_into_wedge(1.1, 6.0);
+    assert!(p.0 < 17.0, "climbed the shallow slope: {p:?}");
+}

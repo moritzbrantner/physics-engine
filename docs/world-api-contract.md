@@ -148,7 +148,10 @@ character keeps its gap to everything else, so walls and other characters stop i
 of the motion it does not yield is handled as above. What a character received from pushes during
 the batch is reported as `pushed`, apart from `translation` and `depenetration`. On walkable
 surfaces downward intent stops instead of sliding down the slope; horizontal intent follows the
-surface.
+surface. Surfaces steeper than `max_slope` are walls: unless the desired motion rises, the slide
+keeps no motion up along them, so a character walking into a too-steep ramp stops at its foot
+(Rapier's `max_slope_climb_angle`). Motion stops `offset` short of whichever touched surface it
+reaches first along its normal, not only the first one touched.
 `set_kinematic_position` places an external body without resolving contact.
 
 ## Failure behaviour

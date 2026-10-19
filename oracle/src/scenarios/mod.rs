@@ -5,6 +5,7 @@ pub mod character_move;
 pub mod crowd;
 pub mod mmorpg_tick;
 pub mod push;
+pub mod slopes;
 pub mod static_queries;
 pub mod terrain;
 #[cfg(feature = "rapier")]
