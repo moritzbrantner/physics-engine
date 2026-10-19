@@ -22,3 +22,8 @@ rapier3d = { version = "=0.36.1", optional = true }
 name = "oracle"
 path = "src/main.rs"
 required-features = ["engine", "rapier"]
+
+[[bin]]
+name = "probe"
+path = "src/bin/probe.rs"
+required-features = ["engine", "rapier"]

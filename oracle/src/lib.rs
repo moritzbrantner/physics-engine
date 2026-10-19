@@ -2,6 +2,7 @@
 //! and on physics-engine, records comparable observations, and checks behaviour invariants. The
 //! native binary also times both sides and fails when physics-engine is slower than Rapier.
 
+pub mod probe;
 pub mod scenarios;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
