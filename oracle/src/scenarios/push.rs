@@ -65,15 +65,23 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             // The pushed character stays in its lane; once it is pinned at the wall the
             // pusher sidesteps around it (head-on rule).
             if a[1] != REST || b[1] != REST || b[2] != z {
-                return Err(format!("lane {k} left its line at tick {tick}: {a:?} {b:?}"));
+                return Err(format!(
+                    "lane {k} left its line at tick {tick}: {a:?} {b:?}"
+                ));
             }
             if ((b[0] - a[0]).powi(2) + (b[2] - a[2]).powi(2)).sqrt() < GAP - 1e-4 {
                 return Err(format!("lane {k} overlaps at tick {tick}: {a:?} {b:?}"));
             }
             if b[0] + RADIUS + OFFSET > WALL_X + 1e-4 {
-                return Err(format!("lane {k} pushed into the wall at tick {tick}: {b:?}"));
+                return Err(format!(
+                    "lane {k} pushed into the wall at tick {tick}: {b:?}"
+                ));
             }
-            let before = if tick == 0 { chars[2 * k + 1].0[0] } else { at(tick - 1, 2 * k + 1)[0] };
+            let before = if tick == 0 {
+                chars[2 * k + 1].0[0]
+            } else {
+                at(tick - 1, 2 * k + 1)[0]
+            };
             if b[0] - before > step + 1e-4 || b[0] < before {
                 return Err(format!("lane {k} pushed beyond the ceiling at tick {tick}"));
             }
