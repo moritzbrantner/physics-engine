@@ -491,3 +491,14 @@ fn characters_without_a_ceiling_are_never_pushed() {
         assert_eq!(position(&w, b), V(90.0 + gap, FOOT + OFFSET, 0.0));
     }
 }
+
+/// A free move reports exactly the desired motion, also far from the origin (#336).
+#[test]
+fn a_free_move_reports_the_desired_translation_exactly() {
+    let mut w = world();
+    let c = character(&mut w, 10, V(21.0, FOOT + OFFSET, 21.0));
+    let desired = V(0.07, 0.0, -0.03);
+    let r = step(&mut w, c, desired);
+    assert_eq!(r.translation, desired);
+    assert_eq!(r.depenetration, V::ZERO);
+}
