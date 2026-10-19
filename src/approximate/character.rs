@@ -569,6 +569,39 @@ impl World {
             .is_some_and(|hit| hit.normal.dot(V::Y) >= min_up && hit.fraction * reach <= predict))
     }
 
+    /// Rapier's grounded: some static contact within the ground prediction (true distance, in
+    /// any direction) faces up at all, a step's rounded edge beside the character included.
+    fn ground_contact_at(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        s: CharacterSettings,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<bool, Error> {
+        let Shape::Capsule {
+            half_segment,
+            radius,
+        } = pose.shape
+        else {
+            return Ok(false);
+        };
+        let mut probe = pose;
+        probe.shape = Shape::Capsule {
+            half_segment,
+            radius: radius + self.ground_prediction(s),
+        };
+        let filter = QueryFilter {
+            exclude: Some(id),
+            ..QueryFilter::default()
+        };
+        self.overlap_shape(probe, filter, hits)
+            .map_err(|_| Error::InvalidInput)?;
+        Ok(hits.iter().any(|h| {
+            h.normal.dot(V::Y) >= 1e-3
+                && self.index(h.body).is_ok_and(|i| is_static(&self.bodies[i]))
+        }))
+    }
+
     /// Distance below a character within which walkable ground counts as support: Rapier's
     /// ground prediction, `offset` plus 5 cm in this world's length unit.
     fn ground_prediction(&self, s: CharacterSettings) -> Real {
@@ -729,7 +762,7 @@ impl World {
                 && self
                     .index(hit.body)
                     .is_ok_and(|i| !self.bodies[i].movable())
-                && *walking.get_or_insert(self.on_ground_at(id, start_pose, s, 1e-3, hits)?)
+                && *walking.get_or_insert(self.ground_contact_at(id, start_pose, s, hits)?)
                 && let Some(lift) = self.step_up(id, pose, rest, s, step, hits)?
             {
                 pose.position += lift;
