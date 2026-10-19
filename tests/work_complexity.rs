@@ -529,6 +529,40 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
     );
 }
 
+/// Placing one character makes only it and its neighbours check for overlap again (#337).
+#[test]
+fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
+    let mut samples = Vec::new();
+    let mut out: Vec<CharacterMoveResult> = Vec::new();
+    for m in [8u64, 16, 32, 64, 128] {
+        let (mut w, ids) = crowd(12, m, 1);
+        let rest: Vec<_> = ids
+            .iter()
+            .map(|&body| CharacterMove {
+                body,
+                desired: V::ZERO,
+            })
+            .collect();
+        // Settle once so every character is known free of overlap.
+        w.move_characters(&rest, &mut out).unwrap();
+        w.move_characters(&rest, &mut out).unwrap();
+        let p = w.body(ids[0]).unwrap().position + V(0.01, 0.0, 0.0);
+        let (n, e) = counted(|| {
+            w.set_kinematic_position(ids[0], p).unwrap();
+            w.move_characters(&rest, &mut out).unwrap();
+        });
+        samples.push((
+            vec![("bodies", 1u64 << 12), ("characters", m)],
+            vec![("tree-nodes", n), ("exact-tests", e)],
+        ));
+    }
+    judge(
+        "place-character",
+        &samples,
+        &[("tree-nodes", "characters", "constant")],
+    );
+}
+
 fn terrain(cells: usize) -> World {
     let mut w = World::new(Config {
         gravity: V::ZERO,

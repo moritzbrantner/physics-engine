@@ -102,6 +102,7 @@ pub(super) struct Characters {
     batch: Vec<(super::Order, usize, CharacterState)>,
     separation: Vec<V>,
     hits: Vec<QueryHit>,
+    nearby: Vec<BodyId>,
 }
 
 const DIRTY: (u64, u64) = (u64::MAX, u64::MAX);
@@ -145,11 +146,9 @@ impl Characters {
             self.clear[slot] = state;
         }
     }
-    /// A character was placed instead of moved: overlap is unknown again for all of them.
-    pub fn placed(&mut self, id: BodyId) {
-        if self.slot(id).is_some() {
-            self.placements += 1;
-        }
+    /// Overlap is unknown again for every character.
+    fn placed_all(&mut self) {
+        self.placements += 1;
     }
     pub fn remove(&mut self, id: BodyId) {
         if let Some(slot) = self.slot(id) {
@@ -328,7 +327,6 @@ impl World {
                         let half = push * 0.5;
                         self.shift_character(id, half)?;
                         self.shift_character(h.body, -half)?;
-                        self.characters.placed(h.body);
                         separation[n] += half;
                         separation[other] += -half;
                     }
@@ -385,8 +383,41 @@ impl World {
     fn shift_character(&mut self, id: BodyId, by: V) -> Result<(), Error> {
         let p = self.bodies[self.index(id)?].position + by;
         self.place_kinematic(id, p)?;
-        self.characters.placed(id);
+        self.character_placed(id);
         Ok(())
+    }
+
+    /// Character `id` was placed instead of moved, so it can overlap anything: it and every
+    /// character whose bounds it touches check for overlap again (all of them when the query
+    /// tree is stale).
+    pub(super) fn character_placed(&mut self, id: BodyId) {
+        let Some(state) = self.characters.get(id) else {
+            return;
+        };
+        let Ok(i) = self.index(id) else {
+            return;
+        };
+        if !self.query_tree.current(self.bookkeeping.generation) {
+            self.characters.placed_all();
+            return;
+        }
+        let pad = state.settings.offset;
+        let (lo, hi) = self.bodies[i].cached_bounds;
+        let mut nearby = std::mem::take(&mut self.characters.nearby);
+        nearby.clear();
+        let nodes = self.query_tree.tree().visit_aabb(
+            spatial_kernels::Aabb {
+                min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
+                max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],
+            },
+            |leaf| nearby.push(self.bodies[self.slot_index(leaf.id)].id),
+        );
+        crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
+        self.characters.set_clear(id, None);
+        for &other in &nearby {
+            self.characters.set_clear(other, None);
+        }
+        self.characters.nearby = nearby;
     }
 
     fn character_pose(&self, id: BodyId) -> Result<QueryPose, Error> {
