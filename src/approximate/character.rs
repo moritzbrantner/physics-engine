@@ -30,6 +30,11 @@ pub struct CharacterSettings {
     /// Planar movement: the character stays at its height and moves only horizontally. Such a
     /// character needs no floor collider and is always grounded, with `support` `None`.
     pub plane: Option<Real>,
+    /// Bounded pushing between characters (`None`: never pushes nor is pushed). A moving
+    /// character pushes a blocking one horizontally by at most the smaller of their two
+    /// ceilings per move, in scene units; the pushed character keeps its gap to everything
+    /// else, so it is never pushed into walls or other characters.
+    pub max_push: Option<Real>,
 }
 
 impl Default for CharacterSettings {
@@ -40,6 +45,7 @@ impl Default for CharacterSettings {
             snap_to_ground: Some(0.05),
             max_slides: 4,
             plane: None,
+            max_push: None,
         }
     }
 }
@@ -59,6 +65,9 @@ pub struct CharacterMoveResult {
     pub translation: V,
     /// Translation applied to leave penetration, never part of `translation`.
     pub depenetration: V,
+    /// Translation received from other characters' pushes during the batch, never part of
+    /// `translation` or `depenetration`.
+    pub pushed: V,
     /// Standing on walkable static support within reach after the move.
     pub grounded: bool,
     /// The supporting static body when grounded.
@@ -80,6 +89,8 @@ pub(super) struct Characters {
     ids: Vec<BodyId>,
     settings: Vec<CharacterSettings>,
     grounded: Vec<bool>,
+    /// Translation received from pushes in the current batch.
+    pushed: Vec<V>,
     /// Layout generation at which the character was last known free of overlap
     /// ([`DIRTY`] when unknown). Moves keep a gap to everything, so a character stays free
     /// until bodies are added or removed, or it is placed by the game.
@@ -115,6 +126,7 @@ impl Characters {
             self.ids.resize(slot + 1, BodyId::NONE);
             self.settings.resize(slot + 1, CharacterSettings::default());
             self.grounded.resize(slot + 1, false);
+            self.pushed.resize(slot + 1, V::ZERO);
             self.clear.resize(slot + 1, DIRTY);
         }
         self.ids[slot] = id;
@@ -143,6 +155,9 @@ impl Characters {
         if let Some(slot) = self.slot(id) {
             self.ids[slot] = BodyId::NONE;
         }
+    }
+    fn pushed(&mut self, id: BodyId) -> Option<&mut V> {
+        self.slot(id).map(|s| &mut self.pushed[s])
     }
     fn set_grounded(&mut self, id: BodyId, grounded: bool) {
         if let Some(slot) = self.slot(id) {
@@ -181,7 +196,8 @@ impl World {
                 .snap_to_ground
                 .is_none_or(|s| s.is_finite() && s >= 0.0)
             && settings.max_slides > 0
-            && settings.plane.is_none_or(Real::is_finite);
+            && settings.plane.is_none_or(Real::is_finite)
+            && settings.max_push.is_none_or(|p| p.is_finite() && p >= 0.0);
         let body = &self.bodies[i];
         if !valid || !matches!(body.shape, Shape::Capsule { .. }) || !body.external {
             return Err(Error::InvalidInput);
@@ -193,8 +209,9 @@ impl World {
     /// Moves characters by their desired translations. Moves run once each in body order
     /// (keyed bodies by key, then keyless by creation), independent of the order of `moves`;
     /// each later mover sees the earlier ones at their new positions. Characters of the batch
-    /// that overlap each other are first separated horizontally, half each. `out[i]` is the
-    /// result of `moves[i]`.
+    /// that overlap each other are first separated horizontally, half each. A mover pushes
+    /// blocking characters within [`CharacterSettings::max_push`]. `out[i]` is the result of
+    /// `moves[i]`.
     pub fn move_characters(
         &mut self,
         moves: &[CharacterMove],
@@ -226,6 +243,9 @@ impl World {
                 .get(m.body)
                 .ok_or(Error::MissingBody(m.body))?;
             batch.push((self.bodies[self.index(m.body)?].order, n, state));
+            if let Some(pushed) = self.characters.pushed(m.body) {
+                *pushed = V::ZERO;
+            }
         }
         batch.sort_unstable_by_key(|&(order, n, _)| (order, n));
         separation.clear();
@@ -237,6 +257,7 @@ impl World {
                 body: BodyId::NONE,
                 translation: V::ZERO,
                 depenetration: V::ZERO,
+                pushed: V::ZERO,
                 grounded: false,
                 support: None,
                 contacts: 0,
@@ -248,6 +269,12 @@ impl World {
             result.depenetration += separation[n];
             self.characters.set_grounded(m.body, result.grounded);
             out[n] = result;
+        }
+        for &(_, n, _) in batch.iter() {
+            out[n].pushed = self
+                .characters
+                .pushed(moves[n].body)
+                .map_or(V::ZERO, |p| *p);
         }
         Ok(())
     }
@@ -313,6 +340,46 @@ impl World {
             }
         }
         Ok(())
+    }
+
+    /// Moves character `id` by up to `by` (horizontal), stopping `offset` short of whatever
+    /// it would run into; the pusher behind it is passed by. Returns the distance moved.
+    fn push_character(
+        &mut self,
+        id: BodyId,
+        pusher: BodyId,
+        by: V,
+        settings: CharacterSettings,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<Real, Error> {
+        let length = by.length();
+        let direction = by * (1.0 / length);
+        let pose = self.character_pose(id)?;
+        let reach = length + settings.offset;
+        let travel =
+            match self.blocking_hit(id, pose, direction * reach, hits, |b| b.id != pusher)? {
+                None => length,
+                Some(hit) => {
+                    let approach = -direction.dot(hit.normal);
+                    let allowed = if approach > 0.0 {
+                        (hit.fraction * reach - settings.offset / approach).max(0.0)
+                    } else {
+                        0.0
+                    };
+                    if allowed <= settings.offset * 1e-2 {
+                        0.0
+                    } else {
+                        allowed.min(length)
+                    }
+                }
+            };
+        if travel > 0.0 {
+            self.place_kinematic(id, pose.position + direction * travel)?;
+            if let Some(pushed) = self.characters.pushed(id) {
+                *pushed += direction * travel;
+            }
+        }
+        Ok(travel)
     }
 
     fn shift_character(&mut self, id: BodyId, by: V) -> Result<(), Error> {
@@ -392,10 +459,12 @@ impl World {
             body: id,
             translation: V::ZERO,
             depenetration: V::ZERO,
+            pushed: V::ZERO,
             grounded: false,
             support: None,
             contacts: 0,
         };
+        let mut push_budget = s.max_push.unwrap_or(0.0);
 
         // Leave penetration first; reported apart from the requested motion. A few passes
         // resolve overlap with several bodies at once (a pillar against a wall).
@@ -477,12 +546,58 @@ impl World {
                 rest
             };
             remaining = flat(rest - normal * rest.dot(normal));
-            // Head-on against another character: sidestep to the right instead of locking.
-            if approach > HEAD_ON_COS && self.characters.contains(hit.body) {
-                let side = V(direction.0, 0.0, direction.2).cross(up);
-                let blocked = V(rest.0, 0.0, rest.2).length();
-                if side != V::ZERO {
-                    remaining = side.unit() * blocked + V(0.0, remaining.1, 0.0);
+            if let Some(other) = self.characters.get(hit.body) {
+                let mut rest = rest;
+                let away = V(-normal.0, 0.0, -normal.2);
+                if let Some(ceiling) = other.settings.max_push
+                    && push_budget > 0.0
+                    && away != V::ZERO
+                {
+                    let away = away.unit();
+                    let wanted = V(rest.0, 0.0, rest.2)
+                        .dot(away)
+                        .min(push_budget)
+                        .min(ceiling);
+                    if wanted > s.offset * 1e-2 {
+                        // Room past the pushed character, from the hits this cast already found.
+                        let room = hits
+                            .iter()
+                            .filter(|h| h.body != hit.body)
+                            .filter_map(|h| {
+                                let n = flat(h.normal);
+                                let approach = -direction.dot(n.unit());
+                                (n != V::ZERO && (h.starts_overlapping || approach > 0.0)).then(
+                                    || {
+                                        if approach > 0.0 {
+                                            (h.fraction * reach - s.offset / approach).max(0.0)
+                                        } else {
+                                            0.0
+                                        }
+                                    },
+                                )
+                            })
+                            .fold(Real::INFINITY, Real::min)
+                            - travel;
+                        let pushed =
+                            self.push_character(hit.body, id, away * wanted, other.settings, hits)?;
+                        push_budget -= pushed;
+                        // Follow the pushed character along the motion, keeping the gap to it.
+                        let follow = (pushed * away.dot(-normal) / approach)
+                            .min(room)
+                            .min(rest.dot(direction))
+                            .max(0.0);
+                        pose.position += direction * follow;
+                        rest -= direction * follow;
+                        remaining = flat(rest - normal * rest.dot(normal));
+                    }
+                }
+                // Head-on against another character: sidestep to the right instead of locking.
+                if approach > HEAD_ON_COS {
+                    let side = V(direction.0, 0.0, direction.2).cross(up);
+                    let blocked = V(rest.0, 0.0, rest.2).length();
+                    if side != V::ZERO {
+                        remaining = side.unit() * blocked + V(0.0, remaining.1, 0.0);
+                    }
                 }
             }
         }

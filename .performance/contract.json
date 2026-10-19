@@ -64,6 +64,21 @@
       ]
     },
     {
+      "id": "push",
+      "kind": "journey",
+      "description": "C16 bounded character pushing; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",
+      "dimensions": {},
+      "metrics": [
+        {
+          "name": "tick-time",
+          "unit": "microseconds",
+          "direction": "lower",
+          "signal": "wall-clock",
+          "blocking": false
+        }
+      ]
+    },
+    {
       "id": "capsule-normals",
       "kind": "journey",
       "description": "#289/#290 exact capsule contacts; gated against Rapier by the oracle (oracle/, scripts/oracle-wasm.mjs).",

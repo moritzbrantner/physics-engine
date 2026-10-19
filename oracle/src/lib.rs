@@ -164,6 +164,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::character_move::scenario(),
         scenarios::arpg_planar::scenario(),
         scenarios::crowd::scenario(),
+        scenarios::push::scenario(),
         scenarios::capsule_normals::scenario(),
         scenarios::terrain::scenario(),
         scenarios::mmorpg_tick::scenario(),
