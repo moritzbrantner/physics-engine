@@ -1043,8 +1043,57 @@ impl World {
         let unchanged = self.body(id).is_some_and(|b| b.position == position);
         self.place_kinematic(id, position)?;
         if !unchanged {
-            self.character_placed(id);
+            self.body_placed(id);
         }
+        Ok(())
+    }
+    /// Moves a static body (mass 0, not external) to `position` in place, as Rapier moves a
+    /// fixed collider: the layout and every other body's caches stay valid. Sleeping bodies
+    /// it was in contact with or now touches wake; characters it now reaches check for
+    /// overlap again. Halfspaces and heightfields stay where they were added.
+    pub fn set_static_position(&mut self, id: BodyId, position: Vector) -> Result<(), Error> {
+        let i = self.index(id)?;
+        let body = &self.bodies[i];
+        if body.mass != 0.0
+            || body.external
+            || matches!(body.shape, Shape::HalfSpace | Shape::Heightfield { .. })
+            || !position.finite()
+            || position.abs().max_component() >= 1e12
+        {
+            return Err(Error::InvalidInput);
+        }
+        if body.position == position {
+            return Ok(());
+        }
+        let order = body.order;
+        let mut wake = self
+            .cache
+            .keys()
+            .filter_map(|&(a, b)| {
+                (a == order)
+                    .then_some(b)
+                    .or_else(|| (b == order).then_some(a))
+            })
+            .collect::<Vec<_>>();
+        let body = &mut self.bodies[i];
+        body.position = position;
+        body.cached_bounds = contact::bounds(body);
+        self.bookkeeping.poses_changed();
+        if self.query_tree.current(self.bookkeeping.generation) {
+            self.query_tree.moved(&self.bodies[i]);
+        }
+        if !self.bodies[i].sensor && !self.bodies[i].shape.query_only() {
+            wake.extend(self.sleepers_touching(&self.bodies[i]));
+        }
+        if !wake.is_empty() {
+            wake.sort_unstable();
+            wake.dedup();
+            self.sort_storage();
+            for order in wake {
+                self.wake_island(order);
+            }
+        }
+        self.body_placed(id);
         Ok(())
     }
     fn place_kinematic(&mut self, id: BodyId, position: Vector) -> Result<(), Error> {

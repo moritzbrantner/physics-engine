@@ -4,6 +4,7 @@ pub mod capsule_normals;
 pub mod character_move;
 pub mod crowd;
 pub mod mmorpg_tick;
+pub mod platforms;
 pub mod push;
 pub mod slopes;
 pub mod static_queries;

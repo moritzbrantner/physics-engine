@@ -153,6 +153,11 @@ keeps no motion up along them, so a character walking into a too-steep ramp stop
 (Rapier's `max_slope_climb_angle`). Motion stops `offset` short of whichever touched surface it
 reaches first along its normal, not only the first one touched.
 `set_kinematic_position` places an external body without resolving contact.
+`set_static_position` moves a static body (mass 0, not external; not a halfspace or heightfield)
+in place, as Rapier moves a fixed collider (moving platforms): the layout stays valid, sleeping
+bodies it was in contact with or now touches wake, and characters it now reaches check for overlap
+again. Characters are not carried; the consumer adds a platform's displacement to its riders' moves
+(MMORPG's adapter, the `platforms` oracle scenario).
 
 ## Failure behaviour
 
