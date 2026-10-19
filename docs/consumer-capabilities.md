@@ -30,7 +30,7 @@ over the integer `World`; no consumer enables it).
 | C12 | Shape overlap / penetration test (placement, door occupancy) | ARPG, MMORPG | `intersect_shape` + `contact` depth | **parity** (`static-queries`; ~0.3× Rapier's cost) | — |
 | C13 | Length-unit-relative tolerances | MMORPG, ARPG | none (absolute metre tolerances; game converts units) | **parity** for characters and queries: `Config::length_unit`, `World::character_settings`; dynamics defaults parked (#318) | #291 |
 | C14 | Query ties broken by stable id; save → load → continue matches | MMORPG (rebuilds ~1,150 colliders per tick), ARPG | none (game rebuilds the world every tick) | **parity** for queries/characters: ties by key, independent of slot and insertion history (no per-tick rebuild needed) | #292 |
-| C15 | Whole-tick cost at or below Rapier (ARPG: ~18 µs native, ~27 µs WASM, 2.68 MB WASM; MMORPG: WASM 1.76 → 3.29 MB, debug combat ~31 s → ~41 s) | MMORPG, ARPG | — | **parity**: MMORPG (`mmorpg-tick`: its whole `World::step` pattern with its query dispatcher, head-on pairs, doors, line of sight) and ARPG (`arpg-tick`: its `Physics` pattern with players, planar monsters, doors, line of sight, projectiles, placements); engine WASM 0.47 MB vs Rapier 1.46 MB | — |
+| C15 | Whole-tick cost at or below Rapier (ARPG: ~18 µs native, ~27 µs WASM, 2.68 MB WASM; MMORPG: WASM 1.76 → 3.29 MB, debug combat ~31 s → ~41 s) | MMORPG, ARPG | — | **parity**: MMORPG (`mmorpg-tick`: its whole `World::step` pattern with its query dispatcher, head-on pairs, doors, line of sight) and ARPG (`arpg-tick`: its `Physics` pattern with players, planar monsters, doors, line of sight, projectiles, placements); engine WASM 0.47 MB vs Rapier 1.46 MB. **Consumer-integrated** (games' real physics paths, test/bench-only `physics-ab` feature): MMORPG 0.24–0.52×, ARPG 0.07–0.30× Rapier per tick ([below](#consumer-integrated-evidence-c15)) | #330 |
 | C16 | Characters separate and slide around each other (bounded pushing) | MMORPG | none (head-on contact blocks both) | **parity** (`crowd`, `push`): head-on sidestep, half-each separation, bounded pushing under per-character `max_push` ceilings | #308 |
 | C17 | Static heightfield terrain: capsule characters standing and walking on hills, ground rays | MMORPG (#159 step 2; caves later) | `SharedShape::heightfield` (flat cells `CELL_REMOVED`), KCC on terrain, `cast_ray` | **parity** (`terrain`, `terrain-holes`): `add_heightfield`, parry diagonal, removed cells (holes, MMORPG's flat cells over a floor plane), rays, sphere/capsule queries, box/wedge overlaps (door probes), characters; no rigid contacts, not checkpointed; caves later | #195, #342 |
 
@@ -41,6 +41,27 @@ checks them natively (invariants + not more than 5% slower than Rapier) and
 Not used by any consumer today: dynamic rigid bodies, joints, sensors/contact events, collision
 groups, CCD, materials, triangle meshes. Work on those stays parked until a consumer
 uses them.
+
+## Consumer-integrated evidence (C15)
+
+The oracle scenarios above are engine-owned copies of the games' call patterns. #330 adds the
+games' **real** physics integrations on both backends: a non-default `physics-ab` feature in each
+game selects Rapier (production) or a thin physics-engine adapter behind the unchanged physics
+API, and a merge-blocking A/B test in each game's CI asserts shared invariants on both. Timing
+is a manual release example; production stays on Rapier.
+
+| Consumer | PR / engine rev | Workloads | Behaviour | Native per-tick physics, engine / Rapier (median) |
+| --- | --- | --- | --- | --- |
+| MMORPG | mmorpg#323 (`caee2b9`), engine `3a1b841` | two-bots-move, vale-hub-walk, vale-wolf-hunt, Greyhaven idle/fights 8–64 | finite state, no penetration > 0.01 u, grounded at rest, door/LOS/shot/ground-height queries identical on identical states, deterministic replay; scripted players within 0.01 u of Rapier | 0.24–0.52× (e.g. hub-walk 490 vs 1743 µs); zone setup ~2.4× slower |
+| ARPG | arpg#205 (`23dacb9`), engine `3a1b841` | 11 seeded workloads × 2 seeds × 120 ticks | invariants, deterministic replay, exact save continuation; identical outcomes and query decisions; positions within 0.5 u until first character contact | 0.07–0.30× (all workloads 2.5 vs 14.9 µs); 58–90% of Rapier's cost is the per-tick rebuild ARPG needs for exact saves |
+
+Documented divergences (not parity claims): the engine's head-on sidestep vs Rapier blocking,
+engine depenetration of units authored inside geometry (MMORPG's squat rats, slope spawns,
+fixture players inside props; those fights are reported, not bounded), and Rapier's normal
+nudge drift. Engine gaps found and fixed since: #336 (exact translation), #337 (local placement
+invalidation), #340 (snap from geometry, so MMORPG's rebuilt worlds now continue), #341
+(coincident surfaces), #342 (heightfield holes). The games still pin `3a1b841`; moving their
+pins picks the fixes up. Not measured: WASM through the games' integrations, `Indexed` storage.
 
 ## Other dependents of the removed worlds
 
