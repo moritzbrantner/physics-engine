@@ -524,7 +524,13 @@ impl World {
             {
                 let n = flat(h.normal);
                 if n != V::ZERO {
-                    push += n.unit() * (s.offset - h.separation);
+                    // Only what the push so far leaves along this normal: coincident surfaces
+                    // (a floor plane under flat terrain) push once, not once each.
+                    let n = n.unit();
+                    let need = s.offset - h.separation - push.dot(n);
+                    if need > 0.0 {
+                        push += n * need;
+                    }
                 }
             }
             if push == V::ZERO {

@@ -184,3 +184,53 @@ fn terrain_rejects_rigid_body_api_misuse() {
         .unwrap();
     w.step(1.0 / 60.0).unwrap();
 }
+
+/// A character started inside a floor plane that coincides with flat terrain is pushed out
+/// once, not once per surface (#341).
+#[test]
+fn coincident_floor_and_flat_terrain_push_out_once() {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(Body::keyed(1, Shape::HalfSpace, V::ZERO, 0.0))
+        .unwrap();
+    w.add_heightfield(
+        HeightfieldDesc {
+            origin: V(-8.0, 0.0, -8.0),
+            cell_size: (2.0, 2.0),
+            columns: 9,
+            rows: 9,
+            heights: vec![0.0; 81],
+        },
+        Some(2),
+    )
+    .unwrap();
+    let (half, radius) = (0.5, 0.3);
+    let mut body = Body::keyed(
+        10,
+        Shape::capsule(half, radius),
+        V(0.3, half + radius - 0.05, 0.3),
+        1.0,
+    );
+    body.external = true;
+    let c = w.add_body(body).unwrap();
+    let settings = w.character_settings();
+    w.add_character(c, settings).unwrap();
+    let mut out = Vec::new();
+    w.move_characters(
+        &[CharacterMove {
+            body: c,
+            desired: V::ZERO,
+        }],
+        &mut out,
+    )
+    .unwrap();
+    let y = w.body(c).unwrap().position.1;
+    assert!(
+        (y - (half + radius + settings.offset)).abs() < 1e-4,
+        "pushed to {y}, depenetration {:?}",
+        out[0].depenetration
+    );
+}
