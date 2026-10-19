@@ -151,7 +151,14 @@ surfaces downward intent stops instead of sliding down the slope; horizontal int
 surface. Surfaces steeper than `max_slope` are walls: unless the desired motion rises, the slide
 keeps no motion up along them, so a character walking into a too-steep ramp stops at its foot
 (Rapier's `max_slope_climb_angle`). Motion stops `offset` short of whichever touched surface it
-reaches first along its normal, not only the first one touched.
+reaches first along its normal, not only the first one touched. With `autostep`, a walking move
+(starting on the ground, Rapier's grounded: any upward-facing static contact within the ground
+prediction, and not rising) that runs into a non-walkable static surface steps up as Rapier's
+autostep does: room above for `max_height`, room on top for `min_width`, no too-steep slope there;
+it is lifted by the step's height and nudged forward by up to `min_width`. A capsule meeting a
+step's rounded edge may climb it over several moves, as on Rapier. Snapping to the ground applies
+only to moves whose translation did not rise (as Rapier), so a step or a slide up an edge keeps its
+height.
 `set_kinematic_position` places an external body without resolving contact.
 `set_static_position` moves a static body (mass 0, not external; not a halfspace or heightfield)
 in place, as Rapier moves a fixed collider (moving platforms): the layout stays valid, sleeping
