@@ -45,6 +45,7 @@ cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle
 node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes
 cargo test --release --features work-counters --test work_complexity   # Big-O work contracts (self-checking)
 bun <coding-tooling>/src/router.ts performance work --root .            # the same, judged by coding-tooling as in CI
+scripts/local-kernels.sh on [../rust-kernels] | off                  # test against a local rust-kernels change
 ```
 
 CI (`.github/workflows/validate.yml`) runs these on plain Ubuntu with the `rust-toolchain.toml` toolchain; the `fast` tier is declared in `.coding-tooling.json`.
