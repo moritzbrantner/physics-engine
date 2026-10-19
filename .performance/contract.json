@@ -837,6 +837,67 @@
       ]
     },
     {
+      "id": "place-character",
+      "description": "World::set_kinematic_position on one character of a resting crowd, then a zero-motion move_characters batch of the whole crowd.",
+      "publicContract": "physics_engine::approximate::World::set_kinematic_position",
+      "dimensions": {
+        "bodies": {
+          "description": "static bodies in the world"
+        },
+        "characters": {
+          "description": "characters in the crowd and the batch"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 4096,
+          "characters": 8
+        },
+        {
+          "bodies": 4096,
+          "characters": 16
+        },
+        {
+          "bodies": 4096,
+          "characters": 32
+        },
+        {
+          "bodies": 4096,
+          "characters": 64
+        },
+        {
+          "bodies": 4096,
+          "characters": 128
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "Constant in crowd size (#337): a placement marks only the placed character and characters whose bounds it touches for an overlap re-check, so the rest of the crowd stays known free of overlap. Before, every character re-checked (linear).",
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Only the re-checked neighbourhood is tested exactly.",
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "constant"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "terrain-ray",
       "description": "World::cast_ray_first against heightfield terrain, rays crossing `cellsCrossed` cells; 16 queries per point.",
       "publicContract": "physics_engine::approximate::World::cast_ray_first",
