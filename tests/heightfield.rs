@@ -33,6 +33,7 @@ fn hills() -> (World, physics_engine::BodyId) {
                 columns: N,
                 rows: N,
                 heights,
+                removed_cells: None,
             },
             Some(1),
         )
@@ -203,6 +204,7 @@ fn coincident_floor_and_flat_terrain_push_out_once() {
             columns: 9,
             rows: 9,
             heights: vec![0.0; 81],
+            removed_cells: None,
         },
         Some(2),
     )
@@ -232,5 +234,86 @@ fn coincident_floor_and_flat_terrain_push_out_once() {
         (y - (half + radius + settings.offset)).abs() < 1e-4,
         "pushed to {y}, depenetration {:?}",
         out[0].depenetration
+    );
+}
+
+/// Removed cells are holes: rays and characters pass through to what lies below (#342).
+#[test]
+fn removed_cells_are_holes() {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        ..Config::default()
+    })
+    .unwrap();
+    // A floor 2 m below a 1 m-high plateau whose middle cell (0..2, 0..2) is removed.
+    w.add_body(Body::keyed(1, Shape::HalfSpace, V(0.0, -2.0, 0.0), 0.0))
+        .unwrap();
+    let mut removed = vec![false; 4 * 4];
+    removed[2 * 4 + 2] = true;
+    let terrain = w
+        .add_heightfield(
+            HeightfieldDesc {
+                origin: V(-4.0, 0.0, -4.0),
+                cell_size: (2.0, 2.0),
+                columns: 5,
+                rows: 5,
+                heights: vec![1.0; 25],
+                removed_cells: Some(removed),
+            },
+            Some(2),
+        )
+        .unwrap();
+    let down = |w: &World, x: f32, z: f32| {
+        w.cast_ray_first(
+            RayCast::new(V(x, 10.0, z), V(0.0, -20.0, 0.0)),
+            QueryFilter::default(),
+        )
+        .unwrap()
+        .map(|h| (h.body, 10.0 - 20.0 * h.fraction))
+    };
+    let (body, y) = down(&w, -1.0, -1.0).unwrap();
+    assert_eq!(body, terrain);
+    assert!((y - 1.0).abs() < 1e-4, "{y}");
+    let (body, y) = down(&w, 1.0, 1.0).unwrap();
+    assert_ne!(body, terrain, "the ray passes through the hole");
+    assert!((y + 2.0).abs() < 1e-4, "{y}");
+
+    // A character standing over the hole falls through it to the floor.
+    let (half, radius) = (0.5, 0.3);
+    let mut body = Body::keyed(10, Shape::capsule(half, radius), V(1.0, 3.0, 1.0), 1.0);
+    body.external = true;
+    let c = w.add_body(body).unwrap();
+    let settings = w.character_settings();
+    w.add_character(c, settings).unwrap();
+    let mut out = Vec::new();
+    for _ in 0..200 {
+        w.move_characters(
+            &[CharacterMove {
+                body: c,
+                desired: V(0.0, -0.05, 0.0),
+            }],
+            &mut out,
+        )
+        .unwrap();
+    }
+    let y = w.body(c).unwrap().position.1;
+    assert!(
+        (y - (-2.0 + half + radius + settings.offset)).abs() < 1e-4,
+        "rests on the floor below the hole: {y}"
+    );
+    // Validation: the mask must cover every cell.
+    assert!(
+        w.add_heightfield(
+            HeightfieldDesc {
+                origin: V::ZERO,
+                cell_size: (1.0, 1.0),
+                columns: 3,
+                rows: 3,
+                heights: vec![0.0; 9],
+                removed_cells: Some(vec![false; 3]),
+            },
+            None,
+        )
+        .is_err()
     );
 }

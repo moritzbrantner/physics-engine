@@ -101,9 +101,10 @@ When to pick which:
 
 ## Terrain
 
-`add_heightfield(HeightfieldDesc { origin, cell_size, columns, rows, heights }, key)` adds
-static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`) and
-returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same
+`add_heightfield(HeightfieldDesc { origin, cell_size, columns, rows, heights, removed_cells }, key)`
+adds static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`;
+`removed_cells`, row-major per cell, cuts holes that rays, queries and characters pass through,
+like parry's `CELL_REMOVED`) and returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same
 diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and casts, and
 character moves work against it. Box and wedge overlaps (door probes) are tested against the
 triangles by the separating-axis test: whether they overlap is exact, and the reported depth and
