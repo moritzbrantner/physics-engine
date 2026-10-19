@@ -502,3 +502,25 @@ fn a_free_move_reports_the_desired_translation_exactly() {
     assert_eq!(r.translation, desired);
     assert_eq!(r.depenetration, V::ZERO);
 }
+
+/// Snapping depends on the geometry at the move's start, not on earlier moves, so a world
+/// rebuilt from game state snaps on its first move like the original (#340).
+#[test]
+fn the_first_move_in_a_rebuilt_world_snaps_down_a_ledge() {
+    let mut w = world();
+    w.add_body(Body::keyed(
+        60,
+        Shape::Box(V(1.0, 0.015, 1.0)),
+        V(100.0, 0.015, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    let c = character(&mut w, 10, V(100.9, 0.03 + FOOT + OFFSET, 0.0));
+    let r = step(&mut w, c, V(0.5, 0.0, 0.0));
+    assert!(r.grounded, "{r:?}");
+    assert!(
+        (position(&w, c).1 - (FOOT + OFFSET)).abs() < 1e-5,
+        "{:?}",
+        position(&w, c)
+    );
+}
