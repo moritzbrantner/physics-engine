@@ -2,9 +2,71 @@
 //! 5% slower than Rapier (median of interleaved samples), both with the consumer's call pattern
 //! and, where a scenario has one, bare Rapier without the consumer's workarounds. Both engine
 //! storage modes (`BodyStorage::Ordered`, the default, and `Indexed`) are timed and gated.
+//!
+//! CI runs it without arguments. For debugging:
+//!
+//! ```text
+//! oracle --list                      scenario names
+//! oracle --only stairs [--only ...]  run only these scenarios
+//! oracle --no-timing                 invariants only
+//! oracle --keep-going                time scenarios whose invariants fail
+//! oracle --dump DIR                  write each side's trace to DIR/<scenario>.<side>.txt
+//! ```
 
 use physics_oracle::{Scenario, Side, Trace, all};
-use std::{process::ExitCode, time::Instant};
+use std::{io::Write, path::PathBuf, process::ExitCode, time::Instant};
+
+#[derive(Default)]
+struct Options {
+    only: Vec<String>,
+    timing: bool,
+    keep_going: bool,
+    dump: Option<PathBuf>,
+    list: bool,
+}
+
+fn options() -> Result<Options, String> {
+    let mut o = Options {
+        timing: true,
+        ..Options::default()
+    };
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--only" => o
+                .only
+                .push(args.next().ok_or("--only needs a scenario name")?),
+            "--no-timing" => o.timing = false,
+            "--keep-going" => o.keep_going = true,
+            "--dump" => o.dump = Some(args.next().ok_or("--dump needs a directory")?.into()),
+            "--list" => o.list = true,
+            other => return Err(format!("unknown argument {other}")),
+        }
+    }
+    Ok(o)
+}
+
+/// Writes both sides' traces, one observation per line (`tick-ordered index<TAB>observation`).
+fn dump(scenario: &Scenario, dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (side, name) in [(Side::Engine, "engine"), (Side::Rapier, "rapier")] {
+        let mut trace = Trace::default();
+        scenario.run(&mut *scenario.build(side), &mut trace);
+        let path = dir.join(format!("{}.{name}.txt", scenario.name));
+        let mut out = std::io::BufWriter::new(std::fs::File::create(&path)?);
+        let per_tick = trace.0.len() / scenario.ticks.max(1) as usize;
+        for (i, obs) in trace.0.iter().enumerate() {
+            writeln!(
+                out,
+                "{}:{}\t{obs:?}",
+                i / per_tick.max(1),
+                i % per_tick.max(1)
+            )?;
+        }
+        println!("wrote {}", path.display());
+    }
+    Ok(())
+}
 
 const SAMPLES: usize = 11;
 const MARGIN: f64 = 1.05;
@@ -26,6 +88,28 @@ fn median(mut v: Vec<f64>) -> f64 {
 }
 
 fn main() -> ExitCode {
+    let options = match options() {
+        Ok(o) => o,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let scenarios = all();
+    if options.list {
+        for s in &scenarios {
+            println!("{:<20} {}", s.name, s.capabilities);
+        }
+        return ExitCode::SUCCESS;
+    }
+    if let Some(unknown) = options
+        .only
+        .iter()
+        .find(|name| !scenarios.iter().any(|s| s.name == name.as_str()))
+    {
+        eprintln!("unknown scenario {unknown} (see --list)");
+        return ExitCode::FAILURE;
+    }
     let mut failed = false;
     println!(
         "{:<20} {:<12} {:>14} {:>14} {:>14} {:>7} {:>11}  result",
@@ -37,23 +121,41 @@ fn main() -> ExitCode {
         "ratio",
         "rapier raw"
     );
-    for scenario in all() {
+    for scenario in scenarios
+        .iter()
+        .filter(|s| options.only.is_empty() || options.only.iter().any(|o| o == s.name))
+    {
+        if let Some(dir) = &options.dump
+            && let Err(error) = dump(scenario, dir)
+        {
+            eprintln!("cannot dump {}: {error}", scenario.name);
+            return ExitCode::FAILURE;
+        }
         if let Err(error) = scenario.verify() {
             println!(
                 "{:<20} {:<12} invariant failed: {error}",
                 scenario.name, scenario.capabilities
             );
             failed = true;
+            if !options.keep_going {
+                continue;
+            }
+        }
+        if !options.timing {
+            println!(
+                "{:<20} {:<12} invariants checked",
+                scenario.name, scenario.capabilities
+            );
             continue;
         }
         let (mut engine, mut indexed, mut rapier, mut raw) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for _ in 0..SAMPLES {
-            engine.push(time(&scenario, Side::Engine));
-            indexed.push(time(&scenario, Side::EngineIndexed));
-            rapier.push(time(&scenario, Side::Rapier));
+            engine.push(time(scenario, Side::Engine));
+            indexed.push(time(scenario, Side::EngineIndexed));
+            rapier.push(time(scenario, Side::Rapier));
             if scenario.rapier_raw.is_some() {
-                raw.push(time(&scenario, Side::RapierRaw));
+                raw.push(time(scenario, Side::RapierRaw));
             }
         }
         let (e, x, r) = (median(engine), median(indexed), median(rapier));
