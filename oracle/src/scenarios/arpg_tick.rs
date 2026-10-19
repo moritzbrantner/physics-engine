@@ -141,9 +141,19 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             if p[1] < HEIGHT - 1e-3 {
                 return Err(format!("character {c} sank into the floor at tick {tick}"));
             }
-            if c < PLAYERS && g && (p[1] - HEIGHT).abs() > 1e-3 {
+            // Grounded only with the floor within Rapier's ground prediction (offset + 5 cm),
+            // and exactly when Rapier's controller reports it.
+            if c < PLAYERS && g && p[1] - HEIGHT > 0.05 + 1e-3 {
                 return Err(format!(
                     "player {c} grounded in the air at tick {tick}: {p:?}"
+                ));
+            }
+            if c < PLAYERS
+                && let Obs::Grounded(r) = rapier.0[at - 1]
+                && r != g
+            {
+                return Err(format!(
+                    "player {c} grounded {g} but {r} on Rapier at tick {tick}: {p:?}"
                 ));
             }
             if tick.is_multiple_of(20) {

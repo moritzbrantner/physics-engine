@@ -155,6 +155,9 @@ impl Characters {
     }
 }
 
+/// Rapier's ground prediction beyond `offset`, in metres.
+const GROUND_PREDICTION: Real = 0.05;
+
 /// Contact normals within about 5 degrees of the motion count as head-on.
 const HEAD_ON_COS: Real = 0.996;
 
@@ -458,12 +461,19 @@ impl World {
         s: CharacterSettings,
         hits: &mut Vec<QueryHit>,
     ) -> Result<bool, Error> {
-        let reach = s.offset * 3.0;
+        let predict = self.ground_prediction(s);
+        let reach = predict + s.offset;
         Ok(self
             .blocking_hit(id, pose, -V::Y * reach, hits, is_static)?
             .is_some_and(|hit| {
-                hit.normal.dot(V::Y) >= s.max_slope.cos() && hit.fraction * reach <= s.offset * 2.0
+                hit.normal.dot(V::Y) >= s.max_slope.cos() && hit.fraction * reach <= predict
             }))
+    }
+
+    /// Distance below a character within which walkable ground counts as support: Rapier's
+    /// ground prediction, `offset` plus 5 cm in this world's length unit.
+    fn ground_prediction(&self, s: CharacterSettings) -> Real {
+        s.offset + GROUND_PREDICTION * self.config.length_unit
     }
 
     fn move_character(
@@ -653,8 +663,10 @@ impl World {
             }
         }
 
-        // Grounded test and snapping: walkable static support within reach below.
-        let reach = s.offset + s.snap_to_ground.unwrap_or(0.0) + s.offset;
+        // Grounded test and snapping: walkable static support within reach below. Ground
+        // within the prediction counts as support without moving the character (as in Rapier).
+        let predict = self.ground_prediction(s);
+        let reach = predict.max(s.offset + s.snap_to_ground.unwrap_or(0.0)) + s.offset;
         if planar {
             // The plane is the support.
         } else if let Some(hit) = self.blocking_hit(id, pose, -up * reach, hits, is_static)?
@@ -662,14 +674,15 @@ impl World {
         {
             let gap = hit.fraction * reach;
             let snap = gap - s.offset;
-            if gap <= s.offset * 2.0 {
-                support = Some(hit.body);
-            } else if desired.dot(up) <= 0.0
-                && s.snap_to_ground.is_some()
+            if gap > s.offset * 2.0
+                && desired.dot(up) <= 0.0
+                && s.snap_to_ground.is_some_and(|reach| snap <= reach)
                 && self.grounded_at(id, start_pose, s, hits)?
             {
                 pose.position += -up * snap;
                 translation += -up * snap;
+                support = Some(hit.body);
+            } else if gap <= predict {
                 support = Some(hit.body);
             }
         }
