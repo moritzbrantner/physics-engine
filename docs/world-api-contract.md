@@ -153,7 +153,7 @@ keeps no motion up along them, so a character walking into a too-steep ramp stop
 (Rapier's `max_slope_climb_angle`). Motion stops `offset` short of whichever touched surface it
 reaches first along its normal, not only the first one touched. With `autostep`, a walking move
 (starting on the ground, Rapier's grounded: any upward-facing static contact within the ground
-prediction, and not rising) that runs into a non-walkable static surface steps up as Rapier's
+prediction by true distance, a step's rounded edge beside the character included, and not rising) that runs into a non-walkable static surface steps up as Rapier's
 autostep does: room above for `max_height`, room on top for `min_width`, no too-steep slope there;
 it is lifted by the step's height and nudged forward by up to `min_width`. A capsule meeting a
 step's rounded edge may climb it over several moves, as on Rapier. Snapping to the ground applies
