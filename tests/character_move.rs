@@ -2,7 +2,10 @@
 //! static-only support (#309) and separately reported depenetration (#295).
 use physics_engine::{
     BodyId,
-    approximate::{Body, CharacterMove, CharacterSettings, Config, Shape, Vector as V, World},
+    approximate::{
+        Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Shape, Vector as V,
+        World,
+    },
 };
 
 const OFFSET: f32 = 0.0025;
@@ -388,5 +391,103 @@ fn character_motion_does_not_depend_on_the_length_unit() {
     for (tick, ((a, ga), (b, gb))) in metres.iter().zip(&centimetres).enumerate() {
         assert_eq!(ga, gb, "grounded differs at tick {tick}");
         assert!((*a - *b).length() < 1e-4, "tick {tick}: {a:?} vs {b:?}");
+    }
+}
+
+fn pusher(w: &mut World, id: u64, position: V, max_push: Option<f32>) -> BodyId {
+    let mut body = Body::keyed(id, Shape::capsule(HALF, RADIUS), position, 1.0);
+    body.external = true;
+    let id = w.add_body(body).unwrap();
+    let settings = CharacterSettings {
+        max_push,
+        ..CharacterSettings::default()
+    };
+    w.add_character(id, settings).unwrap();
+    id
+}
+
+fn push_tick(w: &mut World, a: BodyId, b: BodyId, desired: V) -> Vec<CharacterMoveResult> {
+    let mut out = Vec::new();
+    w.move_characters(
+        &[
+            CharacterMove { body: a, desired },
+            CharacterMove {
+                body: b,
+                desired: V::ZERO,
+            },
+        ],
+        &mut out,
+    )
+    .unwrap();
+    out
+}
+
+#[test]
+fn a_mover_pushes_a_character_by_at_most_the_smaller_ceiling() {
+    let mut w = world();
+    let gap = 2.0 * RADIUS + OFFSET;
+    let a = pusher(&mut w, 10, V(80.0, FOOT + OFFSET, 0.0), Some(0.04));
+    let b = pusher(&mut w, 11, V(80.0 + gap, FOOT + OFFSET, 0.0), Some(0.02));
+    let out = push_tick(&mut w, a, b, V(0.05, 0.0, 0.0));
+    assert!((out[1].pushed.0 - 0.02).abs() < 1e-5, "{out:?}");
+    assert_eq!(out[1].translation, V::ZERO);
+    assert_eq!(out[0].pushed, V::ZERO);
+    // The pusher follows by the pushed distance; the blocked rest sidesteps as head-on.
+    assert!(
+        (position(&w, a).0 - 80.02).abs() < 1e-4,
+        "{:?}",
+        position(&w, a)
+    );
+}
+
+#[test]
+fn a_mover_within_both_ceilings_pushes_straight_ahead() {
+    let mut w = world();
+    let gap = 2.0 * RADIUS + OFFSET;
+    let a = pusher(&mut w, 10, V(80.0, FOOT + OFFSET, 0.0), Some(0.1));
+    let b = pusher(&mut w, 11, V(80.0 + gap, FOOT + OFFSET, 0.0), Some(0.1));
+    for tick in 1..=10 {
+        let out = push_tick(&mut w, a, b, V(0.05, 0.0, 0.0));
+        assert!((out[1].pushed.0 - 0.05).abs() < 1e-5, "{out:?}");
+        let (pa, pb) = (position(&w, a), position(&w, b));
+        assert!(
+            (pb.0 - 80.0 - gap - 0.05 * tick as f32).abs() < 1e-4,
+            "{pb:?}"
+        );
+        assert!((pb.0 - pa.0 - gap).abs() < 1e-4, "{pa:?} {pb:?}");
+        assert!(pa.2 == 0.0 && pb.2 == 0.0, "no sidestep: {pa:?} {pb:?}");
+    }
+}
+
+#[test]
+fn a_pushed_character_stops_at_the_wall_gap() {
+    let mut w = world();
+    let gap = 2.0 * RADIUS + OFFSET;
+    // The wall's face is at x = 4.75.
+    let b = pusher(&mut w, 11, V(4.0, FOOT + OFFSET, 0.0), Some(0.1));
+    let a = pusher(&mut w, 10, V(4.0 - gap, FOOT + OFFSET, 0.0), Some(0.1));
+    for _ in 0..30 {
+        push_tick(&mut w, a, b, V(0.05, 0.0, 0.0));
+        let (pa, pb) = (position(&w, a), position(&w, b));
+        assert!(pb.0 + RADIUS + OFFSET <= 4.75 + 1e-4, "{pb:?}");
+        let d = V(pb.0 - pa.0, 0.0, pb.2 - pa.2).length();
+        assert!(d >= gap - 1e-4, "{pa:?} {pb:?}");
+    }
+    let pb = position(&w, b);
+    assert!((pb.0 + RADIUS + OFFSET - 4.75).abs() < 1e-4, "{pb:?}");
+}
+
+#[test]
+fn characters_without_a_ceiling_are_never_pushed() {
+    for (ca, cb) in [(Some(0.1), None), (None, Some(0.1))] {
+        let mut w = world();
+        let gap = 2.0 * RADIUS + OFFSET;
+        let a = pusher(&mut w, 10, V(90.0, FOOT + OFFSET, 0.0), ca);
+        let b = pusher(&mut w, 11, V(90.0 + gap, FOOT + OFFSET, 0.0), cb);
+        for _ in 0..10 {
+            let out = push_tick(&mut w, a, b, V(0.05, 0.0, 0.0));
+            assert_eq!(out[1].pushed, V::ZERO);
+        }
+        assert_eq!(position(&w, b), V(90.0 + gap, FOOT + OFFSET, 0.0));
     }
 }

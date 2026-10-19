@@ -137,8 +137,14 @@ the order of the slice; each sees the earlier movers at their new positions, and
 the result of `moves[i]`. Characters of a batch that overlap each other are first separated
 horizontally, half each (a character overlapping one outside the batch moves the whole way);
 that separation is part of `depenetration`. A character blocked head-on by another character
-sidesteps to its right instead of locking. Characters do not push each other yet. On walkable surfaces downward intent stops instead of
-sliding down the slope; horizontal intent follows the surface.
+sidesteps to its right instead of locking. `CharacterSettings::max_push: Some(ceiling)` enables
+bounded pushing: a mover pushes a blocking character horizontally by at most the smaller of their
+two ceilings per move (scene units; `None` on either side: no push) and follows it; the pushed
+character keeps its gap to everything else, so walls and other characters stop it, and the part
+of the motion it does not yield is handled as above. What a character received from pushes during
+the batch is reported as `pushed`, apart from `translation` and `depenetration`. On walkable
+surfaces downward intent stops instead of sliding down the slope; horizontal intent follows the
+surface.
 `set_kinematic_position` places an external body without resolving contact.
 
 ## Failure behaviour
