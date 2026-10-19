@@ -42,6 +42,7 @@ cargo test --locked --features checkpoints
 cargo test --locked --features checkpoints,indexed-storage   # every suite on BodyStorage::Indexed
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
 cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle: invariants + native perf gate
+cargo run --release --locked --manifest-path oracle/Cargo.toml -- --only stairs --no-timing --dump /tmp/traces   # debugging; --list, --keep-going
 node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes
 cargo test --release --features work-counters --test work_complexity   # Big-O work contracts (self-checking)
 bun <coding-tooling>/src/router.ts performance work --root .            # the same, judged by coding-tooling as in CI
