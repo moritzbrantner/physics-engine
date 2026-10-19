@@ -13,6 +13,9 @@ pub struct TerrainId(pub(super) u32);
 
 /// A heightfield: `columns` × `rows` heights, row-major (Z rows, X columns), with the first
 /// vertex at `origin` and `cell_size` spacing along X and Z. Heights are added to `origin.1`.
+/// `removed_cells` (row-major, `(rows - 1) × (columns - 1)`, `true` = removed) cuts holes:
+/// rays, shape queries and characters pass through removed cells, as with Rapier's
+/// `HeightFieldCellStatus::CELL_REMOVED`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightfieldDesc {
     pub origin: V,
@@ -20,6 +23,7 @@ pub struct HeightfieldDesc {
     pub columns: usize,
     pub rows: usize,
     pub heights: Vec<Real>,
+    pub removed_cells: Option<Vec<bool>>,
 }
 
 /// Immutable prepared terrain, shared by world clones.
@@ -42,6 +46,10 @@ impl World {
             || !(dx.is_finite() && dx > 0.0 && dz.is_finite() && dz > 0.0)
             || !desc.origin.finite()
             || desc.heights.iter().any(|h| !h.is_finite())
+            || desc
+                .removed_cells
+                .as_ref()
+                .is_some_and(|cells| cells.len() != (desc.columns - 1) * (desc.rows - 1))
         {
             return Err(Error::InvalidInput);
         }
@@ -61,7 +69,10 @@ impl World {
             columns,
             rows,
             heights,
-            active_cells: None,
+            active_cells: desc
+                .removed_cells
+                .as_ref()
+                .map(|cells| cells.iter().map(|&removed| !removed).collect()),
             diagonal: HeightfieldDiagonal3::Fixed,
         })
         .map_err(|_| Error::InvalidInput)?;
