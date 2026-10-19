@@ -127,9 +127,11 @@ a halfspace are not checkpointed.
 `add_character(id, CharacterSettings)` makes an external (kinematic) upright capsule body a
 character. `move_characters(&[CharacterMove], &mut Vec<CharacterMoveResult>)` is the only move
 primitive: collide-and-slide that keeps `offset` to every surface it touches, then a grounded
-test against walkable static support within `offset + snap_to_ground` (snapping down when the
-character stood on walkable support at the start of the move and does not move up; like
-Rapier, this depends on geometry alone, so a world rebuilt from game state snaps the same). Zero desired motion never moves a character;
+test against walkable static support: like Rapier's ground prediction, support within `offset`
+plus 5 cm (in `length_unit`) makes the character grounded without moving it, and a character
+that stood on such support at the start of the move and does not move up snaps down within
+`offset + snap_to_ground`. This depends on geometry alone, so a world rebuilt from game state
+behaves the same. Zero desired motion never moves a character;
 penetration is resolved first and reported as `depenetration`, apart from `translation`.
 `CharacterSettings::plane: Some(height)` makes a planar character: it moves only horizontally
 at its height, needs no floor collider and is always grounded with `support` `None`.

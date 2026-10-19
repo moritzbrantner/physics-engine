@@ -69,17 +69,21 @@ fn falls_to_the_floor_and_rests_exactly_under_gravity() {
     let c = character(&mut w, 10, V(0.0, FOOT + 1.0, 0.0));
     let mut vy = 0.0;
     let mut rest = None;
+    let mut grounded_ticks = 0;
     for tick in 0..200 {
         vy -= 9.81 / 60.0;
         let r = step(&mut w, c, V(0.0, vy / 60.0, 0.0));
         if r.grounded {
             vy = 0.0;
+            grounded_ticks += 1;
             assert_eq!(r.support, w.body_id(1));
             let p = position(&w, c);
-            match rest {
-                None => rest = Some(p),
-                Some(q) => assert_eq!(p, q, "tick {tick}: grounded character moved"),
+            // Grounded within the ground prediction, the character snaps down on its next
+            // move (as in Rapier); from then on it rests exactly.
+            if grounded_ticks > 2 {
+                assert_eq!(Some(p), rest, "tick {tick}: grounded character moved");
             }
+            rest = Some(p);
         }
     }
     let p = rest.expect("character lands");
@@ -518,6 +522,34 @@ fn the_first_move_in_a_rebuilt_world_snaps_down_a_ledge() {
     let c = character(&mut w, 10, V(100.9, 0.03 + FOOT + OFFSET, 0.0));
     let r = step(&mut w, c, V(0.5, 0.0, 0.0));
     assert!(r.grounded, "{r:?}");
+    assert!(
+        (position(&w, c).1 - (FOOT + OFFSET)).abs() < 1e-5,
+        "{:?}",
+        position(&w, c)
+    );
+}
+
+/// Ground within Rapier's prediction (offset + 5 cm) counts as support without moving the
+/// character (#347).
+#[test]
+fn ground_within_the_prediction_is_support_without_snapping() {
+    let mut w = world();
+    // Feet 12 cm above the floor box top, falling 8 cm: they end 4 cm above it.
+    let c = character(&mut w, 10, V(20.0, FOOT + 0.12, 0.0));
+    let r = step(&mut w, c, V(0.0, -0.08, 0.0));
+    assert!(r.grounded, "{r:?}");
+    assert_eq!(r.support, w.body_id(1));
+    assert!(
+        (position(&w, c).1 - (FOOT + 0.04)).abs() < 1e-5,
+        "not snapped"
+    );
+    // Beyond the prediction: not grounded.
+    let d = character(&mut w, 11, V(24.0, FOOT + 0.14, 0.0));
+    let r = step(&mut w, d, V(0.0, -0.08, 0.0));
+    assert!(!r.grounded, "{r:?}");
+    // Grounded at the start, the next move snaps down to the offset.
+    let r = step(&mut w, c, V(0.0, -0.001, 0.0));
+    assert!(r.grounded);
     assert!(
         (position(&w, c).1 - (FOOT + OFFSET)).abs() < 1e-5,
         "{:?}",
