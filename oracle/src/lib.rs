@@ -23,6 +23,8 @@ pub enum Obs {
     Contact(Option<(f32, [f32; 3])>),
     /// Whether a segment is blocked by static geometry (line of sight).
     Blocked(bool),
+    /// Height of a body's lowest point above the ground under it.
+    Clearance(f32),
 }
 
 /// Observations in the order a scenario recorded them.
@@ -132,6 +134,7 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
             Obs::Position(p) | Obs::Depenetration(p) => p.iter().all(|v| v.is_finite()),
+            Obs::Clearance(c) => c.is_finite(),
             _ => true,
         };
         if !ok {
@@ -169,6 +172,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::stairs::scenario(),
         scenarios::platforms::scenario(),
         scenarios::props::scenario(),
+        scenarios::debris::scenario(),
         scenarios::capsule_normals::scenario(),
         scenarios::terrain::scenario(),
         scenarios::terrain::scenario_holes(),

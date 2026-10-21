@@ -18,9 +18,9 @@ const SNAP: f32 = 0.05;
 const HALF: f32 = 0.5;
 const RADIUS: f32 = 0.3;
 const FOOT: f32 = HALF + RADIUS;
-const N: usize = 65;
-const CELL: f32 = 2.0;
-const ORIGIN: f32 = -64.0;
+pub(super) const N: usize = 65;
+pub(super) const CELL: f32 = 2.0;
+pub(super) const ORIGIN: f32 = -64.0;
 const WALKERS: usize = 48;
 const IDLE: usize = 16;
 const RAYS: usize = 32;
@@ -38,7 +38,7 @@ fn height_at_vertex(i: usize, j: usize, holes: bool) -> f32 {
 }
 
 /// Heights row-major: Z rows, X columns.
-fn heights(holes: bool) -> Vec<f32> {
+pub(super) fn heights(holes: bool) -> Vec<f32> {
     (0..N * N)
         .map(|k| height_at_vertex(k % N, k / N, holes))
         .collect()
@@ -46,7 +46,7 @@ fn heights(holes: bool) -> Vec<f32> {
 
 /// Whether cell (i, j) is removed: with holes, every cell flat at 0 (the floor plane covers
 /// it).
-fn removed(i: usize, j: usize, holes: bool) -> bool {
+pub(super) fn removed(i: usize, j: usize, holes: bool) -> bool {
     holes
         && [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)]
             .into_iter()
@@ -55,7 +55,7 @@ fn removed(i: usize, j: usize, holes: bool) -> bool {
 
 /// Removed cells row-major, `(N - 1)²`.
 #[cfg_attr(not(feature = "engine"), allow(dead_code))]
-fn removed_cells() -> Vec<bool> {
+pub(super) fn removed_cells() -> Vec<bool> {
     (0..(N - 1) * (N - 1))
         .map(|k| removed(k % (N - 1), k / (N - 1), true))
         .collect()
@@ -71,7 +71,7 @@ fn cell_of(x: f32, z: f32) -> (usize, usize) {
 
 /// Surface height with the fixed B–C diagonal (parry's split). Removed cells are flat at 0,
 /// where the floor plane lies.
-fn ground(x: f32, z: f32, holes: bool) -> f32 {
+pub(super) fn ground(x: f32, z: f32, holes: bool) -> f32 {
     let height_at_vertex = |i, j| height_at_vertex(i, j, holes);
     let (fx, fz) = ((x - ORIGIN) / CELL, (z - ORIGIN) / CELL);
     let (i, j) = (
@@ -405,7 +405,7 @@ mod engine {
 }
 
 #[cfg(feature = "rapier")]
-mod rapier {
+pub(super) mod rapier {
     use super::*;
     use rapier3d::control::{CharacterLength, KinematicCharacterController};
     use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher, ShapeCastOptions};
@@ -430,6 +430,28 @@ mod rapier {
         holes: bool,
     }
 
+    /// The hills as a parry heightfield, centred where [`terrain_position`] puts it.
+    pub(in crate::scenarios) fn field(holes: bool) -> SharedShape {
+        // parry: rows along Z, columns along X, column-major storage.
+        let h = heights(holes);
+        let data = (0..N * N).map(|k| h[(k % N) * N + k / N]).collect();
+        let size = CELL * (N - 1) as f32;
+        let mut field = HeightField::new(Array2::new(N, N, data), Vector::new(size, 1.0, size));
+        for j in 0..N - 1 {
+            for i in 0..N - 1 {
+                if removed(i, j, holes) {
+                    field.set_cell_status(j, i, HeightFieldCellStatus::CELL_REMOVED);
+                }
+            }
+        }
+        SharedShape::new(field)
+    }
+
+    pub(in crate::scenarios) fn terrain_position() -> Vector {
+        let centre = ORIGIN + CELL * (N - 1) as f32 * 0.5;
+        Vector::new(centre, 0.0, centre)
+    }
+
     fn build(
         terrain: &SharedShape,
         positions: &[Vector],
@@ -444,10 +466,9 @@ mod rapier {
                 .colliders
                 .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
         }
-        let centre = ORIGIN + CELL * (N - 1) as f32 * 0.5;
         world.colliders.insert(
             ColliderBuilder::new(terrain.clone())
-                .translation(Vector::new(centre, 0.0, centre))
+                .translation(terrain_position())
                 .build(),
         );
         let bodies = positions
@@ -472,19 +493,7 @@ mod rapier {
 
     impl Sim {
         pub fn new(rebuild: bool, holes: bool) -> Self {
-            // parry: rows along Z, columns along X, column-major storage.
-            let h = heights(holes);
-            let data = (0..N * N).map(|k| h[(k % N) * N + k / N]).collect();
-            let size = CELL * (N - 1) as f32;
-            let mut field = HeightField::new(Array2::new(N, N, data), Vector::new(size, 1.0, size));
-            for j in 0..N - 1 {
-                for i in 0..N - 1 {
-                    if removed(i, j, holes) {
-                        field.set_cell_status(j, i, HeightFieldCellStatus::CELL_REMOVED);
-                    }
-                }
-            }
-            let terrain = SharedShape::new(field);
+            let terrain = field(holes);
             let shape = Capsule::new_y(HALF, RADIUS);
             let positions: Vec<Vector> = starts(holes).into_iter().map(v).collect();
             let (world, bodies) = build(&terrain, &positions, shape, holes);

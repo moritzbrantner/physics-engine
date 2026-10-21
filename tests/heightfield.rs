@@ -11,8 +11,12 @@ fn height(x: f32, z: f32) -> f32 {
 }
 
 fn hills() -> (World, physics_engine::BodyId) {
+    hills_with(V::ZERO)
+}
+
+fn hills_with(gravity: V) -> (World, physics_engine::BodyId) {
     let mut w = World::new(Config {
-        gravity: V::ZERO,
+        gravity,
         ..Config::default()
     })
     .unwrap();
@@ -180,7 +184,7 @@ fn terrain_rejects_rigid_body_api_misuse() {
         &mut Vec::new(),
     );
     assert!(r.is_err());
-    // Stepping a world with terrain and a dynamic body does not touch the terrain.
+    // Stepping a world with terrain and a dynamic body clear of it.
     w.add_body(Body::new(Shape::Sphere(0.5), V(0.0, 10.0, 0.0), 1.0))
         .unwrap();
     w.step(1.0 / 60.0).unwrap();
@@ -316,4 +320,134 @@ fn removed_cells_are_holes() {
         )
         .is_err()
     );
+}
+
+/// World-space corners of a box body.
+fn corners(b: &Body) -> Vec<V> {
+    let Shape::Box(h) = b.shape else {
+        unreachable!()
+    };
+    (0..8)
+        .map(|k| {
+            let sign = |bit: usize| if k & bit == 0 { -1.0 } else { 1.0 };
+            b.position
+                + b.orientation
+                    .rotate(V(sign(1) * h.0, sign(2) * h.1, sign(4) * h.2))
+        })
+        .collect()
+}
+
+/// Lowest clearance of the box's corners above the terrain: negative below the surface.
+fn clearance(w: &World, b: &Body) -> f32 {
+    corners(b)
+        .iter()
+        .map(|c| c.1 - ground(w, c.0, c.2))
+        .fold(f32::INFINITY, f32::min)
+}
+
+/// Crates and tumbling planks (MMORPG debris) land on the hills and come to rest on them.
+#[test]
+fn dynamic_boxes_land_and_rest_on_terrain() {
+    let (mut w, _) = hills_with(V(0.0, -9.0, 0.0));
+    let mut ids = Vec::new();
+    for k in 0..12 {
+        let (x, z) = (-20.0 + 3.5 * k as f32, 6.0 - 1.3 * k as f32);
+        let half = if k % 2 == 0 {
+            V(0.35, 0.35, 0.35)
+        } else {
+            V(0.33, 0.03, 0.33)
+        };
+        let mut b = Body::new(Shape::Box(half), V(x, ground(&w, x, z) + 2.0, z), 10.0);
+        b.orientation =
+            physics_engine::approximate::Quaternion(0.1 * k as f32, 0.3, 0.2, 0.9).normalized();
+        b.velocity = V(1.2, 1.5, -0.6);
+        b.angular_velocity = V(3.6, -2.4, 1.5);
+        b.friction = 0.8;
+        b.linear_damping = 0.2;
+        b.angular_damping = 0.8;
+        // Off the terrain-only ray layer, still colliding with the terrain.
+        b.layers = physics_engine::CollisionLayers3d::new(2, u32::MAX);
+        ids.push(w.add_body(b).unwrap());
+    }
+    for tick in 0..300 {
+        w.step(1.0 / 30.0).unwrap();
+        for &id in &ids {
+            let b = w.body(id).unwrap();
+            assert!(
+                clearance(&w, b) > -0.02,
+                "{id:?} below the surface at {tick}: {b:?}"
+            );
+        }
+    }
+    for &id in &ids {
+        let b = w.body(id).unwrap();
+        assert!(clearance(&w, b) < 0.02, "{id:?} floats: {b:?}");
+        assert!(
+            b.velocity.length() < 0.05 && b.angular_velocity.length() < 0.05,
+            "{id:?} still moving: {b:?}"
+        );
+    }
+}
+
+#[test]
+fn fast_box_stops_at_the_terrain_and_falls_through_holes() {
+    let mut w = World::new(Config {
+        gravity: V(0.0, -9.0, 0.0),
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(Body::new(Shape::HalfSpace, V(0.0, -2.0, 0.0), 0.0))
+        .unwrap();
+    let mut removed = vec![false; 4 * 4];
+    removed[2 * 4 + 2] = true;
+    w.add_heightfield(
+        HeightfieldDesc {
+            origin: V(-4.0, 0.0, -4.0),
+            cell_size: (2.0, 2.0),
+            columns: 5,
+            rows: 5,
+            heights: vec![1.0; 25],
+            removed_cells: Some(removed),
+        },
+        Some(2),
+    )
+    .unwrap();
+    let mut fast = Body::new(Shape::Box(V(0.3, 0.3, 0.3)), V(-2.5, 20.0, -2.5), 1.0);
+    fast.velocity = V(0.0, -300.0, 0.0);
+    let fast = w.add_body(fast).unwrap();
+    // Over the removed cell (0..2, 0..2): through the hole onto the floor.
+    let hole = w
+        .add_body(Body::new(
+            Shape::Box(V(0.3, 0.3, 0.3)),
+            V(1.0, 3.0, 1.0),
+            1.0,
+        ))
+        .unwrap();
+    let sphere = w
+        .add_body(Body::new(Shape::Sphere(0.4), V(-2.5, 3.0, 2.5), 1.0))
+        .unwrap();
+    let capsule = w
+        .add_body(Body::new(Shape::capsule(0.5, 0.2), V(2.5, 3.0, -2.5), 1.0))
+        .unwrap();
+    for _ in 0..120 {
+        w.step(1.0 / 30.0).unwrap();
+        assert!(
+            w.body(fast).unwrap().position.1 > 1.29,
+            "{:?}",
+            w.body(fast)
+        );
+    }
+    let y = |id| w.body(id).unwrap().position.1;
+    assert!((y(fast) - 1.3).abs() < 0.01, "{}", y(fast));
+    assert!((y(hole) + 1.7).abs() < 0.01, "{}", y(hole));
+    assert!((y(sphere) - 1.4).abs() < 0.01, "{}", y(sphere));
+    // The capsule tips over and lies on the plateau.
+    assert!(y(capsule) > 1.15 && y(capsule) < 1.75, "{}", y(capsule));
+    for id in [fast, hole, sphere, capsule] {
+        assert!(
+            w.body(id).unwrap().velocity.length() < 0.05,
+            "{:?}",
+            w.body(id)
+        );
+    }
 }

@@ -120,9 +120,8 @@ impl Shape {
     pub const fn wedge(half_extents: Vector) -> Self {
         Self::Wedge(half_extents)
     }
-    /// Terrain and halfspaces are static only and stay out of the bounds structures. They
-    /// answer queries and character moves; halfspaces also give dynamic bodies rigid contacts,
-    /// heightfields do not.
+    /// Terrain and halfspaces are static only. They answer queries and character moves and
+    /// give dynamic bodies rigid contacts through their own closed forms.
     pub fn query_only(self) -> bool {
         matches!(self, Self::Heightfield { .. } | Self::HalfSpace)
     }
@@ -2060,10 +2059,34 @@ impl World {
                         && a.external
                         && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
+                // An awake dynamic primitive meets terrain under each of its support points.
+                let terrain = match (a.shape, b.shape) {
+                    (Shape::Heightfield { terrain, .. }, _) if !b.shape.query_only() => {
+                        Some((terrain, b))
+                    }
+                    (_, Shape::Heightfield { terrain, .. }) if !a.shape.query_only() => {
+                        Some((terrain, a))
+                    }
+                    _ => None,
+                };
+                if let Some((terrain, body)) = terrain {
+                    if body.inverse_mass() > 0.0 && !body.sensor && a.layers.collides_with(b.layers)
+                    {
+                        report.narrow_tests += 1;
+                        contact::terrain(
+                            a,
+                            b,
+                            &self.terrains[terrain.0 as usize].prepared,
+                            self.config.contact_slop,
+                            h,
+                            |m| push(out, (i, j, m), &mut s.work),
+                        );
+                    }
+                    continue;
+                }
                 if a.sensor
                     || b.sensor
-                    // Terrain answers queries and character moves; halfspace contacts with
-                    // dynamic bodies are generated after this sweep.
+                    // Halfspace contacts with dynamic bodies are generated after this sweep.
                     || a.shape.query_only()
                     || b.shape.query_only()
                     || !a.layers.collides_with(b.layers)
@@ -2132,7 +2155,7 @@ impl World {
         }
         // Halfspaces are unbounded and stay out of the sweep: each one is tested against every
         // awake dynamic body. The approach over the substep is admitted as a speculative margin,
-        // so a fast body closes exactly to the plane. Heightfields still take no rigid contacts.
+        // so a fast body closes exactly to the plane.
         for p in 0..self.halfspaces.len() {
             let Ok(plane) = self.index(self.halfspaces[p]) else {
                 continue;

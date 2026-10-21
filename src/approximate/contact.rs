@@ -633,15 +633,9 @@ fn sphere_sphere(a: &Body, b: &Body, ra: Real, rb: Real, margin: Real) -> Option
     })
 }
 
-/// Rigid contact of a primitive with a static halfspace, one of `a` and `b` (pair order).
-/// The plane's outward normal is its local +Y. Support points of the primitive within
-/// `margin` of the plane become contact points, at most the four deepest (ties by vertex
-/// order); speculative points (positive separation) let the solver close up to the surface.
-pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
-    let flipped = a.shape != Shape::HalfSpace;
-    let (plane, body) = if flipped { (b, a) } else { (a, b) };
-    debug_assert!(plane.shape == Shape::HalfSpace && !body.shape.query_only());
-    let n = plane.orientation.rotate(V::Y);
+/// A primitive's contact support: vertices (radius 0) of boxes and wedges, the centre of a
+/// sphere and the segment ends of a capsule (with their radius), in world space.
+fn support_points(body: &Body) -> ([(V, Real); 8], usize) {
     let mut support = [(V::ZERO, 0.0); 8];
     let count = match body.shape {
         Shape::Sphere(r) => {
@@ -682,6 +676,233 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
         }
         Shape::Heightfield { .. } | Shape::HalfSpace => unreachable!("terrain is query-only"),
     };
+    (support, count)
+}
+
+/// Rigid contacts of a dynamic primitive with heightfield terrain, one of `a` and `b` (pair
+/// order); `emit` receives one manifold per touched triangle, normals from `a` toward `b`.
+/// Each support point meets the triangle under it in XZ (ties keep the lower triangle id) along
+/// that triangle's upward normal, so a body across a ridge or crease gets each side's normal
+/// and a point over a removed cell gets none. A point is admitted within `slop` plus its own
+/// approach over the substep `h`; points deeper than the body's extent are beneath the surface
+/// and ignored, as terrain is a surface. A manifold keeps its four deepest points.
+pub(super) fn terrain(
+    a: &Body,
+    b: &Body,
+    field: &geometry_kernels::heightfield::PreparedHeightfield3,
+    slop: Real,
+    h: Real,
+    mut emit: impl FnMut(Manifold),
+) {
+    let flipped = !matches!(a.shape, Shape::Heightfield { .. });
+    let (ground, body) = if flipped { (b, a) } else { (a, b) };
+    let (support, count) = support_points(body);
+    let depth_limit = 2.0 * body.shape.radius();
+    // (triangle, upward normal, points, length) per touched triangle.
+    let mut groups = [(u32::MAX, V::ZERO, [Point::default(); 8], 0usize); 8];
+    let mut touched = 0;
+    for &(centre, radius) in &support[..count] {
+        let c = [centre.0, centre.1, centre.2].map(f64::from);
+        let mut under = None;
+        field.visit_triangles([c[0], c[2]], [c[0], c[2]], |id, corners, normal| {
+            if under.is_none() && inside_xz(c, corners) {
+                under = Some((id, corners[0], normal));
+            }
+        });
+        let Some((id, corner, normal)) = under else {
+            continue;
+        };
+        let n = V(
+            primitive::nearest(normal[0]),
+            primitive::nearest(normal[1]),
+            primitive::nearest(normal[2]),
+        );
+        let offset: f64 = (0..3).map(|k| (c[k] - corner[k]) * normal[k]).sum();
+        let separation = primitive::round_down(offset - f64::from(radius));
+        let arm = centre - body.position;
+        let velocity = body.velocity + body.angular_velocity.cross(arm);
+        if separation > slop + (-velocity.dot(n)).max(0.0) * h || separation < -depth_limit {
+            continue;
+        }
+        let on_body = centre - n * radius;
+        let point = Point {
+            ra: on_body - n * separation - ground.position,
+            rb: on_body - body.position,
+            separation,
+        };
+        let group = match groups[..touched].iter().position(|g| g.0 == id) {
+            Some(g) => g,
+            None => {
+                groups[touched] = (id, n, [Point::default(); 8], 0);
+                touched += 1;
+                touched - 1
+            }
+        };
+        let (_, _, points, len) = &mut groups[group];
+        points[*len] = point;
+        *len += 1;
+    }
+    if let Shape::Box(h) = body.shape {
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for &(c, _) in &support[..count] {
+            lo = [lo[0].min(f64::from(c.0)), lo[1].min(f64::from(c.2))];
+            hi = [hi[0].max(f64::from(c.0)), hi[1].max(f64::from(c.2))];
+        }
+        let narrow = |p: [f64; 3]| {
+            V(
+                primitive::nearest(p[0]),
+                primitive::nearest(p[1]),
+                primitive::nearest(p[2]),
+            )
+        };
+        field.visit_triangles(lo, hi, |_, corners, normal| {
+            let Some((n, found, len)) =
+                box_triangle_features(body, h, corners.map(narrow), narrow(normal), slop)
+            else {
+                return;
+            };
+            let mut points = [Point::default(); 4];
+            for (out, &(on_ground, on_body, separation)) in points.iter_mut().zip(&found[..len]) {
+                *out = Point {
+                    ra: on_ground - ground.position,
+                    rb: on_body - body.position,
+                    separation,
+                };
+            }
+            let manifold = Manifold {
+                normal: n,
+                points: Points::selected(&points[..len]),
+                swept: false,
+                time: 0.0,
+            };
+            emit(if flipped {
+                flip_manifold(manifold)
+            } else {
+                manifold
+            });
+        });
+    }
+    for (_, n, points, len) in &mut groups[..touched] {
+        let points = &mut points[..*len];
+        points.sort_by(|x, y| x.separation.total_cmp(&y.separation));
+        let manifold = Manifold {
+            normal: *n,
+            points: Points::selected(&points[..points.len().min(4)]),
+            swept: false,
+            time: 0.0,
+        };
+        emit(if flipped {
+            flip_manifold(manifold)
+        } else {
+            manifold
+        });
+    }
+}
+
+/// Terrain features inside a box: the part of a triangle within the box (clipped in box space)
+/// that lies deeper than `slop` beyond the box face turned toward the triangle's normal. This
+/// catches ridges and peaks between the box's corners, which vertex contacts miss; flat contact
+/// stays within the slop, so the two do not overlap. Returns the normal from the terrain toward
+/// the box and up to four deepest points (terrain point, box face point, separation).
+fn box_triangle_features(
+    body: &Body,
+    h: V,
+    triangle: [V; 3],
+    up: V,
+    slop: Real,
+) -> Option<(V, [(V, V, Real); 4], usize)> {
+    let local = |p: V| body.orientation.inverse_rotate(p - body.position);
+    let mut polygon = [V::ZERO; 12];
+    let mut len = 3;
+    for (k, corner) in triangle.into_iter().enumerate() {
+        polygon[k] = local(corner);
+    }
+    let mut next = [V::ZERO; 12];
+    for axis in 0..3 {
+        for sign in [-1.0, 1.0] {
+            // Keep sign * p[axis] <= h[axis].
+            let mut out = 0;
+            for k in 0..len {
+                let (p, q) = (polygon[k], polygon[(k + 1) % len]);
+                let (dp, dq) = (
+                    sign * p.at(axis) - h.at(axis),
+                    sign * q.at(axis) - h.at(axis),
+                );
+                if dp <= 0.0 {
+                    next[out] = p;
+                    out += 1;
+                }
+                if (dp < 0.0 && dq > 0.0) || (dp > 0.0 && dq < 0.0) {
+                    next[out] = p + (q - p) * (dp / (dp - dq));
+                    out += 1;
+                }
+            }
+            polygon = next;
+            len = out;
+            if len == 0 {
+                return None;
+            }
+        }
+    }
+    let n = body.orientation.inverse_rotate(up);
+    let axis = (0..3)
+        .max_by(|&i, &j| n.at(i).abs().total_cmp(&n.at(j).abs()))
+        .unwrap();
+    let sign = if n.at(axis) < 0.0 { -1.0 } else { 1.0 };
+    let basis = with(V::ZERO, axis, sign);
+    let mut points = [(V::ZERO, V::ZERO, 0.0); 4];
+    let mut count = 0;
+    for p in &polygon[..len] {
+        let depth = sign * p.at(axis) + h.at(axis);
+        if depth <= slop {
+            continue;
+        }
+        let face = with(*p, axis, -sign * h.at(axis));
+        let point = (
+            body.position + body.orientation.rotate(*p),
+            body.position + body.orientation.rotate(face),
+            -depth,
+        );
+        // Keep the four deepest.
+        if count < 4 {
+            points[count] = point;
+            count += 1;
+        } else if let Some(shallowest) = (0..4).max_by(|&i, &j| points[i].2.total_cmp(&points[j].2))
+            && point.2 < points[shallowest].2
+        {
+            points[shallowest] = point;
+        }
+    }
+    (count > 0).then(|| (body.orientation.rotate(basis), points, count))
+}
+
+/// `v` with component `axis` replaced.
+fn with(v: V, axis: usize, value: Real) -> V {
+    match axis {
+        0 => V(value, v.1, v.2),
+        1 => V(v.0, value, v.2),
+        _ => V(v.0, v.1, value),
+    }
+}
+
+/// Whether `p` lies in the XZ projection of the triangle, edges included.
+fn inside_xz(p: [f64; 3], t: [[f64; 3]; 3]) -> bool {
+    let edge =
+        |a: [f64; 3], b: [f64; 3]| (b[0] - a[0]) * (p[2] - a[2]) - (b[2] - a[2]) * (p[0] - a[0]);
+    let d = [edge(t[0], t[1]), edge(t[1], t[2]), edge(t[2], t[0])];
+    d.iter().all(|&x| x >= 0.0) || d.iter().all(|&x| x <= 0.0)
+}
+
+/// Rigid contact of a primitive with a static halfspace, one of `a` and `b` (pair order).
+/// The plane's outward normal is its local +Y. Support points of the primitive within
+/// `margin` of the plane become contact points, at most the four deepest (ties by vertex
+/// order); speculative points (positive separation) let the solver close up to the surface.
+pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
+    let flipped = a.shape != Shape::HalfSpace;
+    let (plane, body) = if flipped { (b, a) } else { (a, b) };
+    debug_assert!(plane.shape == Shape::HalfSpace && !body.shape.query_only());
+    let n = plane.orientation.rotate(V::Y);
+    let (support, count) = support_points(body);
     let mut points = [(0, Point::default()); 8];
     let mut len = 0;
     for (k, &(centre, radius)) in support[..count].iter().enumerate() {
