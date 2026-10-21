@@ -72,7 +72,7 @@ pub enum CheckpointError {
     UnsupportedPolicy,
     ResourceLimit,
     /// The bytes come from a build whose floating-solver scalar width differs
-    /// (`f32-physics` versus the default f64 build). Rejected before the version fields.
+    /// from this build's `Real`. Rejected before the version fields.
     ScalarWidthMismatch {
         expected_bits: u32,
         found_bits: u32,

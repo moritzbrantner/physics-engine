@@ -18,6 +18,13 @@ mod tests {
     use serde_json::Value;
 
     #[test]
+    fn ledger_scalar_matches_real() {
+        let data: Value = serde_json::from_str(PRIMITIVE_CAPABILITIES_JSON).unwrap();
+        let expected = format!("f{}", 8 * std::mem::size_of::<super::super::Real>());
+        assert_eq!(data["scalar"], expected.as_str());
+    }
+
+    #[test]
     fn ledger_classification_and_manifold_limits_match_the_canonical_pairs() {
         let data: Value = serde_json::from_str(PRIMITIVE_CAPABILITIES_JSON).unwrap();
         assert_eq!(
