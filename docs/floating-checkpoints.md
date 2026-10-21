@@ -9,7 +9,7 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
-Format 5 adds the configuration's body storage mode (`Config::body_storage`); a checkpoint
+Format 6 adds each body's linear and angular damping after its restitution. Format 5 adds the configuration's body storage mode (`Config::body_storage`); a checkpoint
 holds the live bodies in body order whatever the storage held between steps. Format 4 adds the
 configuration's length unit. Format 3 stores each body's handle, key (or creation serial), the slot generations and the
 next creation serial, so restored ids stay valid and stale ids stay rejected.

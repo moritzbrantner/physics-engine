@@ -633,6 +633,95 @@ fn sphere_sphere(a: &Body, b: &Body, ra: Real, rb: Real, margin: Real) -> Option
     })
 }
 
+/// Rigid contact of a primitive with a static halfspace, one of `a` and `b` (pair order).
+/// The plane's outward normal is its local +Y. Support points of the primitive within
+/// `margin` of the plane become contact points, at most the four deepest (ties by vertex
+/// order); speculative points (positive separation) let the solver close up to the surface.
+pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
+    let flipped = a.shape != Shape::HalfSpace;
+    let (plane, body) = if flipped { (b, a) } else { (a, b) };
+    debug_assert!(plane.shape == Shape::HalfSpace && !body.shape.query_only());
+    let n = plane.orientation.rotate(V::Y);
+    let mut support = [(V::ZERO, 0.0); 8];
+    let count = match body.shape {
+        Shape::Sphere(r) => {
+            support[0] = (body.position, r);
+            1
+        }
+        Shape::Capsule {
+            half_segment,
+            radius,
+        } => {
+            let axis = body.orientation.rotate(V::Y) * half_segment;
+            support[0] = (body.position - axis, radius);
+            support[1] = (body.position + axis, radius);
+            2
+        }
+        Shape::Box(h) => {
+            for (k, slot) in support.iter_mut().enumerate() {
+                let sign = |bit: usize| if k & bit == 0 { -1.0 } else { 1.0 };
+                let local = V(sign(1) * h.0, sign(2) * h.1, sign(4) * h.2);
+                *slot = (body.position + body.orientation.rotate(local), 0.0);
+            }
+            8
+        }
+        // Right prism: the full bottom face plus the top edge over -X.
+        Shape::Wedge(h) => {
+            let local = [
+                V(-h.0, -h.1, -h.2),
+                V(h.0, -h.1, -h.2),
+                V(-h.0, -h.1, h.2),
+                V(h.0, -h.1, h.2),
+                V(-h.0, h.1, -h.2),
+                V(-h.0, h.1, h.2),
+            ];
+            for (slot, local) in support.iter_mut().zip(local) {
+                *slot = (body.position + body.orientation.rotate(local), 0.0);
+            }
+            6
+        }
+        Shape::Heightfield { .. } | Shape::HalfSpace => unreachable!("terrain is query-only"),
+    };
+    let mut points = [(0, Point::default()); 8];
+    let mut len = 0;
+    for (k, &(centre, radius)) in support[..count].iter().enumerate() {
+        let separation = (centre - plane.position).dot(n) - radius;
+        if separation > margin {
+            continue;
+        }
+        let on_body = centre - n * radius;
+        points[len] = (
+            k,
+            Point {
+                ra: on_body - n * separation - plane.position,
+                rb: on_body - body.position,
+                separation,
+            },
+        );
+        len += 1;
+    }
+    if len == 0 {
+        return None;
+    }
+    let points = &mut points[..len];
+    points.sort_unstable_by(|(i, x), (j, y)| x.separation.total_cmp(&y.separation).then(i.cmp(j)));
+    let mut deepest = [Point::default(); 4];
+    for (out, (_, point)) in deepest.iter_mut().zip(points.iter()) {
+        *out = *point;
+    }
+    let manifold = Manifold {
+        normal: n,
+        points: Points::selected(&deepest[..len.min(4)]),
+        swept: false,
+        time: 0.0,
+    };
+    Some(if flipped {
+        flip_manifold(manifold)
+    } else {
+        manifold
+    })
+}
+
 fn flip_manifold(mut manifold: Manifold) -> Manifold {
     manifold.normal = -manifold.normal;
     for point in &mut manifold.points {

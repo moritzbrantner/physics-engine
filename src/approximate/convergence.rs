@@ -441,7 +441,10 @@ fn solve_row<const PREPARED: bool, const READ_CHANGE: bool>(
         c.tangent_impulse[0] - vt[0] * c.tangent_mass[0],
         c.tangent_impulse[1] - vt[1] * c.tangent_mass[1],
     ];
-    let len = tangent[0].hypot(tangent[1]);
+    // hypot of finite impulses, evaluated as glibc's hypotf does: exact f64 squares, one sqrt.
+    let len = (f64::from(tangent[0]) * f64::from(tangent[0])
+        + f64::from(tangent[1]) * f64::from(tangent[1]))
+    .sqrt() as Real;
     let limit = c.friction * c.normal_impulse;
     if len > limit && len > 0.0 {
         tangent[0] *= limit / len;
