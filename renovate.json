@@ -6,8 +6,22 @@
   "packageRules": [
     {
       "description": "rust-kernels crates share types and must move to the same revision together",
-      "matchPackageNames": ["geometry-kernels", "bvh-kernels", "spatial-kernels"],
+      "matchPackageNames": [
+        "geometry-kernels",
+        "bvh-kernels",
+        "spatial-kernels"
+      ],
       "groupName": "rust-kernels"
+    },
+    {
+      "description": "Crates from one git repository must move together; single-crate digest bumps split the graph across revisions.",
+      "matchManagers": [
+        "cargo"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
+      "groupName": "git-pinned crate revisions"
     }
   ]
 }
