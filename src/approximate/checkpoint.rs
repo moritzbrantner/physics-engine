@@ -18,13 +18,13 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 5;
+const FORMAT: u32 = 6;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 8;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
-// Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 30 physical scalars.
-const MIN_BODY_BYTES: usize = 29 + 30 * REAL_BYTES;
+// Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 32 physical scalars.
+const MIN_BODY_BYTES: usize = 29 + 32 * REAL_BYTES;
 const POINT_BYTES: usize = 13 * REAL_BYTES;
 // Conservative envelopes for stored normalization/rotated-normal results. The
 // existing normalization can lose unit length for extreme finite input scales;
@@ -509,7 +509,13 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             unreachable!("terrain and halfspace worlds are not checkpointed")
         }
     }
-    for x in [b.mass, b.friction, b.restitution] {
+    for x in [
+        b.mass,
+        b.friction,
+        b.restitution,
+        b.linear_damping,
+        b.angular_damping,
+    ] {
         scalar(out, x);
     }
     let flags = [
@@ -676,6 +682,8 @@ impl<'a> Reader<'a> {
         body.angular_velocity = angular_velocity;
         body.friction = self.scalar()?;
         body.restitution = self.scalar()?;
+        body.linear_damping = self.scalar()?;
+        body.angular_damping = self.scalar()?;
         let flags = self.u16()?;
         if flags & !0x7f != 0 {
             return Err(CheckpointError::InvalidData);

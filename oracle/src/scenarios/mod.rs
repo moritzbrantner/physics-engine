@@ -5,6 +5,7 @@ pub mod character_move;
 pub mod crowd;
 pub mod mmorpg_tick;
 pub mod platforms;
+pub mod props;
 pub mod push;
 pub mod slopes;
 pub mod stairs;
