@@ -287,12 +287,16 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 21] {
                 r.woken_bodies,
                 u64::from(!case.sleeping() && !case.removed())
             );
+            // Prepared once per step, plus once more in the substep after a wake, which
+            // regenerates; later substeps reuse the step's rows and responses (#378).
             assert_eq!(
                 r.response_preparations,
                 if case.sleeping() {
                     0
+                } else if case.removed() {
+                    1
                 } else {
-                    u64::from(substeps)
+                    u64::from(substeps.min(2))
                 }
             );
             assert_eq!(r.inertia_preparations, r.response_preparations);

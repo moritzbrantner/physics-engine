@@ -26,6 +26,8 @@ fn row(a: usize, b: usize) -> Constraint {
         swept: false,
         response: [true, true],
         spin: false,
+        offset: V::ZERO,
+        restitution: 0.0,
     }
 }
 fn execute(
@@ -410,7 +412,12 @@ fn real_mixed_scene_reduces_work_preserves_difficult_island_and_near_miss() {
 #[test]
 fn sleeping_isolation_support_removal_and_new_projectile_contact_remain_real() {
     let mut w = mixed_world(ConvergenceScope::ContactIslands, 4, true);
-    for _ in 0..300 {
+    // How long the four-level block rocks before it sleeps is chaotic in the substep scheme
+    // (#378 reuses one step's contacts across substeps); this test needs only that it sleeps.
+    for _ in 0..600 {
+        if w.is_quiescent() {
+            break;
+        }
         w.step(1.0 / 60.0).unwrap();
     }
     assert!(w.is_quiescent());

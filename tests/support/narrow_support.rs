@@ -157,11 +157,8 @@ fn run_case(case: Case) -> Measurements {
             advance(&mut observed, DT / 4.0, 1, &mut substep_metrics);
             observe(&observed, case, tail, &mut substep_metrics);
         }
-        assert_eq!(
-            world.bodies().collect::<Vec<_>>(),
-            observed.bodies().collect::<Vec<_>>(),
-            "{case:?} physical-substep parity at tick {tick}"
-        );
+        // Four substeps reuse one step's contacts (#378), so they no longer replay four
+        // single-substep steps bit for bit; both worlds meet the same thresholds below.
         assert_eq!(
             world.checkpoint(context).unwrap().to_bytes(),
             replay.checkpoint(context).unwrap().to_bytes(),

@@ -192,8 +192,24 @@ fn run_case(case: Case, ids: [u64; 2], substeps: u8) -> [Real; 17] {
         if call == 1 {
             let expected_wake = u64::from(matches!(case, Case::ContactWake | Case::RepeatedRoots));
             assert_eq!(report.woken_bodies, expected_wake);
-            assert_eq!(report.response_preparations, u64::from(substeps));
-            assert_eq!(report.inertia_preparations, u64::from(substeps));
+            // Prepared once per step, plus once more in the substep after a wake, which
+            // regenerates; later substeps reuse the step's rows and responses (#378).
+            assert_eq!(
+                report.response_preparations,
+                u64::from(if expected_wake > 0 {
+                    substeps.min(2)
+                } else {
+                    1
+                })
+            );
+            assert_eq!(
+                report.inertia_preparations,
+                u64::from(if expected_wake > 0 {
+                    substeps.min(2)
+                } else {
+                    1
+                })
+            );
             let b = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
             let energy =
                 b.velocity.dot(b.velocity) + 0.4 * b.angular_velocity.dot(b.angular_velocity);
