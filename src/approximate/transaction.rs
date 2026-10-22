@@ -1,6 +1,4 @@
 //! Before-images of touched motion and contact history, never a world snapshot.
-use std::collections::{BTreeMap, btree_map::Entry};
-
 use super::{
     Body, BodyId, BookkeepingStats, CachedPoint, GeometryStats, Order, Quaternion, Real, Report,
     Vector, World,
@@ -111,13 +109,22 @@ pub(super) struct Journal {
     stamps: Vec<u64>,
     motion: Vec<(BodyId, Motion)>,
     removed: Vec<Body>,
-    pairs: BTreeMap<Pair, Option<Vec<CachedPoint>>>,
+    /// Before-images of contact-cache entries, sorted by pair: the range of their points in
+    /// `points`, or `None` for a pair that was absent. Flat storage keeps journaling
+    /// allocation-free once warm (#375).
+    pairs: Vec<(Pair, Option<(u32, u32)>)>,
+    points: Vec<CachedPoint>,
     stats: TransactionStats,
 }
 impl Journal {
     pub fn begin(&mut self, bodies: usize) {
         debug_assert!(!self.active);
-        debug_assert!(self.motion.is_empty() && self.removed.is_empty() && self.pairs.is_empty());
+        debug_assert!(
+            self.motion.is_empty()
+                && self.removed.is_empty()
+                && self.pairs.is_empty()
+                && self.points.is_empty()
+        );
         self.active = true;
         self.stats = TransactionStats::default();
         let capacity = self.stamps.capacity();
@@ -143,12 +150,20 @@ impl Journal {
         if !self.active {
             return;
         }
-        if let Entry::Vacant(entry) = self.pairs.entry(key) {
-            self.stats.journaled_pairs += 1;
-            self.stats.copied_contact_points += points.map_or(0, |p| p.len() as u64);
-            self.stats.vector_growths += u64::from(points.is_some_and(|p| !p.is_empty()));
-            entry.insert(points.cloned());
-        }
+        let Err(at) = self.pairs.binary_search_by_key(&key, |(key, _)| *key) else {
+            return;
+        };
+        self.stats.journaled_pairs += 1;
+        self.stats.copied_contact_points += points.map_or(0, |p| p.len() as u64);
+        let capacities = (self.pairs.capacity(), self.points.capacity());
+        let range = points.map(|points| {
+            let start = self.points.len() as u32;
+            self.points.extend_from_slice(points);
+            (start, self.points.len() as u32)
+        });
+        self.pairs.insert(at, (key, range));
+        self.stats.vector_growths += u64::from(capacities.0 != self.pairs.capacity())
+            + u64::from(capacities.1 != self.points.capacity());
     }
     pub fn remove(&mut self, index: usize, body: Body) {
         debug_assert!(self.active);
@@ -169,18 +184,15 @@ impl Journal {
         (self.stamps.capacity() * size_of::<u64>()
             + self.motion.capacity() * size_of::<(BodyId, Motion)>()
             + self.removed.capacity() * size_of::<Body>()
-            + self
-                .pairs
-                .values()
-                .flatten()
-                .map(|v| v.capacity() * size_of::<CachedPoint>())
-                .sum::<usize>()) as u64
+            + self.pairs.capacity() * size_of::<(Pair, Option<(u32, u32)>)>()
+            + self.points.capacity() * size_of::<CachedPoint>()) as u64
     }
     pub fn commit(&mut self) {
         self.active = false;
         self.motion.clear();
         self.removed.clear();
         self.pairs.clear();
+        self.points.clear();
     }
     pub fn rollback(&mut self, world: &mut World) {
         // Membership first, then before-images by stable identity: retirement
@@ -198,13 +210,17 @@ impl Journal {
                 .expect("journaled body restored before its motion");
             motion.restore(&mut world.bodies[index]);
         }
-        for (key, points) in std::mem::take(&mut self.pairs) {
-            if let Some(points) = points {
-                world.cache.insert(key, points);
+        for &(key, range) in &self.pairs {
+            if let Some((start, end)) = range {
+                world
+                    .cache
+                    .insert(key, self.points[start as usize..end as usize].to_vec());
             } else {
                 world.cache.remove(&key);
             }
         }
+        self.pairs.clear();
+        self.points.clear();
         self.stamps.clear();
         self.active = false;
         // These are disposable accelerators. Invalidating on failure avoids

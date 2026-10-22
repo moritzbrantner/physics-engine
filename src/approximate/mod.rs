@@ -1298,6 +1298,7 @@ impl World {
         let prior_activity = self.bookkeeping.activity.count;
         let result = self.advance_substeps::<PREPARED, CACHED>(dt);
         self.last_transaction = self.transaction.stats(result.is_err());
+
         if let Some(work) = &mut self.failed_work {
             work.transaction = self.last_transaction;
         }
@@ -1320,7 +1321,7 @@ impl World {
             self.reindex_slots();
         }
         self.query_tree
-            .sync(&self.bodies, self.bookkeeping.generation);
+            .sync_step(&self.bodies, self.bookkeeping.generation, dt as Real);
         result
     }
     fn advance_substeps<const PREPARED: bool, const CACHED: bool>(
@@ -1518,6 +1519,14 @@ impl World {
                 let spins = !linear
                     && ((response[0] && prepared[0].spins())
                         || (response[1] && prepared[1].spins()));
+                // Rows read and write angular velocity only when a side can spin in response or
+                // already spins (#375): upright crates on a fixed floor skip the cross products,
+                // whose zero terms would change at most the sign of a zero.
+                let row_spin = !linear
+                    && (prepared[0].spins()
+                        || prepared[1].spins()
+                        || a.angular_velocity != Vector::ZERO
+                        || b.angular_velocity != Vector::ZERO);
                 let t1 = if n.0.abs() < 0.7 {
                     n.cross(Vector::X).unit()
                 } else {
@@ -1525,6 +1534,9 @@ impl World {
                 };
                 let t2 = n.cross(t1);
                 let cached = self.cache.get(&(a.order, b.order));
+                // A cached point warm-starts only within this reach. A half-space has zero
+                // radius, so its contacts never match and skip the search.
+                let warm_reach = 0.1 * a.shape.radius().min(b.shape.radius());
                 let used = &mut self.bookkeeping.used;
                 used.clear();
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
@@ -1645,26 +1657,29 @@ impl World {
                         sep: point.separation,
                         swept: m.swept,
                         response,
-                        spin: !linear,
+                        spin: row_spin,
                     };
                     if self.config.warm_start
+                        && warm_reach > 0.0
                         && point.separation <= self.config.contact_slop
                         && self.last_h > 0.0
                         && let Some(old) = cached
                     {
                         let la = a.orientation.inverse_rotate(c.ra);
                         let lb = b.orientation.inverse_rotate(c.rb);
-                        if let Some((idx, p)) = old
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, p)| !used.contains(idx) && p.normal.dot(n) > 0.99)
-                            .min_by(|(_, x), (_, y)| {
-                                ((x.a - la).dot(x.a - la) + (x.b - lb).dot(x.b - lb)).total_cmp(
-                                    &((y.a - la).dot(y.a - la) + (y.b - lb).dot(y.b - lb)),
-                                )
-                            })
-                            && (p.a - la).length() + (p.b - lb).length()
-                                < 0.1 * a.shape.radius().min(b.shape.radius())
+                        // The nearest unused cached point with this normal; ties keep the first.
+                        let mut nearest: Option<(usize, &CachedPoint, Real)> = None;
+                        for (idx, p) in old.iter().enumerate() {
+                            if used.contains(&idx) || p.normal.dot(n) <= 0.99 {
+                                continue;
+                            }
+                            let d = (p.a - la).dot(p.a - la) + (p.b - lb).dot(p.b - lb);
+                            if nearest.is_none_or(|(_, _, best)| d.total_cmp(&best).is_lt()) {
+                                nearest = Some((idx, p, d));
+                            }
+                        }
+                        if let Some((idx, p, _)) = nearest
+                            && (p.a - la).length() + (p.b - lb).length() < warm_reach
                         {
                             used.push(idx);
                             let scale = (h / narrow_time(self.last_h)).clamp(0.0, 2.0);
@@ -1680,6 +1695,7 @@ impl World {
             }
             self.manifold_scratch = pairs;
             report.contact_points += constraints.len() as u64;
+
             for c in &constraints {
                 self.transaction.body(c.a, &self.bodies[c.a]);
                 self.transaction.body(c.b, &self.bodies[c.b]);
@@ -1762,11 +1778,14 @@ impl World {
                 let b = &self.bodies[run[0].b];
                 let cached = run.iter().any(|c| c.sep <= self.config.contact_slop * 2.0);
                 let mut points = cached.then(|| {
-                    self.transaction
-                        .pair((a.order, b.order), self.cache.get(&(a.order, b.order)));
-                    match self.cache.entry((a.order, b.order)) {
-                        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                    let key = (a.order, b.order);
+                    match self.cache.entry(key) {
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            self.transaction.pair(key, Some(entry.get()));
+                            entry.into_mut()
+                        }
                         std::collections::btree_map::Entry::Vacant(entry) => {
+                            self.transaction.pair(key, None);
                             scratch.graph.dirty = true;
                             entry.insert(Vec::new())
                         }
