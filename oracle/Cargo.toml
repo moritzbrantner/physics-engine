@@ -3,6 +3,7 @@ name = "physics-oracle"
 version = "0.1.0"
 edition = "2024"
 publish = false
+default-run = "oracle"
 description = "Rapier oracle: runs each parity scenario on Rapier and physics-engine"
 
 [lib]
@@ -21,4 +22,9 @@ rapier3d = { version = "=0.36.1", optional = true }
 [[bin]]
 name = "oracle"
 path = "src/main.rs"
+required-features = ["engine", "rapier"]
+
+[[bin]]
+name = "probe"
+path = "src/bin/probe.rs"
 required-features = ["engine", "rapier"]
