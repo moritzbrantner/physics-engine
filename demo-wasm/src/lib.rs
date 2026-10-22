@@ -40,7 +40,10 @@ fn fixed(key: u64, position: Vector, half: Vector) -> Body {
 /// Builds the 32-crate tower in a walled room with a rotation-locked player box.
 pub fn tower(upright_crates: bool) -> Result<World, physics_engine::approximate::Error> {
     let mut world = World::new(Config {
+        // The tower is in scene units of 36-unit crates, tuned with these settings.
         gravity: Vector(0.0, -3_600.0, 0.0),
+        contact_slop: 0.02,
+        sleep_speed: 1.0,
         substeps: 4,
         velocity_iterations: 8,
         fixed_position_iterations: 2,

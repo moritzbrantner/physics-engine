@@ -154,6 +154,8 @@ mod engine {
                 // track Rapier's rest positions within 5% of each slide (#375).
                 substeps: 2,
                 velocity_iterations: 1,
+                // Slop and sleep are the metre defaults (#318).
+                length_unit: 1.0,
                 ..Config::default()
             })
             .unwrap();

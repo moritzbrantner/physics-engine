@@ -100,7 +100,7 @@ impl World {
         let mut elapsed: Real = self.bookkeeping.ccd_start[i];
         let mut position = self.position_at(i, elapsed, h);
         let mut impacts: u8 = 0;
-        let limit = self.config.velocity_iterations.max(1);
+        let limit = self.scene.velocity_iterations.max(1);
         let mut excluded = std::mem::take(&mut self.bookkeeping.ccd_excluded);
         excluded.clear();
         let outcome = loop {
@@ -146,7 +146,7 @@ impl World {
                     a,
                     b,
                     remaining * h,
-                    self.config.contact_slop,
+                    self.scene.contact_slop,
                     &mut report.geometry,
                 )
                 .map_err(|reason| Error::CollisionSearchFailed {
@@ -213,7 +213,7 @@ impl World {
             let arms = [r_self, r_other];
             let k = effective_mass::<PREPARED>(pair, arms, n, [true, true], true, report);
             if k > 1e-14 {
-                let restitution = if approach < -1.0 {
+                let restitution = if approach < -self.restitution_speed {
                     body.restitution.min(partner.restitution)
                 } else {
                     0.0

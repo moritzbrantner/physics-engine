@@ -49,6 +49,8 @@ CCD remaining-time response (#246/#261) advances the algorithm to 8 while retain
 
 Contacts generated once per step and reused across substeps (#378) advance the algorithm to 9 while retaining the wire format; algorithm 8 checkpoints are rejected because multi-substep worlds now continue differently. The empty-world digest changes only for the algorithm header and its checksum.
 
+Dynamics settings in metres scaled by `length_unit` (#318) advance the algorithm to 10 while retaining the wire format. The checkpoint stores the configuration as given; `gravity`, `contact_slop`, `sleep_speed` and the 1 m/s restitution threshold are scaled on restore, so algorithm 9 checkpoints with a non-unit `length_unit` would continue differently and are rejected. The empty-world digest changes for the algorithm header and the new default slop and sleep speed.
+
 All current shapes, materials and fixed geometry are inline. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
 
 ## Continuation inventory

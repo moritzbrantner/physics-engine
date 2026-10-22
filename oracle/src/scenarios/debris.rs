@@ -426,10 +426,10 @@ mod engine {
                 body_storage: crate::engine_storage(),
                 gravity: Vector(0.0, -GRAVITY, 0.0),
                 // Two substeps of four passes stop a landing plank's corners well within
-                // Rapier's sinking; a 5 mm slop keeps the pieces from resting 2 cm deep.
+                // Rapier's sinking. Slop and sleep are the metre defaults (#318).
                 substeps: 2,
                 velocity_iterations: 4,
-                contact_slop: 0.005,
+                length_unit: 1.0,
                 ..Config::default()
             })
             .unwrap();

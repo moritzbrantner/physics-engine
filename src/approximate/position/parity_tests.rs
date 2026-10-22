@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub(super) fn reference(w: &mut World, h: Real, report: &mut PositionReport) -> Result<(), Error> {
-    for _ in 0..w.config.fixed_position_iterations {
+    for _ in 0..w.scene.fixed_position_iterations {
         report.passes += 1;
         let mut changed = false;
         for i in 0..w.bodies.len() {
@@ -41,7 +41,7 @@ pub(super) fn reference(w: &mut World, h: Real, report: &mut PositionReport) -> 
                     .into_iter()
                     .map(|p| -p.separation)
                     .fold(0.0, Real::max);
-                let distance = (depth - w.config.contact_slop).max(0.0);
+                let distance = (depth - w.scene.contact_slop).max(0.0);
                 if distance <= 0.0 {
                     continue;
                 }
@@ -52,7 +52,7 @@ pub(super) fn reference(w: &mut World, h: Real, report: &mut PositionReport) -> 
                 }
                 body.cached_bounds = super::contact::bounds(body);
                 // A body still receiving material correction is not ready to sleep.
-                if distance > w.config.sleep_speed * h {
+                if distance > w.scene.sleep_speed * h {
                     body.quiet_time = 0.0;
                 }
                 report.corrections += 1;
@@ -147,7 +147,7 @@ fn correct_pair(a: &mut World, b: &mut World) -> PositionReport {
 fn world() -> World {
     let mut w = World::new(Config {
         fixed_position_iterations: 2,
-        ..Config::default()
+        ..Config::legacy()
     })
     .unwrap();
     w.add_body(Body::fixture(
@@ -218,7 +218,7 @@ fn prepared_position_matches_original_scan_over_rotated_shapes_and_filters() {
 #[test]
 fn correction_discovers_a_later_collider_entered_during_the_same_pass() {
     let mut w = world();
-    w.config.fixed_position_iterations = 1;
+    w.scene.fixed_position_iterations = 1;
     w.add_body(Body::fixture(
         30,
         Shape::Box(Vector(50.0, 1.0, 50.0)),
