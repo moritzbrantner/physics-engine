@@ -168,6 +168,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::slopes::scenario(),
         scenarios::stairs::scenario(),
         scenarios::platforms::scenario(),
+        scenarios::props::scenario(),
         scenarios::capsule_normals::scenario(),
         scenarios::terrain::scenario(),
         scenarios::terrain::scenario_holes(),

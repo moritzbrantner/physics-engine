@@ -44,6 +44,12 @@ impl PreparedResponse {
         }
     }
 
+    /// Whether impulses also change this body's angular velocity.
+    #[inline]
+    pub fn spins(self) -> bool {
+        self.spin
+    }
+
     #[inline]
     pub fn inertia(self, body: &Body, v: Vector, report: &mut Report) -> Vector {
         if !self.spin {

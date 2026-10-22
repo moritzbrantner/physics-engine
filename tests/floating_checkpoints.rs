@@ -356,8 +356,8 @@ fn body_start() -> usize {
 }
 /// Sphere and box body records: 29 fixed bytes (id, key tag, key or serial, ...) plus 30 or
 /// 32 physical scalars. Physical fields start 17 bytes into a record.
-const SPHERE_BODY_BYTES: usize = 29 + 30 * W;
-const BOX_BODY_BYTES: usize = 29 + 32 * W;
+const SPHERE_BODY_BYTES: usize = 29 + 32 * W;
+const BOX_BODY_BYTES: usize = 29 + 34 * W;
 
 #[test]
 fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_world() {
@@ -377,7 +377,7 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         );
     }
     for (offset, value, error) in [
-        (8, 6u32, CheckpointError::UnsupportedFormat(6)),
+        (8, 5u32, CheckpointError::UnsupportedFormat(5)),
         (8, 4u32, CheckpointError::UnsupportedFormat(4)),
         (8, 3u32, CheckpointError::UnsupportedFormat(3)),
         (8, 2u32, CheckpointError::UnsupportedFormat(2)),
@@ -440,8 +440,10 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
         (b + 18 + 14 * W, -1.0),
         (b + 18 + 15 * W, 11.0),
         (b + 18 + 16 * W, 1.1),
-        (b + 29 + 17 * W, -0.1),
-        (b + 29 + 18 * W, Real::NAN),
+        (b + 18 + 17 * W, -1.0),
+        (b + 18 + 18 * W, Real::NAN),
+        (b + 29 + 19 * W, -0.1),
+        (b + 29 + 20 * W, Real::NAN),
         (c + 3 * W + 3, -0.1),
     ] {
         let mut bad = saved.clone();
@@ -455,8 +457,8 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
     }
     for (offset, value) in [
         (b + 17 + 13 * W, 99),
-        (b + 19 + 17 * W, 128),
-        (b + 28 + 17 * W, 2),
+        (b + 19 + 19 * W, 128),
+        (b + 28 + 19 * W, 2),
         (c + 6 * W + 4, 2),
         (c + 6 * W + 5, 3),
     ] {
@@ -587,7 +589,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_five_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
+fn format_six_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -602,7 +604,7 @@ fn format_five_algorithm_eight_f32_empty_world_wire_fixture_is_stable() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "d3d1a6a1a575be11f1c05e7f540c6836eadf9750fdd6d21bb9ea81d351d0d8a0"
+        "99ab08633d1d19270eef5f13fd4c6c225569f5ebbbde9747484cfa68b2a4fa34"
     );
 }
 
