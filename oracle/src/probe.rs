@@ -237,4 +237,21 @@ mod tests {
         );
         assert!(close(r, e, 2e-3), "rapier {r:?}, engine {e:?}");
     }
+
+    #[test]
+    fn a_shallow_landing_ends_at_the_offset() {
+        // physics-engine#349: walking at 2 m/s while falling the last 1.3 mm onto the floor
+        // (gap 3.8 mm, approach cosine 0.08) stops `offset` above it, as Rapier does.
+        let geometry = Geometry {
+            floor: true,
+            ..Geometry::default()
+        };
+        let c = Controller::default();
+        let (at, desired) = ([0.0, 0.8038, 0.0], [0.0333, -0.00267, 0.0]);
+        let (r, e) = (
+            rapier(&geometry, c, at, desired),
+            engine(&geometry, c, at, desired),
+        );
+        assert!(close(r, e, 1e-5), "rapier {r:?}, engine {e:?}");
+    }
 }
