@@ -241,7 +241,7 @@ pub struct Body {
     /// Linear-support contacts disable friction. See docs/contact-materials.md.
     pub friction: Real,
     /// Finite coefficient in [0, 1], default zero. Contacts use the smaller coefficient.
-    /// Restitution requires closing speed > 1 scene unit/s, separation <= contact_slop
+    /// Restitution requires closing speed > 1 m/s (scaled by `length_unit`), separation <= contact_slop
     /// and no retained pair history; speculative positive separation does not bounce.
     pub restitution: Real,
     /// Finite, nonnegative, default zero. After forces, each substep scales the linear
@@ -422,6 +422,7 @@ pub enum PositionCorrection {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
+    /// m/s², default (0, −9.81, 0) as in Rapier; scaled by `length_unit`.
     pub gravity: Vector,
     pub substeps: u8,
     pub velocity_iterations: u8,
@@ -429,9 +430,11 @@ pub struct Config {
     /// Zero disables correction; fixed and admitted dynamic pairs share each selected pass.
     pub fixed_position_iterations: u8,
     pub position_correction: PositionCorrection,
-    /// Scene-space length, default 0.02. Chosen explicitly for the legacy 36-unit crates.
+    /// Metres, default 0.005 (Rapier's allowed linear error); scaled by `length_unit`.
     pub contact_slop: Real,
+    /// m/s, default 0.05 (Rapier's sleep threshold); scaled by `length_unit`.
     pub sleep_speed: Real,
+    /// Seconds below `sleep_speed` before a body sleeps, default 0.5 as in Rapier.
     pub sleep_seconds: Real,
     pub warm_start: bool,
     /// None retains the fixed-pass reference. Some permits a checked early exit.
@@ -439,9 +442,10 @@ pub struct Config {
     /// Contact-island-local stopping, or the original whole-world convergence reference.
     /// With `convergence: None`, both scopes use the unchanged fixed-pass solver.
     pub convergence_scope: ConvergenceScope,
-    /// Scene units per metre (100 for a centimetre game). Built-in tolerances and defaults
-    /// that are lengths are defined in metres and scaled by it, e.g.
-    /// [`World::character_settings`]; values the game passes explicitly stay in scene units.
+    /// Scene units per metre (100 for a centimetre game), as Rapier's `length_unit`. The
+    /// dynamics fields above (`gravity`, `contact_slop`, `sleep_speed`) are in metres and
+    /// scaled by it once in [`World::new`], as are built-in tolerances and character defaults
+    /// ([`World::character_settings`]); body and shape values stay in scene units.
     pub length_unit: Real,
     /// Body storage layout, fixed for the world's lifetime.
     pub body_storage: BodyStorage,
@@ -449,13 +453,13 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            gravity: Vector(0.0, -3600.0, 0.0),
+            gravity: Vector(0.0, -9.81, 0.0),
             substeps: 4,
             velocity_iterations: 8,
             fixed_position_iterations: 0,
             position_correction: PositionCorrection::FixedColliders,
-            contact_slop: 0.02,
-            sleep_speed: 1.0,
+            contact_slop: 0.005,
+            sleep_speed: 0.05,
             sleep_seconds: 0.5,
             warm_start: true,
             convergence: Some(Convergence::default()),
@@ -467,6 +471,18 @@ impl Default for Config {
             } else {
                 BodyStorage::Ordered
             },
+        }
+    }
+}
+#[cfg(test)]
+impl Config {
+    /// The pre-#318 scene-unit dynamics settings that legacy solver tests were tuned with.
+    pub(crate) fn legacy() -> Self {
+        Self {
+            gravity: Vector(0.0, -3600.0, 0.0),
+            contact_slop: 0.02,
+            sleep_speed: 1.0,
+            ..Self::default()
         }
     }
 }
@@ -594,7 +610,12 @@ struct Slot {
 
 #[derive(Clone, Debug)]
 pub struct World {
+    /// The configuration in scene units: metre-valued fields scaled by `length_unit`.
+    scene: Config,
+    /// The configuration as given, returned by [`World::config`] and checkpointed.
     config: Config,
+    /// Closing speed above which restitution applies: 1 m/s in scene units.
+    restitution_speed: Real,
     bodies: Vec<Body>,
     cache: BTreeMap<(Order, Order), Vec<CachedPoint>>,
     /// Prior substep length. Time composition and its checkpoint value stay f64.
@@ -651,8 +672,24 @@ impl World {
         {
             return Err(Error::InvalidInput);
         }
+        let settings = config;
+        let unit = config.length_unit;
+        let config = Config {
+            gravity: config.gravity * unit,
+            contact_slop: config.contact_slop * unit,
+            sleep_speed: config.sleep_speed * unit,
+            ..config
+        };
+        if !config.gravity.finite()
+            || !config.contact_slop.is_normal()
+            || !config.sleep_speed.is_normal()
+        {
+            return Err(Error::InvalidInput);
+        }
         Ok(Self {
-            config,
+            scene: config,
+            config: settings,
+            restitution_speed: unit,
             bodies: Vec::new(),
             cache: BTreeMap::new(),
             last_h: 0.0,
@@ -683,7 +720,7 @@ impl World {
     }
     /// Every live body, in body order (keyed bodies by key, then keyless ones by creation).
     pub fn bodies(&self) -> impl Iterator<Item = &Body> {
-        let indexed = self.config.body_storage == BodyStorage::Indexed;
+        let indexed = self.scene.body_storage == BodyStorage::Indexed;
         let ordered = (!indexed).then(|| self.bodies.iter().filter(|b| b.id != BodyId::NONE));
         let index = indexed.then(|| {
             self.order_index
@@ -805,6 +842,7 @@ impl World {
     pub fn is_quiescent(&self) -> bool {
         self.bookkeeping.activity.count == 0
     }
+    /// The configuration as given to [`World::new`], metre-valued fields unscaled.
     pub fn config(&self) -> Config {
         self.config
     }
@@ -846,7 +884,7 @@ impl World {
         // Only ever called on settled storage (step-end retirement, rollback, restore).
         debug_assert_eq!(self.tombstones, 0);
         self.sorted_len = self.bodies.len();
-        if self.config.body_storage == BodyStorage::Indexed {
+        if self.scene.body_storage == BodyStorage::Indexed {
             self.order_index = self.bodies.iter().map(|b| (b.order, b.id)).collect();
         }
     }
@@ -910,7 +948,7 @@ impl World {
             self.halfspaces.push(id);
         }
         let len = self.bodies.len();
-        let at = match self.config.body_storage {
+        let at = match self.scene.body_storage {
             BodyStorage::Ordered => {
                 let i = self.bodies.partition_point(|b| b.order < order);
                 // A tombstone next to the insertion point keeps the order sorted when reused.
@@ -1041,7 +1079,7 @@ impl World {
         let removed = self.bodies[i].clone();
         self.bodies[i].id = BodyId::NONE;
         self.tombstones += 1;
-        if self.config.body_storage == BodyStorage::Indexed {
+        if self.scene.body_storage == BodyStorage::Indexed {
             self.order_index.remove(&order);
         }
         let slot = id.slot();
@@ -1262,7 +1300,7 @@ impl World {
             return false;
         };
         let id = self.bodies[i].order;
-        let up = (-self.config.gravity).unit();
+        let up = (-self.scene.gravity).unit();
         self.cache.iter().any(|(&(a, b), p)| {
             p.iter().any(|p| {
                 (b == id && p.normal.dot(up) > 0.5) || (a == id && p.normal.dot(up) < -0.5)
@@ -1300,7 +1338,7 @@ impl World {
                 self.bookkeeping.position.retained_bytes();
             return Ok(self.last_report.clone());
         }
-        if substep_length(dt, self.config.substeps) == 0.0 {
+        if substep_length(dt, self.scene.substeps) == 0.0 {
             return Err(Error::InvalidInput);
         }
         let mut report = Report::default();
@@ -1348,13 +1386,13 @@ impl World {
         dt: Scalar,
     ) -> Result<Report, Error> {
         let mut report = Report::default();
-        let h = substep_length(dt, self.config.substeps);
+        let h = substep_length(dt, self.scene.substeps);
         // Contacts are generated once per step and their constraints reused by later substeps,
         // as Rapier does (#378). A substep regenerates only after something the reused rows
         // cannot represent: a sweep or CCD advance, a wake, a sleep or a retirement.
         let mut reuse = false;
-        for substep in 0..self.config.substeps {
-            let lookahead = h * Real::from(self.config.substeps - 1 - substep);
+        for substep in 0..self.scene.substeps {
+            let lookahead = h * Real::from(self.scene.substeps - 1 - substep);
             report.substeps += 1;
             self.bookkeeping.ccd.clear();
             self.bookkeeping.ccd_offsets.clear();
@@ -1418,7 +1456,7 @@ impl World {
                 let mut roots = std::mem::take(&mut self.bookkeeping.roots);
                 roots.clear();
                 reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
-                let up = (-self.config.gravity).unit();
+                let up = (-self.scene.gravity).unit();
                 roots.extend(
                     pairs
                         .iter()
@@ -1448,7 +1486,7 @@ impl World {
                                     relative != Vector::ZERO && relative.dot(m.normal) <= 0.0
                                 });
                             let disruptive = m.swept
-                                || approach > self.config.sleep_speed
+                                || approach > self.scene.sleep_speed
                                 || ((a.external || b.external) && approach > 0.0)
                                 || departing_support
                                 || driven_contact_motion;
@@ -1525,7 +1563,7 @@ impl World {
                         let tumbles = |b: &Body| {
                             !matches!(b.shape, Shape::Sphere(_))
                                 && b.angular_velocity.length() * b.shape.radius() * lookahead
-                                    > self.config.contact_slop
+                                    > self.scene.contact_slop
                         };
                         m.swept || tumbles(&self.bodies[i]) || tumbles(&self.bodies[j])
                     });
@@ -1665,7 +1703,8 @@ impl World {
                             restitution,
                             rel.dot(n),
                             h,
-                            self.config.contact_slop,
+                            self.scene.contact_slop,
+                            self.restitution_speed,
                         );
                         let mut c = Constraint {
                             a: i,
@@ -1707,7 +1746,7 @@ impl World {
                                 || (contact::fixed_box_interval(a, b)
                                     && point.separation
                                         + (b.velocity - a.velocity).dot(n) * h * m.time
-                                        > self.config.contact_slop)
+                                        > self.scene.contact_slop)
                             {
                                 0.0
                             } else {
@@ -1722,9 +1761,9 @@ impl World {
                             offset: b.position - a.position,
                             restitution,
                         };
-                        if self.config.warm_start
+                        if self.scene.warm_start
                             && warm_reach > 0.0
-                            && point.separation <= self.config.contact_slop
+                            && point.separation <= self.scene.contact_slop
                             && self.last_h > 0.0
                             && let Some(old) = cached
                         {
@@ -1772,15 +1811,15 @@ impl World {
                     &mut report,
                 );
             }
-            match self.config.convergence {
+            match self.scene.convergence {
                 Some(tolerances)
-                    if self.config.convergence_scope == ConvergenceScope::ContactIslands =>
+                    if self.scene.convergence_scope == ConvergenceScope::ContactIslands =>
                 {
                     islands::solve::<PREPARED>(
                         &mut self.bodies,
                         &self.responses,
                         &mut constraints,
-                        self.config.velocity_iterations,
+                        self.scene.velocity_iterations,
                         tolerances,
                         &mut self.island_scratch,
                         &mut report,
@@ -1790,7 +1829,7 @@ impl World {
                     &mut self.bodies,
                     &self.responses,
                     &mut constraints,
-                    self.config.velocity_iterations,
+                    self.scene.velocity_iterations,
                     tolerances,
                     &mut report,
                 ),
@@ -1798,7 +1837,7 @@ impl World {
                     &mut self.bodies,
                     &self.responses,
                     &mut constraints,
-                    self.config.velocity_iterations,
+                    self.scene.velocity_iterations,
                     Convergence::default(),
                     &mut report,
                 ),
@@ -1820,7 +1859,7 @@ impl World {
             // Cache entries and a pair's contiguous constraint run are both in pair order: walk
             // them together, so neither side searches the other (#375). New pairs are inserted
             // after the walk.
-            let up = (-self.config.gravity).unit();
+            let up = (-self.scene.gravity).unit();
             debug_assert!(
                 constraints
                     .is_sorted_by_key(|c| { (self.bodies[c.a].order, self.bodies[c.b].order) })
@@ -1867,7 +1906,7 @@ impl World {
                 let a = &self.bodies[run[0].a];
                 let b = &self.bodies[run[0].b];
                 let key = (a.order, b.order);
-                let cached = run.iter().any(|c| c.sep <= self.config.contact_slop * 2.0);
+                let cached = run.iter().any(|c| c.sep <= self.scene.contact_slop * 2.0);
                 let mut new = None;
                 let mut points = match entry {
                     _ if !cached => None,
@@ -1893,7 +1932,7 @@ impl World {
                             report.swept_contacts += 1;
                         }
                     }
-                    if c.sep <= self.config.contact_slop * 2.0
+                    if c.sep <= self.scene.contact_slop * 2.0
                         && let Some(points) = points.as_deref_mut()
                     {
                         points.push(CachedPoint {
@@ -1961,7 +2000,7 @@ impl World {
                     && scratch.supported[i]
                     && correction_quiet
                     && b.velocity.length() + b.angular_velocity.length() * b.shape.radius()
-                        < self.config.sleep_speed
+                        < self.scene.sleep_speed
                 {
                     b.quiet_time += h;
                 } else {
@@ -2034,7 +2073,7 @@ impl World {
     /// rolling sphere's support stays exact. The accumulated impulses stay on the rows and
     /// warm-start this substep.
     fn advance_constraints(&self, constraints: &mut [Constraint], h: Real, report: &mut Report) {
-        let slop = self.config.contact_slop;
+        let slop = self.scene.contact_slop;
         for run in constraints.chunk_by_mut(|x, y| x.a == y.a && x.b == y.b) {
             // A pair stops bouncing once it has a cached contact, as a regenerated row would.
             let cached = run.iter().any(|c| c.sep <= slop * 2.0);
@@ -2056,7 +2095,14 @@ impl World {
                 } else {
                     0.0
                 };
-                c.bias = contact_bias(c.sep, c.restitution, approach, h, slop);
+                c.bias = contact_bias(
+                    c.sep,
+                    c.restitution,
+                    approach,
+                    h,
+                    slop,
+                    self.restitution_speed,
+                );
                 report.max_penetration = report.max_penetration.max((-c.sep).max(0.0));
             }
         }
@@ -2070,7 +2116,7 @@ impl World {
         let b = &mut self.bodies[index];
         self.transaction.body(index, b);
         let prepared = self.responses[index].select::<PREPARED>(b, report);
-        b.velocity += (self.config.gravity + b.force / b.mass) * h;
+        b.velocity += (self.scene.gravity + b.force / b.mass) * h;
         b.angular_velocity += prepared.inertia(b, b.torque, report) * h;
         if b.linear_damping > 0.0 {
             b.velocity = b.velocity * (1.0 / (1.0 + h * b.linear_damping));
@@ -2102,7 +2148,7 @@ impl World {
                 .collect(root, &self.bodies, &s.graph, &mut s.work);
             if s.traversal.island.iter().all(|&i| {
                 let b = &self.bodies[i];
-                b.sleeping || (b.sleep_allowed && b.quiet_time >= self.config.sleep_seconds)
+                b.sleeping || (b.sleep_allowed && b.quiet_time >= self.scene.sleep_seconds)
             }) {
                 for &i in &s.traversal.island {
                     let b = &mut self.bodies[i];
@@ -2164,11 +2210,11 @@ impl World {
             };
             let angular = b.angular_velocity.length() * b.shape.radius() * interval;
             // Gravity and forces keep accelerating the body through the later substeps.
-            let drift = step_drift(b, self.config.gravity, gain).abs();
+            let drift = step_drift(b, self.scene.gravity, gain).abs();
             let pad = Vector(angular, angular, angular)
                 + drift
                 + Vector(1.0, 1.0, 1.0)
-                    * (self.config.contact_slop
+                    * (self.scene.contact_slop
                         // Endpoint addition can round at the displacement's scale even
                         // when the original pose and collider are small.
                         + 8.0 * Real::EPSILON * delta.abs().max_component());
@@ -2245,13 +2291,13 @@ impl World {
                     }
                     report.narrow_tests += 1;
                     let approach = moving.velocity.length() * interval
-                        + step_drift(moving, self.config.gravity, gain).length()
+                        + step_drift(moving, self.scene.gravity, gain).length()
                         + moving.angular_velocity.length() * moving.shape.radius() * interval;
                     contact::heightfield_box(
                         a,
                         b,
                         &self.terrains[terrain.0 as usize].prepared,
-                        self.config.contact_slop + approach,
+                        self.scene.contact_slop + approach,
                         interval,
                         |m| push(out, (i, j, m), &mut s.work),
                     );
@@ -2279,7 +2325,7 @@ impl World {
                 let fast = driven_contact_candidate
                     || a.ccd
                     || b.ccd
-                    || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.config.contact_slop)
+                    || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.scene.contact_slop)
                     || travel
                         > 0.5
                             * a.shape
@@ -2291,7 +2337,7 @@ impl World {
                 let margin = if driven_wake_candidate {
                     0.0
                 } else {
-                    self.config.contact_slop
+                    self.scene.contact_slop
                 };
                 // A separated pair slow enough to skip the sweep is admitted speculatively
                 // when it can close before the step ends; a fast pair keeps this substep's
@@ -2303,8 +2349,8 @@ impl World {
                         + a.angular_velocity.length() * a.shape.radius()
                         + b.angular_velocity.length() * b.shape.radius())
                         * lookahead
-                        + (step_drift(b, self.config.gravity, gain)
-                            - step_drift(a, self.config.gravity, gain))
+                        + (step_drift(b, self.scene.gravity, gain)
+                            - step_drift(a, self.scene.gravity, gain))
                         .length()
                 };
                 report.narrow_tests += 1;
@@ -2387,7 +2433,7 @@ impl World {
                 }
                 report.narrow_tests += 1;
                 let approach = (-b.velocity.dot(n)).max(0.0) * interval
-                    + (-step_drift(b, self.config.gravity, gain).dot(n)).max(0.0)
+                    + (-step_drift(b, self.scene.gravity, gain).dot(n)).max(0.0)
                     + b.angular_velocity.length() * b.shape.radius() * interval;
                 let (i, j) = if a.order < b.order {
                     (plane, k)
@@ -2397,7 +2443,7 @@ impl World {
                 if let Some(m) = contact::halfspace(
                     &self.bodies[i],
                     &self.bodies[j],
-                    self.config.contact_slop + approach,
+                    self.scene.contact_slop + approach,
                     interval,
                 ) {
                     push(out, (i, j, m), &mut self.bookkeeping.work);
@@ -2472,11 +2518,18 @@ fn pair_order(
 /// to its surface. Restitution (`restitution` is the pair's coefficient, `approach` the
 /// relative normal velocity) and softness beyond the slop keep the hard response; within the
 /// slop the positional target is zero, so a support keeps its load-bearing impulse.
-fn contact_bias(sep: Real, restitution: Real, approach: Real, h: Real, slop: Real) -> Real {
+fn contact_bias(
+    sep: Real,
+    restitution: Real,
+    approach: Real,
+    h: Real,
+    slop: Real,
+    restitution_speed: Real,
+) -> Real {
     if sep > 0.0 {
         return -sep / h;
     }
-    let bounce = if approach < -1.0 && sep <= slop {
+    let bounce = if approach < -restitution_speed && sep <= slop {
         -restitution * approach
     } else {
         0.0

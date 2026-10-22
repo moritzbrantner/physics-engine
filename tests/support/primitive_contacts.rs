@@ -31,6 +31,9 @@ fn fixture(
 ) -> World {
     let mut w = World::new(Config {
         gravity: V::ZERO,
+        // The legacy scene-unit tolerances this matrix was tuned with.
+        contact_slop: 0.02,
+        sleep_speed: 1.0,
         substeps,
         convergence: None,
         ..Config::default()

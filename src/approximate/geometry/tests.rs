@@ -259,7 +259,7 @@ fn rotation_shape_margin_and_signed_zero_are_dependency_changes() {
 
 #[test]
 fn cached_negative_contact_does_not_suppress_changed_velocity_or_dt_ccd() {
-    let mut w = World::new(Config::default()).unwrap();
+    let mut w = World::new(Config::legacy()).unwrap();
     w.add_body(Body::fixture(
         1,
         Shape::Box(Vector(1.0, 1.0, 1.0)),

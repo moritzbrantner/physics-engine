@@ -198,7 +198,7 @@ fn check_bounds(w: &mut World, h: Real) {
             // using this formula comparison as geometric correctness evidence.
             let pad = Vector(angular, angular, angular)
                 + Vector(1.0, 1.0, 1.0)
-                    * (w.config.contact_slop + 8.0 * Real::EPSILON * delta.abs().max_component());
+                    * (w.scene.contact_slop + 8.0 * Real::EPSILON * delta.abs().max_component());
             (i, lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
         })
         .collect::<Vec<_>>();

@@ -20,9 +20,9 @@ allowance of `NARROWING_ULPS` (16) `Real::EPSILON`, scaled by the pose magnitude
 
 | Quantity | f32 envelope |
 | --- | --- |
-| position component | \|x\| ≤ 16384 units (ulp ≤ 0.002 ≈ default `contact_slop` 0.02 / 10) |
+| position component | \|x\| ≤ 16384 units (ulp ≤ 0.002 ≈ legacy `contact_slop` 0.02 / 10) |
 | linear speed | ≤ 4000 units/s with default substeps |
-| gravity | default `(0, -3600, 0)` |
+| gravity | legacy scene-unit `(0, -3600, 0)`; the default is `(0, -9.81, 0)` m/s² × `length_unit` |
 | shapes | dimensions ≥ 0.25 units |
 
 `tests/f32_precision_envelope.rs` holds the adverse controls at the edge of the envelope.

@@ -17,8 +17,10 @@ the oracle harness (D4). The per-capability parity status is tracked in
   `World::character_settings()` returns the character defaults (2.5 mm offset, 5 cm snap) in
   scene units; values the game passes explicitly stay in scene units. Query and controller
   tolerances are relative (to magnitudes or to the character offset), so a scene scaled by the
-  unit moves identically. The rigid-body dynamics defaults (`gravity`, `contact_slop`,
-  `sleep_speed`) are still the historical scene-unit values.
+  unit moves identically. The rigid-body dynamics settings are in metres and scaled by it once
+  in `World::new`, with Rapier's defaults: `gravity` (0, −9.81, 0) m/s², `contact_slop`
+  0.005 m, `sleep_speed` 0.05 m/s for `sleep_seconds` 0.5 s; the restitution threshold is
+  1 m/s. `World::config()` returns the configuration as given, in metres.
 
 - Positions and collider dimensions are scene distance units; box dimensions are **half extents**.
 - `step(dt)` takes seconds (finite, `0..=0.1`). Elapsed time is kept in `f64`.

@@ -3,6 +3,9 @@ use physics_engine::approximate::{Body, Config, Quaternion, Shape, Vector as V, 
 fn world(g: V) -> World {
     World::new(Config {
         gravity: g,
+        // The legacy scene-unit tolerances of the 36-unit crate scenes.
+        contact_slop: 0.02,
+        sleep_speed: 1.0,
         ..Config::default()
     })
     .unwrap()

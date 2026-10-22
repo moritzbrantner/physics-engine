@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 };
 const FORMAT: u32 = 6;
 // Bump when continuation semantics change, even if the byte layout does not.
-const ALGORITHM: u32 = 9;
+const ALGORITHM: u32 = 10;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
 // Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 32 physical scalars.
@@ -124,7 +124,7 @@ impl World {
         validate(self.config, self.elapsed, self.last_h, &bodies, &self.cache)?;
         Ok(Checkpoint {
             context,
-            config: self.config,
+            config: self.config(),
             elapsed: self.elapsed,
             last_h: self.last_h,
             bodies,
