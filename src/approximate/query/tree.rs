@@ -10,6 +10,8 @@ use spatial_kernels::{Aabb, Body as Leaf};
 
 /// Fat margin of the tree leaves, in scene units: small moves update a leaf in place.
 const FAT_MARGIN: f32 = 0.1;
+/// Steps of motion a reinserted moving leaf is fattened for.
+const PREDICTED_STEPS: Real = 4.0;
 
 #[derive(Clone, Debug)]
 pub(in crate::approximate) struct QueryTree {
@@ -115,6 +117,28 @@ impl QueryTree {
         }
         self.tree.rebuild();
         self.generation = Some(generation);
+    }
+
+    /// The end of a `dt` step: like [`Self::sync`], but a moving leaf that must be reinserted
+    /// is also fattened along its velocity for the next [`PREDICTED_STEPS`] steps, so steadily
+    /// moving bodies stop being reinserted every step (#375). Only query candidates change.
+    pub fn sync_step(&mut self, bodies: &[Body], generation: u64, dt: Real) {
+        if !self.current(generation) {
+            return self.sync(bodies, generation);
+        }
+        let ahead = dt * PREDICTED_STEPS;
+        for body in bodies.iter().filter(|b| b.id != BodyId::NONE) {
+            if !is_static(body) {
+                let leaf = self.leaf(body);
+                let d = body.velocity * ahead;
+                let displacement = [d.0, d.1, d.2];
+                if displacement.iter().all(|d| d.is_finite()) {
+                    self.tree.update_predicted(leaf, displacement);
+                } else {
+                    self.tree.update(leaf);
+                }
+            }
+        }
     }
 
     /// `body` moved: refit its leaf.

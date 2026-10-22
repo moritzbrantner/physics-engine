@@ -377,6 +377,19 @@ impl Body {
             && self.position.abs().max_component() < 1e12
             && self.velocity.abs().max_component() < 1e12
     }
+    /// [`Self::valid`] for a valid body whose motion changed: only the motion terms can fail.
+    fn motion_valid(&self) -> bool {
+        self.position.finite()
+            && self.velocity.finite()
+            && self.angular_velocity.finite()
+            && self.angular_velocity.abs().max_component() < 1e9
+            && self.orientation.finite()
+            && (!self.rotation_locked || self.angular_velocity == Vector::ZERO)
+            && (self.mass > 0.0
+                || (self.velocity == Vector::ZERO && self.angular_velocity == Vector::ZERO))
+            && self.position.abs().max_component() < 1e12
+            && self.velocity.abs().max_component() < 1e12
+    }
 }
 /// How a world stores its bodies; fixed when the world is created. Both modes give identical
 /// results for the same calls (every traversal and tie follows body order); they differ only
@@ -1320,7 +1333,7 @@ impl World {
             self.reindex_slots();
         }
         self.query_tree
-            .sync(&self.bodies, self.bookkeeping.generation);
+            .sync_step(&self.bodies, self.bookkeeping.generation, dt as Real);
         result
     }
     fn advance_substeps<const PREPARED: bool, const CACHED: bool>(
@@ -1386,6 +1399,8 @@ impl World {
             roots.extend(
                 pairs
                     .iter()
+                    // Only a sleeping side can be a root.
+                    .filter(|(i, j, _)| self.bodies[*i].sleeping || self.bodies[*j].sleeping)
                     .flat_map(|(i, j, m)| {
                         let a = &self.bodies[*i];
                         let b = &self.bodies[*j];
@@ -1482,6 +1497,8 @@ impl World {
                 pairs.iter().map(|(_, _, m)| m.points.len()).sum(),
                 &mut self.bookkeeping.work,
             );
+            // Pairs and cache entries are both in pair order: a cursor finds each pair's history.
+            let mut history = self.cache.iter().peekable();
             for (i, j, m) in pairs.drain(..) {
                 // Remaining-time advancement already resolved every contact of an advanced CCD
                 // body along its actual path; start-pose constraints would act on its response
@@ -1518,13 +1535,28 @@ impl World {
                 let spins = !linear
                     && ((response[0] && prepared[0].spins())
                         || (response[1] && prepared[1].spins()));
+                // Rows read and write angular velocity only when a side can spin in response or
+                // already spins (#375): upright crates on a fixed floor skip the cross products,
+                // whose zero terms would change at most the sign of a zero.
+                let row_spin = !linear
+                    && (prepared[0].spins()
+                        || prepared[1].spins()
+                        || a.angular_velocity != Vector::ZERO
+                        || b.angular_velocity != Vector::ZERO);
                 let t1 = if n.0.abs() < 0.7 {
                     n.cross(Vector::X).unit()
                 } else {
                     n.cross(Vector::Y).unit()
                 };
                 let t2 = n.cross(t1);
-                let cached = self.cache.get(&(a.order, b.order));
+                let key = (a.order, b.order);
+                while history.next_if(|(k, _)| **k < key).is_some() {}
+                let cached = history
+                    .next_if(|(k, _)| **k == key)
+                    .map(|(_, points)| points);
+                // A cached point warm-starts only within this reach. A half-space has zero
+                // radius, so its contacts never match and skip the search.
+                let warm_reach = 0.1 * a.shape.radius().min(b.shape.radius());
                 let used = &mut self.bookkeeping.used;
                 used.clear();
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
@@ -1645,26 +1677,29 @@ impl World {
                         sep: point.separation,
                         swept: m.swept,
                         response,
-                        spin: !linear,
+                        spin: row_spin,
                     };
                     if self.config.warm_start
+                        && warm_reach > 0.0
                         && point.separation <= self.config.contact_slop
                         && self.last_h > 0.0
                         && let Some(old) = cached
                     {
                         let la = a.orientation.inverse_rotate(c.ra);
                         let lb = b.orientation.inverse_rotate(c.rb);
-                        if let Some((idx, p)) = old
-                            .iter()
-                            .enumerate()
-                            .filter(|(idx, p)| !used.contains(idx) && p.normal.dot(n) > 0.99)
-                            .min_by(|(_, x), (_, y)| {
-                                ((x.a - la).dot(x.a - la) + (x.b - lb).dot(x.b - lb)).total_cmp(
-                                    &((y.a - la).dot(y.a - la) + (y.b - lb).dot(y.b - lb)),
-                                )
-                            })
-                            && (p.a - la).length() + (p.b - lb).length()
-                                < 0.1 * a.shape.radius().min(b.shape.radius())
+                        // The nearest unused cached point with this normal; ties keep the first.
+                        let mut nearest: Option<(usize, &CachedPoint, Real)> = None;
+                        for (idx, p) in old.iter().enumerate() {
+                            if used.contains(&idx) || p.normal.dot(n) <= 0.99 {
+                                continue;
+                            }
+                            let d = (p.a - la).dot(p.a - la) + (p.b - lb).dot(p.b - lb);
+                            if nearest.is_none_or(|(_, _, best)| d.total_cmp(&best).is_lt()) {
+                                nearest = Some((idx, p, d));
+                            }
+                        }
+                        if let Some((idx, p, _)) = nearest
+                            && (p.a - la).length() + (p.b - lb).length() < warm_reach
                         {
                             used.push(idx);
                             let scale = (h / narrow_time(self.last_h)).clamp(0.0, 2.0);
@@ -1738,40 +1773,70 @@ impl World {
             }));
             // Reuse point allocations when the pair survives. Warm starting has already read the
             // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
-            for (&(a, b), points) in &mut self.cache {
-                let key = (a, b);
-                let a = self
-                    .bodies
-                    .binary_search_by_key(&a, |b| b.order)
-                    .expect("live contact");
-                let b = self
-                    .bodies
-                    .binary_search_by_key(&b, |b| b.order)
-                    .expect("live contact");
-                if !scratch.supported[a] || !scratch.supported[b] {
-                    if !points.is_empty() {
-                        self.transaction.pair(key, Some(points));
-                    }
-                    points.clear();
-                }
-            }
+            // Cache entries and a pair's contiguous constraint run are both in pair order: walk
+            // them together, so neither side searches the other (#375). New pairs are inserted
+            // after the walk.
             let up = (-self.config.gravity).unit();
-            // A pair's constraints are contiguous: journal and look up its cached points once.
-            for run in constraints.chunk_by(|x, y| x.a == y.a && x.b == y.b) {
+            debug_assert!(
+                constraints
+                    .is_sorted_by_key(|c| { (self.bodies[c.a].order, self.bodies[c.b].order) })
+            );
+            let mut runs = constraints
+                .chunk_by(|x, y| x.a == y.a && x.b == y.b)
+                .peekable();
+            let mut entries = self.cache.iter_mut().peekable();
+            let mut fresh = Vec::new();
+            loop {
+                let run_key = runs
+                    .peek()
+                    .map(|run| (self.bodies[run[0].a].order, self.bodies[run[0].b].order));
+                let entry_key = entries.peek().map(|(key, _)| **key);
+                let (run, entry) = match (run_key, entry_key) {
+                    (None, None) => break,
+                    (Some(r), Some(e)) if r == e => (runs.next(), entries.next()),
+                    (Some(r), e) if e.is_none_or(|e| r < e) => (runs.next(), None),
+                    _ => (None, entries.next()),
+                };
+                let entry = entry.map(|(&key, points)| {
+                    let (a, b) = match run {
+                        Some(run) => (run[0].a, run[0].b),
+                        None => (
+                            self.bodies
+                                .binary_search_by_key(&key.0, |b| b.order)
+                                .expect("live contact"),
+                            self.bodies
+                                .binary_search_by_key(&key.1, |b| b.order)
+                                .expect("live contact"),
+                        ),
+                    };
+                    if !scratch.supported[a] || !scratch.supported[b] {
+                        if !points.is_empty() {
+                            self.transaction.pair(key, Some(points));
+                        }
+                        points.clear();
+                    }
+                    points
+                });
+                let Some(run) = run else {
+                    continue;
+                };
                 let a = &self.bodies[run[0].a];
                 let b = &self.bodies[run[0].b];
+                let key = (a.order, b.order);
                 let cached = run.iter().any(|c| c.sep <= self.config.contact_slop * 2.0);
-                let mut points = cached.then(|| {
-                    self.transaction
-                        .pair((a.order, b.order), self.cache.get(&(a.order, b.order)));
-                    match self.cache.entry((a.order, b.order)) {
-                        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                        std::collections::btree_map::Entry::Vacant(entry) => {
-                            scratch.graph.dirty = true;
-                            entry.insert(Vec::new())
-                        }
+                let mut new = None;
+                let mut points = match entry {
+                    _ if !cached => None,
+                    Some(points) => {
+                        self.transaction.pair(key, Some(points));
+                        Some(points)
                     }
-                });
+                    None => {
+                        self.transaction.pair(key, None);
+                        scratch.graph.dirty = true;
+                        Some(new.insert(Vec::new()))
+                    }
+                };
                 for c in run {
                     if c.normal_impulse > 0.0 {
                         if a.retire_on_impact {
@@ -1802,7 +1867,11 @@ impl World {
                         }
                     }
                 }
+                if let Some(points) = new {
+                    fresh.push((key, points));
+                }
             }
+            self.cache.extend(fresh);
             self.cache.retain(|&key, points| {
                 if points.is_empty() {
                     self.transaction.pair(key, Some(points));
@@ -1831,7 +1900,8 @@ impl World {
                 if !b.rotation_locked {
                     b.orientation = b.orientation.integrate(spin, h);
                 }
-                if !b.valid() {
+                debug_assert_eq!(b.motion_valid(), b.valid());
+                if !b.motion_valid() {
                     let error = Error::NonFiniteState(b.id);
                     self.failed_work = Some(FailedStepWork::capture(
                         &report,
@@ -2130,6 +2200,11 @@ impl World {
         if CACHED {
             self.geometry.finish(&mut report.geometry);
         }
+        // Pairs are solved in pair order. Sort the sweep's few pairs here; each halfspace's
+        // pairs below already come in pair order.
+        let sorted = self.storage_sorted();
+        out.sort_unstable_by(pair_order(&self.bodies, sorted));
+        let swept_pairs = out.len();
         // Halfspaces are unbounded and stay out of the sweep: each one is tested against every
         // awake dynamic body. The approach over the substep is admitted as a speculative margin,
         // so a fast body closes exactly to the plane. Heightfields still take no rigid contacts.
@@ -2165,6 +2240,19 @@ impl World {
                 }
             }
         }
+        // A floor added before every dynamic body precedes all of their pairs: then the
+        // halfspace pairs only rotate to the front.
+        let order = pair_order(&self.bodies, sorted);
+        let (sweep, planes) = out.split_at(swept_pairs);
+        if planes.is_sorted_by(|x, y| order(x, y).is_le())
+            && (sweep.is_empty()
+                || planes.is_empty()
+                || order(&planes[planes.len() - 1], &sweep[0]).is_lt())
+        {
+            out.rotate_left(swept_pairs);
+        } else {
+            out.sort_unstable_by(order);
+        }
         let s = &mut self.bookkeeping;
         // A fast projectile's original trajectory must not activate bodies behind its first hit.
         // Keep all equal-time contacts, but defer later speculative contacts to the next substep,
@@ -2195,8 +2283,25 @@ impl World {
             }
             keep
         });
-        out.sort_unstable_by_key(|(i, j, _)| (self.bodies[*i].order, self.bodies[*j].order));
         Ok(())
+    }
+}
+/// Pair order. Settled storage (`sorted`) is in body order, so storage positions compare
+/// pairs as their body orders do.
+fn pair_order(
+    bodies: &[Body],
+    sorted: bool,
+) -> impl Fn(
+    &(usize, usize, contact::Manifold),
+    &(usize, usize, contact::Manifold),
+) -> std::cmp::Ordering
++ '_ {
+    move |&(a, b, _), &(c, d, _)| {
+        if sorted {
+            (a, b).cmp(&(c, d))
+        } else {
+            (bodies[a].order, bodies[b].order).cmp(&(bodies[c].order, bodies[d].order))
+        }
     }
 }
 #[inline]

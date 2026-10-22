@@ -104,11 +104,11 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
                 ));
             }
         }
-        // At rest before each push, where Rapier's crate rests. One semi-implicit step per tick
-        // under-travels Rapier's internal substeps by at most v·h/2 per push.
-        for (end, pushed) in [
-            (PUSH_BACK_TICK as usize - 1, LAUNCH),
-            (TICKS as usize - 1, LAUNCH - PUSH_BACK),
+        // At rest before each push, within 5% of Rapier's slide of where Rapier's crate rests
+        // (#375: two substeps track Rapier's internal substeps).
+        for (from, end) in [
+            (0, PUSH_BACK_TICK as usize - 1),
+            (PUSH_BACK_TICK as usize - 1, TICKS as usize - 1),
         ] {
             let (p, q) = (at(engine, end, l), at(engine, end - 5, l));
             if (p[0] - q[0]).abs() > 1e-4 {
@@ -117,7 +117,8 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
                 ));
             }
             let r = at(rapier, end, l);
-            if (p[0] - r[0]).abs() > pushed * DT / 2.0 + 0.01 {
+            let slide = (r[0] - at(rapier, from, l)[0]).abs();
+            if (p[0] - r[0]).abs() > 0.05 * slide + 0.01 {
                 return Err(format!(
                     "lane {l} rests at {:.4} m at tick {end}, Rapier at {:.4} m",
                     p[0], r[0]
@@ -149,10 +150,10 @@ mod engine {
             let mut world = World::new(Config {
                 body_storage: crate::engine_storage(),
                 gravity: Vector(0.0, -GRAVITY, 0.0),
-                // The adapter steps once per tick, as MMORPG does. Two passes settle these
-                // contacts; the invariants and the v·h/2 rest bound check that.
-                substeps: 1,
-                velocity_iterations: 2,
+                // The adapter steps once per tick, as MMORPG does: two substeps of one pass
+                // track Rapier's rest positions within 5% of each slide (#375).
+                substeps: 2,
+                velocity_iterations: 1,
                 ..Config::default()
             })
             .unwrap();

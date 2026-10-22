@@ -658,10 +658,19 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
             2
         }
         Shape::Box(h) => {
+            // An identity rotation returns every corner exactly: its components are nonzero, so
+            // the rotation's zero terms cannot change them (#375: upright crates).
+            let identity =
+                body.orientation.0 == 0.0 && body.orientation.1 == 0.0 && body.orientation.2 == 0.0;
             for (k, slot) in support.iter_mut().enumerate() {
                 let sign = |bit: usize| if k & bit == 0 { -1.0 } else { 1.0 };
                 let local = V(sign(1) * h.0, sign(2) * h.1, sign(4) * h.2);
-                *slot = (body.position + body.orientation.rotate(local), 0.0);
+                let offset = if identity {
+                    local
+                } else {
+                    body.orientation.rotate(local)
+                };
+                *slot = (body.position + offset, 0.0);
             }
             8
         }
@@ -704,7 +713,21 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
         return None;
     }
     let points = &mut points[..len];
-    points.sort_unstable_by(|(i, x), (j, y)| x.separation.total_cmp(&y.separation).then(i.cmp(j)));
+    // Deepest first, ties by support index: points are already in index order, so a stable
+    // insertion sort of these few points by separation alone gives that order.
+    for x in 1..len {
+        let mut y = x;
+        while y > 0
+            && points[y - 1]
+                .1
+                .separation
+                .total_cmp(&points[y].1.separation)
+                .is_gt()
+        {
+            points.swap(y - 1, y);
+            y -= 1;
+        }
+    }
     let mut deepest = [Point::default(); 4];
     for (out, (_, point)) in deepest.iter_mut().zip(points.iter()) {
         *out = *point;
