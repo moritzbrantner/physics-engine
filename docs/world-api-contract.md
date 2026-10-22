@@ -113,8 +113,13 @@ diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and cas
 character moves work against it. Box and wedge overlaps (door probes) are tested against the
 triangles by the separating-axis test: whether they overlap is exact, and the reported depth and
 normal come from the deepest triangle alone. The terrain is a surface, so a box wholly beneath
-it does not touch it. Box and wedge casts against terrain return an error. Terrain takes no part
-in rigid-body contacts, and worlds with terrain are not checkpointed. `add_body` rejects
+it does not touch it. Box and wedge casts against terrain return an error. Dynamic boxes take
+rigid contacts with terrain automatically, one manifold per triangle under the box as in
+Rapier: the triangle's upward normal is the contact normal, the box face most opposed to it is
+clipped to the triangle's prism (so ridges and peaks under a face give points), and up to four
+points within the contact slop plus the step's approach are kept, ranked by their separation
+after the body's current motion. Other dynamic shapes take no terrain contacts. Worlds with
+terrain are not checkpointed. `add_body` rejects
 heightfield shapes.
 
 ## Halfspaces
@@ -125,7 +130,8 @@ static only (mass 0, not external). Every ray and shape query tests it with a cl
 wherever the query is; a box or wedge meets it at its deepest point. Characters stand,
 walk and snap on it. Dynamic boxes, wedges, spheres and capsules rest and slide on it: each
 substep tests every halfspace against every awake dynamic body (O(halfspaces · bodies)), keeps
-up to the four deepest support points within the contact slop plus the substep's approach,
+up to four support points within the contact slop plus the substep's approach (the deepest
+after the body's current motion, so a tumbling corner about to swing in is kept),
 and lets the solver close speculative points exactly to the plane, so fast bodies do not pass
 through it. Worlds with a halfspace are not checkpointed.
 
