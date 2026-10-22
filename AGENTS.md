@@ -43,6 +43,7 @@ cargo test --locked --features checkpoints,indexed-storage   # every suite on Bo
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
 cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle: invariants + native perf gate
 cargo run --release --locked --manifest-path oracle/Cargo.toml -- --only stairs --no-timing --dump /tmp/traces   # debugging; --list, --keep-going
+cargo run --release --locked --manifest-path oracle/Cargo.toml --bin probe -- --floor --box 2,1,0,0.25,1,2 --at 0,0.8025,0 --desired 2,0,0   # one move on both engines
 node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes
 cargo test --release --features work-counters --test work_complexity   # Big-O work contracts (self-checking)
 bun <coding-tooling>/src/router.ts performance work --root .            # the same, judged by coding-tooling as in CI
@@ -55,6 +56,7 @@ CI (`.github/workflows/validate.yml`) runs these on plain Ubuntu with the `rust-
 
 - **One task = one branch = one PR**, targeting `main`. A task is one eligible issue. Deliver its scope, its oracle scenario and the docs it changes on that branch.
 - **Stay inside the task.** Note unrelated findings in one line of the PR description.
+- **Check behaviour against Rapier first.** Before filing or fixing a character-movement gap, reproduce it with the single-move probe (`oracle/src/probe.rs`, `--bin probe`): what Rapier does from the same pose is the answer, not a whole-scenario trace.
 - **Rapier oracle.** Every parity PR adds its scenario to the shared Rapier harness; CI checks behaviour invariants and fails when Physics Engine is slower than Rapier (native 1.05×, WASM 1.10×, against the consumer pattern and bare Rapier). Do not add other ratchets, evidence packaging or attestation.
 - **Complexity contracts.** A change that alters an operation's work class updates `.performance/contract.json` in the same PR with the reason in the metric's `notes`; new operations add their world family to `tests/work_complexity.rs`.
 - **Experimental API.** Pick the cleanest API for the consumers; no deprecation windows, shims or back-compat layers. Update `docs/world-api-contract.md` and `docs/consumer-capabilities.md` when the API or a capability's status changes.
