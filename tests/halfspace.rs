@@ -202,3 +202,128 @@ fn halfspace_rejects_misuse_and_removes_cleanly() {
         .is_none_or(|h| h.body != plane)
     );
 }
+
+fn falling_world() -> World {
+    World::new(Config {
+        gravity: V(0.0, -9.0, 0.0),
+        ..Config::default()
+    })
+    .unwrap()
+}
+
+fn crate_body(position: V) -> Body {
+    let mut body = Body::new(Shape::Box(V(0.35, 0.35, 0.35)), position, 176.4);
+    body.rotation_locked = true;
+    body.friction = 0.8;
+    body
+}
+
+#[test]
+fn dynamic_box_rests_on_the_plane_in_either_pair_order() {
+    for plane_first in [true, false] {
+        let mut w = falling_world();
+        let plane = Body::new(Shape::HalfSpace, V(0.0, 0.0, 0.0), 0.0);
+        if plane_first {
+            w.add_body(plane.clone()).unwrap();
+        }
+        let id = w.add_body(crate_body(V(1.0, 0.5, -2.0))).unwrap();
+        if !plane_first {
+            w.add_body(plane.clone()).unwrap();
+        }
+        for _ in 0..90 {
+            w.step(1.0 / 30.0).unwrap();
+        }
+        let b = w.body(id).unwrap();
+        assert!((b.position.1 - 0.35).abs() < 0.01, "{:?}", b.position);
+        assert!(b.velocity.length() < 0.05, "{:?}", b.velocity);
+        assert!((b.position.0 - 1.0).abs() < 1e-4 && (b.position.2 + 2.0).abs() < 1e-4);
+    }
+}
+
+#[test]
+fn fast_falling_box_and_rotating_box_stop_at_the_plane() {
+    let mut w = falling_world();
+    w.add_body(Body::new(Shape::HalfSpace, V(0.0, -1.0, 0.0), 0.0))
+        .unwrap();
+    let mut fast = crate_body(V(0.0, 20.0, 0.0));
+    fast.velocity = V(0.0, -400.0, 0.0);
+    let fast = w.add_body(fast).unwrap();
+    let mut tumbling = Body::new(Shape::Box(V(0.2, 0.1, 0.3)), V(3.0, 2.0, 0.0), 10.0);
+    tumbling.orientation = physics_engine::approximate::Quaternion(0.3, 0.1, 0.2, 0.9).normalized();
+    tumbling.angular_velocity = V(2.0, 0.0, 3.0);
+    let tumbling = w.add_body(tumbling).unwrap();
+    for _ in 0..240 {
+        w.step(1.0 / 30.0).unwrap();
+        for id in [fast, tumbling] {
+            // Never below the plane by more than a few millimetres at any tick.
+            let b = w.body(id).unwrap();
+            let lowest = b.position.1 - b.shape.radius();
+            assert!(
+                lowest > -1.0 - b.shape.radius(),
+                "{id:?} tunnelled: {:?}",
+                b.position
+            );
+        }
+    }
+    let b = w.body(fast).unwrap();
+    assert!((b.position.1 + 0.65).abs() < 0.01, "{:?}", b.position);
+    let t = w.body(tumbling).unwrap();
+    assert!(
+        t.position.1 > -1.0 && t.position.1 < -0.6,
+        "{:?}",
+        t.position
+    );
+    assert!(t.velocity.length() < 0.1, "{:?}", t.velocity);
+}
+
+#[test]
+fn sliding_crate_stops_by_friction_and_damping() {
+    let mut w = falling_world();
+    w.add_body(Body::new(Shape::HalfSpace, V::ZERO, 0.0))
+        .unwrap();
+    let mut body = crate_body(V(0.0, 0.35, 0.0));
+    body.linear_damping = 0.2;
+    body.velocity = V(5.91, 0.0, 0.0);
+    let id = w.add_body(body).unwrap();
+    for _ in 0..90 {
+        w.step(1.0 / 30.0).unwrap();
+    }
+    let b = w.body(id).unwrap();
+    // Coulomb friction 0.8 · 9 m/s² alone stops it after 2.43 m; damping shortens that.
+    assert!(
+        b.position.0 > 2.0 && b.position.0 < 2.45,
+        "{:?}",
+        b.position
+    );
+    assert!(b.velocity.length() < 0.01, "{:?}", b.velocity);
+    assert!((b.position.1 - 0.35).abs() < 0.01 && b.position.2.abs() < 1e-4);
+}
+
+#[test]
+fn damping_scales_velocity_per_substep() {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        ..Config::default()
+    })
+    .unwrap();
+    let mut body = Body::new(Shape::Sphere(0.5), V::ZERO, 1.0);
+    body.velocity = V(10.0, 0.0, 0.0);
+    body.angular_velocity = V(0.0, 4.0, 0.0);
+    body.linear_damping = 1.0;
+    body.angular_damping = 2.0;
+    let id = w.add_body(body).unwrap();
+    for _ in 0..10 {
+        w.step(0.1).unwrap();
+    }
+    // Over one second the product of 1 / (1 + h·c) lies between 1 / (1 + c) and e^-c.
+    let b = w.body(id).unwrap();
+    assert!(
+        b.velocity.0 > 10.0 * (-1.0f32).exp() && b.velocity.0 < 5.0,
+        "{:?}",
+        b.velocity
+    );
+    assert!(b.angular_velocity.1 > 4.0 * (-2.0f32).exp() && b.angular_velocity.1 < 4.0 / 3.0);
+    let mut bad = Body::new(Shape::Sphere(0.5), V::ZERO, 1.0);
+    bad.linear_damping = -1.0;
+    assert!(w.add_body(bad).is_err());
+}

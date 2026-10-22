@@ -120,8 +120,9 @@ impl Shape {
     pub const fn wedge(half_extents: Vector) -> Self {
         Self::Wedge(half_extents)
     }
-    /// Terrain and halfspaces answer queries and character moves but take no part in rigid
-    /// contacts; they are static only.
+    /// Terrain and halfspaces are static only and stay out of the bounds structures. They
+    /// answer queries and character moves; halfspaces also give dynamic bodies rigid contacts,
+    /// heightfields do not.
     pub fn query_only(self) -> bool {
         matches!(self, Self::Heightfield { .. } | Self::HalfSpace)
     }
@@ -242,6 +243,11 @@ pub struct Body {
     /// Restitution requires closing speed > 1 scene unit/s, separation <= contact_slop
     /// and no retained pair history; speculative positive separation does not bounce.
     pub restitution: Real,
+    /// Finite, nonnegative, default zero. After forces, each substep scales the linear
+    /// velocity by `1 / (1 + h * linear_damping)`, as Rapier does.
+    pub linear_damping: Real,
+    /// Finite, nonnegative, default zero. The same scaling for the angular velocity.
+    pub angular_damping: Real,
     pub rotation_locked: bool,
     pub layers: CollisionLayers3d,
     pub external: bool,
@@ -286,6 +292,8 @@ impl Body {
             angular_velocity: Vector::ZERO,
             friction: 0.6,
             restitution: 0.0,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
             rotation_locked: false,
             layers: CollisionLayers3d::ALL,
             external: false,
@@ -361,6 +369,8 @@ impl Body {
             && (0.0..=10.0).contains(&self.friction)
             && self.restitution.is_finite()
             && (0.0..=1.0).contains(&self.restitution)
+            && (0.0..1e6).contains(&self.linear_damping)
+            && (0.0..1e6).contains(&self.angular_damping)
             && (!self.rotation_locked || self.angular_velocity == Vector::ZERO)
             && (self.mass > 0.0
                 || (self.velocity == Vector::ZERO && self.angular_velocity == Vector::ZERO))
@@ -1497,12 +1507,24 @@ impl World {
                 {
                     response[0] = false;
                 }
+                // A side without prepared inverse mass takes no impulse; skipping it changes no value.
+                let prepared = [
+                    self.responses[i].select::<PREPARED>(a, &mut report),
+                    self.responses[j].select::<PREPARED>(b, &mut report),
+                ];
+                response[0] &= prepared[0].inverse_mass > 0.0;
+                response[1] &= prepared[1].inverse_mass > 0.0;
+                // Without rotational response every direction has the same effective mass.
+                let spins = !linear
+                    && ((response[0] && prepared[0].spins())
+                        || (response[1] && prepared[1].spins()));
                 let t1 = if n.0.abs() < 0.7 {
                     n.cross(Vector::X).unit()
                 } else {
                     n.cross(Vector::Y).unit()
                 };
                 let t2 = n.cross(t1);
+                let cached = self.cache.get(&(a.order, b.order));
                 let used = &mut self.bookkeeping.used;
                 used.clear();
                 reserve(used, m.points.len(), &mut self.bookkeeping.work);
@@ -1550,7 +1572,7 @@ impl World {
                         - contact_velocity(a, point.ra, !linear);
                     let restitution = if rel.dot(n) < -1.0
                         && point.separation <= self.config.contact_slop
-                        && !self.cache.contains_key(&(a.order, b.order))
+                        && cached.is_none()
                     {
                         -a.restitution.min(b.restitution) * rel.dot(n)
                     } else {
@@ -1582,26 +1604,30 @@ impl World {
                         t1,
                         t2,
                         normal_mass: 1.0 / k,
-                        tangent_mass: [
-                            effective_mass::<PREPARED>(
-                                response_bodies,
-                                arms,
-                                t1,
-                                response,
-                                !linear,
-                                &mut report,
-                            )
-                            .recip(),
-                            effective_mass::<PREPARED>(
-                                response_bodies,
-                                arms,
-                                t2,
-                                response,
-                                !linear,
-                                &mut report,
-                            )
-                            .recip(),
-                        ],
+                        tangent_mass: if spins {
+                            [
+                                effective_mass::<PREPARED>(
+                                    response_bodies,
+                                    arms,
+                                    t1,
+                                    response,
+                                    !linear,
+                                    &mut report,
+                                )
+                                .recip(),
+                                effective_mass::<PREPARED>(
+                                    response_bodies,
+                                    arms,
+                                    t2,
+                                    response,
+                                    !linear,
+                                    &mut report,
+                                )
+                                .recip(),
+                            ]
+                        } else {
+                            [k.recip(); 2]
+                        },
                         bias,
                         // Additional corners can limit approach while still separated at the
                         // admitted contact time. They have no frictional load yet.
@@ -1624,7 +1650,7 @@ impl World {
                     if self.config.warm_start
                         && point.separation <= self.config.contact_slop
                         && self.last_h > 0.0
-                        && let Some(old) = self.cache.get(&(a.order, b.order))
+                        && let Some(old) = cached
                     {
                         let la = a.orientation.inverse_rotate(c.ra);
                         let lb = b.orientation.inverse_rotate(c.rb);
@@ -1729,42 +1755,51 @@ impl World {
                     points.clear();
                 }
             }
-            for c in &constraints {
-                let a = &self.bodies[c.a];
-                let b = &self.bodies[c.b];
-                if c.normal_impulse > 0.0 {
-                    if a.retire_on_impact {
-                        push(&mut scratch.retired, a.order, &mut scratch.work);
-                    }
-                    if b.retire_on_impact {
-                        push(&mut scratch.retired, b.order, &mut scratch.work);
-                    }
-                    if c.swept {
-                        report.swept_contacts += 1;
-                    }
-                }
-                if c.sep <= self.config.contact_slop * 2.0 {
+            let up = (-self.config.gravity).unit();
+            // A pair's constraints are contiguous: journal and look up its cached points once.
+            for run in constraints.chunk_by(|x, y| x.a == y.a && x.b == y.b) {
+                let a = &self.bodies[run[0].a];
+                let b = &self.bodies[run[0].b];
+                let cached = run.iter().any(|c| c.sep <= self.config.contact_slop * 2.0);
+                let mut points = cached.then(|| {
                     self.transaction
                         .pair((a.order, b.order), self.cache.get(&(a.order, b.order)));
-                    let points = match self.cache.entry((a.order, b.order)) {
+                    match self.cache.entry((a.order, b.order)) {
                         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             scratch.graph.dirty = true;
                             entry.insert(Vec::new())
                         }
-                    };
-                    points.push(CachedPoint {
-                        a: a.orientation.inverse_rotate(c.ra),
-                        b: b.orientation.inverse_rotate(c.rb),
-                        normal: c.n,
-                        impulse: c.normal_impulse,
-                        tangent: c.t1 * c.tangent_impulse[0] + c.t2 * c.tangent_impulse[1],
-                    });
-                    if c.n.dot((-self.config.gravity).unit()) > 0.5 {
-                        push(&mut scratch.support_edges, (c.a, c.b), &mut scratch.work);
                     }
-                    if c.n.dot((-self.config.gravity).unit()) < -0.5 {
-                        push(&mut scratch.support_edges, (c.b, c.a), &mut scratch.work);
+                });
+                for c in run {
+                    if c.normal_impulse > 0.0 {
+                        if a.retire_on_impact {
+                            push(&mut scratch.retired, a.order, &mut scratch.work);
+                        }
+                        if b.retire_on_impact {
+                            push(&mut scratch.retired, b.order, &mut scratch.work);
+                        }
+                        if c.swept {
+                            report.swept_contacts += 1;
+                        }
+                    }
+                    if c.sep <= self.config.contact_slop * 2.0
+                        && let Some(points) = points.as_deref_mut()
+                    {
+                        points.push(CachedPoint {
+                            a: a.orientation.inverse_rotate(c.ra),
+                            b: b.orientation.inverse_rotate(c.rb),
+                            normal: c.n,
+                            impulse: c.normal_impulse,
+                            tangent: c.t1 * c.tangent_impulse[0] + c.t2 * c.tangent_impulse[1],
+                        });
+                        if c.n.dot(up) > 0.5 {
+                            push(&mut scratch.support_edges, (c.a, c.b), &mut scratch.work);
+                        }
+                        if c.n.dot(up) < -0.5 {
+                            push(&mut scratch.support_edges, (c.b, c.a), &mut scratch.work);
+                        }
                     }
                 }
             }
@@ -1885,6 +1920,12 @@ impl World {
         let prepared = self.responses[index].select::<PREPARED>(b, report);
         b.velocity += (self.config.gravity + b.force / b.mass) * h;
         b.angular_velocity += prepared.inertia(b, b.torque, report) * h;
+        if b.linear_damping > 0.0 {
+            b.velocity = b.velocity * (1.0 / (1.0 + h * b.linear_damping));
+        }
+        if b.angular_damping > 0.0 {
+            b.angular_velocity = b.angular_velocity * (1.0 / (1.0 + h * b.angular_damping));
+        }
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
         report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
@@ -2021,7 +2062,8 @@ impl World {
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
                 if a.sensor
                     || b.sensor
-                    // Terrain answers queries and character moves; it has no rigid contacts.
+                    // Terrain answers queries and character moves; halfspace contacts with
+                    // dynamic bodies are generated after this sweep.
                     || a.shape.query_only()
                     || b.shape.query_only()
                     || !a.layers.collides_with(b.layers)
@@ -2088,6 +2130,42 @@ impl World {
         if CACHED {
             self.geometry.finish(&mut report.geometry);
         }
+        // Halfspaces are unbounded and stay out of the sweep: each one is tested against every
+        // awake dynamic body. The approach over the substep is admitted as a speculative margin,
+        // so a fast body closes exactly to the plane. Heightfields still take no rigid contacts.
+        for p in 0..self.halfspaces.len() {
+            let Ok(plane) = self.index(self.halfspaces[p]) else {
+                continue;
+            };
+            let n = self.bodies[plane].orientation.rotate(Vector::Y);
+            for k in 0..self.bodies.len() {
+                let (a, b) = (&self.bodies[plane], &self.bodies[k]);
+                if b.id == BodyId::NONE
+                    || b.inverse_mass() == 0.0
+                    || b.sensor
+                    || b.shape.query_only()
+                    || !a.layers.collides_with(b.layers)
+                {
+                    continue;
+                }
+                report.narrow_tests += 1;
+                let approach = (-b.velocity.dot(n)).max(0.0) * h
+                    + b.angular_velocity.length() * b.shape.radius() * h;
+                let (i, j) = if a.order < b.order {
+                    (plane, k)
+                } else {
+                    (k, plane)
+                };
+                if let Some(m) = contact::halfspace(
+                    &self.bodies[i],
+                    &self.bodies[j],
+                    self.config.contact_slop + approach,
+                ) {
+                    push(out, (i, j, m), &mut self.bookkeeping.work);
+                }
+            }
+        }
+        let s = &mut self.bookkeeping;
         // A fast projectile's original trajectory must not activate bodies behind its first hit.
         // Keep all equal-time contacts, but defer later speculative contacts to the next substep,
         // where the already-updated velocity becomes authoritative. No event-restart loop is added.
@@ -2121,6 +2199,7 @@ impl World {
         Ok(())
     }
 }
+#[inline]
 fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
     b.velocity
         + if spin {
@@ -2129,6 +2208,7 @@ fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
             Vector::ZERO
         }
 }
+#[inline]
 fn effective_mass<const PREPARED: bool>(
     bodies: [(&Body, &PreparedResponse); 2],
     arms: [Vector; 2],
@@ -2149,6 +2229,7 @@ fn effective_mass<const PREPARED: bool>(
     }
     k
 }
+#[inline]
 fn apply<const PREPARED: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],

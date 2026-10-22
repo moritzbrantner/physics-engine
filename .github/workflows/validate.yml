@@ -10,7 +10,33 @@ permissions:
   contents: read
 
 jobs:
+  docs-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.classify.outputs.docs-only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Fail-closed Markdown-only PR classification
+        id: classify
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "docs-only=false" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" != "pull_request" ]]; then exit 0; fi
+          mapfile -d '' changed < <(git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA")
+          if (( ${#changed[@]} == 0 )); then exit 0; fi
+          for file in "${changed[@]}"; do
+            if [[ "$file" != *.md ]]; then exit 0; fi
+          done
+          echo "docs-only=true" >> "$GITHUB_OUTPUT"
+
   validate:
+    needs: docs-scope
+    if: needs.docs-scope.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -75,6 +101,8 @@ jobs:
         run: node scripts/oracle-wasm.mjs
 
   build-pages:
+    needs: docs-scope
+    if: needs.docs-scope.outputs.docs-only != 'true'
     name: Build or reuse validated Pages artifact
     permissions:
       actions: read
@@ -92,10 +120,11 @@ jobs:
   merge-ready:
     name: merge-ready
     if: ${{ always() }}
-    needs: [validate, build-pages]
+    needs: [docs-scope, validate, build-pages]
     runs-on: ubuntu-latest
     steps:
       - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@b0f25f241d76af2584dfc9e375084ff5c5cb97da
         with:
           needs: ${{ toJSON(needs) }}
-          required: '["validate", "build-pages"]'
+          required: '["docs-scope", "validate", "build-pages"]'
+          allow-skipped: ${{ needs.docs-scope.outputs.docs-only == 'true' && '["validate", "build-pages"]' || '[]' }}

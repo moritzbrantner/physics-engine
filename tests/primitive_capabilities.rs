@@ -45,7 +45,7 @@ pub fn advertised_shape_queries_and_mass_cross_the_public_api() {
     let data = ledger();
     assert_eq!(data["schemaVersion"], 1);
     assert_eq!(data["world"], "approximate::World");
-    assert_eq!(data["scalar"], "f64");
+    assert_eq!(data["scalar"], "f32");
     assert_eq!(data["worldApiStatus"], "limited/experimental");
     let capabilities = &data["capabilities"];
     for (key, value) in [

@@ -24,6 +24,10 @@ the oracle harness (D4). The per-capability parity status is tracked in
 - `step(dt)` takes seconds (finite, `0..=0.1`). Elapsed time is kept in `f64`.
 - `gravity` is acceleration in distance units per second squared.
 - `Body::mass` scales response and force/impulse integration.
+- `Body::linear_damping` and `Body::angular_damping` (finite, nonnegative, default 0) are per
+  second: after forces, each substep scales the velocity by `1 / (1 + h · damping)`, as Rapier
+  does. Contacts combine friction with the larger coefficient and restitution with the smaller;
+  Rapier averages both, so an adapter matching Rapier sets the combined values on its bodies.
 - `add_force(id, F)` accumulates force for the next step (`F / mass` per substep) and is cleared
   after a successful step.
 - `apply_impulse(id, J, point)` changes linear velocity by `J / mass` before the first substep;
@@ -119,8 +123,11 @@ heightfield shapes.
 normal is the body's local +Y, so the identity orientation gives an infinite floor. It is
 static only (mass 0, not external). Every ray and shape query tests it with a closed form,
 wherever the query is; a box or wedge meets it at its deepest point. Characters stand,
-walk and snap on it. Like terrain, it takes no part in rigid-body contacts, and worlds with
-a halfspace are not checkpointed.
+walk and snap on it. Dynamic boxes, wedges, spheres and capsules rest and slide on it: each
+substep tests every halfspace against every awake dynamic body (O(halfspaces · bodies)), keeps
+up to the four deepest support points within the contact slop plus the substep's approach,
+and lets the solver close speculative points exactly to the plane, so fast bodies do not pass
+through it. Worlds with a halfspace are not checkpointed.
 
 ## Characters
 

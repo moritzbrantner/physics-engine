@@ -1,0 +1,70 @@
+name: Downstream canary
+
+# Advisory, never a required check (#360): runs the games' physics A/B tests (Rapier vs
+# physics-engine through their real physics integrations) against this repository's main, so a
+# behaviour change shows up before the games bump their pins. A failing game opens or updates
+# one issue here.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: downstream-canary
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  game:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - game: mmorpg
+            test: cargo test -p mmorpg-core --features physics-ab --test physics_ab
+          - game: arpg
+            test: cargo test -p arpg-core --features physics-ab --lib physics_ab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: engine
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: moritzbrantner/${{ matrix.game }}
+          path: game
+      - name: Point the game at this physics-engine
+        working-directory: game
+        run: |
+          printf '\n[patch."https://github.com/moritzbrantner/physics-engine"]\nphysics-engine = { path = "../engine" }\n' >> Cargo.toml
+          cargo update -p physics-engine
+          echo "pinned: $(git diff --no-color Cargo.lock | grep -m1 '^-source = "git+https://github.com/moritzbrantner/physics-engine' || echo unchanged)"
+      - name: Physics A/B test
+        id: ab
+        working-directory: game
+        run: ${{ matrix.test }}
+      - name: Report the failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GAME: ${{ matrix.game }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        working-directory: engine
+        run: |
+          title="Downstream canary: $GAME physics A/B fails on main"
+          body="The $GAME physics A/B test fails against physics-engine \`$GITHUB_SHA\`: $RUN
+
+          Reproduce: check out $GAME, add \`[patch.\"https://github.com/moritzbrantner/physics-engine\"] physics-engine = { path = \"<this checkout>\" }\` to its Cargo.toml and run \`${{ matrix.test }}\`. Either the engine change is wrong or the game's adapter needs updating before its next pin bump."
+          number=$(gh issue list --state open --search "in:title \"$title\"" --json number -q '.[0].number')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
