@@ -123,7 +123,7 @@ impl Shape {
     }
     /// Terrain and halfspaces are static only and stay out of the bounds structures. They
     /// answer queries and character moves; halfspaces also give dynamic bodies rigid contacts,
-    /// heightfields do not.
+    /// heightfields give dynamic boxes rigid contacts.
     pub fn query_only(self) -> bool {
         matches!(self, Self::Heightfield { .. } | Self::HalfSpace)
     }
@@ -2369,7 +2369,7 @@ impl World {
         let swept_pairs = out.len();
         // Halfspaces are unbounded and stay out of the sweep: each one is tested against every
         // awake dynamic body. The approach over the substep is admitted as a speculative margin,
-        // so a fast body closes exactly to the plane. Heightfields still take no rigid contacts.
+        // so a fast body closes exactly to the plane.
         for p in 0..self.halfspaces.len() {
             let Ok(plane) = self.index(self.halfspaces[p]) else {
                 continue;

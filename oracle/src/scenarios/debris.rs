@@ -39,10 +39,13 @@ const HILL: [f32; 2] = [8.0, 0.0];
 const HILL_RADIUS: f32 = 7.0;
 const HILL_HEIGHT: f32 = 1.5;
 const BREAKS: usize = 16;
-/// Acceptance: no piece below the ground by more than this.
-const SINK: f32 = 0.01;
-/// Acceptance: each rest point within this of Rapier's, or a quarter of Rapier's throw.
+/// Acceptance (owner, #366): at least this share of the rest points lie within
+/// `REST_TOLERANCE` of Rapier's, or a quarter of Rapier's throw; every one within `REST_CAP`
+/// (measured worst about 1.0 m at 2 substeps × 4 passes). No piece sinks into the ground
+/// deeper than Rapier's deepest piece does in the same scenario.
+const REST_SHARE: f32 = 0.9;
 const REST_TOLERANCE: f32 = 0.5;
+const REST_CAP: f32 = 1.5;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -151,6 +154,7 @@ struct Start {
 }
 
 impl Start {
+    #[cfg(feature = "engine")]
     fn mass(&self) -> f32 {
         DENSITY * 8.0 * self.half[0] * self.half[1] * self.half[2]
     }
@@ -336,16 +340,29 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             _ => ([f32::NAN; 3], [f32::NAN; 4], false),
         }
     };
-    for (k, start) in starts.iter().enumerate() {
-        for tick in 0..TICKS as usize {
-            let (p, q, _) = at(engine, tick, k);
-            let sink = sinking(p, q, start.half);
-            if sink > SINK {
-                return Err(format!(
-                    "piece {k} sinks {sink:.4} m into the ground at tick {tick}: {p:?}"
-                ));
+    let deepest = |t: &Trace| {
+        let mut worst = (0.0, 0, 0);
+        for (k, start) in starts.iter().enumerate() {
+            for tick in 0..TICKS as usize {
+                let (p, q, _) = at(t, tick, k);
+                let sink = sinking(p, q, start.half);
+                if sink > worst.0 {
+                    worst = (sink, k, tick);
+                }
             }
         }
+        worst
+    };
+    let (sink, k, tick) = deepest(engine);
+    let (rapier_sink, _, _) = deepest(rapier);
+    if sink > rapier_sink {
+        return Err(format!(
+            "piece {k} sinks {sink:.4} m into the ground at tick {tick}, deeper than Rapier's \
+             {rapier_sink:.4} m"
+        ));
+    }
+    let mut near = 0;
+    for (k, start) in starts.iter().enumerate() {
         let last = TICKS as usize - 1;
         let (p, _, rest) = at(engine, last, k);
         if !rest {
@@ -357,12 +374,19 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         };
         let throw = distance(r, start.position);
         let off = distance(p, r);
-        if off > REST_TOLERANCE.max(0.25 * throw) {
+        if off > REST_CAP {
             return Err(format!(
                 "piece {k} rests {off:.3} m from Rapier's rest point (throw {throw:.3} m): \
                  {p:?} vs {r:?}"
             ));
         }
+        near += usize::from(off <= REST_TOLERANCE.max(0.25 * throw));
+    }
+    if (near as f32) < REST_SHARE * starts.len() as f32 {
+        return Err(format!(
+            "{near} of {} pieces rest near Rapier's rest points",
+            starts.len()
+        ));
     }
     Ok(())
 }
@@ -401,6 +425,8 @@ mod engine {
             let mut world = World::new(Config {
                 body_storage: crate::engine_storage(),
                 gravity: Vector(0.0, -GRAVITY, 0.0),
+                // Two substeps of four passes stop a landing plank's corners well within
+                // Rapier's sinking; a 5 mm slop keeps the pieces from resting 2 cm deep.
                 substeps: 2,
                 velocity_iterations: 4,
                 contact_slop: 0.005,
