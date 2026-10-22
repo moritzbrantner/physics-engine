@@ -637,7 +637,7 @@ fn sphere_sphere(a: &Body, b: &Body, ra: Real, rb: Real, margin: Real) -> Option
 /// The plane's outward normal is its local +Y. Support points of the primitive within
 /// `margin` of the plane become contact points, at most the four deepest (ties by vertex
 /// order); speculative points (positive separation) let the solver close up to the surface.
-pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
+pub(super) fn halfspace(a: &Body, b: &Body, margin: Real, horizon: Real) -> Option<Manifold> {
     let flipped = a.shape != Shape::HalfSpace;
     let (plane, body) = if flipped { (b, a) } else { (a, b) };
     debug_assert!(plane.shape == Shape::HalfSpace && !body.shape.query_only());
@@ -691,19 +691,20 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
         }
         Shape::Heightfield { .. } | Shape::HalfSpace => unreachable!("terrain is query-only"),
     };
-    let mut points = [(0, Point::default()); 8];
+    let mut points = [(0.0, Point::default()); 8];
     let mut len = 0;
-    for (k, &(centre, radius)) in support[..count].iter().enumerate() {
+    for &(centre, radius) in &support[..count] {
         let separation = (centre - plane.position).dot(n) - radius;
         if separation > margin {
             continue;
         }
         let on_body = centre - n * radius;
+        let rb = on_body - body.position;
         points[len] = (
-            k,
+            predicted(body, rb, n, separation, horizon),
             Point {
                 ra: on_body - n * separation - plane.position,
-                rb: on_body - body.position,
+                rb,
                 separation,
             },
         );
@@ -712,26 +713,7 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
     if len == 0 {
         return None;
     }
-    let points = &mut points[..len];
-    // Deepest first, ties by support index: points are already in index order, so a stable
-    // insertion sort of these few points by separation alone gives that order.
-    for x in 1..len {
-        let mut y = x;
-        while y > 0
-            && points[y - 1]
-                .1
-                .separation
-                .total_cmp(&points[y].1.separation)
-                .is_gt()
-        {
-            points.swap(y - 1, y);
-            y -= 1;
-        }
-    }
-    let mut deepest = [Point::default(); 4];
-    for (out, (_, point)) in deepest.iter_mut().zip(points.iter()) {
-        *out = *point;
-    }
+    let deepest = deepest_four(&mut points[..len]);
     let manifold = Manifold {
         normal: n,
         points: Points::selected(&deepest[..len.min(4)]),
@@ -743,6 +725,147 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real) -> Option<Manifold> {
     } else {
         manifold
     })
+}
+
+/// The lower of a point's separation now and after `horizon` seconds of the body's current
+/// motion along `n` (toward the plane): a tumbling body's corner about to swing into the
+/// plane ranks with the corners already touching it.
+fn predicted(body: &Body, r: V, n: V, separation: Real, horizon: Real) -> Real {
+    let approach = (body.velocity + body.angular_velocity.cross(r)).dot(n) * horizon;
+    separation + approach.min(0.0)
+}
+
+/// The four lowest-ranked points, ties in input order (stable insertion sort of few points).
+fn deepest_four(points: &mut [(Real, Point)]) -> [Point; 4] {
+    for x in 1..points.len() {
+        let mut y = x;
+        while y > 0 && points[y - 1].0.total_cmp(&points[y].0).is_gt() {
+            points.swap(y - 1, y);
+            y -= 1;
+        }
+    }
+    let mut deepest = [Point::default(); 4];
+    for (out, (_, point)) in deepest.iter_mut().zip(points.iter()) {
+        *out = *point;
+    }
+    deepest
+}
+
+/// Rigid contacts of a box with heightfield terrain, one of `a` and `b` (pair order): one
+/// manifold per triangle under the box, as Rapier's per-triangle manifolds. The triangle's
+/// upward normal is the contact normal; the box face most opposed to it is clipped to the
+/// triangle's prism, so a ridge or a peak under a face gives points where it meets the face.
+/// Points within `margin` of the triangle's plane are kept (speculative when positive).
+pub(super) fn heightfield_box(
+    a: &Body,
+    b: &Body,
+    terrain: &geometry_kernels::heightfield::PreparedHeightfield3,
+    margin: Real,
+    horizon: Real,
+    mut emit: impl FnMut(Manifold),
+) {
+    let flipped = !matches!(a.shape, Shape::Heightfield { .. });
+    let (field, body) = if flipped { (b, a) } else { (a, b) };
+    let Shape::Box(h) = body.shape else {
+        unreachable!("heightfield contacts are box-only")
+    };
+    let axes = body.orientation.axes();
+    let reach = h.length() + margin.max(0.0);
+    let c = body.position;
+    let min = [f64::from(c.0 - reach), f64::from(c.2 - reach)];
+    let max = [f64::from(c.0 + reach), f64::from(c.2 + reach)];
+    let narrow = |p: [f64; 3]| {
+        V(
+            primitive::nearest(p[0]),
+            primitive::nearest(p[1]),
+            primitive::nearest(p[2]),
+        )
+    };
+    terrain.visit_triangles(min, max, |_, triangle, normal| {
+        let v = triangle.map(narrow);
+        let n = narrow(normal);
+        // The box's lowest point along the normal: nothing within reach of this plane.
+        let extent =
+            n.dot(axes[0]).abs() * h.0 + n.dot(axes[1]).abs() * h.1 + n.dot(axes[2]).abs() * h.2;
+        if n.dot(c - v[0]) - extent > margin {
+            return;
+        }
+        // Incident face: the box face most opposed to the normal.
+        let k = (0..3)
+            .max_by(|&i, &j| n.dot(axes[i]).abs().total_cmp(&n.dot(axes[j]).abs()))
+            .unwrap();
+        let face = c - axes[k] * (h.at(k) * n.dot(axes[k]).signum());
+        let (u, w) = (
+            axes[(k + 1) % 3] * h.at((k + 1) % 3),
+            axes[(k + 2) % 3] * h.at((k + 2) % 3),
+        );
+        let mut polygon = [V::ZERO; 8];
+        polygon[..4].copy_from_slice(&[face + u + w, face - u + w, face - u - w, face + u - w]);
+        let mut len = 4;
+        // Clip to the triangle's prism along its normal: keep the inner side of each edge.
+        for e in 0..3 {
+            let (p0, p1, p2) = (v[e], v[(e + 1) % 3], v[(e + 2) % 3]);
+            let mut inward = n.cross(p1 - p0);
+            if inward.dot(p2 - p0) < 0.0 {
+                inward = -inward;
+            }
+            let limit = inward.dot(p0);
+            let mut clipped = [V::ZERO; 8];
+            let mut count = 0;
+            let mut prev = polygon[len - 1];
+            let mut dp = inward.dot(prev) - limit;
+            for &next in &polygon[..len] {
+                let dn = inward.dot(next) - limit;
+                if (dp >= 0.0) != (dn >= 0.0) && count < 8 {
+                    clipped[count] = prev + (next - prev) * (dp / (dp - dn));
+                    count += 1;
+                }
+                if dn >= 0.0 && count < 8 {
+                    clipped[count] = next;
+                    count += 1;
+                }
+                prev = next;
+                dp = dn;
+            }
+            polygon = clipped;
+            len = count;
+            if len == 0 {
+                return;
+            }
+        }
+        let mut points = [(0.0, Point::default()); 8];
+        let mut count = 0;
+        for &p in &polygon[..len] {
+            let separation = n.dot(p - v[0]);
+            if separation <= margin {
+                let rb = p - body.position;
+                points[count] = (
+                    predicted(body, rb, n, separation, horizon),
+                    Point {
+                        ra: p - n * separation - field.position,
+                        rb,
+                        separation,
+                    },
+                );
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return;
+        }
+        let deepest = deepest_four(&mut points[..count]);
+        let manifold = Manifold {
+            normal: n,
+            points: Points::selected(&deepest[..count.min(4)]),
+            swept: false,
+            time: 0.0,
+        };
+        emit(if flipped {
+            flip_manifold(manifold)
+        } else {
+            manifold
+        });
+    });
 }
 
 fn flip_manifold(mut manifold: Manifold) -> Manifold {

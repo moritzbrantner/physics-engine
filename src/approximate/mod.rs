@@ -1542,6 +1542,7 @@ impl World {
                 );
                 // Pairs and cache entries are both in pair order: a cursor finds each pair's history.
                 let mut history = self.cache.iter().peekable();
+                let mut last_history = None;
                 for (i, j, m) in pairs.drain(..) {
                     // Remaining-time advancement already resolved every contact of an advanced CCD
                     // body along its actual path; start-pose constraints would act on its response
@@ -1593,10 +1594,18 @@ impl World {
                     };
                     let t2 = n.cross(t1);
                     let key = (a.order, b.order);
-                    while history.next_if(|(k, _)| **k < key).is_some() {}
-                    let cached = history
-                        .next_if(|(k, _)| **k == key)
-                        .map(|(_, points)| points);
+                    // A pair with several manifolds (a box on heightfield triangles) shares
+                    // one cache entry: its later manifolds read the same history.
+                    let cached = match last_history {
+                        Some((last, points)) if last == key => points,
+                        _ => {
+                            while history.next_if(|(k, _)| **k < key).is_some() {}
+                            history
+                                .next_if(|(k, _)| **k == key)
+                                .map(|(_, points)| points)
+                        }
+                    };
+                    last_history = Some((key, cached));
                     // A cached point warm-starts only within this reach. A half-space has zero
                     // radius, so its contacts never match and skip the search.
                     let warm_reach = 0.1 * a.shape.radius().min(b.shape.radius());
@@ -2216,6 +2225,38 @@ impl World {
                         && a.external
                         && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
+                // Boxes take rigid contacts with heightfield terrain, one manifold per triangle.
+                // As with halfspaces, the approach over the step is the speculative margin.
+                if let (Shape::Heightfield { terrain, .. }, body)
+                | (body, Shape::Heightfield { terrain, .. }) = (a.shape, b.shape)
+                    && let Shape::Box(_) = body
+                {
+                    let moving = if matches!(a.shape, Shape::Box(_)) {
+                        a
+                    } else {
+                        b
+                    };
+                    if moving.inverse_mass() == 0.0
+                        || moving.sensor
+                        || moving.sleeping
+                        || !a.layers.collides_with(b.layers)
+                    {
+                        continue;
+                    }
+                    report.narrow_tests += 1;
+                    let approach = moving.velocity.length() * interval
+                        + step_drift(moving, self.config.gravity, gain).length()
+                        + moving.angular_velocity.length() * moving.shape.radius() * interval;
+                    contact::heightfield_box(
+                        a,
+                        b,
+                        &self.terrains[terrain.0 as usize].prepared,
+                        self.config.contact_slop + approach,
+                        interval,
+                        |m| push(out, (i, j, m), &mut s.work),
+                    );
+                    continue;
+                }
                 if a.sensor
                     || b.sensor
                     // Terrain answers queries and character moves; halfspace contacts with
@@ -2357,6 +2398,7 @@ impl World {
                     &self.bodies[i],
                     &self.bodies[j],
                     self.config.contact_slop + approach,
+                    interval,
                 ) {
                     push(out, (i, j, m), &mut self.bookkeeping.work);
                 }

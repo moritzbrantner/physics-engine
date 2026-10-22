@@ -16,6 +16,8 @@ pub enum Obs {
     Penetrates(bool),
     /// A body position after a tick.
     Position([f32; 3]),
+    /// A body rotation (unit quaternion `[x, y, z, w]`) after a tick.
+    Rotation([f32; 4]),
     /// Whether a character stands on static support after a tick.
     Grounded(bool),
     /// Translation applied to leave penetration (zero where an engine does not report it).
@@ -133,6 +135,7 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
             Obs::Position(p) | Obs::Depenetration(p) => p.iter().all(|v| v.is_finite()),
+            Obs::Rotation(q) => q.iter().all(|v| v.is_finite()),
             _ => true,
         };
         if !ok {
@@ -170,6 +173,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::stairs::scenario(),
         scenarios::platforms::scenario(),
         scenarios::props::scenario(),
+        scenarios::debris::scenario(),
         scenarios::capsule_normals::scenario(),
         scenarios::terrain::scenario(),
         scenarios::terrain::scenario_holes(),
