@@ -179,7 +179,7 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
 }
 fn check_bounds(w: &mut World, h: Real) {
     let mut out = Vec::new();
-    w.manifolds::<true>(h, &mut super::super::Report::default(), &mut out)
+    w.manifolds::<true>(h, 0.0, &mut super::super::Report::default(), &mut out)
         .unwrap();
     let mut expected = w
         .bodies
@@ -265,7 +265,12 @@ fn tower_pair() -> World {
             }
         }
     }
-    for _ in 0..240 {
+    // How long a four-level block rocks before it sleeps is chaotic in the substep scheme
+    // (#378 reuses one step's contacts across substeps); the tests need only that it sleeps.
+    for _ in 0..600 {
+        if w.bodies.iter().filter(|b| b.mass > 0.0).all(|b| b.sleeping) {
+            break;
+        }
         w.step(1.0 / 60.0).unwrap();
     }
     assert!(
@@ -376,7 +381,8 @@ fn warmed_bookkeeping_visits_only_active_neighborhood_and_reuses_buffer_capacity
         assert_eq!(r.bookkeeping.adjacency_rebuilds, 0);
         assert_eq!(r.bookkeeping.island_body_visits, 4);
         assert_eq!(r.bookkeeping.island_edge_visits, 0);
-        assert_eq!(r.bookkeeping.bounds_updates, 4);
+        // Contacts are generated once per step, not per substep (#378).
+        assert_eq!(r.bookkeeping.bounds_updates, 1);
         assert_eq!(r.bookkeeping.bound_rows_sorted, 0);
         assert!(r.bookkeeping.bounds_order_checks > 0);
         assert_eq!(r.bookkeeping.scratch_growths, 0);

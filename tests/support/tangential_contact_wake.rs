@@ -190,10 +190,12 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 20] {
         assert!(r.retired.is_empty());
         if call == 1 {
             assert_eq!(r.woken_bodies, u64::from(case.admitted()));
+            // Prepared in the waking substep and the regenerated next one; later substeps
+            // reuse the step's rows and responses (#378).
             assert_eq!(
                 r.response_preparations,
                 if case.admitted() {
-                    u64::from(case.substeps())
+                    u64::from(case.substeps().min(2))
                 } else {
                     0
                 }

@@ -3,9 +3,10 @@
 //! Physical state uses [`Real`] (`f32`). Elapsed time stays [`numeric::Scalar`] (`f64`); each
 //! substep narrows its `dt` to `Real` once. See docs/numerics.md for the f32 precision envelope.
 //!
-//! External impulses change velocity once; forces act for the requested duration. Each bounded
-//! substep prepares contacts, accumulates clamped sequential impulses, then integrates the new
-//! linear/angular velocity. Contact impulses persist for warm starting. No integer quantization,
+//! External impulses change velocity once; forces act for the requested duration. Contacts are
+//! prepared once per step and reused by its bounded substeps (#378, see
+//! docs/fixed-step-approximation.md); each substep accumulates clamped sequential impulses, then
+//! integrates the new linear/angular velocity. Contact impulses persist for warm starting. No integer quantization,
 //! rational remainder tree, event-restart loop, or whole-world sleep proxy conversion is used.
 //!
 //! CCD sweeps translation over each substep for fast shapes. Orientations are held fixed during
@@ -549,6 +550,12 @@ struct Constraint {
     swept: bool,
     response: [bool; 2],
     spin: bool,
+    /// Centre offset `b - a` when `sep` was last measured: later substeps of the step advance
+    /// `sep` by the bodies' relative motion along `n` instead of regenerating the contact
+    /// (#378).
+    offset: Vector,
+    /// Restitution coefficient while the pair has no cached contact yet; zero afterwards.
+    restitution: Real,
 }
 /// Internal body order: keyed bodies first by key, then keyless bodies by creation serial.
 /// Every traversal, pair orientation and tie uses it, so results depend on game keys and the
@@ -1342,20 +1349,29 @@ impl World {
     ) -> Result<Report, Error> {
         let mut report = Report::default();
         let h = substep_length(dt, self.config.substeps);
+        // Contacts are generated once per step and their constraints reused by later substeps,
+        // as Rapier does (#378). A substep regenerates only after something the reused rows
+        // cannot represent: a sweep or CCD advance, a wake, a sleep or a retirement.
+        let mut reuse = false;
         for substep in 0..self.config.substeps {
+            let lookahead = h * Real::from(self.config.substeps - 1 - substep);
             report.substeps += 1;
             self.bookkeeping.ccd.clear();
             self.bookkeeping.ccd_offsets.clear();
             self.bookkeeping.ccd_start.clear();
             self.bookkeeping.ccd_retired.clear();
-            self.responses
-                .resize(self.bodies.len(), PreparedResponse::default());
-            for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
-                *prepared = if PREPARED {
-                    PreparedResponse::new(b, &mut report)
-                } else {
-                    PreparedResponse::default()
-                };
+            // Responses are prepared with the contacts: reused rows keep the step's response,
+            // as their masses do (#378).
+            if !reuse {
+                self.responses
+                    .resize(self.bodies.len(), PreparedResponse::default());
+                for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
+                    *prepared = if PREPARED {
+                        PreparedResponse::new(b, &mut report)
+                    } else {
+                        PreparedResponse::default()
+                    };
+                }
             }
             // External impulses still apply exactly once, before the first force integration.
             if substep == 0 {
@@ -1381,77 +1397,115 @@ impl World {
                 }
             }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
-            if let Err(error) = self.manifolds::<CACHED>(h, &mut report, &mut pairs) {
-                self.manifold_scratch = pairs;
-                self.failed_work = Some(FailedStepWork::capture(
-                    &report,
-                    BookkeepingStats {
-                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
-                        ..self.bookkeeping.work
-                    },
-                ));
-                return Err(error);
-            }
-            let mut roots = std::mem::take(&mut self.bookkeeping.roots);
-            roots.clear();
-            reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
-            let up = (-self.config.gravity).unit();
-            roots.extend(
-                pairs
-                    .iter()
-                    // Only a sleeping side can be a root.
-                    .filter(|(i, j, _)| self.bodies[*i].sleeping || self.bodies[*j].sleeping)
-                    .flat_map(|(i, j, m)| {
-                        let a = &self.bodies[*i];
-                        let b = &self.bodies[*j];
-                        let approach = -(b.velocity - a.velocity).dot(m.normal);
-                        // A separating command alone is not wake evidence. An admitted
-                        // previously load-bearing support moving away is a dependency loss.
-                        let departing_support = approach < 0.0
-                            && ((a.external && b.sleeping && m.normal.dot(up) > 0.5)
-                                || (b.external && a.sleeping && m.normal.dot(up) < -0.5))
-                            && self.cache.get(&(a.order, b.order)).is_some_and(|points| {
-                                points
-                                    .iter()
-                                    .any(|p| p.impulse > 0.0 && p.normal.dot(m.normal) > 0.99)
-                            });
-                        let driven_contact_motion = (a.sleeping || b.sleeping)
-                            && (a.external || b.external)
-                            && (&m.points).into_iter().any(|point| {
-                                let spin = a.linear_support.is_none() && b.linear_support.is_none();
-                                let relative = contact_velocity(b, point.rb, spin)
-                                    - contact_velocity(a, point.ra, spin);
-                                relative != Vector::ZERO && relative.dot(m.normal) <= 0.0
-                            });
-                        let disruptive = m.swept
-                            || approach > self.config.sleep_speed
-                            || ((a.external || b.external) && approach > 0.0)
-                            || departing_support
-                            || driven_contact_motion;
-                        [
-                            if disruptive && a.sleeping && b.mass > 0.0 {
-                                Some(a.order)
-                            } else {
-                                None
+            let mut reuse_next = reuse;
+            if !reuse {
+                let regenerate =
+                    match self.manifolds::<CACHED>(h, lookahead, &mut report, &mut pairs) {
+                        Ok(regenerate) => regenerate,
+                        Err(error) => {
+                            self.manifold_scratch = pairs;
+                            self.failed_work = Some(FailedStepWork::capture(
+                                &report,
+                                BookkeepingStats {
+                                    scratch_retained_bytes: self.bookkeeping.retained_bytes()
+                                        as u64,
+                                    ..self.bookkeeping.work
+                                },
+                            ));
+                            return Err(error);
+                        }
+                    };
+                let mut roots = std::mem::take(&mut self.bookkeeping.roots);
+                roots.clear();
+                reserve(&mut roots, pairs.len() * 2, &mut self.bookkeeping.work);
+                let up = (-self.config.gravity).unit();
+                roots.extend(
+                    pairs
+                        .iter()
+                        // Only a sleeping side can be a root.
+                        .filter(|(i, j, _)| self.bodies[*i].sleeping || self.bodies[*j].sleeping)
+                        .flat_map(|(i, j, m)| {
+                            let a = &self.bodies[*i];
+                            let b = &self.bodies[*j];
+                            let approach = -(b.velocity - a.velocity).dot(m.normal);
+                            // A separating command alone is not wake evidence. An admitted
+                            // previously load-bearing support moving away is a dependency loss.
+                            let departing_support = approach < 0.0
+                                && ((a.external && b.sleeping && m.normal.dot(up) > 0.5)
+                                    || (b.external && a.sleeping && m.normal.dot(up) < -0.5))
+                                && self.cache.get(&(a.order, b.order)).is_some_and(|points| {
+                                    points
+                                        .iter()
+                                        .any(|p| p.impulse > 0.0 && p.normal.dot(m.normal) > 0.99)
+                                });
+                            let driven_contact_motion = (a.sleeping || b.sleeping)
+                                && (a.external || b.external)
+                                && (&m.points).into_iter().any(|point| {
+                                    let spin =
+                                        a.linear_support.is_none() && b.linear_support.is_none();
+                                    let relative = contact_velocity(b, point.rb, spin)
+                                        - contact_velocity(a, point.ra, spin);
+                                    relative != Vector::ZERO && relative.dot(m.normal) <= 0.0
+                                });
+                            let disruptive = m.swept
+                                || approach > self.config.sleep_speed
+                                || ((a.external || b.external) && approach > 0.0)
+                                || departing_support
+                                || driven_contact_motion;
+                            [
+                                if disruptive && a.sleeping && b.mass > 0.0 {
+                                    Some(a.order)
+                                } else {
+                                    None
+                                },
+                                if disruptive && b.sleeping && a.mass > 0.0 {
+                                    Some(b.order)
+                                } else {
+                                    None
+                                },
+                            ]
+                        })
+                        .flatten(),
+                );
+                let mut woke = 0;
+                for root in roots.drain(..) {
+                    woke += self.wake_contact_island::<PREPARED>(root, h, &mut report);
+                }
+                self.bookkeeping.roots = roots;
+                report.woken_bodies += woke;
+                if woke > 0 {
+                    // Real response and forces are ready before the regenerated contact impulse.
+                    if let Err(error) =
+                        self.manifolds::<CACHED>(h, lookahead, &mut report, &mut pairs)
+                    {
+                        self.manifold_scratch = pairs;
+                        self.failed_work = Some(FailedStepWork::capture(
+                            &report,
+                            BookkeepingStats {
+                                scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
+                                ..self.bookkeeping.work
                             },
-                            if disruptive && b.sleeping && a.mass > 0.0 {
-                                Some(b.order)
-                            } else {
-                                None
-                            },
-                        ]
-                    })
-                    .flatten(),
-            );
-            let mut woke = 0;
-            for root in roots.drain(..) {
-                woke += self.wake_contact_island::<PREPARED>(root, h, &mut report);
-            }
-            self.bookkeeping.roots = roots;
-            report.woken_bodies += woke;
-            if woke > 0 {
-                // Real response and forces are ready before the regenerated contact impulse.
-                if let Err(error) = self.manifolds::<CACHED>(h, &mut report, &mut pairs) {
+                        ));
+                        return Err(error);
+                    }
+                }
+                // CCD remaining-time impacts respond before the contact solve, so a struck body's
+                // current contacts (e.g. its floor) still resist the impulse in this substep.
+                {
+                    let s = &mut self.bookkeeping;
+                    for (i, j, m) in &pairs {
+                        if m.swept && ccd::deferred(&self.bodies[*i], &self.bodies[*j]) {
+                            for k in [*i, *j] {
+                                if ccd::advances(&self.bodies[k]) {
+                                    push(&mut s.ccd, k, &mut s.work);
+                                }
+                            }
+                        }
+                    }
+                }
+                if !self.bookkeeping.ccd.is_empty()
+                    && let Err(error) = self.advance_ccd_bodies::<PREPARED>(h, &mut report)
+                {
                     self.manifold_scratch = pairs;
                     self.failed_work = Some(FailedStepWork::capture(
                         &report,
@@ -1462,255 +1516,236 @@ impl World {
                     ));
                     return Err(error);
                 }
-            }
-            // CCD remaining-time impacts respond before the contact solve, so a struck body's
-            // current contacts (e.g. its floor) still resist the impulse in this substep.
-            {
-                let s = &mut self.bookkeeping;
-                for (i, j, m) in &pairs {
-                    if m.swept && ccd::deferred(&self.bodies[*i], &self.bodies[*j]) {
-                        for k in [*i, *j] {
-                            if ccd::advances(&self.bodies[k]) {
-                                push(&mut s.ccd, k, &mut s.work);
-                            }
-                        }
-                    }
-                }
-            }
-            if !self.bookkeeping.ccd.is_empty()
-                && let Err(error) = self.advance_ccd_bodies::<PREPARED>(h, &mut report)
-            {
-                self.manifold_scratch = pairs;
-                self.failed_work = Some(FailedStepWork::capture(
-                    &report,
-                    BookkeepingStats {
-                        scratch_retained_bytes: self.bookkeeping.retained_bytes() as u64,
-                        ..self.bookkeeping.work
-                    },
-                ));
-                return Err(error);
+                reuse_next = lookahead > 0.0
+                    && !regenerate
+                    && woke == 0
+                    && self.bookkeeping.ccd.is_empty()
+                    && !pairs.iter().any(|&(i, j, ref m)| {
+                        // A tumbling corner can reach a feature this manifold lacks.
+                        let tumbles = |b: &Body| {
+                            !matches!(b.shape, Shape::Sphere(_))
+                                && b.angular_velocity.length() * b.shape.radius() * lookahead
+                                    > self.config.contact_slop
+                        };
+                        m.swept || tumbles(&self.bodies[i]) || tumbles(&self.bodies[j])
+                    });
             }
             let mut constraints = std::mem::take(&mut self.constraints);
-            constraints.clear();
-            reserve(
-                &mut constraints,
-                pairs.iter().map(|(_, _, m)| m.points.len()).sum(),
-                &mut self.bookkeeping.work,
-            );
-            // Pairs and cache entries are both in pair order: a cursor finds each pair's history.
-            let mut history = self.cache.iter().peekable();
-            for (i, j, m) in pairs.drain(..) {
-                // Remaining-time advancement already resolved every contact of an advanced CCD
-                // body along its actual path; start-pose constraints would act on its response
-                // velocity a second time.
-                if (m.swept && ccd::deferred(&self.bodies[i], &self.bodies[j]))
-                    || self.bookkeeping.ccd.binary_search(&i).is_ok()
-                    || self.bookkeeping.ccd.binary_search(&j).is_ok()
-                {
-                    continue;
-                }
-                let a = &self.bodies[i];
-                let b = &self.bodies[j];
-                let n = m.normal;
-                let linear = a.linear_support.is_some() || b.linear_support.is_some();
-                let mut response = [true, true];
-                if let Some(s) = a.linear_support
-                    && n.dot(s.unit()) > 0.5
-                {
-                    response[1] = false;
-                }
-                if let Some(s) = b.linear_support
-                    && (-n).dot(s.unit()) > 0.5
-                {
-                    response[0] = false;
-                }
-                // A side without prepared inverse mass takes no impulse; skipping it changes no value.
-                let prepared = [
-                    self.responses[i].select::<PREPARED>(a, &mut report),
-                    self.responses[j].select::<PREPARED>(b, &mut report),
-                ];
-                response[0] &= prepared[0].inverse_mass > 0.0;
-                response[1] &= prepared[1].inverse_mass > 0.0;
-                // Without rotational response every direction has the same effective mass.
-                let spins = !linear
-                    && ((response[0] && prepared[0].spins())
-                        || (response[1] && prepared[1].spins()));
-                // Rows read and write angular velocity only when a side can spin in response or
-                // already spins (#375): upright crates on a fixed floor skip the cross products,
-                // whose zero terms would change at most the sign of a zero.
-                let row_spin = !linear
-                    && (prepared[0].spins()
-                        || prepared[1].spins()
-                        || a.angular_velocity != Vector::ZERO
-                        || b.angular_velocity != Vector::ZERO);
-                let t1 = if n.0.abs() < 0.7 {
-                    n.cross(Vector::X).unit()
-                } else {
-                    n.cross(Vector::Y).unit()
-                };
-                let t2 = n.cross(t1);
-                let key = (a.order, b.order);
-                while history.next_if(|(k, _)| **k < key).is_some() {}
-                let cached = history
-                    .next_if(|(k, _)| **k == key)
-                    .map(|(_, points)| points);
-                // A cached point warm-starts only within this reach. A half-space has zero
-                // radius, so its contacts never match and skip the search.
-                let warm_reach = 0.1 * a.shape.radius().min(b.shape.radius());
-                let used = &mut self.bookkeeping.used;
-                used.clear();
-                reserve(used, m.points.len(), &mut self.bookkeeping.work);
-                for point in &m.points {
-                    let mut point = *point;
-                    if !m.swept
-                        && !linear
-                        && a.movable()
-                        && b.movable()
-                        && !a.sleeping
-                        && !b.sleeping
-                        && response == [true, true]
+            if reuse {
+                self.advance_constraints(&mut constraints, h, &mut report);
+            } else {
+                constraints.clear();
+                reserve(
+                    &mut constraints,
+                    pairs.iter().map(|(_, _, m)| m.points.len()).sum(),
+                    &mut self.bookkeeping.work,
+                );
+                // Pairs and cache entries are both in pair order: a cursor finds each pair's history.
+                let mut history = self.cache.iter().peekable();
+                for (i, j, m) in pairs.drain(..) {
+                    // Remaining-time advancement already resolved every contact of an advanced CCD
+                    // body along its actual path; start-pose constraints would act on its response
+                    // velocity a second time.
+                    if (m.swept && ccd::deferred(&self.bodies[i], &self.bodies[j]))
+                        || self.bookkeeping.ccd.binary_search(&i).is_ok()
+                        || self.bookkeeping.ccd.binary_search(&j).is_ok()
                     {
-                        // Opposite impulses at separate witnesses create an internal
-                        // friction couple. Reciprocal dynamic current contacts share
-                        // the midpoint along the contact normal. Projecting the witness
-                        // gap avoids feeding tangential reconstruction roundoff into
-                        // resting friction rows; separation still owns the target.
-                        let delta = (b.position - a.position) + point.rb - point.ra;
-                        let gap = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
-                            // Box clipping projects witnesses along this normal;
-                            // generic primitive support vertices need the full gap.
-                            n * delta.dot(n)
-                        } else {
-                            delta
-                        };
-                        let shift = gap * 0.5;
-                        point.ra += shift;
-                        point.rb -= shift;
-                    }
-                    let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
-                    let arms = [point.ra, point.rb];
-                    let k = effective_mass::<PREPARED>(
-                        response_bodies,
-                        arms,
-                        n,
-                        response,
-                        !linear,
-                        &mut report,
-                    );
-                    if k <= 1e-14 {
                         continue;
                     }
-                    let rel = contact_velocity(b, point.rb, !linear)
-                        - contact_velocity(a, point.ra, !linear);
-                    let restitution = if rel.dot(n) < -1.0
-                        && point.separation <= self.config.contact_slop
-                        && cached.is_none()
+                    let a = &self.bodies[i];
+                    let b = &self.bodies[j];
+                    let n = m.normal;
+                    let linear = a.linear_support.is_some() || b.linear_support.is_some();
+                    let mut response = [true, true];
+                    if let Some(s) = a.linear_support
+                        && n.dot(s.unit()) > 0.5
                     {
-                        -a.restitution.min(b.restitution) * rel.dot(n)
-                    } else {
-                        0.0
-                    };
-                    let bias = if point.separation > 0.0 {
-                        -point.separation / h
-                    } else {
-                        (0.2 * (-point.separation - self.config.contact_slop).max(0.0) / h)
-                            .min(60.0)
+                        response[1] = false;
                     }
-                    .max(restitution);
-                    // Speculative and restitutive impacts retain the hard response. Softness
-                    // applies only beyond the existing slop, on non-bouncing normal constraints.
-                    // Within slop the positional target is zero: keep the support hard rather
-                    // than repeatedly reducing its load-bearing accumulated impulse.
-                    // A separated speculative constraint must still permit closing up to its surface.
-                    let bias = if point.separation > 0.0 {
-                        -point.separation / h
+                    if let Some(s) = b.linear_support
+                        && (-n).dot(s.unit()) > 0.5
+                    {
+                        response[0] = false;
+                    }
+                    // A side without prepared inverse mass takes no impulse; skipping it changes no value.
+                    let prepared = [
+                        self.responses[i].select::<PREPARED>(a, &mut report),
+                        self.responses[j].select::<PREPARED>(b, &mut report),
+                    ];
+                    response[0] &= prepared[0].inverse_mass > 0.0;
+                    response[1] &= prepared[1].inverse_mass > 0.0;
+                    // Without rotational response every direction has the same effective mass.
+                    let spins = !linear
+                        && ((response[0] && prepared[0].spins())
+                            || (response[1] && prepared[1].spins()));
+                    // Rows read and write angular velocity only when a side can spin in response or
+                    // already spins (#375): upright crates on a fixed floor skip the cross products,
+                    // whose zero terms would change at most the sign of a zero.
+                    let row_spin = !linear
+                        && (prepared[0].spins()
+                            || prepared[1].spins()
+                            || a.angular_velocity != Vector::ZERO
+                            || b.angular_velocity != Vector::ZERO);
+                    let t1 = if n.0.abs() < 0.7 {
+                        n.cross(Vector::X).unit()
                     } else {
-                        bias
+                        n.cross(Vector::Y).unit()
                     };
-                    let mut c = Constraint {
-                        a: i,
-                        b: j,
-                        n,
-                        ra: point.ra,
-                        rb: point.rb,
-                        t1,
-                        t2,
-                        normal_mass: 1.0 / k,
-                        tangent_mass: if spins {
-                            [
-                                effective_mass::<PREPARED>(
-                                    response_bodies,
-                                    arms,
-                                    t1,
-                                    response,
-                                    !linear,
-                                    &mut report,
-                                )
-                                .recip(),
-                                effective_mass::<PREPARED>(
-                                    response_bodies,
-                                    arms,
-                                    t2,
-                                    response,
-                                    !linear,
-                                    &mut report,
-                                )
-                                .recip(),
-                            ]
-                        } else {
-                            [k.recip(); 2]
-                        },
-                        bias,
-                        // Additional corners can limit approach while still separated at the
-                        // admitted contact time. They have no frictional load yet.
-                        friction: if linear
-                            || (contact::fixed_box_interval(a, b)
-                                && point.separation + (b.velocity - a.velocity).dot(n) * h * m.time
-                                    > self.config.contact_slop)
+                    let t2 = n.cross(t1);
+                    let key = (a.order, b.order);
+                    while history.next_if(|(k, _)| **k < key).is_some() {}
+                    let cached = history
+                        .next_if(|(k, _)| **k == key)
+                        .map(|(_, points)| points);
+                    // A cached point warm-starts only within this reach. A half-space has zero
+                    // radius, so its contacts never match and skip the search.
+                    let warm_reach = 0.1 * a.shape.radius().min(b.shape.radius());
+                    let used = &mut self.bookkeeping.used;
+                    used.clear();
+                    reserve(used, m.points.len(), &mut self.bookkeeping.work);
+                    for point in &m.points {
+                        let mut point = *point;
+                        if !m.swept
+                            && !linear
+                            && a.movable()
+                            && b.movable()
+                            && !a.sleeping
+                            && !b.sleeping
+                            && response == [true, true]
                         {
+                            // Opposite impulses at separate witnesses create an internal
+                            // friction couple. Reciprocal dynamic current contacts share
+                            // the midpoint along the contact normal. Projecting the witness
+                            // gap avoids feeding tangential reconstruction roundoff into
+                            // resting friction rows; separation still owns the target.
+                            let delta = (b.position - a.position) + point.rb - point.ra;
+                            let gap =
+                                if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                                    // Box clipping projects witnesses along this normal;
+                                    // generic primitive support vertices need the full gap.
+                                    n * delta.dot(n)
+                                } else {
+                                    delta
+                                };
+                            let shift = gap * 0.5;
+                            point.ra += shift;
+                            point.rb -= shift;
+                        }
+                        let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
+                        let arms = [point.ra, point.rb];
+                        let k = effective_mass::<PREPARED>(
+                            response_bodies,
+                            arms,
+                            n,
+                            response,
+                            !linear,
+                            &mut report,
+                        );
+                        if k <= 1e-14 {
+                            continue;
+                        }
+                        let rel = contact_velocity(b, point.rb, !linear)
+                            - contact_velocity(a, point.ra, !linear);
+                        let restitution = if cached.is_none() {
+                            a.restitution.min(b.restitution)
+                        } else {
                             0.0
-                        } else {
-                            a.friction.max(b.friction)
-                        },
-                        normal_impulse: 0.0,
-                        tangent_impulse: [0.0; 2],
-                        sep: point.separation,
-                        swept: m.swept,
-                        response,
-                        spin: row_spin,
-                    };
-                    if self.config.warm_start
-                        && warm_reach > 0.0
-                        && point.separation <= self.config.contact_slop
-                        && self.last_h > 0.0
-                        && let Some(old) = cached
-                    {
-                        let la = a.orientation.inverse_rotate(c.ra);
-                        let lb = b.orientation.inverse_rotate(c.rb);
-                        // The nearest unused cached point with this normal; ties keep the first.
-                        let mut nearest: Option<(usize, &CachedPoint, Real)> = None;
-                        for (idx, p) in old.iter().enumerate() {
-                            if used.contains(&idx) || p.normal.dot(n) <= 0.99 {
-                                continue;
-                            }
-                            let d = (p.a - la).dot(p.a - la) + (p.b - lb).dot(p.b - lb);
-                            if nearest.is_none_or(|(_, _, best)| d.total_cmp(&best).is_lt()) {
-                                nearest = Some((idx, p, d));
-                            }
-                        }
-                        if let Some((idx, p, _)) = nearest
-                            && (p.a - la).length() + (p.b - lb).length() < warm_reach
+                        };
+                        let bias = contact_bias(
+                            point.separation,
+                            restitution,
+                            rel.dot(n),
+                            h,
+                            self.config.contact_slop,
+                        );
+                        let mut c = Constraint {
+                            a: i,
+                            b: j,
+                            n,
+                            ra: point.ra,
+                            rb: point.rb,
+                            t1,
+                            t2,
+                            normal_mass: 1.0 / k,
+                            tangent_mass: if spins {
+                                [
+                                    effective_mass::<PREPARED>(
+                                        response_bodies,
+                                        arms,
+                                        t1,
+                                        response,
+                                        !linear,
+                                        &mut report,
+                                    )
+                                    .recip(),
+                                    effective_mass::<PREPARED>(
+                                        response_bodies,
+                                        arms,
+                                        t2,
+                                        response,
+                                        !linear,
+                                        &mut report,
+                                    )
+                                    .recip(),
+                                ]
+                            } else {
+                                [k.recip(); 2]
+                            },
+                            bias,
+                            // Additional corners can limit approach while still separated at the
+                            // admitted contact time. They have no frictional load yet.
+                            friction: if linear
+                                || (contact::fixed_box_interval(a, b)
+                                    && point.separation
+                                        + (b.velocity - a.velocity).dot(n) * h * m.time
+                                        > self.config.contact_slop)
+                            {
+                                0.0
+                            } else {
+                                a.friction.max(b.friction)
+                            },
+                            normal_impulse: 0.0,
+                            tangent_impulse: [0.0; 2],
+                            sep: point.separation,
+                            swept: m.swept,
+                            response,
+                            spin: row_spin,
+                            offset: b.position - a.position,
+                            restitution,
+                        };
+                        if self.config.warm_start
+                            && warm_reach > 0.0
+                            && point.separation <= self.config.contact_slop
+                            && self.last_h > 0.0
+                            && let Some(old) = cached
                         {
-                            used.push(idx);
-                            let scale = (h / narrow_time(self.last_h)).clamp(0.0, 2.0);
-                            c.normal_impulse = p.impulse * scale;
-                            c.tangent_impulse =
-                                [p.tangent.dot(t1) * scale, p.tangent.dot(t2) * scale];
+                            let la = a.orientation.inverse_rotate(c.ra);
+                            let lb = b.orientation.inverse_rotate(c.rb);
+                            // The nearest unused cached point with this normal; ties keep the first.
+                            let mut nearest: Option<(usize, &CachedPoint, Real)> = None;
+                            for (idx, p) in old.iter().enumerate() {
+                                if used.contains(&idx) || p.normal.dot(n) <= 0.99 {
+                                    continue;
+                                }
+                                let d = (p.a - la).dot(p.a - la) + (p.b - lb).dot(p.b - lb);
+                                if nearest.is_none_or(|(_, _, best)| d.total_cmp(&best).is_lt()) {
+                                    nearest = Some((idx, p, d));
+                                }
+                            }
+                            if let Some((idx, p, _)) = nearest
+                                && (p.a - la).length() + (p.b - lb).length() < warm_reach
+                            {
+                                used.push(idx);
+                                let scale = (h / narrow_time(self.last_h)).clamp(0.0, 2.0);
+                                c.normal_impulse = p.impulse * scale;
+                                c.tangent_impulse =
+                                    [p.tangent.dot(t1) * scale, p.tangent.dot(t2) * scale];
+                            }
                         }
+                        report.max_penetration =
+                            report.max_penetration.max((-point.separation).max(0.0));
+                        constraints.push(c);
                     }
-                    report.max_penetration =
-                        report.max_penetration.max((-point.separation).max(0.0));
-                    constraints.push(c);
                 }
             }
             self.manifold_scratch = pairs;
@@ -1937,7 +1972,9 @@ impl World {
                 ));
                 return Err(error);
             }
+            let active = self.bookkeeping.activity.count;
             self.sleep_quiet_islands();
+            reuse_next &= self.bookkeeping.activity.count == active;
             // Retirement is local; remove all affected cached edges before indexed graph reuse.
             let s = &mut self.bookkeeping;
             for n in 0..s.ccd_retired.len() {
@@ -1966,6 +2003,8 @@ impl World {
                     report.retired.push(handle);
                 }
             }
+            // Reused rows hold storage indices: a retirement shifts them.
+            reuse = reuse_next && self.bookkeeping.retired.is_empty();
             self.last_h = widen_time(h);
         }
         for (i, b) in self.bodies.iter_mut().enumerate() {
@@ -1978,6 +2017,40 @@ impl World {
         self.elapsed += dt;
         self.finish_bookkeeping(&mut report);
         Ok(report)
+    }
+    /// Carries the step's constraint rows into the next substep (#378). Normals, arms, masses and
+    /// friction stay as generated; each row's separation advances by the bodies' relative
+    /// motion along the normal and the position target follows it. Translation is measured
+    /// (it includes position correction); rotation is linearised at the fixed arms, so a
+    /// rolling sphere's support stays exact. The accumulated impulses stay on the rows and
+    /// warm-start this substep.
+    fn advance_constraints(&self, constraints: &mut [Constraint], h: Real, report: &mut Report) {
+        let slop = self.config.contact_slop;
+        for run in constraints.chunk_by_mut(|x, y| x.a == y.a && x.b == y.b) {
+            // A pair stops bouncing once it has a cached contact, as a regenerated row would.
+            let cached = run.iter().any(|c| c.sep <= slop * 2.0);
+            for c in run {
+                let (a, b) = (&self.bodies[c.a], &self.bodies[c.b]);
+                let offset = b.position - a.position;
+                c.sep += (offset - c.offset).dot(c.n);
+                if c.spin {
+                    c.sep += (b.angular_velocity.cross(c.rb) - a.angular_velocity.cross(c.ra))
+                        .dot(c.n)
+                        * h;
+                }
+                c.offset = offset;
+                if cached {
+                    c.restitution = 0.0;
+                }
+                let approach = if c.restitution > 0.0 {
+                    (contact_velocity(b, c.rb, c.spin) - contact_velocity(a, c.ra, c.spin)).dot(c.n)
+                } else {
+                    0.0
+                };
+                c.bias = contact_bias(c.sep, c.restitution, approach, h, slop);
+                report.max_penetration = report.max_penetration.max((-c.sep).max(0.0));
+            }
+        }
     }
     fn apply_substep_forces<const PREPARED: bool>(
         &mut self,
@@ -2036,12 +2109,22 @@ impl World {
         s.activity.dirty |= slept > 0;
     }
 
+    /// Contacts for this substep plus `lookahead`, the rest of the step: pairs within reach
+    /// before the step ends are admitted as speculative contacts, so later substeps can reuse
+    /// the constraints (#378). Returns whether the next substep must regenerate instead: a pair
+    /// needed a swept test, which covers only this substep, or two dynamic bodies can close.
     fn manifolds<const CACHED: bool>(
         &mut self,
         h: Real,
+        lookahead: Real,
         report: &mut Report,
         out: &mut Vec<(usize, usize, contact::Manifold)>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
+        let mut regenerate = false;
+        let interval = h + lookahead;
+        // Displacement per unit of constant acceleration over the later substeps: velocity
+        // gains a·h per substep after this one, so the step ends a·L·(L + h)/2 further on.
+        let gain = lookahead * interval * 0.5;
         let s = &mut self.bookkeeping;
         if CACHED {
             self.geometry.begin(self.bodies.len());
@@ -2068,10 +2151,13 @@ impl World {
             let delta = if b.sleeping {
                 Vector::ZERO
             } else {
-                b.velocity * h
+                b.velocity * interval
             };
-            let angular = b.angular_velocity.length() * b.shape.radius() * h;
+            let angular = b.angular_velocity.length() * b.shape.radius() * interval;
+            // Gravity and forces keep accelerating the body through the later substeps.
+            let drift = step_drift(b, self.config.gravity, gain).abs();
             let pad = Vector(angular, angular, angular)
+                + drift
                 + Vector(1.0, 1.0, 1.0)
                     * (self.config.contact_slop
                         // Endpoint addition can round at the displacement's scale even
@@ -2143,12 +2229,42 @@ impl World {
                 {
                     continue;
                 }
+                let speed = (b.velocity - a.velocity).length();
+                let travel = speed * h;
+                // Retain full-interval discovery after response preparation wakes the
+                // body; the second geometry pass must not discard an admitted sweep.
+                // A fixed boundary may be crossed below the shape-sized fast threshold.
+                // The current margin only rules out travel no larger than that margin.
+                let fast = driven_contact_candidate
+                    || a.ccd
+                    || b.ccd
+                    || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.config.contact_slop)
+                    || travel
+                        > 0.5
+                            * a.shape
+                                .half_extents()
+                                .min_component()
+                                .min(b.shape.half_extents().min_component());
                 // A tolerance-only manifold is not wake evidence. Probe the actual surface
                 // and full interval before replacing the parked body's zero response.
                 let margin = if driven_wake_candidate {
                     0.0
                 } else {
                     self.config.contact_slop
+                };
+                // A separated pair slow enough to skip the sweep is admitted speculatively
+                // when it can close before the step ends; a fast pair keeps this substep's
+                // sweep instead.
+                let reach = if fast || lookahead == 0.0 {
+                    0.0
+                } else {
+                    (speed
+                        + a.angular_velocity.length() * a.shape.radius()
+                        + b.angular_velocity.length() * b.shape.radius())
+                        * lookahead
+                        + (step_drift(b, self.config.gravity, gain)
+                            - step_drift(a, self.config.gravity, gain))
+                        .length()
                 };
                 report.narrow_tests += 1;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
@@ -2161,36 +2277,41 @@ impl World {
                 };
                 let m = if current.is_some() {
                     current
-                } else {
-                    let travel = (b.velocity - a.velocity).length() * h;
-                    // Retain full-interval discovery after response preparation wakes the
-                    // body; the second geometry pass must not discard an admitted sweep.
-                    // A fixed boundary may be crossed below the shape-sized fast threshold.
-                    // The current margin only rules out travel no larger than that margin.
-                    if driven_contact_candidate
-                        || a.ccd
-                        || b.ccd
-                        || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.config.contact_slop)
-                        || travel
-                            > 0.5
-                                * a.shape
-                                    .half_extents()
-                                    .min_component()
-                                    .min(b.shape.half_extents().min_component())
-                    {
-                        let swept = if CACHED {
-                            self.geometry
-                                .swept([i, j], [a, b], h, margin, &mut report.geometry)
-                        } else {
-                            contact::swept(a, b, h, margin, &mut report.geometry)
-                        };
-                        swept.map_err(|reason| Error::CollisionSearchFailed {
-                            bodies: [a.id, b.id],
-                            reason,
-                        })?
+                } else if fast {
+                    regenerate = true;
+                    let swept = if CACHED {
+                        self.geometry
+                            .swept([i, j], [a, b], h, margin, &mut report.geometry)
                     } else {
+                        contact::swept(a, b, h, margin, &mut report.geometry)
+                    };
+                    swept.map_err(|reason| Error::CollisionSearchFailed {
+                        bodies: [a.id, b.id],
+                        reason,
+                    })?
+                } else if reach > 0.0 {
+                    let margin = margin + reach;
+                    let speculative = if CACHED {
+                        self.geometry.query_interval(
+                            [i, j],
+                            [a, b],
+                            h,
+                            margin,
+                            &mut report.geometry,
+                        )
+                    } else {
+                        contact::current_interval_counted(a, b, h, margin, &mut report.geometry)
+                    };
+                    if speculative.is_some() && a.mass > 0.0 && b.mass > 0.0 {
+                        // Speculative rows between two dynamic bodies make stacks rock: such
+                        // a pair is discovered by the next substep's regeneration instead.
+                        regenerate = true;
                         None
+                    } else {
+                        speculative
                     }
+                } else {
+                    None
                 };
                 if let Some(m) = m {
                     push(out, (i, j, m), &mut s.work);
@@ -2224,8 +2345,9 @@ impl World {
                     continue;
                 }
                 report.narrow_tests += 1;
-                let approach = (-b.velocity.dot(n)).max(0.0) * h
-                    + b.angular_velocity.length() * b.shape.radius() * h;
+                let approach = (-b.velocity.dot(n)).max(0.0) * interval
+                    + (-step_drift(b, self.config.gravity, gain).dot(n)).max(0.0)
+                    + b.angular_velocity.length() * b.shape.radius() * interval;
                 let (i, j) = if a.order < b.order {
                     (plane, k)
                 } else {
@@ -2283,7 +2405,7 @@ impl World {
             }
             keep
         });
-        Ok(())
+        Ok(regenerate)
     }
 }
 /// Pair order. Settled storage (`sorted`) is in body order, so storage positions compare
@@ -2302,6 +2424,30 @@ fn pair_order(
         } else {
             (bodies[a].order, bodies[b].order).cmp(&(bodies[c].order, bodies[d].order))
         }
+    }
+}
+/// The normal row's velocity target. A separated (speculative) row permits closing exactly up
+/// to its surface. Restitution (`restitution` is the pair's coefficient, `approach` the
+/// relative normal velocity) and softness beyond the slop keep the hard response; within the
+/// slop the positional target is zero, so a support keeps its load-bearing impulse.
+fn contact_bias(sep: Real, restitution: Real, approach: Real, h: Real, slop: Real) -> Real {
+    if sep > 0.0 {
+        return -sep / h;
+    }
+    let bounce = if approach < -1.0 && sep <= slop {
+        -restitution * approach
+    } else {
+        0.0
+    };
+    (0.2 * (-sep - slop).max(0.0) / h).min(60.0).max(bounce)
+}
+/// Extra displacement from gravity and accumulated force, which keep acting on an awake
+/// dynamic body through the rest of the step; `gain` is zero on the step's last substep.
+fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
+    if gain > 0.0 && b.movable() && !b.sleeping {
+        (gravity + b.force / b.mass) * gain
+    } else {
+        Vector::ZERO
     }
 }
 #[inline]

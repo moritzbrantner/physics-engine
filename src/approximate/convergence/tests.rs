@@ -23,6 +23,8 @@ fn row(a: usize, b: usize) -> Constraint {
         swept: false,
         response: [true, true],
         spin: false,
+        offset: V::ZERO,
+        restitution: 0.0,
     }
 }
 

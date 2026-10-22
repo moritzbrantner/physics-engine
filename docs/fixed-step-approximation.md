@@ -27,9 +27,25 @@ retains the fixed-pass reference. See `docs/velocity-convergence.md` for the res
 checks, tolerances, probe schedule and comparison evidence. Each iteration updates velocities using incremental impulses; accumulated normal
 impulses clamp at zero, and accumulated tangential impulses clamp to the Coulomb friction disk.
 Prepared contact points and effective masses are reused for those iterations. Local contact
-anchors and impulses survive for warm starting on the next substep.
+anchors and impulses survive for warm starting on the next step.
 
-## One substep
+## Contacts once per step
+
+As in Rapier, contacts are generated once per step and their constraint rows are reused by
+the later substeps (#378). Generation looks ahead to the end of the step: AABBs are padded by
+the velocity and by the displacement gravity and forces add over the later substeps, and a
+pair with one fixed side that is separated but can close before the step ends is admitted as
+speculative rows (which permit closing exactly to the surface). A reused row keeps its normal,
+arms, masses and friction; its separation advances by the bodies' measured relative
+translation plus the rotation linearised at the arms, and its position target follows. Its
+accumulated impulses warm-start the next substep, and body responses are prepared with the
+contacts. A substep regenerates contacts and responses instead after anything the rows cannot
+represent: a swept test or CCD advance, a wake, a sleep, a retirement, two dynamic bodies that
+can close, or a non-sphere body whose rotation moves its surface more than the slop by the end
+of the step. Results of multi-substep worlds therefore differ from stepping `dt / n` with one
+substep `n` times; one-substep worlds are unchanged.
+
+## One substep (with generation)
 
 1. Apply force/gravity to awake velocities. External impulses were accumulated once at tick start.
 2. Query swept AABBs in a stable sweep-and-prune order. Reuse sleeping/static geometric bounds.

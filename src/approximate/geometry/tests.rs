@@ -273,22 +273,23 @@ fn cached_negative_contact_does_not_suppress_changed_velocity_or_dt_ccd() {
     projectile.velocity = Vector(40.0, 0.0, 0.0);
     w.add_body(projectile).unwrap();
     let mut out = Vec::new();
-    w.manifolds::<true>(0.1, &mut Report::default(), &mut out)
+    w.manifolds::<true>(0.1, 0.0, &mut Report::default(), &mut out)
         .unwrap();
     assert!(out.is_empty(), "rounded corner near miss must stay a miss");
     w.set_velocity(w.body_id(2).unwrap(), Vector(40.0, -2.0, 0.0))
         .unwrap();
     let mut report = Report::default();
-    w.manifolds::<true>(0.1, &mut report, &mut out).unwrap();
+    w.manifolds::<true>(0.1, 0.0, &mut report, &mut out)
+        .unwrap();
     assert_eq!(report.geometry.negative_hits, 1);
     assert_eq!(report.geometry.sweep_queries, 1);
     assert_eq!(out.len(), 1, "new trajectory must still be swept");
     assert!(out[0].2.swept);
     let mut reference = Vec::new();
-    w.manifolds::<false>(0.1, &mut Report::default(), &mut reference)
+    w.manifolds::<false>(0.1, 0.0, &mut Report::default(), &mut reference)
         .unwrap();
     assert_eq!(out, reference);
-    w.manifolds::<true>(0.001, &mut Report::default(), &mut out)
+    w.manifolds::<true>(0.001, 0.0, &mut Report::default(), &mut out)
         .unwrap();
     assert!(
         out.is_empty(),

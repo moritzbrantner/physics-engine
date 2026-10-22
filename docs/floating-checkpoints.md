@@ -47,6 +47,8 @@ The f32 build keeps the same format/algorithm versions and record layout, but wr
 
 CCD remaining-time response (#246/#261) advances the algorithm to 8 while retaining wire format 2. Algorithms 1 through 7 are rejected: a CCD body now responds at its swept time of impact and travels the rest of the substep along the response velocity, which changes continuation semantics. The empty-world digests change only because the algorithm header and its checksum change.
 
+Contacts generated once per step and reused across substeps (#378) advance the algorithm to 9 while retaining the wire format; algorithm 8 checkpoints are rejected because multi-substep worlds now continue differently. The empty-world digest changes only for the algorithm header and its checksum.
+
 All current shapes, materials and fixed geometry are inline. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
 
 ## Continuation inventory
