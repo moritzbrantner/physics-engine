@@ -452,6 +452,44 @@ impl World {
         hits: &mut Vec<QueryHit>,
         admit: impl Fn(&Body) -> bool,
     ) -> Result<Option<QueryHit>, Error> {
+        self.cast_hits(id, pose, displacement, hits)?;
+        Ok(hits.iter().copied().find(|h| {
+            (h.starts_overlapping || h.normal.dot(displacement) < 0.0)
+                && self.index(h.body).is_ok_and(|i| admit(&self.bodies[i]))
+        }))
+    }
+
+    /// Earliest surface `displacement` approaches with the character inflated by `offset`, as
+    /// Rapier's cast with that target distance: the hit's `fraction` is where the true gap
+    /// closes to `offset`, and surfaces already within `offset` count only when approached.
+    fn offset_hit(
+        &self,
+        id: BodyId,
+        mut pose: QueryPose,
+        displacement: V,
+        offset: Real,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<Option<QueryHit>, Error> {
+        if let Shape::Capsule { radius, .. } = &mut pose.shape {
+            *radius += offset;
+        }
+        self.cast_hits(id, pose, displacement, hits)?;
+        // Sliding along a surface at the offset approaches it only by rounding; motion that
+        // closes the gap by under a thousandth of the offset does not count as approaching.
+        let tolerance = offset * 1e-3;
+        Ok(hits
+            .iter()
+            .copied()
+            .find(|h| h.normal.dot(displacement) < -tolerance))
+    }
+
+    fn cast_hits(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        displacement: V,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<(), Error> {
         let filter = QueryFilter {
             exclude: Some(id),
             ..QueryFilter::default()
@@ -466,10 +504,7 @@ impl World {
                 }
                 super::QueryFailureReason::InvalidInput => Error::InvalidInput,
             })?;
-        Ok(hits.iter().copied().find(|h| {
-            (h.starts_overlapping || h.normal.dot(displacement) < 0.0)
-                && self.index(h.body).is_ok_and(|i| admit(&self.bodies[i]))
-        }))
+        Ok(())
     }
 
     /// Rapier's step-up: room above, room on top of the step for `min_width`, and no
@@ -697,9 +732,9 @@ impl World {
                 break;
             }
             let direction = remaining * (1.0 / length);
-            // Cast one offset further so motion never ends closer than `offset`.
-            let reach = length + s.offset;
-            let Some(hit) = self.blocking_hit(id, pose, direction * reach, hits, |_| true)? else {
+            // Cast the character inflated by `offset` (Rapier's target distance): a hit is
+            // where the true gap to a surface the motion approaches closes to `offset`.
+            let Some(hit) = self.offset_hit(id, pose, remaining, s.offset, hits)? else {
                 pose.position += remaining;
                 translation += remaining;
                 break;
@@ -713,30 +748,7 @@ impl World {
             }
             let normal = normal.unit();
             let approach = -direction.dot(normal);
-            // Stop `offset` short of the surface along its normal.
-            let mut allowed = if approach > 0.0 {
-                (hit.fraction * reach - s.offset / approach).max(0.0)
-            } else {
-                0.0
-            };
-            // A later-touched surface approached at a shallow angle (the floor under a
-            // descending walk into a steep slope) may need the motion to stop sooner.
-            let first = hit.body;
-            let (mut hit, mut normal, mut approach) = (hit, normal, approach);
-            for other in hits.iter().filter(|h| h.body != first) {
-                let n = flat(other.normal);
-                if n == V::ZERO || other.starts_overlapping {
-                    continue;
-                }
-                let n = n.unit();
-                let a = -direction.dot(n);
-                if a > 0.0 {
-                    let stop = (other.fraction * reach - s.offset / a).max(0.0);
-                    if stop < allowed {
-                        (allowed, hit, normal, approach) = (stop, *other, n, a);
-                    }
-                }
-            }
+            let allowed = hit.fraction * length;
             if allowed >= length {
                 pose.position += remaining;
                 translation += remaining;
@@ -804,19 +816,11 @@ impl World {
                         let room = hits
                             .iter()
                             .filter(|h| h.body != hit.body)
-                            .filter_map(|h| {
+                            .filter(|h| {
                                 let n = flat(h.normal);
-                                let approach = -direction.dot(n.unit());
-                                (n != V::ZERO && (h.starts_overlapping || approach > 0.0)).then(
-                                    || {
-                                        if approach > 0.0 {
-                                            (h.fraction * reach - s.offset / approach).max(0.0)
-                                        } else {
-                                            0.0
-                                        }
-                                    },
-                                )
+                                n != V::ZERO && direction.dot(n) < 0.0
                             })
+                            .map(|h| h.fraction * length)
                             .fold(Real::INFINITY, Real::min)
                             - travel;
                         let pushed =

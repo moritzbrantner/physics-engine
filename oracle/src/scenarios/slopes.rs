@@ -74,9 +74,8 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             if p[2] != z || !p.iter().all(|a| a.is_finite()) {
                 return Err(format!("lane {lane} left its line at tick {tick}: {p:?}"));
             }
-            // Never into the floor. Landing at a shallow angle may still end inside the
-            // offset (#349).
-            if p[1] < REST - OFFSET - 1e-4 {
+            // Never inside the floor's offset, even landing at a shallow angle (#349).
+            if p[1] < REST - 1e-5 {
                 return Err(format!("lane {lane} sank to {} at tick {tick}", p[1]));
             }
             if lane >= 12 && p[1] > REST + 1e-4 {
