@@ -179,7 +179,7 @@ fn slow_current_contact_keeps_sleeping_anchor_response_like_fixed_anchor() {
                 substeps: 1,
                 fixed_position_iterations: 0,
                 convergence: None,
-                ..Config::default()
+                ..Config::legacy()
             })
             .unwrap();
             let mut anchor = Body::fixture(

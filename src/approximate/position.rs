@@ -91,17 +91,17 @@ impl World {
         if self.bookkeeping.position.reference {
             return parity_tests::reference(self, h, report);
         }
-        if self.config.fixed_position_iterations == 0 {
+        if self.scene.fixed_position_iterations == 0 {
             return Ok(());
         }
         let s = &mut self.bookkeeping;
         s.activity.refresh(&self.bodies, &mut s.work);
         s.position.prepare(&self.bodies, report);
         let clipping_before = s.position.clipping.retained_bytes();
-        for _ in 0..self.config.fixed_position_iterations {
+        for _ in 0..self.scene.fixed_position_iterations {
             report.passes += 1;
             let mut changed = false;
-            if self.config.position_correction == PositionCorrection::AdmittedContacts {
+            if self.scene.position_correction == PositionCorrection::AdmittedContacts {
                 let mut previous = None;
                 for row in &self.constraints {
                     let (i, j) = (row.a, row.b);
@@ -157,7 +157,7 @@ impl World {
                         .into_iter()
                         .map(|p| -p.separation)
                         .fold(0.0, Real::max);
-                    let distance = (depth - self.config.contact_slop).max(0.0);
+                    let distance = (depth - self.scene.contact_slop).max(0.0);
                     if distance <= 0.0 {
                         continue;
                     }
@@ -185,7 +185,7 @@ impl World {
                             return Err(Error::NonFiniteState(body.id));
                         }
                         body.cached_bounds = contact::bounds(body);
-                        if moved > self.config.sleep_speed * h {
+                        if moved > self.scene.sleep_speed * h {
                             body.quiet_time = 0.0;
                         }
                     }
@@ -249,7 +249,7 @@ impl World {
                         .into_iter()
                         .map(|p| -p.separation)
                         .fold(0.0, Real::max);
-                    let distance = (depth - self.config.contact_slop).max(0.0);
+                    let distance = (depth - self.scene.contact_slop).max(0.0);
                     if distance <= 0.0 {
                         continue;
                     }
@@ -260,7 +260,7 @@ impl World {
                     }
                     body.cached_bounds = contact::bounds(body);
                     (lo, hi) = body.cached_bounds;
-                    if distance > self.config.sleep_speed * h {
+                    if distance > self.scene.sleep_speed * h {
                         body.quiet_time = 0.0;
                     }
                     report.corrections += 1;
@@ -290,7 +290,7 @@ mod tests {
     fn fixture() -> World {
         let mut w = World::new(Config {
             fixed_position_iterations: 2,
-            ..Config::default()
+            ..Config::legacy()
         })
         .unwrap();
         w.add_body(Body::fixture(
@@ -400,7 +400,7 @@ mod tests {
         w.correct_positions(1.0 / 240.0, &mut report).unwrap();
         assert_eq!(w.bodies, before);
         assert_eq!(report.contact_tests, 0);
-        w.config.fixed_position_iterations = 0;
+        w.scene.fixed_position_iterations = 0;
         report = PositionReport::default();
         w.correct_positions(1.0 / 240.0, &mut report).unwrap();
         assert_eq!(report.passes, 0);
@@ -420,7 +420,7 @@ mod tests {
             substeps: 1,
             fixed_position_iterations: 2,
             position_correction: PositionCorrection::AdmittedContacts,
-            ..Config::default()
+            ..Config::legacy()
         })
         .unwrap();
         for (id, x, mass) in [(1, 0.0, 1.0), (2, 2.0, 3.0)] {

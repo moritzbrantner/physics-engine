@@ -183,7 +183,7 @@ fn two_passes_solve_an_isolated_elastic_impact_without_changing_momentum_or_carr
         w.add_body(b).unwrap();
     }
     let mut fixed = w.clone();
-    fixed.config.convergence = None;
+    fixed.scene.convergence = None;
     let r = w.step(1.0 / 60.0).unwrap();
     let f = fixed.step(1.0 / 60.0).unwrap();
     assert_eq!(r.impulse_iterations, 2);
@@ -214,7 +214,7 @@ fn empty_contacts_skip_passes_without_dropping_forces_impulses_or_time() {
     w.apply_impulse(w.body_id(1).unwrap(), V(2.0, 0.0, 0.0), V::ZERO)
         .unwrap();
     let mut fixed = w.clone();
-    fixed.config.convergence = None;
+    fixed.scene.convergence = None;
     for _ in 0..3 {
         let r = w.step(1.0 / 60.0).unwrap();
         fixed.step(1.0 / 60.0).unwrap();
@@ -329,7 +329,7 @@ fn mass_ratio_friction_and_offcenter_contacts_keep_fixed_reference_quality() {
             body.friction = 0.8;
             a.add_body(body).unwrap();
             let mut fixed = a.clone();
-            fixed.config.convergence = None;
+            fixed.scene.convergence = None;
             for _ in 0..60 {
                 a.step(1.0 / 60.0).unwrap();
                 fixed.step(1.0 / 60.0).unwrap();

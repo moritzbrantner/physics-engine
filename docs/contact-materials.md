@@ -16,9 +16,9 @@ shape volume does not automatically choose density, mass or material.
 The pair restitution coefficient is the **minimum** of the two coefficients.
 Restitution uses contact-point relative normal velocity, including permitted spin.
 Its target separating speed is `e * closing_speed` only when closing speed is
-strictly greater than **1 scene unit per second**, witness separation is at most
-`Config::contact_slop`, and the pair has no retained contact-history entry.
-This absolute speed threshold does not scale with mass, dimensions or timestep.
+strictly greater than **1 m/s** (`Config::length_unit` scene units per second), witness
+separation is at most `Config::contact_slop`, and the pair has no retained contact-history entry.
+This speed threshold does not scale with mass, dimensions or timestep.
 
 The history gate applies even with `warm_start: false`; that option disables
 reapplication of old impulses, rather than contact history. A clear interval which

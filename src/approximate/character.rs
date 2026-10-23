@@ -183,7 +183,7 @@ fn is_static(b: &Body) -> bool {
 impl World {
     /// Default character settings in this world's length unit.
     pub fn character_settings(&self) -> CharacterSettings {
-        let unit = self.config.length_unit;
+        let unit = self.scene.length_unit;
         let metres = CharacterSettings::default();
         CharacterSettings {
             offset: metres.offset * unit,
@@ -640,7 +640,7 @@ impl World {
     /// Distance below a character within which walkable ground counts as support: Rapier's
     /// ground prediction, `offset` plus 5 cm in this world's length unit.
     fn ground_prediction(&self, s: CharacterSettings) -> Real {
-        s.offset + GROUND_PREDICTION * self.config.length_unit
+        s.offset + GROUND_PREDICTION * self.scene.length_unit
     }
 
     fn move_character(

@@ -340,7 +340,7 @@ fn within(a: V, b: V, limit: Real) {
 fn real_mixed_scene_reduces_work_preserves_difficult_island_and_near_miss() {
     let mut local = mixed_world(ConvergenceScope::ContactIslands, 32, false);
     let mut global = local.clone();
-    global.config.convergence_scope = ConvergenceScope::WholeWorld;
+    global.scene.convergence_scope = ConvergenceScope::WholeWorld;
     let mut isolated = mixed_world(ConvergenceScope::ContactIslands, 0, false);
     let mut easy_only = local.clone();
     for id in 1..=32 {
@@ -463,7 +463,7 @@ fn single_island_and_fixed_reference_keep_original_counters_and_momentum() {
         local.add_body(b).unwrap();
     }
     let mut global = local.clone();
-    global.config.convergence_scope = ConvergenceScope::WholeWorld;
+    global.scene.convergence_scope = ConvergenceScope::WholeWorld;
     let a = local.step(1.0 / 60.0).unwrap();
     let b = global.step(1.0 / 60.0).unwrap();
     assert_eq!(local.bodies, global.bodies);
@@ -474,7 +474,7 @@ fn single_island_and_fixed_reference_keep_original_counters_and_momentum() {
         ConvergenceScope::ContactIslands,
     ] {
         let mut w = mixed_world(scope, 4, false);
-        w.config.convergence = None;
+        w.scene.convergence = None;
         let r = w.step(1.0 / 60.0).unwrap();
         assert_eq!(r.impulse_iterations, 32);
         assert_eq!(r.islands, IslandStats::default());
@@ -558,7 +558,7 @@ fn globally_converged_or_tiny_budgets_do_not_pay_for_partitioning() {
         for id in 1..=32 {
             w.remove_body(w.body_id(id).unwrap());
         }
-        w.config.velocity_iterations = limit;
+        w.scene.velocity_iterations = limit;
         // Isolated spheres have an exact one-row solution; two passes certify it globally.
         for id in 100..132 {
             w.remove_body(w.body_id(id).unwrap());

@@ -20,6 +20,10 @@ enum Case {
 
 fn fixture(case: Case, substeps: u8) -> World {
     let mut world = World::new(Config {
+        // The legacy scene-unit dynamics settings this fixture was tuned with.
+        gravity: physics_engine::approximate::Vector(0.0, -3600.0, 0.0),
+        contact_slop: 0.02,
+        sleep_speed: 1.0,
         substeps,
         velocity_iterations: 8,
         fixed_position_iterations: 2,

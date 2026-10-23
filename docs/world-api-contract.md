@@ -17,8 +17,10 @@ the oracle harness (D4). The per-capability parity status is tracked in
   `World::character_settings()` returns the character defaults (2.5 mm offset, 5 cm snap) in
   scene units; values the game passes explicitly stay in scene units. Query and controller
   tolerances are relative (to magnitudes or to the character offset), so a scene scaled by the
-  unit moves identically. The rigid-body dynamics defaults (`gravity`, `contact_slop`,
-  `sleep_speed`) are still the historical scene-unit values.
+  unit moves identically. The rigid-body dynamics settings are in metres and scaled by it once
+  in `World::new`, with Rapier's defaults: `gravity` (0, −9.81, 0) m/s², `contact_slop`
+  0.005 m, `sleep_speed` 0.05 m/s for `sleep_seconds` 0.5 s; the restitution threshold is
+  1 m/s. `World::config()` returns the configuration as given, in metres.
 
 - Positions and collider dimensions are scene distance units; box dimensions are **half extents**.
 - `step(dt)` takes seconds (finite, `0..=0.1`). Elapsed time is kept in `f64`.
@@ -113,8 +115,13 @@ diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and cas
 character moves work against it. Box and wedge overlaps (door probes) are tested against the
 triangles by the separating-axis test: whether they overlap is exact, and the reported depth and
 normal come from the deepest triangle alone. The terrain is a surface, so a box wholly beneath
-it does not touch it. Box and wedge casts against terrain return an error. Terrain takes no part
-in rigid-body contacts, and worlds with terrain are not checkpointed. `add_body` rejects
+it does not touch it. Box and wedge casts against terrain return an error. Dynamic boxes take
+rigid contacts with terrain automatically, one manifold per triangle under the box as in
+Rapier: the triangle's upward normal is the contact normal, the box face most opposed to it is
+clipped to the triangle's prism (so ridges and peaks under a face give points), and up to four
+points within the contact slop plus the step's approach are kept, ranked by their separation
+after the body's current motion. Other dynamic shapes take no terrain contacts. Worlds with
+terrain are not checkpointed. `add_body` rejects
 heightfield shapes.
 
 ## Halfspaces
@@ -125,7 +132,8 @@ static only (mass 0, not external). Every ray and shape query tests it with a cl
 wherever the query is; a box or wedge meets it at its deepest point. Characters stand,
 walk and snap on it. Dynamic boxes, wedges, spheres and capsules rest and slide on it: each
 substep tests every halfspace against every awake dynamic body (O(halfspaces · bodies)), keeps
-up to the four deepest support points within the contact slop plus the substep's approach,
+up to four support points within the contact slop plus the substep's approach (the deepest
+after the body's current motion, so a tumbling corner about to swing in is kept),
 and lets the solver close speculative points exactly to the plane, so fast bodies do not pass
 through it. Worlds with a halfspace are not checkpointed.
 

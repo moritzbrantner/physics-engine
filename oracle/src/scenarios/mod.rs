@@ -3,6 +3,7 @@ pub mod arpg_tick;
 pub mod capsule_normals;
 pub mod character_move;
 pub mod crowd;
+pub mod debris;
 pub mod mmorpg_tick;
 pub mod platforms;
 pub mod props;
