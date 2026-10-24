@@ -158,6 +158,14 @@ pub(super) fn snapshot_sweep(
     let mut b = kernel_body(target);
     a.velocity = to_array(displacement);
     b.velocity = [0.0; 3];
+    // Sweep in the query's frame. Conservative advance creeps one time ulp at a time when the
+    // gap stalls just above contact, and the separation's rounding grows with the coordinates'
+    // magnitude: far from the origin (a capsule reaching a box edge at x = 15853,
+    // physics-engine#349) the creep cannot outrun it and exhausts the iteration budget.
+    // Widened f32 coordinates subtract exactly in f64, so the fraction is unchanged.
+    let origin = a.position;
+    a.position = [0.0; 3];
+    b.position = [0, 1, 2].map(|k| b.position[k] - origin[k]);
     kernel_swept_time(a, b, 1.0, 0.0, max_iterations, work)
         .map(|fraction| fraction.map(toward_zero))
         .map_err(sweep_failure)
@@ -442,6 +450,29 @@ mod tests {
         assert!((0.0..=1.0).contains(&time));
         assert!(work.primitive_sweep_iterations > 0);
         assert!(work.primitive_sweep_iterations < 128);
+    }
+
+    #[test]
+    fn far_snapshot_sweep_reaches_a_box_edge_within_rounding() {
+        // physics-engine#349 (mmorpg#427): an offset-inflated character capsule walking into
+        // a crate's vertical edge far from the origin. The gap stalled at 7e-15 and the
+        // conservative advance exhausted its 128 iterations one ulp at a time.
+        let capsule = body(
+            1,
+            Shape::capsule(45.0, 35.25),
+            V(15811.787, 385.7618, 2472.5217),
+        );
+        let crate_box = body(
+            2,
+            Shape::Box(V(41.0, 250.0, 41.0)),
+            V(15894.0, 527.0, 2519.0),
+        );
+        let mut work = PrimitiveWork3::default();
+        let fraction = snapshot_sweep(&capsule, &crate_box, V(7.0, 0.0, 1.0), 128, &mut work)
+            .unwrap()
+            .unwrap();
+        assert!((fraction - 0.894_596_6).abs() < 1e-6, "{fraction}");
+        assert!(work.sweep_iterations < 8, "{}", work.sweep_iterations);
     }
 
     #[test]
