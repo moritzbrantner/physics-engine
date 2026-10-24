@@ -342,6 +342,41 @@ fn overlap_is_resolved_after_a_door_closes_or_the_game_places_a_character() {
     assert!(d >= 2.0 * RADIUS + OFFSET - 1e-4, "{d}");
 }
 
+/// A character pushed out of a wall into another character is separated from it on the next
+/// batch, exactly as a world rebuilt from the same poses separates them (mmorpg#427).
+#[test]
+fn depenetration_into_another_character_separates_as_a_restored_world_does() {
+    fn batch(w: &mut World, bodies: [BodyId; 2]) {
+        let moves = bodies.map(|body| CharacterMove {
+            body,
+            desired: V::ZERO,
+        });
+        w.move_characters(&moves, &mut Vec::new()).unwrap();
+    }
+    let mut live = world();
+    // Resting 0.45 short of the wall at x = 4.75; the other starts inside the wall and is
+    // pushed out onto it.
+    let a = character(&mut live, 10, V(4.0, FOOT + OFFSET, 0.0));
+    let b = character(&mut live, 11, V(4.9, FOOT + OFFSET, 0.0));
+    batch(&mut live, [a, b]);
+    let (pa, pb) = (position(&live, a), position(&live, b));
+    assert!(pb.0 - pa.0 < 2.0 * RADIUS, "pushed into a: {pa:?} {pb:?}");
+
+    let mut restored = world();
+    let ra = character(&mut restored, 10, pa);
+    let rb = character(&mut restored, 11, pb);
+    batch(&mut live, [a, b]);
+    batch(&mut restored, [ra, rb]);
+    assert_eq!(position(&live, a), position(&restored, ra));
+    assert_eq!(position(&live, b), position(&restored, rb));
+    // The wall holds `b`, so the separation moves `a` away.
+    assert!(
+        position(&live, a).0 < pa.0 - 0.05,
+        "{:?}",
+        position(&live, a)
+    );
+}
+
 /// The same scene in metres and in centimetres moves identically (#291).
 #[test]
 fn character_motion_does_not_depend_on_the_length_unit() {

@@ -711,7 +711,11 @@ impl World {
                 }
             }
             if push == V::ZERO {
-                resolved = true;
+                // Still inside another character (or pushed into one): not clear, so the
+                // next batch separates them, as it would after a restore.
+                resolved = !hits
+                    .iter()
+                    .any(|h| h.separation < 0.0 && self.characters.contains(h.body));
                 break;
             }
             pose.position += push;
