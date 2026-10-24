@@ -3,8 +3,8 @@
 //! re-swept against every candidate.
 use physics_engine::{
     approximate::{
-        Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Real, Report, Shape,
-        Vector as V, World,
+        Body, Checkpoint, CheckpointContext, CheckpointLimits, CombineRule, Config, Real, Report,
+        Shape, Vector as V, World,
     },
     numeric::Scalar,
 };
@@ -28,6 +28,9 @@ fn elastic_sphere(id: u64, position: V, velocity: V) -> Body {
     b.restitution = 1.0;
     b.friction = 0.0;
     b.ccd = true;
+    // Elastic only against elastic walls; frictionless only against frictionless bodies.
+    b.restitution_combine = CombineRule::Min;
+    b.friction_combine = CombineRule::Max;
     b
 }
 
@@ -99,13 +102,9 @@ fn parked_target() -> World {
         .unwrap();
     w.add_body(fixed(2, V(0.25, 5.0, 5.0), V(0.0, 5.0, 0.0), 1.0, 0.0))
         .unwrap();
-    w.add_body(Body::keyed(
-        10,
-        Shape::Box(V(1.0, 1.0, 1.0)),
-        V(-10.0, 1.0, 0.0),
-        2.0,
-    ))
-    .unwrap();
+    let mut target = Body::keyed(10, Shape::Box(V(1.0, 1.0, 1.0)), V(-10.0, 1.0, 0.0), 2.0);
+    target.friction = 0.6;
+    w.add_body(target).unwrap();
     for _ in 0..120 {
         w.step(1.0 / 60.0).unwrap();
     }

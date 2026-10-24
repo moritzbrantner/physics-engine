@@ -309,6 +309,7 @@ mod engine {
                         rows: N,
                         heights: heights(holes),
                         removed_cells: holes.then(removed_cells),
+                        material: Default::default(),
                     },
                     Some(1),
                 )

@@ -1,6 +1,7 @@
 //! First-substep force/load oracles for contact-awakened bodies. No sleep-policy changes.
 use physics_engine::approximate::{
-    Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
+    Body, Checkpoint, CheckpointContext, CheckpointLimits, CombineRule, Config, Shape, Vector as V,
+    World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -30,17 +31,15 @@ fn fixture(case: Case, ids: [u64; 2], substeps: u8) -> World {
     })
     .unwrap();
     for (id, x) in [(0, 0.0), (40, 10.0)] {
-        w.add_body(Body::keyed(
-            id,
-            Shape::Box(V(4.0, 0.5, 4.0)),
-            V(x, -0.5, 0.0),
-            0.0,
-        ))
-        .unwrap();
+        let mut floor = Body::keyed(id, Shape::Box(V(4.0, 0.5, 4.0)), V(x, -0.5, 0.0), 0.0);
+        floor.friction = 0.6;
+        w.add_body(floor).unwrap();
     }
     for (id, x) in [(ids[1], 0.0), (30, 10.0)] {
         let mut b = Body::keyed(id, Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0);
-        b.friction = 0.0; // max mixing: the floor contributes .6; driven walls contribute0.
+        // Max mixing: the floor contributes 0.6; driven walls contribute 0.
+        b.friction = 0.0;
+        b.friction_combine = CombineRule::Max;
         if id == ids[1] && matches!(case, Case::AwakeReference) {
             b.sleep_allowed = false;
         }

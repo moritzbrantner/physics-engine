@@ -1,7 +1,16 @@
 //! Analytic public-API controls shared by native tests and the existing WASM driver.
 use physics_engine::approximate::{
-    Body, CheckpointContext, Config, Error, Shape, Vector as V, World,
+    Body, CheckpointContext, CombineRule, Config, Error, Shape, Vector as V, World,
 };
+
+/// Rule pairs covering every rule and Rapier's precedence (the later variant wins).
+const RULES: [(CombineRule, CombineRule); 5] = [
+    (CombineRule::Average, CombineRule::Average),
+    (CombineRule::Min, CombineRule::Average),
+    (CombineRule::Average, CombineRule::Multiply),
+    (CombineRule::Max, CombineRule::Min),
+    (CombineRule::Multiply, CombineRule::Min),
+];
 use physics_engine::{approximate::Real, numeric::Scalar};
 
 /// Rounding-only bound: the f64 reference, or 64 ulps of `scale` when larger (f32 state).
@@ -59,41 +68,45 @@ pub fn restitution_combination_threshold_and_mass_scaling() {
     for mass_scale in [1e-6, 1.0, 1e6] {
         for (left_id, right_id) in [(1, 2), (2, 1)] {
             for (left_e, right_e) in [(0.2, 0.8), (0.8, 0.2), (0.0, 1.0), (1.0, 1.0)] {
-                for speed in [0.999, 1.0, 1.001, 3.0] {
-                    let mut w = world(V::ZERO, true);
-                    let (ma, mb) = (mass_scale, 3.0 * mass_scale);
-                    let mut a = sphere(left_id, -V::X, ma, V::X * speed);
-                    let mut b = sphere(right_id, V::X, mb, V::ZERO);
-                    a.restitution = left_e;
-                    b.restitution = right_e;
-                    w.add_body(b).unwrap();
-                    w.add_body(a).unwrap();
-                    step(&mut w);
-                    let a = w.body_id(left_id).and_then(|id| w.body(id)).unwrap();
-                    let b = w.body_id(right_id).and_then(|id| w.body(id)).unwrap();
-                    // Independent one-dimensional impulse/momentum solution.
-                    let e = if speed > 1.0 {
-                        left_e.min(right_e)
-                    } else {
-                        0.0
-                    };
-                    let impulse = (1.0 + e) * speed / (1.0 / ma + 1.0 / mb);
-                    close(a.velocity.0, speed - impulse / ma);
-                    close(b.velocity.0, impulse / mb);
-                    close(
-                        (a.velocity * ma + b.velocity * mb).0 / mass_scale,
-                        ma / mass_scale * speed,
-                    );
-                    close(b.velocity.0 - a.velocity.0, e * speed);
-                    let reduced_mass = ma * mb / (ma + mb);
-                    let energy_before = 0.5 * ma * speed * speed;
-                    let expected_loss = 0.5 * reduced_mass * (1.0 - e * e) * speed * speed;
-                    close(
-                        (a.kinetic_energy() + b.kinetic_energy()) / energy_before,
-                        1.0 - expected_loss / energy_before,
-                    );
-                    assert_eq!(a.angular_velocity, V::ZERO);
-                    assert_eq!(b.angular_velocity, V::ZERO);
+                for (left_rule, right_rule) in RULES {
+                    for speed in [0.999, 1.0, 1.001, 3.0] {
+                        let mut w = world(V::ZERO, true);
+                        let (ma, mb) = (mass_scale, 3.0 * mass_scale);
+                        let mut a = sphere(left_id, -V::X, ma, V::X * speed);
+                        let mut b = sphere(right_id, V::X, mb, V::ZERO);
+                        a.restitution = left_e;
+                        b.restitution = right_e;
+                        a.restitution_combine = left_rule;
+                        b.restitution_combine = right_rule;
+                        w.add_body(b).unwrap();
+                        w.add_body(a).unwrap();
+                        step(&mut w);
+                        let a = w.body_id(left_id).and_then(|id| w.body(id)).unwrap();
+                        let b = w.body_id(right_id).and_then(|id| w.body(id)).unwrap();
+                        // Independent one-dimensional impulse/momentum solution.
+                        let e = if speed > 1.0 {
+                            CombineRule::combine(left_e, left_rule, right_e, right_rule)
+                        } else {
+                            0.0
+                        };
+                        let impulse = (1.0 + e) * speed / (1.0 / ma + 1.0 / mb);
+                        close(a.velocity.0, speed - impulse / ma);
+                        close(b.velocity.0, impulse / mb);
+                        close(
+                            (a.velocity * ma + b.velocity * mb).0 / mass_scale,
+                            ma / mass_scale * speed,
+                        );
+                        close(b.velocity.0 - a.velocity.0, e * speed);
+                        let reduced_mass = ma * mb / (ma + mb);
+                        let energy_before = 0.5 * ma * speed * speed;
+                        let expected_loss = 0.5 * reduced_mass * (1.0 - e * e) * speed * speed;
+                        close(
+                            (a.kinetic_energy() + b.kinetic_energy()) / energy_before,
+                            1.0 - expected_loss / energy_before,
+                        );
+                        assert_eq!(a.angular_velocity, V::ZERO);
+                        assert_eq!(b.angular_velocity, V::ZERO);
+                    }
                 }
             }
         }
@@ -124,11 +137,12 @@ pub fn fixed_target_restitution_and_speculative_contact() {
             let swept = gap > Config::default().contact_slop;
             close(
                 moving.velocity.0,
-                if gap == 0.0 || swept { -2.0 } else { gap / DT },
+                // The pair restitution is the average, 0.625.
+                if gap == 0.0 || swept { -2.5 } else { gap / DT },
             );
             if swept {
                 let impact = gap / 4.0;
-                close(moving.position.0, -1.0 + gap - 2.0 * (DT - impact));
+                close(moving.position.0, -1.0 + gap - 2.5 * (DT - impact));
             }
             assert_eq!(w.body_id(fixed_id).and_then(|id| w.body(id)), Some(&fixed));
         }
@@ -204,6 +218,7 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
 fn sliding_sphere(
     mass: Real,
     friction: [Real; 2],
+    rules: (CombineRule, CombineRule),
     velocity: V,
     locked: bool,
     linear: bool,
@@ -212,8 +227,10 @@ fn sliding_sphere(
     let mut w = world(-V::Y * 10.0, true);
     let mut floor = Body::keyed(ids[0], Shape::Box(V(100.0, 1.0, 100.0)), -V::Y, 0.0);
     floor.friction = friction[0];
+    floor.friction_combine = rules.0;
     let mut body = sphere(ids[1], V::Y, mass, velocity);
     body.friction = friction[1];
+    body.friction_combine = rules.1;
     body.rotation_locked = locked;
     body.linear_support = linear.then_some(V::Y);
     w.add_body(body).unwrap();
@@ -225,11 +242,14 @@ fn sliding_sphere(
 pub fn friction_combination_disk_mass_scaling_and_rotation() {
     for mass in [1e-6, 1.0, 1e6] {
         for ids in [[1, 2], [2, 1]] {
-            for friction in [[0.0, 0.0], [0.2, 0.8], [0.8, 0.2], [0.0, 0.8]] {
+            for (friction, rules) in [[0.0, 0.0], [0.2, 0.8], [0.8, 0.2], [0.0, 0.8]]
+                .into_iter()
+                .flat_map(|friction| RULES.map(|rules| (friction, rules)))
+            {
                 let initial = V(3.0, 0.0, 4.0);
-                let w = sliding_sphere(mass, friction, initial, true, false, ids);
+                let w = sliding_sphere(mass, friction, rules, initial, true, false, ids);
                 let body = w.body_id(ids[1]).and_then(|id| w.body(id)).unwrap();
-                let mu = friction[0].max(friction[1]);
+                let mu = CombineRule::combine(friction[0], rules.0, friction[1], rules.1);
                 let speed = initial.length() - mu * 10.0 * DT;
                 close(body.velocity.0, speed * 0.6);
                 close(body.velocity.1, 0.0);
@@ -239,7 +259,7 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
                 assert!(body.kinetic_energy() <= 0.5 * mass * initial.dot(initial));
             }
             let initial = V::X * 0.02;
-            let locked = sliding_sphere(mass, [0.8, 0.0], initial, true, false, ids);
+            let locked = sliding_sphere(mass, [0.8, 0.0], RULES[0], initial, true, false, ids);
             close(
                 locked
                     .body_id(ids[1])
@@ -249,7 +269,7 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
                     .0,
                 0.0,
             );
-            let rolling = sliding_sphere(mass, [0.8, 0.0], initial, false, false, ids);
+            let rolling = sliding_sphere(mass, [0.8, 0.0], RULES[0], initial, false, false, ids);
             let body = rolling
                 .body_id(ids[1])
                 .and_then(|id| rolling.body(id))
@@ -265,7 +285,7 @@ pub fn friction_combination_disk_mass_scaling_and_rotation() {
                 body.kinetic_energy() / (0.5 * mass * initial.dot(initial)),
                 5.0 / 7.0,
             );
-            let linear = sliding_sphere(mass, [0.8, 0.8], V::X * 3.0, true, true, ids);
+            let linear = sliding_sphere(mass, [0.8, 0.8], RULES[0], V::X * 3.0, true, true, ids);
             close(
                 (linear
                     .body_id(ids[1])

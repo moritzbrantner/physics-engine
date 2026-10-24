@@ -34,9 +34,11 @@ fn fixture(ids: [u64; 2], substeps: u8) -> World {
     platform.velocity = V(2.0, 0.0, 0.0);
     platform.rotation_locked = true;
     platform.sleep_allowed = false;
+    platform.friction = 0.6;
     w.add_body(platform).unwrap();
     let mut rider = Body::keyed(ids[1], Shape::Box(V(1.0, 1.0, 1.0)), V(0.0, 1.5, 0.0), 2.0);
     rider.rotation_locked = true;
+    rider.friction = 0.6;
     w.add_body(rider).unwrap();
     w
 }

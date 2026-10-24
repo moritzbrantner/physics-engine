@@ -2,7 +2,7 @@
 //! along the same diagonal as parry/Rapier heightfields. The prepared geometry lives in the
 //! world; its body carries `Shape::Heightfield` with the terrain's bounds.
 
-use super::{Body, BodyId, Error, Real, Shape, Vector as V, World, primitive};
+use super::{Body, BodyId, Error, Material, Real, Shape, Vector as V, World, primitive};
 use geometry_kernels::heightfield::{
     HeightfieldContact3, HeightfieldData3, HeightfieldDiagonal3, PreparedHeightfield3,
 };
@@ -24,6 +24,8 @@ pub struct HeightfieldDesc {
     pub rows: usize,
     pub heights: Vec<Real>,
     pub removed_cells: Option<Vec<bool>>,
+    /// The terrain body's contact material.
+    pub material: Material,
 }
 
 /// Immutable prepared terrain, shared by world clones.
@@ -104,6 +106,7 @@ impl World {
             0.0,
         );
         body.key = key;
+        body.set_material(desc.material);
         self.insert_body(body).inspect_err(|_| {
             self.terrains.pop();
         })

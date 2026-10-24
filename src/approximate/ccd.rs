@@ -214,14 +214,14 @@ impl World {
             let k = effective_mass::<PREPARED>(pair, arms, n, [true, true], true, report);
             if k > 1e-14 {
                 let restitution = if approach < -self.restitution_speed {
-                    body.restitution.min(partner.restitution)
+                    super::pair_restitution(body, partner)
                 } else {
                     0.0
                 };
                 let normal = -(1.0 + restitution) * approach / k;
                 let tangential = relative - n * approach;
                 let mut impulse = n * normal;
-                let mu = body.friction.max(partner.friction);
+                let mu = super::pair_friction(body, partner);
                 if mu > 0.0 && tangential.length() > 0.0 {
                     let t = tangential.unit();
                     let kt = effective_mass::<PREPARED>(pair, arms, t, [true, true], true, report);

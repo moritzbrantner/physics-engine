@@ -28,8 +28,12 @@ the oracle harness (D4). The per-capability parity status is tracked in
 - `Body::mass` scales response and force/impulse integration.
 - `Body::linear_damping` and `Body::angular_damping` (finite, nonnegative, default 0) are per
   second: after forces, each substep scales the velocity by `1 / (1 + h · damping)`, as Rapier
-  does. Contacts combine friction with the larger coefficient and restitution with the smaller;
-  Rapier averages both, so an adapter matching Rapier sets the combined values on its bodies.
+  does.
+- `Body::friction` (default 0.5) and `Body::restitution` (default 0) combine per contact by
+  `Body::friction_combine` and `Body::restitution_combine` (`CombineRule::{Average, Min,
+  Multiply, Max}`, default `Average`; when the rules differ the later wins), as Rapier's
+  defaults and `CoefficientCombineRule` do. `Body::set_material(Material)` sets all four. See
+  [contact materials](contact-materials.md).
 - `add_force(id, F)` accumulates force for the next step (`F / mass` per substep) and is cleared
   after a successful step.
 - `apply_impulse(id, J, point)` changes linear velocity by `J / mass` before the first substep;
@@ -107,7 +111,7 @@ When to pick which:
 
 ## Terrain
 
-`add_heightfield(HeightfieldDesc { origin, cell_size, columns, rows, heights, removed_cells }, key)`
+`add_heightfield(HeightfieldDesc { origin, cell_size, columns, rows, heights, removed_cells, material }, key)`
 adds static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`;
 `removed_cells`, row-major per cell, cuts holes that rays, queries and characters pass through,
 like parry's `CELL_REMOVED`) and returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Body, BodyId, BodyStorage, CachedPoint, CollisionLayers3d, Config, Convergence,
+    Body, BodyId, BodyStorage, CachedPoint, CollisionLayers3d, CombineRule, Config, Convergence,
     ConvergenceScope, Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape,
     Vector, World, contact, narrow_time, substep_length, widen_time,
 };
@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 };
 const FORMAT: u32 = 6;
 // Bump when continuation semantics change, even if the byte layout does not.
-const ALGORITHM: u32 = 10;
+const ALGORITHM: u32 = 11;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
 // Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 32 physical scalars.
@@ -529,7 +529,9 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
     ]
     .into_iter()
     .enumerate()
-    .fold(0u16, |bits, (i, yes)| bits | (u16::from(yes) << i));
+    .fold(0u16, |bits, (i, yes)| bits | (u16::from(yes) << i))
+        | b.friction_combine.bits() << 7
+        | b.restitution_combine.bits() << 9;
     out.extend_from_slice(&flags.to_le_bytes());
     out.extend_from_slice(&b.layers.memberships().to_le_bytes());
     out.extend_from_slice(&b.layers.mask().to_le_bytes());
@@ -685,9 +687,11 @@ impl<'a> Reader<'a> {
         body.linear_damping = self.scalar()?;
         body.angular_damping = self.scalar()?;
         let flags = self.u16()?;
-        if flags & !0x7f != 0 {
+        if flags & !0x7ff != 0 {
             return Err(CheckpointError::InvalidData);
         }
+        body.friction_combine = CombineRule::from_bits(flags >> 7);
+        body.restitution_combine = CombineRule::from_bits(flags >> 9);
         body.rotation_locked = flags & 1 != 0;
         body.external = flags & 2 != 0;
         body.sensor = flags & 4 != 0;

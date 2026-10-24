@@ -1,6 +1,7 @@
 //! Natural external-support parking with default-policy restart and dependency loss.
 use physics_engine::approximate::{
-    Body, Checkpoint, CheckpointContext, CheckpointLimits, Config, Shape, Vector as V, World,
+    Body, Checkpoint, CheckpointContext, CheckpointLimits, CombineRule, Config, Shape, Vector as V,
+    World,
 };
 use physics_engine::{approximate::Real, numeric::Scalar};
 
@@ -62,15 +63,12 @@ fn initial(case: Case, ids: [u64; 2], substeps: u8, external: bool) -> World {
         if external { 1.0 } else { 0.0 },
     );
     floor.external = external;
+    floor.friction = 0.6;
     w.add_body(floor).unwrap();
     if !shared {
-        w.add_body(Body::keyed(
-            200,
-            Shape::Box(V(4.0, 0.5, 4.0)),
-            V(20.0, -0.5, 20.0),
-            0.0,
-        ))
-        .unwrap();
+        let mut far = Body::keyed(200, Shape::Box(V(4.0, 0.5, 4.0)), V(20.0, -0.5, 20.0), 0.0);
+        far.friction = 0.6;
+        w.add_body(far).unwrap();
     }
     for (id, p) in [
         (ids[1], V(0.0, 1.5, 0.0)),
@@ -84,9 +82,12 @@ fn initial(case: Case, ids: [u64; 2], substeps: u8, external: bool) -> World {
         ),
     ] {
         let mut b = Body::keyed(id, Shape::Sphere(1.0), p, 2.0);
+        b.friction = 0.6;
         if shared {
+            // Floor 0.6 / wall 0 under maximum coefficient mixing.
             b.friction = 0.0;
-        } // Floor .6 / wall0 under maximum coefficient mixing.
+            b.friction_combine = CombineRule::Max;
+        }
         w.add_body(b).unwrap();
     }
     w

@@ -4,16 +4,25 @@ This is the existing `approximate::World` policy, verified through its public bo
 command and step APIs for #221 (parent #193). It does not change solver formulas.
 The legacy translational and rotating worlds have their own material contracts.
 
-`Body::friction` defaults to 0.6 and accepts finite values in `[0, 10]`.
+`Body::friction` defaults to 0.5 (Rapier's collider default) and accepts finite values in `[0, 10]`.
 `Body::restitution` defaults to zero and accepts finite values in `[0, 1]`.
 Invalid material or mass input fails admission without modifying physical state or
 consuming pending forces. Zero mass denotes immovable geometry; positive dynamic
 mass is at least `1e-6` and below `1e12`. These are independent coefficients;
 shape volume does not automatically choose density, mass or material.
 
+## Combine rules
+
+A contact combines the two bodies' coefficients by their `friction_combine` and
+`restitution_combine` rules (`CombineRule`, default `Average`), as Rapier's
+`CoefficientCombineRule` does: `Average` is `(a + b) / 2`, `Min`, `Multiply` and `Max` as
+named. When the two bodies' rules differ the later one wins (Average < Min < Multiply < Max),
+Rapier's precedence. Rapier's `ClampedSum` and `GeometricMean` are not offered: no consumer
+uses them. Engine-built bodies take a `Material` (`HeightfieldDesc::material`).
+
 ## Normal impacts
 
-The pair restitution coefficient is the **minimum** of the two coefficients.
+The pair restitution coefficient is the combined coefficient.
 Restitution uses contact-point relative normal velocity, including permitted spin.
 Its target separating speed is `e * closing_speed` only when closing speed is
 strictly greater than **1 m/s** (`Config::length_unit` scene units per second), witness
@@ -51,8 +60,8 @@ correction is a distinct optional stage; see [its policy](dense-contact-correcti
 
 ## Tangential response
 
-The pair friction coefficient is the **maximum** of the two coefficients, so one
-zero-friction surface does not make the pair frictionless. The two accumulated
+The pair friction coefficient is the combined coefficient; a frictionless surface makes the
+pair frictionless only under `Min` or `Multiply`. The two accumulated
 tangent components are projected onto the disk
 `length(tangent_impulse) <= mu * accumulated_normal_impulse`.
 This is a vector Coulomb bound, including diagonal slip, rather than separate
@@ -77,9 +86,9 @@ driven surfaces must be included when interpreting other energy controls.
 ## Executable evidence and limits
 
 [The shared controls](../tests/support/contact_materials.rs) verify analytic normal
-impact velocities, minimum restitution, threshold equality and either side of it,
+impact velocities, combined restitution under every rule and precedence, threshold equality and either side of it,
 unequal masses, fixed supports, speculative arrival, persistent history with/without
-warm starting, clear/recontact, same-ID replacement, maximum friction, diagonal
+warm starting, clear/recontact, same-ID replacement, combined friction under every rule, diagonal
 Coulomb limiting, sticking, spin, rotation lock, linear support and invalid admission.
 The mass scales are `1e-6`, `1` and `1e6`; formulas use explicit absolute/relative
 roundoff tolerances. Momentum, impulse and energy checks normalize by their physical

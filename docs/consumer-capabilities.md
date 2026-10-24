@@ -33,14 +33,14 @@ over the integer `World`; no consumer enables it).
 | C15 | Whole-tick cost at or below Rapier (ARPG: ~18 µs native, ~27 µs WASM, 2.68 MB WASM; MMORPG: WASM 1.76 → 3.29 MB, debug combat ~31 s → ~41 s) | MMORPG, ARPG | — | **parity**: MMORPG (`mmorpg-tick`: its whole `World::step` pattern with its query dispatcher, head-on pairs, doors, line of sight) and ARPG (`arpg-tick`: its `Physics` pattern with players, planar monsters, doors, line of sight, projectiles, placements); engine WASM 0.47 MB vs Rapier 1.46 MB. **Consumer-integrated** (games' real physics paths, test/bench-only `physics-ab` feature): MMORPG 0.24–0.52×, ARPG 0.07–0.30× Rapier per tick ([below](#consumer-integrated-evidence-c15)) | #330 |
 | C16 | Characters separate and slide around each other (bounded pushing) | MMORPG | none (head-on contact blocks both) | **parity** (`crowd`, `push`): head-on sidestep, half-each separation, bounded pushing under per-character `max_push` ceilings | #308 |
 | C17 | Static heightfield terrain: capsule characters standing and walking on hills, ground rays | MMORPG (#159 step 2; caves later) | `SharedShape::heightfield` (flat cells `CELL_REMOVED`), KCC on terrain, `cast_ray` | **parity** (`terrain`, `terrain-holes`): `add_heightfield`, parry diagonal, removed cells (holes, MMORPG's flat cells over a floor plane), rays, sphere/capsule queries, box/wedge overlaps (door probes), characters, rigid contacts with dynamic boxes (`debris`); not checkpointed; caves later | #195, #342 |
-| C18 | Dynamic boxes: upright movable crates (slide, stop at walls and units, rest, wake on the next push) and tumbling debris | MMORPG (mmorpg#58, #288) | `RigidBodyBuilder::dynamic()` (crates `lock_rotations`), cuboid colliders with density 600, friction 0.8, restitution 0.15, linear damping 0.2 (debris also angular 0.8), fixed boxes, capsules, halfspace and heightfield around them, one `step` per tick | **parity** (`props`, `debris`): rotation-locked boxes with friction and linear damping on the floor plane, against fixed boxes and capsules (2 substeps × 1 pass, rests within 5% of each slide of Rapier's position); tumbling debris with restitution, linear and angular damping, debris–debris contacts and box/heightfield contacts, settled by the game's rule into fixed boxes (2 substeps × 4 passes, sleep off): sinks no deeper than Rapier, at least 90% of rest points within 0.5 m (or 25% of the throw) of Rapier's and all within 1.5 m | #366 |
+| C18 | Dynamic boxes: upright movable crates (slide, stop at walls and units, rest, wake on the next push) and tumbling debris | MMORPG (mmorpg#58, #288) | `RigidBodyBuilder::dynamic()` (crates `lock_rotations`), cuboid colliders with density 600, friction 0.8, restitution 0.15, linear damping 0.2 (debris also angular 0.8), fixed boxes, capsules, halfspace and heightfield around them, one `step` per tick | **parity** (`props`, `debris`): rotation-locked boxes with friction and linear damping on the floor plane, against fixed boxes and capsules (2 substeps × 1 pass, rests within 5% of each slide of Rapier's position); tumbling debris with restitution, linear and angular damping, debris–debris contacts and box/heightfield contacts, settled by the game's rule into fixed boxes (2 substeps × 4 passes, sleep off): sinks no deeper than Rapier, at least 90% of rest points within 0.5 m (or 25% of the throw) of Rapier's and all within 1.5 m; mixed materials (`materials`: crates 0.8 / 0.15 on geometry at Rapier's 0.5 / 0 defaults, crate on crate, `Multiply` and `Max` slabs; Rapier's `CoefficientCombineRule` per body, default `Average`): every slide within 5% of Rapier's (measured 1.2–2.0%) | #366, #391 |
 
 Scenarios live in `oracle/src/scenarios/`; `cargo run --release --manifest-path oracle/Cargo.toml`
 checks them natively (invariants + not more than 5% slower than Rapier) and
 `node scripts/oracle-wasm.mjs` reports WASM timings and sizes.
 
 Not used by any consumer today: joints, sensors/contact events, collision
-groups, CCD, materials, triangle meshes. Work on those stays parked until a consumer
+groups, CCD, triangle meshes. Work on those stays parked until a consumer
 uses them. Engine and sandbox support (`ccd`, `sensor`, `retire_on_impact`, layers) is not
 consumer adoption. The engine/game boundary for melee sweeps, contact enter/exit, buoyancy,
 filtering, multi-hit queries and projectiles, with the consumer issues that would gate each, is
@@ -64,8 +64,9 @@ engine depenetration of units authored inside geometry (MMORPG's squat rats, slo
 fixture players inside props; those fights are reported, not bounded), and Rapier's normal
 nudge drift. Engine gaps found and fixed since: #336 (exact translation), #337 (local placement
 invalidation), #340 (snap from geometry, so MMORPG's rebuilt worlds now continue), #341
-(coincident surfaces), #342 (heightfield holes). The games still pin `3a1b841`; moving their
-pins picks the fixes up. Not measured: WASM through the games' integrations, `Indexed` storage.
+(coincident surfaces), #342 (heightfield holes), #391 (Rapier's per-body material combine
+rules, found by mmorpg#442). The table was measured at `3a1b841`; MMORPG now pins `d7aad42`
+and ARPG `cda9d1d` (2026-10-24), and moving their pins picks the later fixes up. Not measured: WASM through the games' integrations, `Indexed` storage.
 
 ## Other dependents of the removed worlds
 
