@@ -84,6 +84,32 @@ issues stay open but parked. The capability inventory lives in
 The Pages sandbox (`site/` + `demo-wasm/`) runs on `approximate::World` and shows the parity
 scenarios side by side with Rapier.
 
+## D7 — Physical interactions: reuse the world, consumer-gated (Q32–Q38)
+
+Owner-approved 2026-10-22–23 (#384). A boundary for future work, not an implementation plan:
+each capability below starts only with a concrete consumer scenario, the exact API gap, Rapier
+behaviour and the D4 gates. Game rules stay in the games; no new projectile, fluid or filter
+subsystem.
+
+| Q | Engine owns | Game owns |
+| --- | --- | --- |
+| Q32 melee | continuous swept collision queries against physical objects | attack motion, active windows, hit validity, damage, combos |
+| Q33 contact enter/exit | deterministic, stably ordered enter/exit for genuinely physical contact | interpreting transitions; purely logical areas and zones |
+| Q34 media | generic friction, damping/drag; buoyancy only when a consumer needs it | swimming, breath, spells, damage |
+| Q35 filtering | layers/masks for bodies, solver and queries; per-query BodyId/group exclusions and body-pair exceptions only when needed | which bodies share a layer; no bit per player, no faction semantics |
+| Q36 selection | reusable generic filters and ids | the semantic language (owner, team, faction, summons, pets, tags, abilities); no engine entity database, DSL or gameplay callbacks |
+| Q37 multi-hit | bounded multiple candidates by time of impact, ties by stable body id; first-hit fast paths kept | shields, friendly fire, piercing, effects |
+| Q38 projectiles | travelling projectiles are dynamic bodies with CCD (spheres, rotation-locked arrows, rotating rigid boxes, bouncing props), optional `retire_on_impact`; beams and melee sweeps use ray/shape queries — one world, no separate projectile engine | which policy an attack uses |
+
+Already present and reused: body `ccd`, `retire_on_impact`, `sensor`, `layers`, friction and
+damping; ordered ray/shape casts with layers, sensors and one BodyId exclusion
+([shape queries](floating-shape-queries.md)); sandbox sphere/arrow/box projectiles. Not implied:
+rotational CCD (CCD is translational), rotating melee volumes (casts keep a fixed orientation),
+group/pair exclusions, a bounded-result query API. Consumer issues showing future demand:
+mmorpg#300 (trap/trigger entry, Q33), mmorpg#290 (thrown and bouncing weapons, Q38), mmorpg#294
+(movement and surface spells, Q34), mmorpg#379 (action timing, Q32 sweep sampling). #3 (CCD
+roadmap) stays closed. Recording these decisions establishes neither parity nor adoption.
+
 ## Standing rules
 
 These earlier rules remain compatible with the direction above:

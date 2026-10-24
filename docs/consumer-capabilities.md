@@ -41,7 +41,10 @@ checks them natively (invariants + not more than 5% slower than Rapier) and
 
 Not used by any consumer today: joints, sensors/contact events, collision
 groups, CCD, materials, triangle meshes. Work on those stays parked until a consumer
-uses them.
+uses them. Engine and sandbox support (`ccd`, `sensor`, `retire_on_impact`, layers) is not
+consumer adoption. The engine/game boundary for melee sweeps, contact enter/exit, buoyancy,
+filtering, multi-hit queries and projectiles, with the consumer issues that would gate each, is
+[D7](technical-decisions.md#d7--physical-interactions-reuse-the-world-consumer-gated-q32q38).
 
 ## Consumer-integrated evidence (C15)
 
