@@ -34,6 +34,7 @@ fn hills() -> (World, physics_engine::BodyId) {
                 rows: N,
                 heights,
                 removed_cells: None,
+                material: Default::default(),
             },
             Some(1),
         )
@@ -205,6 +206,7 @@ fn coincident_floor_and_flat_terrain_push_out_once() {
             rows: 9,
             heights: vec![0.0; 81],
             removed_cells: None,
+            material: Default::default(),
         },
         Some(2),
     )
@@ -259,6 +261,7 @@ fn removed_cells_are_holes() {
                 rows: 5,
                 heights: vec![1.0; 25],
                 removed_cells: Some(removed),
+                material: Default::default(),
             },
             Some(2),
         )
@@ -311,6 +314,7 @@ fn removed_cells_are_holes() {
                 rows: 3,
                 heights: vec![0.0; 9],
                 removed_cells: Some(vec![false; 3]),
+                material: Default::default(),
             },
             None,
         )

@@ -173,6 +173,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::stairs::scenario(),
         scenarios::platforms::scenario(),
         scenarios::props::scenario(),
+        scenarios::materials::scenario(),
         scenarios::debris::scenario(),
         scenarios::capsule_normals::scenario(),
         scenarios::terrain::scenario(),

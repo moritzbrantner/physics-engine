@@ -617,6 +617,7 @@ fn terrain(cells: usize) -> World {
             rows: n,
             heights,
             removed_cells: None,
+            material: Default::default(),
         },
         Some(1),
     )

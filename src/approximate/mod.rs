@@ -220,6 +220,89 @@ impl Shape {
         }
     }
 }
+/// How two bodies' friction or restitution coefficients combine at a contact, as Rapier's
+/// `CoefficientCombineRule`. When the two bodies' rules differ, the later variant wins
+/// (Average < Min < Multiply < Max), as in Rapier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CombineRule {
+    /// `(a + b) / 2`, Rapier's default.
+    #[default]
+    Average,
+    Min,
+    Multiply,
+    Max,
+}
+impl CombineRule {
+    /// The pair coefficient of `a` (with `rule_a`) and `b` (with `rule_b`).
+    #[must_use]
+    pub fn combine(a: Real, rule_a: Self, b: Real, rule_b: Self) -> Real {
+        match rule_a.max(rule_b) {
+            Self::Average => (a + b) * 0.5,
+            Self::Min => a.min(b),
+            Self::Multiply => a * b,
+            Self::Max => a.max(b),
+        }
+    }
+    #[cfg(feature = "checkpoints")]
+    const fn bits(self) -> u16 {
+        self as u16
+    }
+    #[cfg(feature = "checkpoints")]
+    const fn from_bits(bits: u16) -> Self {
+        match bits & 3 {
+            0 => Self::Average,
+            1 => Self::Min,
+            2 => Self::Multiply,
+            _ => Self::Max,
+        }
+    }
+}
+/// A contact material: the [`Body`] fields of the same names, for bodies built by the world
+/// (heightfields, [`HeightfieldDesc::material`]). The default is Rapier's collider default.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Material {
+    pub friction: Real,
+    pub restitution: Real,
+    pub friction_combine: CombineRule,
+    pub restitution_combine: CombineRule,
+}
+impl Default for Material {
+    fn default() -> Self {
+        Self {
+            friction: 0.5,
+            restitution: 0.0,
+            friction_combine: CombineRule::Average,
+            restitution_combine: CombineRule::Average,
+        }
+    }
+}
+impl Body {
+    /// Sets the body's contact material.
+    pub fn set_material(&mut self, material: Material) {
+        self.friction = material.friction;
+        self.restitution = material.restitution;
+        self.friction_combine = material.friction_combine;
+        self.restitution_combine = material.restitution_combine;
+    }
+}
+/// The contact friction of `a` against `b`.
+fn pair_friction(a: &Body, b: &Body) -> Real {
+    CombineRule::combine(
+        a.friction,
+        a.friction_combine,
+        b.friction,
+        b.friction_combine,
+    )
+}
+/// The contact restitution of `a` against `b`.
+fn pair_restitution(a: &Body, b: &Body) -> Real {
+    CombineRule::combine(
+        a.restitution,
+        a.restitution_combine,
+        b.restitution,
+        b.restitution_combine,
+    )
+}
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
     /// Assigned by [`World::add_body`]; [`BodyId::NONE`] before.
@@ -236,14 +319,20 @@ pub struct Body {
     pub shape: Shape,
     /// Zero is immovable geometry; positive mass is dynamic unless `external` is set.
     pub mass: Real,
-    /// Finite coefficient in [0, 10], default 0.6. Contacts use the larger coefficient
-    /// and clamp the accumulated tangential impulse to a disk of radius mu * normal impulse.
-    /// Linear-support contacts disable friction. See docs/contact-materials.md.
+    /// Finite coefficient in [0, 10], default 0.5 (Rapier's). Contacts combine the pair's
+    /// coefficients by [`Body::friction_combine`] and clamp the accumulated tangential impulse
+    /// to a disk of radius mu * normal impulse. Linear-support contacts disable friction. See
+    /// docs/contact-materials.md.
     pub friction: Real,
-    /// Finite coefficient in [0, 1], default zero. Contacts use the smaller coefficient.
-    /// Restitution requires closing speed > 1 m/s (scaled by `length_unit`), separation <= contact_slop
-    /// and no retained pair history; speculative positive separation does not bounce.
+    /// Finite coefficient in [0, 1], default zero. Contacts combine the pair's coefficients by
+    /// [`Body::restitution_combine`]. Restitution requires closing speed > 1 m/s (scaled by
+    /// `length_unit`), separation <= contact_slop and no retained pair history; speculative
+    /// positive separation does not bounce.
     pub restitution: Real,
+    /// Default [`CombineRule::Average`], as in Rapier.
+    pub friction_combine: CombineRule,
+    /// Default [`CombineRule::Average`], as in Rapier.
+    pub restitution_combine: CombineRule,
     /// Finite, nonnegative, default zero. After forces, each substep scales the linear
     /// velocity by `1 / (1 + h * linear_damping)`, as Rapier does.
     pub linear_damping: Real,
@@ -291,8 +380,10 @@ impl Body {
             velocity: Vector::ZERO,
             orientation: Quaternion::IDENTITY,
             angular_velocity: Vector::ZERO,
-            friction: 0.6,
+            friction: 0.5,
             restitution: 0.0,
+            friction_combine: CombineRule::Average,
+            restitution_combine: CombineRule::Average,
             linear_damping: 0.0,
             angular_damping: 0.0,
             rotation_locked: false,
@@ -1694,7 +1785,7 @@ impl World {
                         let rel = contact_velocity(b, point.rb, !linear)
                             - contact_velocity(a, point.ra, !linear);
                         let restitution = if cached.is_none() {
-                            a.restitution.min(b.restitution)
+                            pair_restitution(a, b)
                         } else {
                             0.0
                         };
@@ -1750,7 +1841,7 @@ impl World {
                             {
                                 0.0
                             } else {
-                                a.friction.max(b.friction)
+                                pair_friction(a, b)
                             },
                             normal_impulse: 0.0,
                             tangent_impulse: [0.0; 2],

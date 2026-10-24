@@ -77,16 +77,14 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
     .unwrap();
     // In the cold-load reference the external pair precedes this redundant fixed floor.
     // Default warm-start controls retain the fixed floor's existing normal load.
-    w.add_body(Body::keyed(
-        100,
-        Shape::Box(V(12.0, 0.5, 4.0)),
-        V(0.0, -0.5, 0.0),
-        0.0,
-    ))
-    .unwrap();
+    // Every body has friction 0.6, so each pair does.
+    let mut floor = Body::keyed(100, Shape::Box(V(12.0, 0.5, 4.0)), V(0.0, -0.5, 0.0), 0.0);
+    floor.friction = 0.6;
+    w.add_body(floor).unwrap();
     for (id, x) in [(ids[1], 0.0), (30, 10.0)] {
-        w.add_body(Body::keyed(id, Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0))
-            .unwrap();
+        let mut sphere = Body::keyed(id, Shape::Sphere(1.0), V(x, 1.0, 0.0), 2.0);
+        sphere.friction = 0.6;
+        w.add_body(sphere).unwrap();
     }
     for _ in 0..32 {
         w.step(1.0 / 60.0).unwrap();
@@ -104,6 +102,7 @@ fn fixture(case: Case, ids: [u64; 2]) -> World {
             .is_sleeping()
     );
     let mut platform = Body::keyed(ids[0], Shape::Box(V(4.0, 0.5, 4.0)), case.origin(), 1.0);
+    platform.friction = 0.6;
     platform.external = true;
     platform.sensor = matches!(case, Case::Sensor);
     if matches!(case, Case::Layers) {

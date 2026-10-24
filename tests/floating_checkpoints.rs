@@ -1,8 +1,9 @@
 use physics_engine::{
     CollisionLayers3d,
     approximate::{
-        Body, Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, Config,
-        ConvergenceScope, PositionCorrection, Quaternion, Report, Shape, Vector as V, World,
+        Body, Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, CombineRule,
+        Config, ConvergenceScope, PositionCorrection, Quaternion, Report, Shape, Vector as V,
+        World,
     },
 };
 use physics_engine::{
@@ -92,6 +93,11 @@ fn fixture(config: Config) -> World {
         b.rotation_locked = id == 22;
         b.friction = 0.43;
         b.restitution = 0.12;
+        // Every non-default combine rule round-trips.
+        b.friction_combine =
+            [CombineRule::Min, CombineRule::Multiply, CombineRule::Max][id as usize - 20];
+        b.restitution_combine =
+            [CombineRule::Max, CombineRule::Min, CombineRule::Multiply][id as usize - 20];
         b.layers = CollisionLayers3d::new(2, 2);
         world.add_body(b).unwrap();
     }
@@ -381,7 +387,8 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         (8, 4u32, CheckpointError::UnsupportedFormat(4)),
         (8, 3u32, CheckpointError::UnsupportedFormat(3)),
         (8, 2u32, CheckpointError::UnsupportedFormat(2)),
-        (12, 11u32, CheckpointError::UnsupportedAlgorithm(11)),
+        (12, 12u32, CheckpointError::UnsupportedAlgorithm(12)),
+        (12, 10u32, CheckpointError::UnsupportedAlgorithm(10)),
         (12, 9u32, CheckpointError::UnsupportedAlgorithm(9)),
         (12, 8u32, CheckpointError::UnsupportedAlgorithm(8)),
         (12, 7u32, CheckpointError::UnsupportedAlgorithm(7)),
@@ -591,7 +598,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_six_algorithm_ten_f32_empty_world_wire_fixture_is_stable() {
+fn format_six_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -606,7 +613,7 @@ fn format_six_algorithm_ten_f32_empty_world_wire_fixture_is_stable() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "62b0b7e02b83e73ce88d72cc3bb1e880f6c2f204fca68482cd6d823ea21383aa"
+        "3a5e52d4bcab16087720e461d8993d0f9fdbaa67155d24ca7ea28d1d3ae1b52b"
     );
 }
 

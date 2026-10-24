@@ -279,8 +279,9 @@ fn fast_falling_box_and_rotating_box_stop_at_the_plane() {
 #[test]
 fn sliding_crate_stops_by_friction_and_damping() {
     let mut w = falling_world();
-    w.add_body(Body::new(Shape::HalfSpace, V::ZERO, 0.0))
-        .unwrap();
+    let mut floor = Body::new(Shape::HalfSpace, V::ZERO, 0.0);
+    floor.friction = 0.8;
+    w.add_body(floor).unwrap();
     let mut body = crate_body(V(0.0, 0.35, 0.0));
     body.linear_damping = 0.2;
     body.velocity = V(5.91, 0.0, 0.0);

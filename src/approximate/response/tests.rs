@@ -344,13 +344,16 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
         ..Config::default()
     })
     .unwrap();
-    w.add_body(Body::fixture(
+    let mut ground = Body::fixture(
         0,
         Shape::Box(Vector(4.0, 0.5, 4.0)),
         Vector(0.0, -0.5, 0.0),
         0.0,
-    ))
-    .unwrap();
+    );
+    // The ground's friction 0.6 applies to the frictionless target.
+    ground.friction = 0.6;
+    ground.friction_combine = crate::approximate::CombineRule::Max;
+    w.add_body(ground).unwrap();
     let mut target = Body::fixture(10, Shape::Sphere(1.0), Vector(0.0, 1.0, 0.0), 2.0);
     target.friction = 0.0;
     w.add_body(target).unwrap();
@@ -380,6 +383,8 @@ fn naturally_parked_contact_wake_applies_pending_load_once_in_all_reference_path
         let mut wall = Body::fixture(id, Shape::Box(half), position, 1.0);
         wall.external = true;
         wall.friction = 0.0;
+        // The target's own friction, as when the pair took the larger coefficient.
+        wall.friction_combine = crate::approximate::CombineRule::Max;
         wall.velocity = velocity;
         w.add_body(wall).unwrap();
     }

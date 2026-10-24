@@ -396,7 +396,7 @@ mod engine {
     use super::*;
     use physics_engine::{
         BodyId,
-        approximate::{Body, Config, HeightfieldDesc, Quaternion, Shape, Vector, World},
+        approximate::{Body, Config, HeightfieldDesc, Material, Quaternion, Shape, Vector, World},
     };
 
     fn v(a: [f32; 3]) -> Vector {
@@ -445,6 +445,11 @@ mod engine {
                         rows: N,
                         heights: heights(),
                         removed_cells: Some(removed_cells()),
+                        material: Material {
+                            friction: FRICTION,
+                            restitution: RESTITUTION,
+                            ..Material::default()
+                        },
                     },
                     Some(2),
                 )
