@@ -2,7 +2,8 @@
 //! halfspace ground). 64 characters idle, push into walls, wander, stand on platforms and
 //! jump into ceilings, 16 pairs meet head-on in the lanes, door leaves toggle (an overlap probe,
 //! then a remove and an add), and 48 line-of-sight segments are tested against static geometry
-//! every tick.
+//! every tick. It runs at MMORPG's 60 Hz zone tick (mmorpg#379): eight seconds of 1/60 s steps,
+//! with the town's walks, door toggles and jumps on their original 30 Hz timetable.
 //!
 //! The Rapier side runs MMORPG's `World::step` call pattern (main at 0782d4b): a world rebuild
 //! in body-id order, then per moving body a static-only ground cast, `slide_around` over every
@@ -16,9 +17,14 @@ use super::character_move::{
 };
 use crate::{Obs, Scenario, Trace};
 
-const TICKS: u32 = 240;
+/// MMORPG's zone rate (60 Hz since mmorpg#379).
+const TICK_HZ: u32 = 60;
+/// Eight seconds of zone ticks.
+const TICKS: u32 = 8 * TICK_HZ;
+/// Ticks per 1/30 s: the shared town walks, door toggles and jumps keep their 30 Hz timing.
+const PER_30HZ: u32 = TICK_HZ / 30;
 /// MMORPG's zone tick.
-const DT: f32 = 1.0 / 30.0;
+const DT: f32 = 1.0 / TICK_HZ as f32;
 /// Gravity, metres per tick².
 const G: f32 = -9.81 * DT * DT;
 /// Jump speed, metres per tick.
@@ -71,7 +77,7 @@ fn door(d: usize, open: bool) -> BoxSpec {
 
 /// The door toggled at `tick`, if any.
 fn toggle(tick: u32) -> Option<usize> {
-    (tick % 15 == 7).then_some((tick / 15) as usize % DOORS)
+    (tick % (15 * PER_30HZ) == 7 * PER_30HZ).then_some((tick / (15 * PER_30HZ)) as usize % DOORS)
 }
 
 /// Line-of-sight segments: origin and translation, at head height between lane crossings.
@@ -89,7 +95,7 @@ fn segments() -> Vec<([f32; 3], [f32; 3])> {
 fn horizontal(who: Who, i: usize, tick: u32) -> (f32, f32) {
     match who {
         Who::Town(role) => {
-            let (x, z) = walk(role, i, tick);
+            let (x, z) = walk(role, i, tick / PER_30HZ);
             (x * DT, z * DT)
         }
         Who::HeadOn(direction) => (direction * HEAD_ON, 0.0),
@@ -97,7 +103,7 @@ fn horizontal(who: Who, i: usize, tick: u32) -> (f32, f32) {
 }
 
 fn jumps(who: Who, tick: u32) -> bool {
-    who == Who::Town(Role::Jumper) && tick % 40 == 10
+    who == Who::Town(Role::Jumper) && tick % (40 * PER_30HZ) == 10 * PER_30HZ
 }
 
 pub fn scenario() -> Scenario {
@@ -141,7 +147,10 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         }
     }
     let boxes = layout();
-    for tick in (0..TICKS as usize).step_by(30).chain([TICKS as usize - 1]) {
+    for tick in (0..TICKS as usize)
+        .step_by(TICK_HZ as usize)
+        .chain([TICKS as usize - 1])
+    {
         for i in 0..n {
             let (p, _) = at(engine, tick, i);
             // Capsule centre: the game position (feet on the support) plus the offset.
@@ -153,7 +162,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             }
         }
     }
-    let settle = 120;
+    let settle = 4 * TICK_HZ as usize;
     for (i, &(start, who)) in chars.iter().enumerate() {
         let (rest, grounded) = at(engine, settle, i);
         match who {
