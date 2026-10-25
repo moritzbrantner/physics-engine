@@ -600,8 +600,29 @@ impl World {
         let predict = self.ground_prediction(s);
         let reach = predict + s.offset;
         Ok(self
-            .blocking_hit(id, pose, -V::Y * reach, hits, is_static)?
-            .is_some_and(|hit| hit.normal.dot(V::Y) >= min_up && hit.fraction * reach <= predict))
+            .support_hit(id, pose, reach, min_up, hits)?
+            .is_some_and(|hit| hit.fraction * reach <= predict))
+    }
+
+    /// The nearest static surface below `pose` within `reach` that a downward cast runs into
+    /// and whose normal points up by at least `min_up`. Too-steep surfaces met first (a steep
+    /// ramp's face at its foot) are passed over, as Rapier's consumers recast past them, so the
+    /// floor beneath still supports the character (#395).
+    fn support_hit(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        reach: Real,
+        min_up: Real,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<Option<QueryHit>, Error> {
+        let displacement = -V::Y * reach;
+        self.cast_hits(id, pose, displacement, hits)?;
+        Ok(hits.iter().copied().find(|h| {
+            (h.starts_overlapping || h.normal.dot(displacement) < 0.0)
+                && h.normal.dot(V::Y) >= min_up
+                && self.index(h.body).is_ok_and(|i| is_static(&self.bodies[i]))
+        }))
     }
 
     /// Rapier's grounded: some static contact within the ground prediction (true distance, in
@@ -858,9 +879,7 @@ impl World {
         let reach = predict.max(s.offset + s.snap_to_ground.unwrap_or(0.0)) + s.offset;
         if planar {
             // The plane is the support.
-        } else if let Some(hit) = self.blocking_hit(id, pose, -up * reach, hits, is_static)?
-            && hit.normal.dot(up) >= min_up
-        {
+        } else if let Some(hit) = self.support_hit(id, pose, reach, min_up, hits)? {
             let gap = hit.fraction * reach;
             let snap = gap - s.offset;
             // As Rapier: only a move that has not risen snaps (a step or a slide up an edge
