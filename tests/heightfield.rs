@@ -321,3 +321,89 @@ fn removed_cells_are_holes() {
         .is_err()
     );
 }
+
+/// Terrain with a 1 m cliff of `cell`-wide cells rising toward -X and toward +Z from a floor:
+/// a concave corner at the origin.
+fn cliff_corner(cell: f32) -> World {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        ..Config::default()
+    })
+    .unwrap();
+    let n = (16.0 / cell) as usize + 1;
+    let origin = V(-8.0, 0.0, -8.0);
+    let heights = (0..n * n)
+        .map(|k| {
+            let (x, z) = (
+                origin.0 + cell * (k % n) as f32,
+                origin.2 + cell * (k / n) as f32,
+            );
+            if x < -1e-4 || z > 1e-4 { 1.0 } else { 0.0 }
+        })
+        .collect();
+    w.add_heightfield(
+        HeightfieldDesc {
+            origin,
+            cell_size: (cell, cell),
+            columns: n,
+            rows: n,
+            heights,
+            removed_cells: None,
+            material: Default::default(),
+        },
+        Some(1),
+    )
+    .unwrap();
+    w
+}
+
+/// #396: a character walking into the foot of a steep heightfield cliff (and into the corner
+/// where two cliffs meet) stays on the floor and never ends inside the terrain.
+#[test]
+fn walking_into_a_steep_heightfield_cliff_never_sinks_into_it() {
+    let (half, radius) = (0.45, 0.35);
+    for cell in [0.5, 0.35, 0.25] {
+        for (dx, dz, z0) in [
+            (-1.0, 0.0, -2.0),
+            (-1.0, 0.0, -0.3),
+            (-1.0, 0.0, -0.1),
+            (-1.0, 1.0, -2.0),
+            (-0.3, 1.0, -2.0),
+            (0.0, 1.0, -2.0),
+        ] {
+            let mut w = cliff_corner(cell);
+            let start = V(2.0, half + radius + 0.01, z0);
+            let mut body = Body::keyed(10, Shape::capsule(half, radius), start, 1.0);
+            body.external = true;
+            body.layers = physics_engine::CollisionLayers3d::new(2, u32::MAX);
+            let c = w.add_body(body).unwrap();
+            let settings = w.character_settings();
+            w.add_character(c, settings).unwrap();
+            let mut out = Vec::new();
+            let mut vy = 0.0;
+            let speed = 1.5 / 60.0 / f32::hypot(dx, dz);
+            for tick in 0..300 {
+                vy -= 9.81 / 60.0;
+                w.move_characters(
+                    &[CharacterMove {
+                        body: c,
+                        desired: V(dx * speed, vy / 60.0, dz * speed),
+                    }],
+                    &mut out,
+                )
+                .unwrap();
+                if out[0].grounded {
+                    vy = 0.0;
+                }
+                let p = w.body(c).unwrap().position;
+                let foot = p.1 - half - radius;
+                assert!(
+                    foot > ground(&w, p.0, p.2) - 2e-3,
+                    "cell {cell}, walk ({dx}, {dz}) from z {z0}, tick {tick}: sank into the \
+                     terrain at {p:?} (ground {})",
+                    ground(&w, p.0, p.2)
+                );
+            }
+        }
+    }
+}
