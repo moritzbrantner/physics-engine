@@ -453,9 +453,14 @@ impl World {
                         return Err(failure(SweepFailure::InvalidGeometryInput));
                     }
                 };
+                // A terrain is one body, so a cast reports one contact with it: the triangle the
+                // motion runs into first (most head-on among those it starts touching), never
+                // one it starts touching and leaves. A capsule at a cliff's foot or in a corner
+                // touches several faces; the deepest of them can be one the motion leaves while
+                // it runs into another (#396). Only a cast that runs into nothing reports the
+                // initial contact, at fraction 0, as for any body it starts touching.
                 let outcome = match (initial, cast, capsule) {
-                    (Some(c), ..) => Some((0.0, c)),
-                    (None, Some(cast), Some((p, q, r))) => {
+                    (initial, Some(cast), Some((p, q, r))) => {
                         let d = [displacement.0, displacement.1, displacement.2].map(f64::from);
                         stats.sweep_iterations += 1;
                         field
@@ -469,7 +474,9 @@ impl World {
                             )
                             .map_err(|_| failure(SweepFailure::NonFiniteComputation))?
                             .map(|hit| (primitive::toward_zero(hit.fraction), hit.contact))
+                            .or(initial.map(|c| (0.0, c)))
                     }
+                    (Some(c), ..) => Some((0.0, c)),
                     _ => None,
                 };
                 crate::work::add(
@@ -493,7 +500,8 @@ impl World {
                     query_point: point + normal * separation,
                     target_point: point,
                     separation,
-                    starts_overlapping: initial.is_some_and(|c| c.separation < 0.0),
+                    starts_overlapping: fraction == 0.0
+                        && initial.is_some_and(|c| c.separation < 0.0),
                     support_velocity: V::ZERO,
                     sensor: target.sensor,
                 });
