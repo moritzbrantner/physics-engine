@@ -66,10 +66,11 @@ fixture players inside props; those fights are reported, not bounded), and Rapie
 nudge drift. Engine gaps found and fixed since: #336 (exact translation), #337 (local placement
 invalidation), #340 (snap from geometry, so MMORPG's rebuilt worlds now continue), #341
 (coincident surfaces), #342 (heightfield holes), #391 (Rapier's per-body material combine
-rules, found by mmorpg#442). Open since 60 Hz (mmorpg#458 exempts them in its A/B check): #395
-(support stops at a too-steep face, so a character at a chute's foot is not grounded) and #396 (a
-swimmer can sink into the heightfield). The first table was measured at `3a1b841`; MMORPG now pins `52e85ab`
-and ARPG `cda9d1d` (2026-10-24), and moving their pins picks the later fixes up. Not measured: WASM through the games' integrations, `Indexed` storage.
+rules, found by mmorpg#442), and, found at 60 Hz by mmorpg#458, #395 (support stopped at a
+too-steep face, so a character at a chute's foot was not grounded) and #396 (a terrain cast could
+report the cliff face a character was leaving, so it sank into the other face or the floor). The
+first table was measured at `3a1b841`; MMORPG pins a revision with the #396 fix (since mmorpg#458)
+and ARPG pins `cda9d1d` (2026-10-24); moving their pins picks the later fixes up. Not measured: WASM through the games' integrations, `Indexed` storage.
 
 ## Other dependents of the removed worlds
 
