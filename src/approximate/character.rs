@@ -173,6 +173,11 @@ impl Characters {
 /// Rapier's ground prediction beyond `offset`, in metres.
 const GROUND_PREDICTION: Real = 0.05;
 
+/// How far, as a fraction of `offset`, a slide's next cast leans off the surface it slid along
+/// (Rapier's `normal_nudge_factor`: 1e-4 against its 0.01 offset). Well above the rounding of
+/// the projected motion, well below the offset.
+const NORMAL_NUDGE: Real = 1e-2;
+
 /// Contact normals within about 5 degrees of the motion count as head-on.
 const HEAD_ON_COS: Real = 0.996;
 
@@ -751,6 +756,8 @@ impl World {
         // first step attempt.
         let mut walking = None;
         let mut support = None;
+        // The surface the slide last met: the next cast leans off it by the nudge.
+        let mut leaving = V::ZERO;
         for _ in 0..s.max_slides {
             let length = remaining.length();
             if length <= s.offset * 1e-3 {
@@ -758,8 +765,13 @@ impl World {
             }
             let direction = remaining * (1.0 / length);
             // Cast the character inflated by `offset` (Rapier's target distance): a hit is
-            // where the true gap to a surface the motion approaches closes to `offset`.
-            let Some(hit) = self.offset_hit(id, pose, remaining, s.offset, hits)? else {
+            // where the true gap to a surface the motion approaches closes to `offset`. The
+            // cast leans off the surface just slid along (Rapier's normal nudge), so rounding
+            // in the projection never makes that surface the first contact, at fraction 0, of
+            // a terrain whose next triangle the slide runs into (#394). Only the cast leans;
+            // the character moves by `remaining`.
+            let cast = remaining + leaving * (s.offset * NORMAL_NUDGE);
+            let Some(hit) = self.offset_hit(id, pose, cast, s.offset, hits)? else {
                 pose.position += remaining;
                 translation += remaining;
                 break;
@@ -780,6 +792,7 @@ impl World {
                 break;
             }
             result.contacts += 1;
+            leaving = normal;
             // Already at the gap (within rounding): stay put rather than creep by an ulp.
             let travel = if allowed <= s.offset * 1e-2 {
                 0.0
