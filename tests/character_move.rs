@@ -695,3 +695,50 @@ fn autostep_climbs_low_steps_but_not_high_ones() {
     let p = walk_into_stairs(0.3, step);
     assert!(p.0 > 18.0 && (p.1 - (FOOT + OFFSET)).abs() < 1e-3, "{p:?}");
 }
+
+/// #395: a character pressing into the foot of a too-steep slope stands on the floor below it.
+/// Its downward support cast meets the steep face first; that face is set aside (as Rapier's
+/// consumers recast past it) and the floor beneath is the support, so the character is grounded
+/// and rests on it, never hovering against the face.
+#[test]
+fn pressing_into_a_too_steep_slope_foot_is_grounded_on_the_floor() {
+    for drop in [0.0, 0.002, 0.004, 0.006] {
+        let mut w = world();
+        // 60°, foot at x = 20.6, rising toward -X.
+        w.add_body(Body::keyed(
+            9,
+            Shape::wedge(V(0.6, 1.04, 2.0)),
+            V(20.0, 1.04, 0.0),
+            0.0,
+        ))
+        .unwrap();
+        // Touching the face at a little above rest height, then pressed into it every tick.
+        let y = FOOT - HALF + OFFSET + drop;
+        let x = 20.6 + (RADIUS + OFFSET - 0.5 * y) / 0.866_025_4;
+        let c = character(&mut w, 10, V(x, FOOT + OFFSET + drop, 0.0));
+        let mut vy = 0.0;
+        let mut last = None;
+        for tick in 0..120 {
+            vy -= 9.81 / 60.0;
+            let r = step(&mut w, c, V(-2.0 / 60.0, vy / 60.0, 0.0));
+            if r.grounded {
+                vy = 0.0;
+            }
+            assert!(
+                tick < 3 || r.grounded,
+                "drop {drop}: not grounded at tick {tick}: {:?}",
+                position(&w, c)
+            );
+            last = Some(r);
+        }
+        let r = last.unwrap();
+        let p = position(&w, c);
+        assert!(r.grounded, "drop {drop}: grounded at the foot {p:?}");
+        assert_eq!(r.support, w.body_id(1), "drop {drop}: on the floor {p:?}");
+        // Within the gap a snap leaves alone (twice the offset), as on a flat floor.
+        assert!(
+            (0.0..=OFFSET + 1e-5).contains(&(p.1 - (FOOT + OFFSET))),
+            "drop {drop}: rests on the floor {p:?}"
+        );
+    }
+}
