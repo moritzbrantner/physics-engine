@@ -51,13 +51,13 @@ const GROUND: ([f32; 3], [f32; 3]) = (
 /// Piece `k`: half extents, resting start position and kick velocity. Even pieces rest on a
 /// roof, odd ones in the lane east of a house.
 fn piece(k: usize) -> ([f32; 3], [f32; 3], [f32; 3]) {
-    let half = if k % 3 == 0 {
+    let half = if k.is_multiple_of(3) {
         [0.3, 0.15, 0.2]
     } else {
         [0.2, 0.1, 0.25]
     };
     let h = house((k * 7) % COLS, (k * 11) % ROWS);
-    let (lane, ground) = if k % 2 == 0 {
+    let (lane, ground) = if k.is_multiple_of(2) {
         (0.0, 2.0 * HOUSE)
     } else {
         (SPACING * 0.5, 0.0)
@@ -181,7 +181,7 @@ mod engine {
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            if tick % KICK_EVERY == 0 && ((tick / KICK_EVERY) as usize) < PIECES {
+            if tick.is_multiple_of(KICK_EVERY) && ((tick / KICK_EVERY) as usize) < PIECES {
                 let k = (tick / KICK_EVERY) as usize;
                 self.world
                     .set_velocity(self.pieces[k], v(piece(k).2))
@@ -255,7 +255,7 @@ mod rapier {
 
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            if tick % KICK_EVERY == 0 && ((tick / KICK_EVERY) as usize) < PIECES {
+            if tick.is_multiple_of(KICK_EVERY) && ((tick / KICK_EVERY) as usize) < PIECES {
                 let k = (tick / KICK_EVERY) as usize;
                 self.world.bodies[self.pieces[k]].set_linvel(v(piece(k).2), true);
             }
