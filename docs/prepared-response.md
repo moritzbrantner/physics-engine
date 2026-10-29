@@ -55,7 +55,7 @@ increase with iteration count, and each prepared replay exactly matches its unpr
 ```sh
 cargo test --locked --lib approximate::response::tests
 cargo test --locked --test fixed_step_approximation
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release --target wasm32-unknown-unknown
+cargo build -p physics-engine-demo --locked --release --target wasm32-unknown-unknown
 node scripts/benchmark-prepared-response.mjs base.wasm candidate.wasm prepared-response.json
 ```
 

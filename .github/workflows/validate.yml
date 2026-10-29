@@ -60,13 +60,10 @@ jobs:
           install-mode: none
 
       - name: Clippy without optional features
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test every suite on BodyStorage::Indexed
         run: cargo test --locked --features checkpoints,indexed-storage
-
-      - name: Test the Pages adapter
-        run: cargo test --manifest-path demo-wasm/Cargo.toml --locked
 
       - name: Check out coding-tooling for the work contracts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,7 +92,7 @@ jobs:
           PY
 
       - name: Rapier oracle (invariants + native perf gate)
-        run: cargo run --release --locked --manifest-path oracle/Cargo.toml
+        run: cargo run --release --locked -p physics-oracle
 
       - name: Rapier oracle on WASM (invariants + 1.10x perf gate, sizes)
         run: node scripts/oracle-wasm.mjs

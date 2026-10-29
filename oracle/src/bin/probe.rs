@@ -1,7 +1,7 @@
 //! One character move (or a few in a row) on Rapier and physics-engine from the same pose.
 //!
 //! ```text
-//! cargo run --release --manifest-path oracle/Cargo.toml --bin probe -- \
+//! cargo run --release -p physics-oracle --bin probe -- \
 //!     --floor --box 9.8,0.1025,0,0.2,0.1025,0.8 --autostep 0.25,0.15 \
 //!     --at 10.2855,0.8126,0 --desired -0.0333,-0.0027,0 [--repeat 10]
 //! ```

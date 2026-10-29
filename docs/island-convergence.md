@@ -135,7 +135,7 @@ TRIALS=4 TICKS=600 node experiments/contact-islands/run.mjs \
   experiments/contact-islands/target/wasm32-unknown-unknown/release/contact_islands_experiment.wasm \
   island-results.json [immutable-baseline-fixture.wasm]
 TOWER_TICKS=1200 TOWER_TRIALS=2 node scripts/test-tower-runtime.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm tower-quality.json
+  target/wasm32-unknown-unknown/release/physics_engine_demo.wasm tower-quality.json
 ```
 
 The mixed fixture is the next acceptance workload, not a Battlefield capacity claim. Jointed

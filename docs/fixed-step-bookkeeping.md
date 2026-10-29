@@ -90,7 +90,7 @@ a genuine impact, and local support removal leave the other sleeping tower's ful
 cargo test --locked --lib approximate::bookkeeping::
 cargo test --locked --test fixed_step_approximation
 cargo test --release --locked --lib sleeping_neighborhood_bookkeeping_scaling_benchmark -- --ignored --nocapture
-cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
+cargo build -p physics-engine-demo --target wasm32-unknown-unknown --release --locked
 node scripts/benchmark-prepared-response.mjs base.wasm candidate.wasm paired.json --bookkeeping
 ```
 

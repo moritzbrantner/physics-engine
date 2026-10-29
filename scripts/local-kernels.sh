@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Points every workspace (root, oracle, demo-wasm) at a local rust-kernels checkout, for testing
+# Points the workspace (crate, oracle, demo-wasm) at a local rust-kernels checkout, for testing
 # a kernel change before it is merged, and puts everything back afterwards.
 #
 #   scripts/local-kernels.sh on [path]   # default path: ../rust-kernels
-#   scripts/local-kernels.sh off         # restores manifests and lockfiles exactly
+#   scripts/local-kernels.sh off         # restores the manifest and lockfile exactly
 #   scripts/local-kernels.sh status
 #
 # The originals are kept in target/local-kernels/ while the patch is on; never commit while it
@@ -11,7 +11,7 @@
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 backup="$root/target/local-kernels"
-workspaces=(. oracle demo-wasm)
+workspaces=(.)
 crates=(geometry-kernels bvh-kernels spatial-kernels)
 
 usage() {

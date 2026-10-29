@@ -85,7 +85,7 @@ character movement #194 and wedge COM-centered response #176.
 ```sh
 cargo test --locked --test primitive_capabilities
 cargo test --locked --lib approximate::capabilities
-cargo test --manifest-path demo-wasm/Cargo.toml --locked --example shape-query-contract
+cargo test -p physics-engine-demo --locked --example shape-query-contract
 ```
 
 The complete Pages build runs three actual WASM replays of the separate query

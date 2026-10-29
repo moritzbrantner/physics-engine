@@ -113,11 +113,11 @@ cargo test --locked --test floating_shape_queries
 cargo test --locked --test capsule_contact_normals
 cargo test --locked --test capsule_row_work
 cargo test --locked --lib approximate::query
-cargo test --manifest-path demo-wasm/Cargo.toml --locked --example shape-query-contract
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \
+cargo test -p physics-engine-demo --locked --example shape-query-contract
+cargo build -p physics-engine-demo --locked --release \
   --target wasm32-unknown-unknown --example shape-query-contract
 node scripts/test-shape-query-wasm.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/examples/shape_query_contract.wasm
+  target/wasm32-unknown-unknown/release/examples/shape_query_contract.wasm
 cargo test --release --locked --lib approximate::query::tests::paired_query_workload_evidence \
   -- --ignored --nocapture
 ```
