@@ -8,7 +8,8 @@
 //!
 //! Geometry: `--floor` (y = 0), `--box cx,cy,cz,hx,hy,hz`, `--wedge cx,cy,cz,hx,hy,hz` (rises
 //! toward -X), each repeatable. Character: `--capsule half,radius` (0.5,0.3), `--offset`
-//! (0.0025), `--slope degrees` (45), `--snap metres|none` (0.05), `--autostep height,width`.
+//! (0.0025), `--slope degrees` (45), `--snap metres|none` (0.05), `--autostep height,width`,
+//! `--stay` (the engine leaves an embedded start in place, as Rapier does).
 //! `--repeat N` continues each side from its own result with the same desired motion.
 
 use physics_oracle::probe::{Controller, Geometry, engine, rapier};
@@ -67,6 +68,7 @@ fn parse() -> Result<Probe, String> {
                 let [h, w] = numbers::<2>(&value(&mut args, &flag)?)?;
                 c.autostep = Some((h, w));
             }
+            "--stay" => c.stay = true,
             "--at" => at = Some(numbers::<3>(&value(&mut args, &flag)?)?),
             "--desired" => desired = Some(numbers::<3>(&value(&mut args, &flag)?)?),
             "--repeat" => {

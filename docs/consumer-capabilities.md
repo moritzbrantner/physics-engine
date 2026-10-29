@@ -23,7 +23,7 @@ over the integer `World`; no consumer enables it).
 | C5 | Grounded/support state with snap-to-ground and slope limit; static-only support; exact support on box tops; rest under gravity | MMORPG, ARPG | controller `snap_to_ground`, `movement.grounded`; `cast_shape` with `only_fixed` + slope check | **parity** (`character-move`): static-only support, exact box-top support, snap, rest under gravity | #293, #304, #305, #309 |
 | C6 | Planar (2.5D) movement constraint | ARPG | game zeroes y around `move_shape` | **parity** (`arpg-planar`): `CharacterSettings::plane`, no floor collider needed, always grounded | #293 |
 | C7 | Batched multi-character move, order-independent | ARPG, MMORPG | one `move_shape` per character with a BVH refresh between | **parity** (`crowd`): one batch per tick in body order, independent of slice order | #294 |
-| C8 | Depenetration reported apart from motion | ARPG, MMORPG | game clamps velocity | **parity** (`arpg-planar`): `CharacterMoveResult::depenetration`, never part of `translation` | #295 |
+| C8 | Depenetration reported apart from motion; embedded starts | ARPG, MMORPG | game clamps velocity; `move_shape` leaves a moving character where it starts embedded | **parity** (`arpg-planar`): `CharacterMoveResult::depenetration`, never part of `translation`; (`embedded-starts`): floor, box face, box corner and heightfield slope overlaps moved four ways, `Embedded::PushOut` (default) within 0.01 m of Rapier started outside, `Embedded::Stay` within 0.02 m of Rapier started embedded (Rapier's nudge works it out faster on halfspace tangents and heightfield diagonals), grounded equal every tick | #295, #404 |
 | C9 | Accurate capsule/capsule contact normals (parallel, deep, coincident) | ARPG | custom `QueryDispatcher` over parry | **parity** (`capsule-normals`): exact against closed forms, no custom dispatcher needed | #289 |
 | C10 | Accurate capsule-cast normals against long boxes | ARPG | custom `QueryDispatcher` (circle vs rectangle) | **parity** (`capsule-normals`): exact against closed forms, no custom dispatcher needed | #290 |
 | C11 | Ray cast against static geometry (line of sight, ground height, projectiles) | ARPG, MMORPG | `QueryPipeline::cast_ray` with `only_fixed`, `Cuboid::cast_ray` | **parity** within `static-queries` (`cast_ray_first`); rays alone still ~1.7× Rapier's cost | — |
@@ -62,7 +62,8 @@ is a manual release example; production stays on Rapier.
 
 Documented divergences (not parity claims): the engine's head-on sidestep vs Rapier blocking,
 engine depenetration of units authored inside geometry (MMORPG's squat rats, slope spawns,
-fixture players inside props; those fights are reported, not bounded), and Rapier's normal
+fixture players inside props; those fights are reported, not bounded, until MMORPG stops
+authoring them embedded; `Embedded::Stay` keeps Rapier's behaviour where needed, #404), and Rapier's normal
 nudge drift. Engine gaps found and fixed since: #336 (exact translation), #337 (local placement
 invalidation), #340 (snap from geometry, so MMORPG's rebuilt worlds now continue), #341
 (coincident surfaces), #342 (heightfield holes), #391 (Rapier's per-body material combine

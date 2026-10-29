@@ -5,7 +5,7 @@
 //! settings and support state. Motion keeps a gap of `offset` to everything it touches, so a
 //! character pushing into a wall, a ceiling or its floor stays exactly where it is, and zero
 //! desired motion never moves it. Penetration is resolved first and reported separately from
-//! the requested motion.
+//! the requested motion, unless the character's [`Embedded`] setting leaves it in place.
 
 use super::{
     Body, BodyId, Error, QueryFilter, QueryHit, QueryPose, Real, Shape, ShapeCast, Vector as V,
@@ -40,6 +40,21 @@ pub struct CharacterSettings {
     /// Rapier's `autostep` with dynamic bodies excluded. Only walking moves step: ones that
     /// start on the ground and do not rise, so jumps and falls never step (ARPG's use).
     pub autostep: Option<Autostep>,
+    /// How a move that starts embedded in geometry is handled.
+    pub embedded: Embedded,
+}
+
+/// What a character's move does when it starts inside geometry (other characters aside: the
+/// batch always separates overlapping characters).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Embedded {
+    /// Push the character out first, reported in [`CharacterMoveResult::depenetration`].
+    #[default]
+    PushOut,
+    /// Leave it in place, as Rapier's `move_shape` does for a moving character: only the
+    /// requested motion is resolved, a surface the character is inside blocks only motion into
+    /// it, and each such contact steps it Rapier's 0.1 mm normal nudge off that surface.
+    Stay,
 }
 
 /// Automatic step-up, in scene units.
@@ -61,6 +76,7 @@ impl Default for CharacterSettings {
             plane: None,
             max_push: None,
             autostep: None,
+            embedded: Embedded::PushOut,
         }
     }
 }
@@ -177,6 +193,10 @@ const GROUND_PREDICTION: Real = 0.05;
 /// (Rapier's `normal_nudge_factor`: 1e-4 against its 0.01 offset). Well above the rounding of
 /// the projected motion, well below the offset.
 const NORMAL_NUDGE: Real = 1e-2;
+
+/// Rapier's `normal_nudge_factor` in metres: the step off a surface an embedded character
+/// runs into.
+const EMBEDDED_NUDGE: Real = 1e-4;
 
 /// Contact normals within about 5 degrees of the motion count as head-on.
 const HEAD_ON_COS: Real = 0.996;
@@ -716,7 +736,21 @@ impl World {
         };
         let generation = self.bookkeeping.generation;
         let mut resolved = self.characters.is_clear(id, generation);
-        for _ in 0..if resolved { 0 } else { 4 } {
+        if !resolved && s.embedded == Embedded::Stay {
+            // Left in geometry: clear once no other character overlaps it (the batch
+            // separates those).
+            self.overlap_shape(pose, filter, hits)
+                .map_err(|_| Error::InvalidInput)?;
+            resolved = !hits
+                .iter()
+                .any(|h| h.separation < 0.0 && self.characters.contains(h.body));
+        }
+        let passes = if resolved || s.embedded == Embedded::Stay {
+            0
+        } else {
+            4
+        };
+        for _ in 0..passes {
             self.overlap_shape(pose, filter, hits)
                 .map_err(|_| Error::InvalidInput)?;
             let mut push = V::ZERO;
@@ -793,6 +827,13 @@ impl World {
             }
             result.contacts += 1;
             leaving = normal;
+            if s.embedded == Embedded::Stay && hit.separation + s.offset < 0.0 {
+                // Inside the surface it runs into: Rapier's slide steps off it by its normal
+                // nudge, so a character left embedded works its way out at that rate.
+                let nudge = normal * (EMBEDDED_NUDGE * self.scene.length_unit);
+                pose.position += nudge;
+                translation += nudge;
+            }
             // Already at the gap (within rounding): stay put rather than creep by an ulp.
             let travel = if allowed <= s.offset * 1e-2 {
                 0.0

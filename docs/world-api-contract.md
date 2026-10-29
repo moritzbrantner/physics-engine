@@ -152,6 +152,13 @@ that stood on such support at the start of the move and does not move up snaps d
 `offset + snap_to_ground`. This depends on geometry alone, so a world rebuilt from game state
 behaves the same. Zero desired motion never moves a character;
 penetration is resolved first and reported as `depenetration`, apart from `translation`.
+`CharacterSettings::embedded` chooses how a move that starts inside geometry is handled:
+`Embedded::PushOut` (the default) pushes the character out as above; `Embedded::Stay` leaves it
+in place, as Rapier's `move_shape` does for a moving character: only the requested motion is
+resolved, a surface the character is inside blocks only motion into it, and each such contact
+steps it 0.1 mm (in `length_unit`) off that surface, as Rapier's normal nudge does. Rapier
+0.36.1 depenetrates a character asked for zero motion; `Stay` never moves it then (MMORPG skips
+zero-motion moves). Other characters are always separated by the batch (below).
 `CharacterSettings::plane: Some(height)` makes a planar character: it moves only horizontally
 at its height, needs no floor collider and is always grounded with `support` `None`.
 Depenetration leaves static and kinematic bodies, not other characters.

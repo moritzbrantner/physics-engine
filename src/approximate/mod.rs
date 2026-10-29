@@ -69,7 +69,7 @@ pub use geometry::GeometryStats;
 mod ccd;
 mod character;
 mod terrain;
-pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings};
+pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};
 pub use terrain::{HeightfieldDesc, TerrainId};
 mod math;
 mod response;

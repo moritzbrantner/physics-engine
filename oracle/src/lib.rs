@@ -180,5 +180,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::terrain::scenario_holes(),
         scenarios::mmorpg_tick::scenario(),
         scenarios::arpg_tick::scenario(),
+        scenarios::embedded_starts::scenario(),
     ]
 }
