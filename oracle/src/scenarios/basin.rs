@@ -307,6 +307,7 @@ mod engine {
                     body: self.ids[k],
                     desired: Vector(x, self.vy[k], z),
                     exclude: open_floor(p.0, p.2).then_some(self.floor),
+                    autostep: None,
                 });
             }
             self.world

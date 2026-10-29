@@ -1,6 +1,8 @@
 //! C4/C5 (ARPG stairs, #353): characters walking under gravity into stairs with Rapier's
 //! autostep (0.25 m, 0.15 m free width, dynamic bodies excluded). Steps up to the autostep
 //! height are climbed onto the landing; higher ones stop the character at the first riser.
+//! Both sides choose autostep for each move by ARPG's walking rule: the previous move ended in
+//! ground contact.
 //! Rapier mirrors the consumer call pattern: a world rebuild per tick, `move_shape` per
 //! character in id order.
 
@@ -106,9 +108,9 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         }
         let (e, r) = (at(engine, last, lane), at(rapier, last, lane));
         if lane < 12 {
-            // Both climbed onto the landing. The pace differs: with ARPG's walking rule Rapier
-            // can stall at a step for a few ticks, its normal nudge leaving the player just off
-            // support so that it does not step; the engine does not stall.
+            // Both climbed onto the landing. Rises up to 0.2 m sweep across the 45° step
+            // threshold, where Rapier's climb is chaotic, so only end states are compared here;
+            // `stairs-pace` compares the pace tick by tick on ARPG's stairs.
             let top = rise(lane) * (STEPS + 1) as f32 + REST;
             let landing = FOOT_X - TREAD * STEPS as f32;
             for (side, p) in [("engine", e), ("rapier", r)] {
@@ -160,6 +162,8 @@ mod engine {
         world: World,
         ids: Vec<BodyId>,
         vy: Vec<f32>,
+        /// ARPG's walking rule: the previous move ended in ground contact.
+        on_ground: Vec<bool>,
         moves: Vec<CharacterMove>,
         results: Vec<CharacterMoveResult>,
     }
@@ -185,10 +189,6 @@ mod engine {
             let settings = CharacterSettings {
                 offset: OFFSET,
                 snap_to_ground: Some(SNAP),
-                autostep: Some(Autostep {
-                    max_height: MAX_STEP,
-                    min_width: MIN_WIDTH,
-                }),
                 ..CharacterSettings::default()
             };
             let ids = (0..LANES)
@@ -209,6 +209,7 @@ mod engine {
                 world,
                 ids,
                 vy: vec![0.0; LANES],
+                on_ground: vec![true; LANES],
                 moves: Vec::with_capacity(LANES),
                 results: Vec::with_capacity(LANES),
             }
@@ -223,6 +224,10 @@ mod engine {
                     body,
                     desired: Vector(-SPEED * DT, self.vy[lane] * DT, 0.0),
                     exclude: None,
+                    autostep: self.on_ground[lane].then_some(Autostep {
+                        max_height: MAX_STEP,
+                        min_width: MIN_WIDTH,
+                    }),
                 });
             }
             self.world
@@ -232,6 +237,7 @@ mod engine {
                 if r.grounded {
                     self.vy[lane] = 0.0;
                 }
+                self.on_ground[lane] = r.ground_contact;
                 let p = self.world.body(r.body).unwrap().position;
                 trace.0.push(Obs::Position([p.0, p.1, p.2]));
             }

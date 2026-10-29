@@ -36,10 +36,6 @@ pub struct CharacterSettings {
     /// ceilings per move, in scene units; the pushed character keeps its gap to everything
     /// else, so it is never pushed into walls or other characters.
     pub max_push: Option<Real>,
-    /// Stepping up onto ledges low enough to climb without jumping (`None`: never), as
-    /// Rapier's `autostep` with dynamic bodies excluded. Only walking moves step: ones that
-    /// start on the ground and do not rise, so jumps and falls never step (ARPG's use).
-    pub autostep: Option<Autostep>,
     /// How a move that starts embedded in geometry is handled.
     pub embedded: Embedded,
 }
@@ -57,7 +53,7 @@ pub enum Embedded {
     Stay,
 }
 
-/// Automatic step-up, in scene units.
+/// Automatic step-up for one move ([`CharacterMove::autostep`]), in scene units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Autostep {
     /// Highest step climbed, measured from the character's lowest point.
@@ -75,7 +71,6 @@ impl Default for CharacterSettings {
             max_slides: 4,
             plane: None,
             max_push: None,
-            autostep: None,
             embedded: Embedded::PushOut,
         }
     }
@@ -92,6 +87,12 @@ pub struct CharacterMove {
     /// static collider (MMORPG opens its floor halfspace over a lake basin this way). Pushes
     /// the character receives exclude it too, until its next move.
     pub exclude: Option<BodyId>,
+    /// Stepping up onto ledges low enough to climb without jumping on this move (`None`:
+    /// never), as Rapier's `autostep` with dynamic bodies excluded. The consumer chooses it
+    /// per move, as it chooses Rapier's controller: ARPG steps only on walks, moves whose
+    /// previous result had [`CharacterMoveResult::ground_contact`] and that do not take off,
+    /// so jumps and falls never step.
+    pub autostep: Option<Autostep>,
 }
 
 /// What one move did.
@@ -107,6 +108,11 @@ pub struct CharacterMoveResult {
     pub pushed: V,
     /// Standing on walkable static support within reach after the move.
     pub grounded: bool,
+    /// Rapier's `grounded` after the move: some static contact within the ground prediction
+    /// (true distance, in any direction) faces up at all, a step's rounded edge beside the
+    /// character included. Implied by `grounded`; a consumer walking up stairs chooses the
+    /// next move's [`CharacterMove::autostep`] by it.
+    pub ground_contact: bool,
     /// The supporting static body when grounded.
     pub support: Option<BodyId>,
     /// Number of surfaces the motion touched (at most `max_slides`).
@@ -253,13 +259,7 @@ impl World {
                 .is_none_or(|s| s.is_finite() && s >= 0.0)
             && settings.max_slides > 0
             && settings.plane.is_none_or(Real::is_finite)
-            && settings.max_push.is_none_or(|p| p.is_finite() && p >= 0.0)
-            && settings.autostep.is_none_or(|a| {
-                a.max_height.is_finite()
-                    && a.max_height > 0.0
-                    && a.min_width.is_finite()
-                    && a.min_width >= 0.0
-            });
+            && settings.max_push.is_none_or(|p| p.is_finite() && p >= 0.0);
         let body = &self.bodies[i];
         if !valid || !matches!(body.shape, Shape::Capsule { .. }) || !body.external {
             return Err(Error::InvalidInput);
@@ -297,7 +297,13 @@ impl World {
     ) -> Result<(), Error> {
         batch.clear();
         for (n, m) in moves.iter().enumerate() {
-            if !m.desired.finite() || m.desired.abs().max_component() >= 1e12 {
+            let step_valid = m.autostep.is_none_or(|a| {
+                a.max_height.is_finite()
+                    && a.max_height > 0.0
+                    && a.min_width.is_finite()
+                    && a.min_width >= 0.0
+            });
+            if !m.desired.finite() || m.desired.abs().max_component() >= 1e12 || !step_valid {
                 return Err(Error::InvalidInput);
             }
             let state = self
@@ -322,13 +328,14 @@ impl World {
                 depenetration: V::ZERO,
                 pushed: V::ZERO,
                 grounded: false,
+                ground_contact: false,
                 support: None,
                 contacts: 0,
             },
         );
         for &(_, n, state) in batch.iter() {
             let m = moves[n];
-            let mut result = self.move_character(m.body, m.desired, state)?;
+            let mut result = self.move_character(m.body, m.desired, m.autostep, state)?;
             result.depenetration += separation[n];
             out[n] = result;
         }
@@ -626,37 +633,6 @@ impl World {
         Ok(Some(lift + nudge))
     }
 
-    /// Whether `pose` stands on walkable static support (within twice the offset). Snapping
-    /// asks this of the move's start, as Rapier does, so it depends on geometry alone and a
-    /// world rebuilt from game state snaps exactly like the original.
-    fn grounded_at(
-        &self,
-        id: BodyId,
-        pose: QueryPose,
-        s: CharacterSettings,
-        hits: &mut Vec<QueryHit>,
-    ) -> Result<bool, Error> {
-        self.on_ground_at(id, pose, s, s.max_slope.cos(), hits)
-    }
-
-    /// Whether `pose` has static ground within the ground prediction below whose normal points
-    /// up by at least `min_up`. The prediction is measured along the ground's normal, as
-    /// Rapier's contact distance, so the cast reaches `1 / min_up` times as far down.
-    fn on_ground_at(
-        &self,
-        id: BodyId,
-        pose: QueryPose,
-        s: CharacterSettings,
-        min_up: Real,
-        hits: &mut Vec<QueryHit>,
-    ) -> Result<bool, Error> {
-        let predict = self.ground_prediction(s);
-        let reach = predict / min_up + s.offset;
-        Ok(self
-            .support_hit(id, pose, reach, min_up, hits)?
-            .is_some_and(|hit| hit.fraction * reach * hit.normal.dot(V::Y) <= predict))
-    }
-
     /// The nearest static surface below `pose` within `reach` that a downward cast runs into
     /// and whose normal points up by at least `min_up`. Too-steep surfaces met first (a steep
     /// ramp's face at its foot) are passed over, as Rapier's consumers recast past them, so the
@@ -733,10 +709,11 @@ impl World {
         &mut self,
         id: BodyId,
         desired: V,
+        autostep: Option<Autostep>,
         state: CharacterState,
     ) -> Result<CharacterMoveResult, Error> {
         let mut hits = std::mem::take(&mut self.characters.hits);
-        let result = self.move_character_with(id, desired, state, &mut hits);
+        let result = self.move_character_with(id, desired, autostep, state, &mut hits);
         self.characters.hits = hits;
         result
     }
@@ -745,6 +722,7 @@ impl World {
         &mut self,
         id: BodyId,
         desired: V,
+        autostep: Option<Autostep>,
         state: CharacterState,
         hits: &mut Vec<QueryHit>,
     ) -> Result<CharacterMoveResult, Error> {
@@ -763,6 +741,7 @@ impl World {
             depenetration: V::ZERO,
             pushed: V::ZERO,
             grounded: false,
+            ground_contact: false,
             support: None,
             contacts: 0,
         };
@@ -819,10 +798,6 @@ impl World {
         // Collide and slide, keeping `offset` to every surface.
         let mut translation = V::ZERO;
         let mut remaining = flat(desired);
-        // Whether the move starts on the ground (Rapier's grounded: any upward-facing static
-        // contact within the prediction, a step's rounded edge included), found once on the
-        // first step attempt.
-        let mut walking = None;
         let mut support = None;
         // The surface the slide last met: the next cast leans off it by the nudge.
         let mut leaving = V::ZERO;
@@ -877,17 +852,15 @@ impl World {
             pose.position += direction * travel;
             translation += direction * travel;
             let rest = remaining - direction * travel;
-            // A low ledge in the way of a walking character is stepped onto instead of slid
-            // along. Jumps and falls never step (as ARPG uses Rapier's autostep).
-            if let Some(step) = s.autostep
+            // A low ledge in the way of a stepping move is stepped onto instead of slid along,
+            // as Rapier's autostep does on a wall.
+            if let Some(step) = autostep
                 && !planar
                 && normal.dot(up) >= 0.0
                 && normal.dot(up) < min_up
-                && desired.dot(up) <= 0.0
                 && self
                     .index(hit.body)
                     .is_ok_and(|i| !self.bodies[i].movable())
-                && *walking.get_or_insert(self.ground_contact_at(id, start_pose, s, hits)?)
                 && let Some(lift) = self.step_up(id, pose, rest, s, step, hits)?
             {
                 pose.position += lift;
@@ -983,12 +956,13 @@ impl World {
         } else if let Some(hit) = self.support_hit(id, pose, reach, min_up, hits)? {
             let gap = hit.fraction * reach;
             let snap = gap - s.offset;
-            // As Rapier: only a move that has not risen snaps (a step or a slide up an edge
-            // keeps its height).
-            if gap > s.offset * 2.0
+            // As Rapier: a move that started in ground contact (Rapier's grounded, a step's
+            // rounded edge included) and has not risen (a step or a slide up an edge keeps its
+            // height) snaps down to the offset from any gap beyond it.
+            if snap > s.offset * 1e-2
                 && translation.dot(up) <= 0.0
                 && s.snap_to_ground.is_some_and(|reach| snap <= reach)
-                && self.grounded_at(id, start_pose, s, hits)?
+                && self.ground_contact_at(id, start_pose, s, hits)?
             {
                 pose.position += -up * snap;
                 translation += -up * snap;
@@ -1007,6 +981,8 @@ impl World {
         if pose.position != start {
             self.place_kinematic(id, pose.position)?;
         }
+        // Walkable support is a contact facing up; only off it does the contact test run.
+        result.ground_contact = result.grounded || self.ground_contact_at(id, pose, s, hits)?;
         // The slide kept its gap: free of overlap until the layout changes or it is placed.
         self.characters
             .set_clear(id, resolved.then_some(generation));

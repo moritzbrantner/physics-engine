@@ -222,6 +222,7 @@ mod engine {
                     body: self.riders[lane],
                     desired: v(add(carry, [0.0, self.vy[lane] * DT, 0.0])),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

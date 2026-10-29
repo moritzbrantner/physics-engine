@@ -139,6 +139,7 @@ fn apply(w: &mut World, op: &Op, characters: &[u64]) -> Seen {
                     body,
                     desired: V(0.05 * (n as f32 - 2.0), -0.02, 0.04),
                     exclude: None,
+                    autostep: None,
                 })
                 .collect::<Vec<_>>();
             let mut out = Vec::new();

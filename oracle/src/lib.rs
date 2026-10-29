@@ -174,6 +174,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::push::scenario(),
         scenarios::slopes::scenario(),
         scenarios::stairs::scenario(),
+        scenarios::stairs_pace::scenario(),
         scenarios::platforms::scenario(),
         scenarios::props::scenario(),
         scenarios::materials::scenario(),

@@ -59,6 +59,7 @@ fn step(w: &mut World, c: BodyId, desired: V) -> (V, bool) {
             body: c,
             desired,
             exclude: None,
+            autostep: None,
         }],
         &mut out,
     )

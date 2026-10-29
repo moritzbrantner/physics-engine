@@ -361,6 +361,7 @@ mod engine {
                     body,
                     desired: v(d),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

@@ -149,8 +149,11 @@ primitive: collide-and-slide that keeps `offset` to every surface it touches, th
 test against walkable static support: like Rapier's ground prediction, support within `offset`
 plus 5 cm (in `length_unit`, measured along the ground's normal as Rapier's contact distance)
 makes the character grounded without moving it, and a character
-that stood on such support at the start of the move and does not move up snaps down within
-`offset + snap_to_ground`. This depends on geometry alone, so a world rebuilt from game state
+that started the move in ground contact (below) and does not move up snaps down to `offset` from
+any gap beyond it within `offset + snap_to_ground`, as Rapier's snap. `CharacterMoveResult::ground_contact`
+is Rapier's `grounded`: some static contact within that prediction (true distance, in any
+direction) faces up at all, a step's rounded edge beside the character included; it is implied
+by `grounded` and tested (one overlap query) only off walkable support. This depends on geometry alone, so a world rebuilt from game state
 behaves the same. On a walkable slope a move never slips downhill unless its horizontal intent
 leads downhill, as Rapier's non-slip slopes: a slide that would point down the slope keeps only
 its part along the slope's contour. Zero desired motion never moves a character;
@@ -186,9 +189,10 @@ surfaces downward intent stops instead of sliding down the slope; horizontal int
 surface. Surfaces steeper than `max_slope` are walls: unless the desired motion rises, the slide
 keeps no motion up along them, so a character walking into a too-steep ramp stops at its foot
 (Rapier's `max_slope_climb_angle`). Motion stops `offset` short of whichever touched surface it
-reaches first along its normal, not only the first one touched. With `autostep`, a walking move
-(starting on the ground, Rapier's grounded: any upward-facing static contact within the ground
-prediction by true distance, a step's rounded edge beside the character included, and not rising) that runs into a non-walkable static surface steps up as Rapier's
+reaches first along its normal, not only the first one touched. `CharacterMove::autostep:
+Option<Autostep>` is chosen per move, as a consumer chooses Rapier's controller for each call
+(ARPG: a walk, when the previous result had `ground_contact` and the player does not take off;
+jumps and falls never step). A move with it that runs into a non-walkable static surface steps up as Rapier's
 autostep does: room above for `max_height`, room on top for `min_width`, no too-steep slope there;
 it is lifted by the step's height and nudged forward by up to `min_width`. A capsule meeting a
 step's rounded edge may climb it over several moves, as on Rapier. Snapping to the ground applies

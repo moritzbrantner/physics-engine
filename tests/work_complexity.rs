@@ -506,6 +506,7 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
                 body,
                 desired: V(0.7, 0.0, 0.7),
                 exclude: None,
+                autostep: None,
             })
             .collect();
         w.move_characters(&[], &mut out).unwrap();
@@ -543,6 +544,7 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
                 body,
                 desired: V::ZERO,
                 exclude: None,
+                autostep: None,
             })
             .collect();
         // Settle once so every character is known free of overlap.
@@ -578,6 +580,7 @@ fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
                 body,
                 desired: V::ZERO,
                 exclude: None,
+                autostep: None,
             })
             .collect();
         w.move_characters(&rest, &mut out).unwrap();
@@ -720,6 +723,7 @@ fn a_warm_tick_allocates_nothing_at_any_size() {
                 body,
                 desired: V(0.02, 0.0, 0.01),
                 exclude: None,
+                autostep: None,
             })
             .collect();
         let mut out: Vec<CharacterMoveResult> = Vec::new();

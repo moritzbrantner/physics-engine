@@ -13,6 +13,7 @@ pub mod props;
 pub mod push;
 pub mod slopes;
 pub mod stairs;
+pub mod stairs_pace;
 pub mod static_queries;
 pub mod terrain;
 #[cfg(feature = "rapier")]
