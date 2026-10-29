@@ -48,7 +48,7 @@ substep `n` times; one-substep worlds are unchanged.
 ## One substep (with generation)
 
 1. Apply force/gravity to awake velocities. External impulses were accumulated once at tick start.
-2. Query swept AABBs in a stable sweep-and-prune order. Reuse sleeping/static geometric bounds.
+2. Query the query tree with each awake body's swept AABB (#412). Reuse sleeping/static bounds.
 3. Prepare OBB SAT contacts with clipped face manifolds (at most four points); use one-point
    edge and sphere contacts. Only real contact or an admitted translation sweep wakes an island.
 4. Retain the first/equal-time swept contacts of each CCD projectile, so a nearer wall shields

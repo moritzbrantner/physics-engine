@@ -181,10 +181,12 @@ fn check_bounds(w: &mut World, h: Real) {
     let mut out = Vec::new();
     w.manifolds::<true>(h, 0.0, &mut super::super::Report::default(), &mut out)
         .unwrap();
-    let mut expected = w
+    // Only awake bodies take swept bounds (#412), in storage order.
+    let expected = w
         .bodies
         .iter()
         .enumerate()
+        .filter(|(_, b)| b.mass > 0.0 && !b.sleeping)
         .map(|(i, b)| {
             let (lo, hi) = b.cached_bounds;
             let delta = if b.sleeping {
@@ -202,18 +204,7 @@ fn check_bounds(w: &mut World, h: Real) {
             (i, lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
         })
         .collect::<Vec<_>>();
-    expected.sort_by(|a, b| {
-        a.1.0
-            .total_cmp(&b.1.0)
-            .then_with(|| w.bodies[a.0].order.cmp(&w.bodies[b.0].order))
-    });
-    let got = w
-        .bookkeeping
-        .bounds
-        .iter()
-        .map(|r| (r.index, r.lo, r.hi))
-        .collect::<Vec<_>>();
-    assert_eq!(got, expected);
+    assert_eq!(w.bookkeeping.bounds, expected);
 }
 #[test]
 fn retained_sweeps_refresh_on_wake_sleep_dt_change_and_same_length_layout_change() {
@@ -383,8 +374,6 @@ fn warmed_bookkeeping_visits_only_active_neighborhood_and_reuses_buffer_capacity
         assert_eq!(r.bookkeeping.island_edge_visits, 0);
         // Contacts are generated once per step, not per substep (#378).
         assert_eq!(r.bookkeeping.bounds_updates, 1);
-        assert_eq!(r.bookkeeping.bound_rows_sorted, 0);
-        assert!(r.bookkeeping.bounds_order_checks > 0);
         assert_eq!(r.bookkeeping.scratch_growths, 0);
         assert!(r.bookkeeping.scratch_retained_bytes > 0);
         assert_eq!(

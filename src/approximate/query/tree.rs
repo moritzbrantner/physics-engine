@@ -119,16 +119,28 @@ impl QueryTree {
         self.generation = Some(generation);
     }
 
-    /// The end of a `dt` step: like [`Self::sync`], but a moving leaf that must be reinserted
-    /// is also fattened along its velocity for the next [`PREDICTED_STEPS`] steps, so steadily
-    /// moving bodies stop being reinserted every step (#375). Only query candidates change.
-    pub fn sync_step(&mut self, bodies: &[Body], generation: u64, dt: Real) {
+    /// The end of a `dt` step that moved only the bodies at `moved` (storage indices; `None`
+    /// is every body): their leaves return to their bounds, and a leaf that
+    /// must be reinserted is also fattened along its velocity for the next [`PREDICTED_STEPS`]
+    /// steps, so steadily moving bodies stop being reinserted every step (#375). Without a
+    /// current tree this is [`Self::sync`]. Only query candidates change.
+    pub fn sync_step(
+        &mut self,
+        bodies: &[Body],
+        moved: Option<&[usize]>,
+        generation: u64,
+        dt: Real,
+    ) {
         if !self.current(generation) {
+            crate::work::add(crate::work::Counter::BodyVisits, bodies.len() as u64);
             return self.sync(bodies, generation);
         }
+        let count = moved.map_or(bodies.len(), <[usize]>::len);
+        crate::work::add(crate::work::Counter::BodyVisits, count as u64);
         let ahead = dt * PREDICTED_STEPS;
-        for body in bodies.iter().filter(|b| b.id != BodyId::NONE) {
-            if !is_static(body) {
+        for q in 0..count {
+            let body = &bodies[moved.map_or(q, |m| m[q])];
+            if body.id != BodyId::NONE && !is_static(body) {
                 let leaf = self.leaf(body);
                 let d = body.velocity * ahead;
                 let displacement = [d.0, d.1, d.2];
@@ -138,6 +150,27 @@ impl QueryTree {
                     self.tree.update(leaf);
                 }
             }
+        }
+    }
+
+    /// An awake body's leaf holds its broad-phase box `(lo, hi)` (#412, `bookkeeping::BroadBox`)
+    /// until [`Self::sync_step`] or a move returns it to the body's bounds. A leaf that must be
+    /// reinserted is fattened along the velocity over `dt` as there.
+    pub fn swept(&mut self, body: &Body, (lo, hi): (V, V), dt: Real) {
+        self.magnitude = self
+            .magnitude
+            .max(lo.abs().max_component())
+            .max(hi.abs().max_component());
+        let leaf = Leaf {
+            id: body.id.slot(),
+            aabb: aabb((lo, hi)),
+        };
+        let d = body.velocity * (dt * PREDICTED_STEPS);
+        let displacement = [d.0, d.1, d.2];
+        if displacement.iter().all(|d| d.is_finite()) {
+            self.tree.update_predicted(leaf, displacement);
+        } else {
+            self.tree.update(leaf);
         }
     }
 

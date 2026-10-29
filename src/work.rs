@@ -20,9 +20,12 @@ pub enum Counter {
     TerrainTriangles,
     /// Body-order comparisons (storage searches, the `Indexed` order index, sorts).
     OrderComparisons,
+    /// Bodies visited by `World::step`'s per-body loops (preparation, forces, integration,
+    /// support, sleep and query-tree refits), including full rebuilds after layout changes.
+    BodyVisits,
 }
 
-const COUNTERS: usize = 7;
+const COUNTERS: usize = 8;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

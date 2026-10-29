@@ -20,9 +20,8 @@ pub struct BookkeepingStats {
     pub support_body_visits: u64,
     /// Directed support edges visited by the propagation frontier.
     pub support_edge_visits: u64,
+    /// Awake bodies' swept bounds refitted into the query tree for contact pairs.
     pub bounds_updates: u64,
-    pub bound_rows_sorted: u64,
-    pub bounds_order_checks: u64,
     pub scratch_growths: u64,
     pub scratch_retained_bytes: u64,
 }
@@ -42,6 +41,8 @@ pub(super) fn bytes<T>(v: &Vec<T>) -> usize {
     v.capacity() * size_of::<T>()
 }
 
+/// Awake bodies (`mass > 0`, not sleeping) in storage order. Wakes and sleeps update the list
+/// in place; only a layout change (`dirty`) rescans the bodies.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Activity {
     pub count: usize,
@@ -49,12 +50,31 @@ pub(super) struct Activity {
     pub dirty: bool,
 }
 impl Activity {
+    /// Body `i` just woke.
+    pub fn woke(&mut self, i: usize, work: &mut BookkeepingStats) {
+        if self.dirty {
+            return;
+        }
+        let at = self.indices.partition_point(|&k| k < i);
+        debug_assert!(self.indices.get(at) != Some(&i));
+        let needed = self.indices.len() + 1;
+        reserve(&mut self.indices, needed, work);
+        self.indices.insert(at, i);
+    }
+    /// Bodies of the list just fell asleep.
+    pub fn slept(&mut self, bodies: &[Body]) {
+        if !self.dirty {
+            self.indices.retain(|&i| !bodies[i].sleeping);
+        }
+    }
     pub fn refresh(&mut self, bodies: &[Body], work: &mut BookkeepingStats) {
         if !self.dirty {
+            debug_assert_eq!(self.indices.len(), self.count);
             return;
         }
         work.active_view_rebuilds += 1;
         work.active_body_scans += bodies.len() as u64;
+        crate::work::add(crate::work::Counter::BodyVisits, bodies.len() as u64);
         self.indices.clear();
         reserve(&mut self.indices, self.count, work);
         self.indices.extend(
@@ -186,12 +206,12 @@ impl Traversal {
 /// of a reachable supported source at most once, replacing the previous repeated full-edge scan.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SupportPropagation {
-    offsets: Vec<usize>,
-    neighbors: Vec<usize>,
-    cursor: Vec<usize>,
+    /// The support edges sorted by lower body: each body's outgoing edges are one run.
+    edges: Vec<(usize, usize)>,
     queue: Vec<usize>,
 }
 impl SupportPropagation {
+    /// O(edges · log edges), independent of the body count.
     pub fn propagate(
         &mut self,
         supported: &mut [bool],
@@ -205,36 +225,23 @@ impl SupportPropagation {
         work.support_graph_builds += 1;
         work.support_edges_indexed += edges.len() as u64;
 
-        reserve(&mut self.offsets, supported.len() + 1, work);
-        self.offsets.clear();
-        self.offsets.resize(supported.len() + 1, 0);
-        for &(lower, upper) in edges {
-            debug_assert!(lower < supported.len());
-            debug_assert!(upper < supported.len());
-            self.offsets[lower + 1] += 1;
-        }
-        for index in 1..self.offsets.len() {
-            self.offsets[index] += self.offsets[index - 1];
-        }
-
-        reserve(&mut self.cursor, supported.len(), work);
-        self.cursor.clear();
-        self.cursor
-            .extend_from_slice(&self.offsets[..supported.len()]);
-
-        reserve(&mut self.neighbors, edges.len(), work);
-        self.neighbors.clear();
-        self.neighbors.resize(edges.len(), 0);
-        for &(lower, upper) in edges {
-            self.neighbors[self.cursor[lower]] = upper;
-            self.cursor[lower] += 1;
-        }
+        self.edges.clear();
+        reserve(&mut self.edges, edges.len(), work);
+        self.edges.extend_from_slice(edges);
+        self.edges.sort_unstable();
+        let sorted = &self.edges;
+        let outgoing = |lower: usize| {
+            let start = sorted.partition_point(|&(l, _)| l < lower);
+            let end = start + sorted[start..].partition_point(|&(l, _)| l == lower);
+            start..end
+        };
 
         self.queue.clear();
-        reserve(&mut self.queue, supported.len().min(edges.len()), work);
-        for (index, is_supported) in supported.iter().copied().enumerate() {
-            if is_supported && self.offsets[index] != self.offsets[index + 1] {
-                push(&mut self.queue, index, work);
+        reserve(&mut self.queue, edges.len(), work);
+        for run in sorted.chunk_by(|x, y| x.0 == y.0) {
+            debug_assert!(run[0].0 < supported.len());
+            if supported[run[0].0] {
+                push(&mut self.queue, run[0].0, work);
             }
         }
 
@@ -244,14 +251,13 @@ impl SupportPropagation {
             head += 1;
             work.support_body_visits += 1;
 
-            let start = self.offsets[lower];
-            let end = self.offsets[lower + 1];
-            work.support_edge_visits += (end - start) as u64;
-            for edge_index in start..end {
-                let upper = self.neighbors[edge_index];
+            let range = outgoing(lower);
+            work.support_edge_visits += range.len() as u64;
+            for &(_, upper) in &sorted[range] {
+                debug_assert!(upper < supported.len());
                 if !supported[upper] {
                     supported[upper] = true;
-                    if self.offsets[upper] != self.offsets[upper + 1] {
+                    if !outgoing(upper).is_empty() {
                         push(&mut self.queue, upper, work);
                     }
                 }
@@ -260,17 +266,28 @@ impl SupportPropagation {
     }
 
     fn retained_bytes(&self) -> usize {
-        bytes(&self.offsets) + bytes(&self.neighbors) + bytes(&self.cursor) + bytes(&self.queue)
+        bytes(&self.edges) + bytes(&self.queue)
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(super) struct SweepRow {
-    pub index: usize,
+/// An awake body's broad-phase box (#412), Rapier's fat AABB: it covers the body's swept bounds
+/// with room to move, its query-tree leaf holds it, and `broad_slots[start..start + len]` are
+/// the tree leaves it overlapped when it was made. It lasts across steps until the swept bounds
+/// leave it, the body sleeps or a resting body it overlaps changes.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct BroadBox {
+    /// Valid while equal to `Scratch::broad_epoch`; zero is no box.
+    pub epoch: u64,
+    /// When the box was made and queried the tree (`Scratch::queries`).
+    pub query: u64,
     pub lo: Vector,
     pub hi: Vector,
-    pub active: bool,
+    pub start: u32,
+    pub len: u32,
+    /// The body's row in `Scratch::bounds` this contact generation.
+    pub row: u32,
 }
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct Scratch {
     pub position: super::position::Scratch,
@@ -278,7 +295,27 @@ pub(super) struct Scratch {
     pub graph: Adjacency,
     pub traversal: Traversal,
     pub work: BookkeepingStats,
-    pub bounds: Vec<SweepRow>,
+    /// Awake bodies' swept bounds this contact generation: (index, lo, hi).
+    pub bounds: Vec<(usize, Vector, Vector)>,
+    /// Broad-phase boxes, indexed by id slot (as query-tree leaves).
+    pub broad: Vec<BroadBox>,
+    /// Query-tree leaf slots the broad-phase boxes overlapped.
+    pub broad_slots: Vec<u32>,
+    /// Compaction buffer for `broad_slots`.
+    pub broad_spare: Vec<u32>,
+    /// Bumping it drops every broad-phase box (`BroadBox::epoch`).
+    pub broad_epoch: u64,
+    /// Counts broad-phase queries, for `BroadBox::query`.
+    pub queries: u64,
+    /// Broadphase pairs (lower, higher body order) before the narrow phase.
+    pub candidates: Vec<(usize, usize)>,
+    /// Bodies awake at some point of the current step (step start plus wakes), for the
+    /// end-of-step force reset and query-tree refit.
+    pub stepped: Vec<usize>,
+    /// Layout generation for which the per-body vectors (`responses`, `supported`,
+    /// `earliest`) hold their resting values for every body that is not awake: default
+    /// responses, `true` and infinity. `None` after a rollback.
+    pub per_body: Option<u64>,
     pub roots: Vec<Order>,
     pub used: Vec<usize>,
     pub retired: Vec<Order>,
@@ -286,6 +323,8 @@ pub(super) struct Scratch {
     pub supported: Vec<bool>,
     pub support_edges: Vec<(usize, usize)>,
     pub earliest: Vec<Real>,
+    /// Entries of `earliest` set by the current contact pass.
+    pub earliest_set: Vec<usize>,
     /// CCD bodies with an admitted swept impact this substep (remaining-time advancement).
     pub ccd: Vec<usize>,
     /// Per-body position correction from remaining-time advancement, added at integration.
@@ -299,16 +338,30 @@ pub(super) struct Scratch {
     pub generation: u64,
 }
 impl Scratch {
+    /// The epoch of valid broad-phase boxes (`BroadBox::epoch`), never zero.
+    pub fn box_epoch(&self) -> u64 {
+        self.broad_epoch + 1
+    }
+    /// Drops every broad-phase box.
+    pub fn forget_boxes(&mut self) {
+        self.broad_epoch += 1;
+    }
+    /// Drops the broad-phase box of the body in `slot`.
+    pub fn drop_box(&mut self, slot: u32) {
+        if let Some(e) = self.broad.get_mut(slot as usize) {
+            e.epoch = 0;
+        }
+    }
     pub fn layout_changed(&mut self) {
         self.generation += 1;
-        self.poses_changed();
-    }
-    /// A body moved outside a step: derived pose caches are stale, the layout is not.
-    pub fn poses_changed(&mut self) {
-        self.position.invalidate();
         self.activity.dirty = true;
         self.graph.dirty = true;
-        self.bounds.clear();
+        self.poses_changed();
+    }
+    /// A body moved outside a step: derived pose caches are stale, the layout, the awake set
+    /// and the contact graph are not.
+    pub fn poses_changed(&mut self) {
+        self.position.invalidate();
     }
     pub fn ensure_graph(
         &mut self,
@@ -317,11 +370,15 @@ impl Scratch {
     ) {
         self.graph.ensure(bodies, cache, &mut self.work);
     }
+    /// Excludes the broad-phase boxes, which persist with the query tree (its storage is not
+    /// counted either).
     pub fn retained_bytes(&self) -> usize {
         bytes(&self.activity.indices)
             + self.graph.retained_bytes()
             + self.traversal.retained_bytes()
             + bytes(&self.bounds)
+            + bytes(&self.candidates)
+            + bytes(&self.stepped)
             + bytes(&self.roots)
             + bytes(&self.used)
             + bytes(&self.retired)
@@ -329,6 +386,7 @@ impl Scratch {
             + bytes(&self.supported)
             + bytes(&self.support_edges)
             + bytes(&self.earliest)
+            + bytes(&self.earliest_set)
             + bytes(&self.ccd)
             + bytes(&self.ccd_offsets)
             + bytes(&self.ccd_start)
