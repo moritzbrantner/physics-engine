@@ -54,8 +54,15 @@ fn character(w: &mut World, id: u64, position: V) -> BodyId {
 
 fn step(w: &mut World, id: BodyId, desired: V) -> physics_engine::approximate::CharacterMoveResult {
     let mut out = Vec::new();
-    w.move_characters(&[CharacterMove { body: id, desired }], &mut out)
-        .unwrap();
+    w.move_characters(
+        &[CharacterMove {
+            body: id,
+            desired,
+            exclude: None,
+        }],
+        &mut out,
+    )
+    .unwrap();
     out[0]
 }
 
@@ -267,10 +274,12 @@ fn head_on_characters_sidestep_and_pass() {
                 CharacterMove {
                     body: a,
                     desired: V(0.0, 0.0, 0.05),
+                    exclude: None,
                 },
                 CharacterMove {
                     body: b,
                     desired: V(0.0, 0.0, -0.05),
+                    exclude: None,
                 },
             ],
             &mut out,
@@ -305,6 +314,7 @@ fn batch_results_do_not_depend_on_slice_order() {
                         0.0,
                         0.01 * tick as f32,
                     ),
+                    exclude: None,
                 })
                 .collect();
             if reverse {
@@ -328,10 +338,12 @@ fn overlapping_characters_separate_half_each() {
             CharacterMove {
                 body: b,
                 desired: V::ZERO,
+                exclude: None,
             },
             CharacterMove {
                 body: a,
                 desired: V::ZERO,
+                exclude: None,
             },
         ],
         &mut out,
@@ -374,6 +386,7 @@ fn overlap_is_resolved_after_a_door_closes_or_the_game_places_a_character() {
         &[CharacterMove {
             body: c,
             desired: V::ZERO,
+            exclude: None,
         }],
         &mut out,
     )
@@ -390,6 +403,7 @@ fn depenetration_into_another_character_separates_as_a_restored_world_does() {
         let moves = bodies.map(|body| CharacterMove {
             body,
             desired: V::ZERO,
+            exclude: None,
         });
         w.move_characters(&moves, &mut Vec::new()).unwrap();
     }
@@ -457,8 +471,15 @@ fn character_motion_does_not_depend_on_the_length_unit() {
         for _ in 0..120 {
             vy -= 9.81 / 60.0;
             let desired = s(V(0.05, vy / 60.0, 0.02));
-            w.move_characters(&[CharacterMove { body: c, desired }], &mut out)
-                .unwrap();
+            w.move_characters(
+                &[CharacterMove {
+                    body: c,
+                    desired,
+                    exclude: None,
+                }],
+                &mut out,
+            )
+            .unwrap();
             if out[0].grounded {
                 vy = 0.0;
             }
@@ -489,10 +510,15 @@ fn push_tick(w: &mut World, a: BodyId, b: BodyId, desired: V) -> Vec<CharacterMo
     let mut out = Vec::new();
     w.move_characters(
         &[
-            CharacterMove { body: a, desired },
+            CharacterMove {
+                body: a,
+                desired,
+                exclude: None,
+            },
             CharacterMove {
                 body: b,
                 desired: V::ZERO,
+                exclude: None,
             },
         ],
         &mut out,
@@ -633,7 +659,7 @@ fn ground_within_the_prediction_is_support_without_snapping() {
 }
 
 /// A wedge rising toward -X from x = `run` / 2 (its foot) to height `2 * half_height`, and a
-/// character walking -X into it under gravity for 240 ticks. Returns its final position.
+/// character walking -X into it under gravity for 300 ticks. Returns its final position.
 fn walk_into_wedge(half_height: f32, run: f32) -> V {
     let mut w = world();
     w.add_body(Body::keyed(
@@ -645,7 +671,7 @@ fn walk_into_wedge(half_height: f32, run: f32) -> V {
     .unwrap();
     let c = character(&mut w, 10, V(20.0 + run / 2.0 + 1.0, FOOT + OFFSET, 0.0));
     let mut vy = 0.0;
-    for _ in 0..240 {
+    for _ in 0..300 {
         vy -= 9.81 / 60.0;
         let r = step(&mut w, c, V(-2.0 / 60.0, vy / 60.0, 0.0));
         if r.grounded {
@@ -781,4 +807,45 @@ fn pressing_into_a_too_steep_slope_foot_is_grounded_on_the_floor() {
             "drop {drop}: rests on the floor {p:?}"
         );
     }
+}
+
+/// #405: a move that excludes the floor passes through it to the ground below, and its
+/// grounded test stands on that ground; the floor holds every move that does not exclude it.
+#[test]
+fn a_move_excluding_the_floor_falls_through_it_to_the_ground_below() {
+    let mut w = world();
+    let floor = w.body_id(1).unwrap();
+    let below = w
+        .add_body(Body::keyed(
+            20,
+            Shape::Box(V(10.0, 0.5, 10.0)),
+            V(30.0, -1.0, 0.0),
+            0.0,
+        ))
+        .unwrap();
+    let c = character(&mut w, 10, V(30.0, FOOT + OFFSET, 0.0));
+    let r = step(&mut w, c, V(0.0, -0.1, 0.0));
+    assert!(r.grounded && r.support == Some(floor));
+    assert_eq!(position(&w, c).1, FOOT + OFFSET);
+    let mut out = Vec::new();
+    let mut last = None;
+    for _ in 0..20 {
+        let m = CharacterMove {
+            body: c,
+            desired: V(0.0, -0.1, 0.0),
+            exclude: Some(floor),
+        };
+        w.move_characters(&[m], &mut out).unwrap();
+        last = Some(out[0]);
+    }
+    let r = last.unwrap();
+    let p = position(&w, c);
+    assert!(r.grounded, "grounded below the floor {p:?}");
+    assert_eq!(r.support, Some(below));
+    assert!((p.1 - (-0.5 + FOOT + OFFSET)).abs() < 1e-3, "{p:?}");
+    assert_eq!(r.depenetration, V::ZERO);
+    // Without the exclusion the floor box holds the character again: it is pushed out onto it.
+    let r = step(&mut w, c, V::ZERO);
+    assert!((r.depenetration.1 - 0.5).abs() < 1e-3, "{r:?}");
+    assert_eq!(r.support, Some(floor));
 }

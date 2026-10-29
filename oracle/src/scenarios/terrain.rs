@@ -360,6 +360,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body,
                     desired: v(d),
+                    exclude: None,
                 });
             }
             self.world

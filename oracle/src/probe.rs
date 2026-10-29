@@ -188,6 +188,7 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
             &[CharacterMove {
                 body: id,
                 desired: v(desired),
+                exclude: None,
             }],
             &mut out,
         )

@@ -221,6 +221,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body: self.riders[lane],
                     desired: v(add(carry, [0.0, self.vy[lane] * DT, 0.0])),
+                    exclude: None,
                 });
             }
             self.world

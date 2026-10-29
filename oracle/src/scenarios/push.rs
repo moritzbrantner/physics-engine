@@ -166,6 +166,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body,
                     desired: v(self.directions[i]),
+                    exclude: None,
                 });
             }
             self.world

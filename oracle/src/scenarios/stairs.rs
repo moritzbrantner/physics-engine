@@ -222,6 +222,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body,
                     desired: Vector(-SPEED * DT, self.vy[lane] * DT, 0.0),
+                    exclude: None,
                 });
             }
             self.world

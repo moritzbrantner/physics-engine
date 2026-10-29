@@ -336,12 +336,14 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body: self.ids[p],
                     desired: Vector(x, self.vy[p], z),
+                    exclude: None,
                 });
             }
             for m in 0..MONSTERS {
                 self.moves.push(CharacterMove {
                     body: self.ids[PLAYERS + m],
                     desired: v(monster_intent(m, tick)),
+                    exclude: None,
                 });
             }
             self.world

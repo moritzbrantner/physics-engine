@@ -147,11 +147,20 @@ through it. Worlds with a halfspace are not checkpointed.
 character. `move_characters(&[CharacterMove], &mut Vec<CharacterMoveResult>)` is the only move
 primitive: collide-and-slide that keeps `offset` to every surface it touches, then a grounded
 test against walkable static support: like Rapier's ground prediction, support within `offset`
-plus 5 cm (in `length_unit`) makes the character grounded without moving it, and a character
+plus 5 cm (in `length_unit`, measured along the ground's normal as Rapier's contact distance)
+makes the character grounded without moving it, and a character
 that stood on such support at the start of the move and does not move up snaps down within
 `offset + snap_to_ground`. This depends on geometry alone, so a world rebuilt from game state
-behaves the same. Zero desired motion never moves a character;
+behaves the same. On a walkable slope a move never slips downhill unless its horizontal intent
+leads downhill, as Rapier's non-slip slopes: a slide that would point down the slope keeps only
+its part along the slope's contour. Zero desired motion never moves a character;
 penetration is resolved first and reported as `depenetration`, apart from `translation`.
+`CharacterMove::exclude: Option<BodyId>` names one body the move ignores entirely, as
+`QueryFilter::exclude` does for a query (one id comparison per candidate, no group storage):
+the slide, depenetration, stepping, snapping and the grounded test all pass through it, as
+Rapier's `move_shape` and support cast do through a filter excluding one static collider
+(MMORPG opens its floor halfspace over a lake basin). Pushes the character receives exclude it
+too, until its next move; a changed exclusion makes the character check for overlap again.
 `CharacterSettings::embedded` chooses how a move that starts inside geometry is handled:
 `Embedded::PushOut` (the default) pushes the character out as above; `Embedded::Stay` leaves it
 in place, as Rapier's `move_shape` does for a moving character: only the requested motion is

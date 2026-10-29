@@ -182,6 +182,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body,
                     desired: v(desired(i, tick)),
+                    exclude: None,
                 });
             }
             self.world
