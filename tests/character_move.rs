@@ -59,6 +59,7 @@ fn step(w: &mut World, id: BodyId, desired: V) -> physics_engine::approximate::C
             body: id,
             desired,
             exclude: None,
+            autostep: None,
         }],
         &mut out,
     )
@@ -275,11 +276,13 @@ fn head_on_characters_sidestep_and_pass() {
                     body: a,
                     desired: V(0.0, 0.0, 0.05),
                     exclude: None,
+                    autostep: None,
                 },
                 CharacterMove {
                     body: b,
                     desired: V(0.0, 0.0, -0.05),
                     exclude: None,
+                    autostep: None,
                 },
             ],
             &mut out,
@@ -315,6 +318,7 @@ fn batch_results_do_not_depend_on_slice_order() {
                         0.01 * tick as f32,
                     ),
                     exclude: None,
+                    autostep: None,
                 })
                 .collect();
             if reverse {
@@ -339,11 +343,13 @@ fn overlapping_characters_separate_half_each() {
                 body: b,
                 desired: V::ZERO,
                 exclude: None,
+                autostep: None,
             },
             CharacterMove {
                 body: a,
                 desired: V::ZERO,
                 exclude: None,
+                autostep: None,
             },
         ],
         &mut out,
@@ -387,6 +393,7 @@ fn overlap_is_resolved_after_a_door_closes_or_the_game_places_a_character() {
             body: c,
             desired: V::ZERO,
             exclude: None,
+            autostep: None,
         }],
         &mut out,
     )
@@ -404,6 +411,7 @@ fn depenetration_into_another_character_separates_as_a_restored_world_does() {
             body,
             desired: V::ZERO,
             exclude: None,
+            autostep: None,
         });
         w.move_characters(&moves, &mut Vec::new()).unwrap();
     }
@@ -476,6 +484,7 @@ fn character_motion_does_not_depend_on_the_length_unit() {
                     body: c,
                     desired,
                     exclude: None,
+                    autostep: None,
                 }],
                 &mut out,
             )
@@ -514,11 +523,13 @@ fn push_tick(w: &mut World, a: BodyId, b: BodyId, desired: V) -> Vec<CharacterMo
                 body: a,
                 desired,
                 exclude: None,
+                autostep: None,
             },
             CharacterMove {
                 body: b,
                 desired: V::ZERO,
                 exclude: None,
+                autostep: None,
             },
         ],
         &mut out,
@@ -721,23 +732,84 @@ fn walk_into_stairs(rise: f32, autostep: Option<physics_engine::approximate::Aut
     );
     body.external = true;
     let c = w.add_body(body).unwrap();
-    w.add_character(
-        c,
-        CharacterSettings {
-            autostep,
-            ..CharacterSettings::default()
-        },
-    )
-    .unwrap();
+    w.add_character(c, CharacterSettings::default()).unwrap();
     let mut vy = 0.0;
+    // ARPG's walking rule: a move steps when the previous one ended in ground contact.
+    let mut walking = true;
+    let mut out = Vec::new();
     for _ in 0..180 {
         vy -= 9.81 / 60.0;
-        let r = step(&mut w, c, V(-2.0 / 60.0, vy / 60.0, 0.0));
+        w.move_characters(
+            &[CharacterMove {
+                body: c,
+                desired: V(-2.0 / 60.0, vy / 60.0, 0.0),
+                exclude: None,
+                autostep: autostep.filter(|_| walking),
+            }],
+            &mut out,
+        )
+        .unwrap();
+        let r = out[0];
+        assert!(!r.grounded || r.ground_contact, "{r:?}");
         if r.grounded {
             vy = 0.0;
         }
+        walking = r.ground_contact;
     }
     position(&w, c)
+}
+
+/// The per-move choice: a move without autostep slides against the riser it would step up,
+/// and a step's rounded edge counts as ground contact although it is no walkable support.
+#[test]
+fn autostep_is_chosen_per_move_and_a_step_edge_is_ground_contact() {
+    use physics_engine::approximate::Autostep;
+    let mut w = world();
+    // A 0.2 m step whose riser faces +X at x = 18.
+    w.add_body(Body::keyed(
+        20,
+        Shape::Box(V(1.0, 0.1, 2.0)),
+        V(17.0, 0.1, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    let start = V(18.0 + RADIUS + 2.0 * OFFSET, FOOT + OFFSET, 0.0);
+    let c = character(&mut w, 10, start);
+    let into = V(-0.05, 0.0, 0.0);
+    let mut out = Vec::new();
+    let mut walk = |w: &mut World, desired, autostep| {
+        w.move_characters(
+            &[CharacterMove {
+                body: c,
+                desired,
+                exclude: None,
+                autostep,
+            }],
+            &mut out,
+        )
+        .unwrap();
+        out[0]
+    };
+    let r = walk(&mut w, into, None);
+    assert!(
+        r.translation.1.abs() < 1e-4,
+        "no step without autostep: {r:?}"
+    );
+    let step = Autostep {
+        max_height: 0.25,
+        min_width: 0.15,
+    };
+    // With it the same move starts up the step's rounded edge (as Rapier: 0.035 m).
+    let r = walk(&mut w, into, Some(step));
+    assert!(r.translation.1 > 0.03, "stepping: {r:?}");
+    // The capsule's base 2 cm off the step's edge, beside it, where the edge's normal is too
+    // steep to support it: Rapier's grounded contact, no support.
+    let (dx, gap) = (0.25, RADIUS + 0.02);
+    let base = V(18.0 + dx, 0.2 + (gap * gap - dx * dx).sqrt(), 0.0);
+    w.set_kinematic_position(c, base + V(0.0, HALF, 0.0))
+        .unwrap();
+    let r = walk(&mut w, V::ZERO, None);
+    assert!(r.ground_contact && !r.grounded, "{r:?}");
 }
 
 #[test]
@@ -801,7 +873,7 @@ fn pressing_into_a_too_steep_slope_foot_is_grounded_on_the_floor() {
         let p = position(&w, c);
         assert!(r.grounded, "drop {drop}: grounded at the foot {p:?}");
         assert_eq!(r.support, w.body_id(1), "drop {drop}: on the floor {p:?}");
-        // Within the gap a snap leaves alone (twice the offset), as on a flat floor.
+        // Snapped down to the offset, as on a flat floor.
         assert!(
             (0.0..=OFFSET + 1e-5).contains(&(p.1 - (FOOT + OFFSET))),
             "drop {drop}: rests on the floor {p:?}"
@@ -834,6 +906,7 @@ fn a_move_excluding_the_floor_falls_through_it_to_the_ground_below() {
             body: c,
             desired: V(0.0, -0.1, 0.0),
             exclude: Some(floor),
+            autostep: None,
         };
         w.move_characters(&[m], &mut out).unwrap();
         last = Some(out[0]);

@@ -107,6 +107,7 @@ fn characters_stand_and_walk_at_terrain_height() {
                 body: c,
                 desired: V(walk, vy / 60.0, walk * 0.5),
                 exclude: None,
+                autostep: None,
             }],
             &mut out,
         )
@@ -229,6 +230,7 @@ fn coincident_floor_and_flat_terrain_push_out_once() {
             body: c,
             desired: V::ZERO,
             exclude: None,
+            autostep: None,
         }],
         &mut out,
     )
@@ -297,6 +299,7 @@ fn removed_cells_are_holes() {
                 body: c,
                 desired: V(0.0, -0.05, 0.0),
                 exclude: None,
+                autostep: None,
             }],
             &mut out,
         )
@@ -392,6 +395,7 @@ fn walking_into_a_steep_heightfield_cliff_never_sinks_into_it() {
                         body: c,
                         desired: V(dx * speed, vy / 60.0, dz * speed),
                         exclude: None,
+                        autostep: None,
                     }],
                     &mut out,
                 )

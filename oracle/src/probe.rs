@@ -53,6 +53,7 @@ impl Default for Controller {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Outcome {
     pub translation: [f32; 3],
+    /// Rapier's `grounded`; the engine's `ground_contact`.
     pub grounded: bool,
 }
 
@@ -169,10 +170,6 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
                 offset: c.offset,
                 max_slope: c.max_slope,
                 snap_to_ground: c.snap,
-                autostep: c.autostep.map(|(max_height, min_width)| Autostep {
-                    max_height,
-                    min_width,
-                }),
                 embedded: if c.stay {
                     Embedded::Stay
                 } else {
@@ -189,6 +186,10 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
                 body: id,
                 desired: v(desired),
                 exclude: None,
+                autostep: c.autostep.map(|(max_height, min_width)| Autostep {
+                    max_height,
+                    min_width,
+                }),
             }],
             &mut out,
         )
@@ -196,7 +197,7 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
     let t = out[0].translation + out[0].depenetration;
     Outcome {
         translation: [t.0, t.1, t.2],
-        grounded: out[0].grounded,
+        grounded: out[0].ground_contact,
     }
 }
 

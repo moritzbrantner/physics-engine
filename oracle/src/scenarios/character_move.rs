@@ -337,6 +337,7 @@ mod engine {
                     body: self.ids[i],
                     desired: v(d),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

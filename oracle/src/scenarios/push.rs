@@ -167,6 +167,7 @@ mod engine {
                     body,
                     desired: v(self.directions[i]),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

@@ -385,6 +385,7 @@ mod engine {
                     body: self.ids[i],
                     desired: Vector(case.walk[0], self.vy[i], case.walk[1]),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

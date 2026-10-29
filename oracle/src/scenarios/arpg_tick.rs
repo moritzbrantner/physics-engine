@@ -337,6 +337,7 @@ mod engine {
                     body: self.ids[p],
                     desired: Vector(x, self.vy[p], z),
                     exclude: None,
+                    autostep: None,
                 });
             }
             for m in 0..MONSTERS {
@@ -344,6 +345,7 @@ mod engine {
                     body: self.ids[PLAYERS + m],
                     desired: v(monster_intent(m, tick)),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

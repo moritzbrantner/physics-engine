@@ -183,6 +183,7 @@ mod engine {
                     body,
                     desired: v(desired(i, tick)),
                     exclude: None,
+                    autostep: None,
                 });
             }
             self.world

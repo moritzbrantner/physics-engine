@@ -159,6 +159,7 @@ fn characters_stand_and_walk_on_the_plane() {
                 body: c,
                 desired: V(walk, vy / 60.0, 0.0),
                 exclude: None,
+                autostep: None,
             }],
             &mut out,
         )
