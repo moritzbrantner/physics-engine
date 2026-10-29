@@ -26,6 +26,8 @@ pub enum Obs {
     Contact(Option<(f32, [f32; 3])>),
     /// Whether a segment is blocked by static geometry (line of sight).
     Blocked(bool),
+    /// The gap a downward support cast found to walkable static ground, if any.
+    Support(Option<f32>),
 }
 
 /// Observations in the order a scenario recorded them.
@@ -131,6 +133,7 @@ impl Scenario {
 pub fn finite(trace: &Trace) -> Result<(), String> {
     for (i, obs) in trace.0.iter().enumerate() {
         let ok = match obs {
+            Obs::Support(Some(t)) => t.is_finite(),
             Obs::Ray(Some((t, n))) | Obs::Contact(Some((t, n))) => {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
@@ -181,5 +184,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::mmorpg_tick::scenario(),
         scenarios::arpg_tick::scenario(),
         scenarios::embedded_starts::scenario(),
+        scenarios::basin::scenario(),
     ]
 }

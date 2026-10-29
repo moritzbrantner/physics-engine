@@ -70,8 +70,8 @@ fn conservative_bounds_match_exhaustive_current_geometry_for_seeded_rotated_shap
                     ),
                 )),
             ] {
-                let fast = world.shape_query(pose, cast, filter, &mut pruned, true);
-                let reference = world.shape_query(pose, cast, filter, &mut exhaustive, false);
+                let fast = world.shape_query(pose, cast, filter, None, &mut pruned, true);
+                let reference = world.shape_query(pose, cast, filter, None, &mut exhaustive, false);
                 assert_eq!(
                     fast.as_ref().err().map(|error| error.reason),
                     reference.as_ref().err().map(|error| error.reason)
@@ -158,10 +158,17 @@ fn paired_query_workload_evidence() {
             let mut hits = Vec::new();
             let mut reference = Vec::new();
             world
-                .shape_query(pose, cast, QueryFilter::default(), &mut hits, true)
+                .shape_query(pose, cast, QueryFilter::default(), None, &mut hits, true)
                 .unwrap();
             world
-                .shape_query(pose, cast, QueryFilter::default(), &mut reference, false)
+                .shape_query(
+                    pose,
+                    cast,
+                    QueryFilter::default(),
+                    None,
+                    &mut reference,
+                    false,
+                )
                 .unwrap();
             assert_eq!(hits, reference);
             for trial in 0..3 {
@@ -171,7 +178,7 @@ fn paired_query_workload_evidence() {
                     let mut last = QueryStats::default();
                     for _ in 0..256 {
                         last = world
-                            .shape_query(pose, cast, QueryFilter::default(), out, prune)
+                            .shape_query(pose, cast, QueryFilter::default(), None, out, prune)
                             .unwrap();
                         assert_eq!(last.output_capacity_growths, 0);
                     }

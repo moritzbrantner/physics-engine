@@ -1,5 +1,6 @@
 pub mod arpg_planar;
 pub mod arpg_tick;
+pub mod basin;
 pub mod capsule_normals;
 pub mod character_move;
 pub mod crowd;

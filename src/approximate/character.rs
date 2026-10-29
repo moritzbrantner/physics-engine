@@ -86,6 +86,12 @@ impl Default for CharacterSettings {
 pub struct CharacterMove {
     pub body: BodyId,
     pub desired: V,
+    /// A body this move ignores entirely, as [`QueryFilter::exclude`] does for a query: the
+    /// slide, leaving penetration, stepping, snapping and the grounded test all pass through
+    /// it, as Rapier's `move_shape` and support cast do through a filter that excludes one
+    /// static collider (MMORPG opens its floor halfspace over a lake basin this way). Pushes
+    /// the character receives exclude it too, until its next move.
+    pub exclude: Option<BodyId>,
 }
 
 /// What one move did.
@@ -124,6 +130,8 @@ pub(super) struct Characters {
     /// ([`DIRTY`] when unknown). Moves keep a gap to everything, so a character stays free
     /// until bodies are added or removed, or it is placed by the game.
     clear: Vec<(u64, u64)>,
+    /// The body the latest move excluded ([`CharacterMove::exclude`]).
+    exclude: Vec<Option<BodyId>>,
     /// Incremented whenever a character is placed rather than moved: a placed character can
     /// overlap any other, so every character checks again once.
     placements: u64,
@@ -156,10 +164,12 @@ impl Characters {
             self.settings.resize(slot + 1, CharacterSettings::default());
             self.pushed.resize(slot + 1, V::ZERO);
             self.clear.resize(slot + 1, DIRTY);
+            self.exclude.resize(slot + 1, None);
         }
         self.ids[slot] = id;
         self.settings[slot] = settings;
         self.clear[slot] = DIRTY;
+        self.exclude[slot] = None;
     }
     /// Whether the character is known free of overlap at layout `generation`.
     fn is_clear(&self, id: BodyId, generation: u64) -> bool {
@@ -183,6 +193,20 @@ impl Characters {
     }
     fn pushed(&mut self, id: BodyId) -> Option<&mut V> {
         self.slot(id).map(|s| &mut self.pushed[s])
+    }
+    /// The body the character's latest move excluded.
+    fn exclude(&self, id: BodyId) -> Option<BodyId> {
+        self.slot(id).and_then(|s| self.exclude[s])
+    }
+    /// Records a move's exclusion. A changed one can uncover overlap the last move kept clear
+    /// of (a floor it moved under while excluded), so overlap is unknown again.
+    fn set_exclude(&mut self, id: BodyId, exclude: Option<BodyId>) {
+        if let Some(slot) = self.slot(id)
+            && self.exclude[slot] != exclude
+        {
+            self.exclude[slot] = exclude;
+            self.clear[slot] = DIRTY;
+        }
     }
 }
 
@@ -281,6 +305,7 @@ impl World {
                 .get(m.body)
                 .ok_or(Error::MissingBody(m.body))?;
             batch.push((self.bodies[self.index(m.body)?].order, n, state));
+            self.characters.set_exclude(m.body, m.exclude);
             if let Some(pushed) = self.characters.pushed(m.body) {
                 *pushed = V::ZERO;
             }
@@ -519,7 +544,9 @@ impl World {
             exclude: Some(id),
             ..QueryFilter::default()
         };
-        self.cast_shape(ShapeCast::new(pose, displacement), filter, hits)
+        let cast = ShapeCast::new(pose, displacement);
+        let also = self.characters.exclude(id);
+        self.shape_query(pose, Some(cast), filter, also, hits, true)
             .map_err(|failure| match failure.reason {
                 super::QueryFailureReason::Search { body, reason } => {
                     Error::CollisionSearchFailed {
@@ -613,7 +640,8 @@ impl World {
     }
 
     /// Whether `pose` has static ground within the ground prediction below whose normal points
-    /// up by at least `min_up`.
+    /// up by at least `min_up`. The prediction is measured along the ground's normal, as
+    /// Rapier's contact distance, so the cast reaches `1 / min_up` times as far down.
     fn on_ground_at(
         &self,
         id: BodyId,
@@ -623,10 +651,10 @@ impl World {
         hits: &mut Vec<QueryHit>,
     ) -> Result<bool, Error> {
         let predict = self.ground_prediction(s);
-        let reach = predict + s.offset;
+        let reach = predict / min_up + s.offset;
         Ok(self
             .support_hit(id, pose, reach, min_up, hits)?
-            .is_some_and(|hit| hit.fraction * reach <= predict))
+            .is_some_and(|hit| hit.fraction * reach * hit.normal.dot(V::Y) <= predict))
     }
 
     /// The nearest static surface below `pose` within `reach` that a downward cast runs into
@@ -671,16 +699,28 @@ impl World {
             half_segment,
             radius: radius + self.ground_prediction(s),
         };
-        let filter = QueryFilter {
-            exclude: Some(id),
-            ..QueryFilter::default()
-        };
-        self.overlap_shape(probe, filter, hits)
-            .map_err(|_| Error::InvalidInput)?;
+        self.character_overlap(id, probe, hits)?;
         Ok(hits.iter().any(|h| {
             h.normal.dot(V::Y) >= 1e-3
                 && self.index(h.body).is_ok_and(|i| is_static(&self.bodies[i]))
         }))
+    }
+
+    /// Everything `pose` overlaps except character `id` and its move's exclusion.
+    fn character_overlap(
+        &self,
+        id: BodyId,
+        pose: QueryPose,
+        hits: &mut Vec<QueryHit>,
+    ) -> Result<(), Error> {
+        let filter = QueryFilter {
+            exclude: Some(id),
+            ..QueryFilter::default()
+        };
+        let also = self.characters.exclude(id);
+        self.shape_query(pose, None, filter, also, hits, true)
+            .map_err(|_| Error::InvalidInput)?;
+        Ok(())
     }
 
     /// Distance below a character within which walkable ground counts as support: Rapier's
@@ -730,17 +770,12 @@ impl World {
 
         // Leave penetration first; reported apart from the requested motion. A few passes
         // resolve overlap with several bodies at once (a pillar against a wall).
-        let filter = QueryFilter {
-            exclude: Some(id),
-            ..QueryFilter::default()
-        };
         let generation = self.bookkeeping.generation;
         let mut resolved = self.characters.is_clear(id, generation);
         if !resolved && s.embedded == Embedded::Stay {
             // Left in geometry: clear once no other character overlaps it (the batch
             // separates those).
-            self.overlap_shape(pose, filter, hits)
-                .map_err(|_| Error::InvalidInput)?;
+            self.character_overlap(id, pose, hits)?;
             resolved = !hits
                 .iter()
                 .any(|h| h.separation < 0.0 && self.characters.contains(h.body));
@@ -751,8 +786,7 @@ impl World {
             4
         };
         for _ in 0..passes {
-            self.overlap_shape(pose, filter, hits)
-                .map_err(|_| Error::InvalidInput)?;
+            self.character_overlap(id, pose, hits)?;
             let mut push = V::ZERO;
             // Other characters are separated by the character interaction rules, not here.
             for h in hits
@@ -861,10 +895,23 @@ impl World {
                 remaining = rest - lift;
                 continue;
             }
-            // On walkable ground, downward intent stops instead of sliding down the slope;
-            // horizontal intent follows the surface.
-            let rest = if !planar && normal.dot(up) >= min_up && rest.dot(up) < 0.0 {
-                V(rest.0, 0.0, rest.2)
+            // On walkable ground the character never slips down the slope unless its
+            // horizontal intent leads downhill (a swimmer diving down a basin's slope keeps
+            // its descent): as Rapier's non-slip slopes, motion whose slide would point down
+            // the slope keeps only its part along the slope's contour.
+            let tangent = rest - normal * rest.dot(normal);
+            let rest = if !planar
+                && normal.dot(up) >= min_up
+                && tangent.dot(up) < 0.0
+                && V(desired.0, 0.0, desired.2).dot(normal) <= 0.0
+            {
+                let contour = normal.cross(up);
+                if contour == V::ZERO {
+                    V::ZERO
+                } else {
+                    let contour = contour.unit();
+                    contour * tangent.dot(contour)
+                }
             } else {
                 rest
             };
@@ -930,7 +977,7 @@ impl World {
         // Grounded test and snapping: walkable static support within reach below. Ground
         // within the prediction counts as support without moving the character (as in Rapier).
         let predict = self.ground_prediction(s);
-        let reach = predict.max(s.offset + s.snap_to_ground.unwrap_or(0.0)) + s.offset;
+        let reach = (predict / min_up).max(s.offset + s.snap_to_ground.unwrap_or(0.0)) + s.offset;
         if planar {
             // The plane is the support.
         } else if let Some(hit) = self.support_hit(id, pose, reach, min_up, hits)? {
@@ -946,7 +993,9 @@ impl World {
                 pose.position += -up * snap;
                 translation += -up * snap;
                 support = Some(hit.body);
-            } else if gap <= predict {
+            } else if gap * hit.normal.dot(up) <= predict {
+                // Rapier measures the prediction along the contact normal, not vertically: on
+                // a slope, ground a little beyond it straight down is still within it.
                 support = Some(hit.body);
             }
         }

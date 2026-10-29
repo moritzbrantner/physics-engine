@@ -336,6 +336,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body: self.ids[i],
                     desired: v(d),
+                    exclude: None,
                 });
             }
             self.world

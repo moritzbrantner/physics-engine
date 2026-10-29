@@ -209,7 +209,7 @@ impl World {
         filter: QueryFilter,
         hits: &mut Vec<QueryHit>,
     ) -> Result<QueryStats, Box<QueryFailure>> {
-        self.shape_query(pose, None, filter, hits, true)
+        self.shape_query(pose, None, filter, None, hits, true)
     }
     /// All translation-only hits ordered by fraction then BodyId. Initial overlap/touching
     /// is included even for separating/tangential movement; response policy belongs to callers.
@@ -220,19 +220,22 @@ impl World {
         filter: QueryFilter,
         hits: &mut Vec<QueryHit>,
     ) -> Result<QueryStats, Box<QueryFailure>> {
-        self.shape_query(cast.pose, Some(cast), filter, hits, true)
+        self.shape_query(cast.pose, Some(cast), filter, None, hits, true)
     }
-    fn shape_query(
+    /// A shape query whose filter also leaves out body `also` (a character move's
+    /// [`CharacterMove::exclude`](super::CharacterMove::exclude) beside the character itself).
+    pub(super) fn shape_query(
         &self,
         pose: QueryPose,
         cast: Option<ShapeCast>,
         filter: QueryFilter,
+        also: Option<BodyId>,
         hits: &mut Vec<QueryHit>,
         prune: bool,
     ) -> Result<QueryStats, Box<QueryFailure>> {
         hits.clear();
         let mut stats = QueryStats::default();
-        let result = self.collect_shape_hits(pose, cast, filter, hits, prune, &mut stats);
+        let result = self.collect_shape_hits(pose, cast, (filter, also), hits, prune, &mut stats);
         if result.is_err() {
             hits.clear();
         }
@@ -254,7 +257,8 @@ impl World {
         &self,
         pose: QueryPose,
         cast: Option<ShapeCast>,
-        filter: QueryFilter,
+        // The query's filter and one more body it leaves out.
+        (filter, also): (QueryFilter, Option<BodyId>),
         hits: &mut Vec<QueryHit>,
         prune: bool,
         stats: &mut QueryStats,
@@ -334,7 +338,7 @@ impl World {
                 (None, None) => unreachable!(),
             }];
             stats.bodies_visited += 1;
-            if !filter.admits(target) {
+            if !filter.admits(target) || also == Some(target.id) {
                 stats.filtered_bodies += 1;
                 continue;
             }

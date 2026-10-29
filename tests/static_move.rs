@@ -62,6 +62,7 @@ fn riders_carried_by_the_game_stay_on_a_moving_platform() {
             &[CharacterMove {
                 body: rider,
                 desired: by,
+                exclude: None,
             }],
             &mut out,
         )
@@ -93,6 +94,7 @@ fn a_character_overlapped_by_a_moved_platform_is_pushed_out() {
     let rest = [CharacterMove {
         body: c,
         desired: V::ZERO,
+        exclude: None,
     }];
     w.move_characters(&rest, &mut out).unwrap();
     w.move_characters(&rest, &mut out).unwrap();

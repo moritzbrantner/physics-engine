@@ -54,8 +54,15 @@ fn world(at: V) -> (World, BodyId) {
 
 fn step(w: &mut World, c: BodyId, desired: V) -> (V, bool) {
     let mut out = Vec::new();
-    w.move_characters(&[CharacterMove { body: c, desired }], &mut out)
-        .unwrap();
+    w.move_characters(
+        &[CharacterMove {
+            body: c,
+            desired,
+            exclude: None,
+        }],
+        &mut out,
+    )
+    .unwrap();
     (w.body(c).unwrap().position, out[0].grounded)
 }
 

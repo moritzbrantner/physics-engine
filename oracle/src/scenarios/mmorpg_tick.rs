@@ -337,6 +337,7 @@ mod engine {
                 self.moves.push(CharacterMove {
                     body: self.ids[i],
                     desired: Vector(x, self.vy[i], z),
+                    exclude: None,
                 });
             }
             self.world
