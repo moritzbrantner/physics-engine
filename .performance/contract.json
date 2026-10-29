@@ -928,6 +928,26 @@
         {
           "bodies": 4096,
           "characters": 128
+        },
+        {
+          "bodies": 512,
+          "characters": 32
+        },
+        {
+          "bodies": 1024,
+          "characters": 32
+        },
+        {
+          "bodies": 2048,
+          "characters": 32
+        },
+        {
+          "bodies": 8192,
+          "characters": 32
+        },
+        {
+          "bodies": 16384,
+          "characters": 32
         }
       ],
       "metrics": [
@@ -935,11 +955,15 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Constant in crowd size (#337): a placement marks only the placed character and characters whose bounds it touches for an overlap re-check, so the rest of the crowd stays known free of overlap. Before, every character re-checked (linear).",
+          "notes": "Constant in crowd size (#337): a placement marks only the placed character and characters whose bounds it touches for an overlap re-check, so the rest of the crowd stays known free of overlap. Before, every character re-checked (linear). Logarithmic in world size: the leaf refit and the neighbourhood lookup are tree descents.",
           "growth": [
             {
               "dimension": "characters",
               "bound": "constant"
+            },
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
             }
           ]
         },
@@ -947,10 +971,14 @@
           "name": "exact-tests",
           "unit": "tests",
           "signal": "operation-count",
-          "notes": "Only the re-checked neighbourhood is tested exactly.",
+          "notes": "Only the re-checked neighbourhood is tested exactly, whatever the world size.",
           "growth": [
             {
               "dimension": "characters",
+              "bound": "constant"
+            },
+            {
+              "dimension": "bodies",
               "bound": "constant"
             }
           ]
@@ -989,6 +1017,26 @@
         {
           "bodies": 4096,
           "characters": 128
+        },
+        {
+          "bodies": 512,
+          "characters": 32
+        },
+        {
+          "bodies": 1024,
+          "characters": 32
+        },
+        {
+          "bodies": 2048,
+          "characters": 32
+        },
+        {
+          "bodies": 8192,
+          "characters": 32
+        },
+        {
+          "bodies": 16384,
+          "characters": 32
         }
       ],
       "metrics": [
@@ -996,11 +1044,16 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Constant in crowd size (#352): moving a static body in place keeps the layout, and marks only characters whose bounds it touches for an overlap re-check. Removing and re-adding it changes the layout, so every character re-checked (linear).",
+          "notes": "Constant in crowd size (#352): moving a static body in place keeps the layout, and marks only characters whose bounds it touches for an overlap re-check. Removing and re-adding it changes the layout, so every character re-checked (linear). Logarithmic in world size: the leaf refit and the neighbourhood lookup are tree descents. Measured 21, 21, 23, 25, 27, 29 nodes at 512..16384 bodies, two nodes per doubling after a flat first interval, hence tolerance 1 (upper slope allowed 2.5 per level against the lower half's 1); linear work would add thousands of nodes.",
           "growth": [
             {
               "dimension": "characters",
               "bound": "constant"
+            },
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic",
+              "tolerance": 1
             }
           ]
         },
@@ -1008,10 +1061,14 @@
           "name": "exact-tests",
           "unit": "tests",
           "signal": "operation-count",
-          "notes": "Only the re-checked neighbourhood is tested exactly.",
+          "notes": "Only the re-checked neighbourhood is tested exactly, whatever the world size.",
           "growth": [
             {
               "dimension": "characters",
+              "bound": "constant"
+            },
+            {
+              "dimension": "bodies",
               "bound": "constant"
             }
           ]
@@ -1163,7 +1220,7 @@
     },
     {
       "id": "warm-tick-allocations",
-      "description": "One warm tick (32 character moves, 24 queries, one step) after two warm-up ticks, in towns of 2^log2Bodies boxes.",
+      "description": "One warm tick (32 character moves, 24 queries, one in-place static-platform move, one step with a falling sphere and a crate resting in contact) after 30 warm-up ticks, in towns of 2^log2Bodies boxes.",
       "publicContract": "physics_engine::approximate::World",
       "dimensions": {
         "bodies": {

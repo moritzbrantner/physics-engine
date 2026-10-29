@@ -531,13 +531,21 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
     );
 }
 
+/// Placement scale points: crowd sizes in a 4096-box town, then town sizes with 32 characters.
+fn placement_points() -> impl Iterator<Item = (u32, u64)> {
+    [8u64, 16, 32, 64, 128]
+        .map(|m| (12, m))
+        .into_iter()
+        .chain(SIZES.into_iter().filter(|&s| s != 12).map(|s| (s, 32)))
+}
+
 /// Placing one character makes only it and its neighbours check for overlap again (#337).
 #[test]
 fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
     let mut samples = Vec::new();
     let mut out: Vec<CharacterMoveResult> = Vec::new();
-    for m in [8u64, 16, 32, 64, 128] {
-        let (mut w, ids) = crowd(12, m, 1);
+    for (log2, m) in placement_points() {
+        let (mut w, ids) = crowd(log2, m, 1);
         let rest: Vec<_> = ids
             .iter()
             .map(|&body| CharacterMove {
@@ -556,14 +564,18 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
             w.move_characters(&rest, &mut out).unwrap();
         });
         samples.push((
-            vec![("bodies", 1u64 << 12), ("characters", m)],
+            vec![("bodies", 1u64 << log2), ("characters", m)],
             vec![("tree-nodes", n), ("exact-tests", e)],
         ));
     }
     judge(
         "place-character",
         &samples,
-        &[("tree-nodes", "characters", "constant")],
+        &[
+            ("tree-nodes", "characters", "constant"),
+            ("exact-tests", "characters", "constant"),
+            ("exact-tests", "bodies", "constant"),
+        ],
     );
 }
 
@@ -572,8 +584,8 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
 fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
     let mut samples = Vec::new();
     let mut out: Vec<CharacterMoveResult> = Vec::new();
-    for m in [8u64, 16, 32, 64, 128] {
-        let (mut w, ids) = crowd(12, m, 1);
+    for (log2, m) in placement_points() {
+        let (mut w, ids) = crowd(log2, m, 1);
         let rest: Vec<_> = ids
             .iter()
             .map(|&body| CharacterMove {
@@ -592,14 +604,18 @@ fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
             w.move_characters(&rest, &mut out).unwrap();
         });
         samples.push((
-            vec![("bodies", 1u64 << 12), ("characters", m)],
+            vec![("bodies", 1u64 << log2), ("characters", m)],
             vec![("tree-nodes", n), ("exact-tests", e)],
         ));
     }
     judge(
         "place-static",
         &samples,
-        &[("tree-nodes", "characters", "constant")],
+        &[
+            ("tree-nodes", "characters", "constant"),
+            ("exact-tests", "characters", "constant"),
+            ("exact-tests", "bodies", "constant"),
+        ],
     );
 }
 
@@ -717,6 +733,16 @@ fn a_warm_tick_allocates_nothing_at_any_size() {
             b
         })
         .unwrap();
+        // A crate touching a box top keeps a persistent contact pair (cache, manifold, solver
+        // rows); box 5 is a platform moved in place every tick (MMORPG #56, mill hoist).
+        w.add_body(Body::new(
+            Shape::Box(V(0.3, 0.3, 0.3)),
+            cell(3, 3) + V(0.0, BOX + 0.3, 0.0),
+            1.0,
+        ))
+        .unwrap();
+        let platform = w.body_id(5).unwrap();
+        let mut lift = 0.0f32;
         let moves: Vec<_> = ids
             .iter()
             .map(|&body| CharacterMove {
@@ -742,10 +768,16 @@ fn a_warm_tick_allocates_nothing_at_any_size() {
                 )
                 .unwrap();
             }
-            w.step(1.0 / 60.0).unwrap();
+            lift += 0.001;
+            w.set_static_position(platform, cell(5, 0) + V(0.0, lift, 0.0))
+                .unwrap();
+            let report = w.step(1.0 / 60.0).unwrap();
+            assert!(report.contact_points > 0, "the crate lost its contact");
         };
-        tick(&mut w);
-        tick(&mut w);
+        // Long enough for every retained buffer and the contact cache to reach steady state.
+        for _ in 0..30 {
+            tick(&mut w);
+        }
         let allocs = allocations(|| tick(&mut w));
         samples.push((
             vec![("bodies", 1u64 << log2)],
