@@ -451,7 +451,13 @@ fn body_churn_is_amortized_over_a_long_sequence() {
 /// scattered (deterministically) inside each block.
 fn crowd(log2: u32, characters: u64, per_block: u64) -> (World, Vec<BodyId>) {
     let mut w = town(log2);
-    let settings = CharacterSettingsHelper::plane(&w);
+    let ids = add_crowd(&mut w, characters, per_block);
+    (w, ids)
+}
+
+/// The characters of [`crowd`], added to `w`.
+fn add_crowd(w: &mut World, characters: u64, per_block: u64) -> Vec<BodyId> {
+    let settings = CharacterSettingsHelper::plane(w);
     let mut ids = Vec::new();
     let mut seed = 0x51u64;
     let mut next = || {
@@ -475,7 +481,7 @@ fn crowd(log2: u32, characters: u64, per_block: u64) -> (World, Vec<BodyId>) {
         w.add_character(id, settings).unwrap();
         ids.push(id);
     }
-    (w, ids)
+    ids
 }
 
 struct CharacterSettingsHelper;
@@ -791,5 +797,129 @@ fn a_warm_tick_allocates_nothing_at_any_size() {
     );
     if evidence_dir().is_none() {
         assert!(samples.iter().all(|s| s.1[0].1 == 0), "{samples:?}");
+    }
+}
+
+// ---- step ----
+
+/// `statics` unit boxes on the 2 m grid in `cols` columns, under gravity, and `awake` debris
+/// spheres resting on box tops in the first 32 × 16 m block (inside the smallest town).
+fn debris_town(statics: usize, cols: usize, awake: u64) -> World {
+    let mut w = World::new(Config::default()).unwrap();
+    for k in 0..statics {
+        let p = cell(k % cols, k / cols);
+        w.add_body(Body::keyed(k as u64, Shape::Box(V(BOX, BOX, BOX)), p, 0.0))
+            .unwrap();
+    }
+    for k in 0..awake {
+        let r = 0.3;
+        let p = cell((k % 16) as usize * 2, (k / 16) as usize * 2) + V(0.0, BOX + r, 0.0);
+        w.add_body(Body::keyed(2_000_000 + k, Shape::Sphere(r), p, 1.0))
+            .unwrap();
+    }
+    w
+}
+
+/// Work of one warm step: (pair tests, tree nodes, body visits, contact points).
+fn step_work(w: &mut World) -> (u64, u64, u64, u64) {
+    work::reset();
+    let r = w.step(1.0 / 60.0).unwrap();
+    (
+        r.pair_tests,
+        work::get(Counter::TreeNodes),
+        work::get(Counter::BodyVisits),
+        r.contact_points,
+    )
+}
+
+/// A step's broadphase and per-body loops follow the awake bodies, not the static town (#412).
+#[test]
+fn a_step_follows_awake_bodies_not_the_static_town() {
+    let mut samples = Vec::new();
+    let points = SIZES
+        .iter()
+        .map(|&s| (s, 8u64))
+        .chain([1u64, 2, 4, 16, 32, 64, 128].iter().map(|&a| (12, a)));
+    for (log2, awake) in points {
+        let statics = 1usize << log2;
+        let mut w = debris_town(statics, 1 << log2.div_ceil(2), awake);
+        // The first step makes every awake body's broad-phase box (one tree query each); warm
+        // steps keep the boxes.
+        let (_, nodes, _, _) = step_work(&mut w);
+        w.step(1.0 / 60.0).unwrap();
+        let (pairs, _, visits, contacts) = step_work(&mut w);
+        let resting = w
+            .bodies()
+            .filter(|b| b.mass > 0.0)
+            .all(|b| (b.position.1 - (2.0 * BOX + 0.3)).abs() < 0.01);
+        assert!(resting, "debris left the box tops");
+        samples.push((
+            vec![("statics", statics as u64), ("awake", awake)],
+            vec![
+                ("pair-tests", pairs),
+                ("box-query-nodes", nodes),
+                ("body-visits", visits),
+                ("contact-points", contacts),
+            ],
+        ));
+    }
+    judge(
+        "step",
+        &samples,
+        &[
+            ("body-visits", "statics", "constant"),
+            ("body-visits", "awake", "linear"),
+            ("contact-points", "statics", "constant"),
+            ("contact-points", "awake", "linear"),
+        ],
+    );
+}
+
+/// MMORPG's zone scale (#412): 1,280 bodies, 139 characters and 128 awake debris. One warm
+/// tick moves every character and steps; budgets hold the step's work and the tick's
+/// allocations.
+#[test]
+fn a_zone_step_stays_within_its_budgets() {
+    const BODIES: usize = 1280;
+    const CHARACTERS: u64 = 139;
+    const AWAKE: u64 = 128;
+    let mut w = debris_town(BODIES - CHARACTERS as usize - AWAKE as usize, 32, AWAKE);
+    let ids = add_crowd(&mut w, CHARACTERS, 1);
+    let moves: Vec<_> = ids
+        .iter()
+        .map(|&body| CharacterMove {
+            body,
+            desired: V(0.02, 0.0, 0.01),
+            exclude: None,
+            autostep: None,
+        })
+        .collect();
+    let mut out: Vec<CharacterMoveResult> = Vec::new();
+    let mut tick = |w: &mut World| {
+        w.move_characters(&moves, &mut out).unwrap();
+        step_work(w)
+    };
+    for _ in 0..3 {
+        tick(&mut w);
+    }
+    let mut measured = (0, 0, 0, 0);
+    let allocs = allocations(|| measured = tick(&mut w));
+    let (pairs, _, visits, _) = measured;
+    let samples = [(
+        vec![
+            ("bodies", BODIES as u64),
+            ("characters", CHARACTERS),
+            ("awake", AWAKE),
+        ],
+        vec![
+            ("pair-tests", pairs),
+            ("body-visits", visits),
+            ("heap-allocations", allocs),
+        ],
+    )];
+    judge("step-zone", &samples, &[]);
+    // The pair-test and body-visit budgets are judged by `coding-tooling performance work`.
+    if evidence_dir().is_none() && std::env::var_os("WORK_PRINT").is_none() {
+        assert_eq!(allocs, 0, "{samples:?}");
     }
 }

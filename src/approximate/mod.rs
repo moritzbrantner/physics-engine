@@ -63,7 +63,7 @@ pub use convergence::{Convergence, ConvergenceStats};
 pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;
 pub use bookkeeping::BookkeepingStats;
-use bookkeeping::{Scratch, SweepRow, push, reserve};
+use bookkeeping::{Scratch, push, reserve};
 use geometry::GeometryCache;
 pub use geometry::GeometryStats;
 mod ccd;
@@ -692,6 +692,8 @@ impl Order {
 }
 
 const FREE_SLOT: u32 = u32::MAX;
+/// Steps of motion a new broad-phase box (`bookkeeping::BroadBox`) leaves room for (#412).
+const BOX_STEPS: Real = 4.0;
 /// One id slot: its current generation and the body's index while live.
 #[derive(Clone, Copy, Debug)]
 struct Slot {
@@ -1100,6 +1102,21 @@ impl World {
         } else {
             self.query_tree
                 .sync(&self.bodies, self.bookkeeping.generation);
+            self.bookkeeping.forget_boxes();
+        }
+        // The slot's previous body's box is gone; boxes near a new resting body lack its leaf
+        // (an awake one makes its own box).
+        let s = &mut self.bookkeeping;
+        if s.broad.len() < self.slots.len() {
+            reserve(&mut s.broad, self.slots.len(), &mut s.work);
+            s.broad
+                .resize(self.slots.len(), bookkeeping::BroadBox::default());
+        }
+        s.drop_box(id.slot());
+        let b = &self.bodies[at];
+        if !(b.mass > 0.0 && !b.sleeping) {
+            let bounds = b.cached_bounds;
+            self.resting_changed(at, bounds);
         }
         Ok(id)
     }
@@ -1175,6 +1192,7 @@ impl World {
         }
         let slot = id.slot();
         self.slots[slot as usize].index = FREE_SLOT;
+        self.bookkeeping.drop_box(slot);
         // Descending, so `pop` reuses the lowest free slot.
         let at = self.free.partition_point(|&f| f > slot);
         self.free.insert(at, slot);
@@ -1188,6 +1206,7 @@ impl World {
         } else {
             self.query_tree
                 .sync(&self.bodies, self.bookkeeping.generation);
+            self.bookkeeping.forget_boxes();
         }
         // Tombstones are compacted by the next step, or here once they are half the records:
         // amortized O(1) per removal.
@@ -1235,12 +1254,14 @@ impl World {
             })
             .collect::<Vec<_>>();
         let body = &mut self.bodies[i];
+        let before = body.cached_bounds;
         body.position = position;
         body.cached_bounds = contact::bounds(body);
         self.bookkeeping.poses_changed();
         if self.query_tree.current(self.bookkeeping.generation) {
             self.query_tree.moved(&self.bodies[i]);
         }
+        self.resting_changed(i, before);
         if !self.bodies[i].sensor && !self.bodies[i].shape.query_only() {
             wake.extend(self.sleepers_touching(&self.bodies[i]));
         }
@@ -1262,11 +1283,19 @@ impl World {
             return Err(Error::InvalidInput);
         }
         let body = &mut self.bodies[i];
+        let before = body.cached_bounds;
         body.position = position;
         body.cached_bounds = contact::bounds(body);
         self.bookkeeping.poses_changed();
         if self.query_tree.current(self.bookkeeping.generation) {
             self.query_tree.moved(&self.bodies[i]);
+        }
+        // An awake body's leaf no longer holds its box; a resting one changed under others.
+        let b = &self.bodies[i];
+        if b.mass > 0.0 && !b.sleeping {
+            self.bookkeeping.drop_box(b.id.slot());
+        } else {
+            self.resting_changed(i, before);
         }
         Ok(())
     }
@@ -1366,7 +1395,9 @@ impl World {
         });
         let count = s.traversal.island.len();
         s.activity.count += count;
-        s.activity.dirty |= count > 0;
+        for &i in &s.traversal.island {
+            s.activity.woke(i, &mut s.work);
+        }
         count as u64
     }
     fn wake_contact_island<const PREPARED: bool>(
@@ -1378,6 +1409,8 @@ impl World {
         let woke = self.wake_island(root);
         for n in 0..self.bookkeeping.traversal.island.len() {
             let i = self.bookkeeping.traversal.island[n];
+            let s = &mut self.bookkeeping;
+            push(&mut s.stepped, i, &mut s.work);
             if PREPARED {
                 self.responses[i] = PreparedResponse::new(&self.bodies[i], report);
             }
@@ -1465,11 +1498,49 @@ impl World {
                 Err(error)
             }
         };
-        if self.bookkeeping.generation != layout {
-            self.reindex_slots();
-        }
+        let generation = self.bookkeeping.generation;
+        let moved = if self.bookkeeping.generation != layout
+            || !self.query_tree.current(self.bookkeeping.generation)
+        {
+            // Every leaf returns to its body's bounds.
+            if self.bookkeeping.generation != layout {
+                self.reindex_slots();
+            }
+            self.bookkeeping.forget_boxes();
+            None
+        } else {
+            // Bodies awake at some point of the step, sorted for a canonical refit order. An
+            // awake body whose box still holds its bounds keeps the box in its leaf for the
+            // next step; any other leaf returns to its body's bounds.
+            let s = &mut self.bookkeeping;
+            let epoch = s.box_epoch();
+            s.stepped.sort_unstable();
+            s.stepped.dedup();
+            let (bodies, broad) = (&self.bodies, &mut s.broad);
+            s.stepped.retain(|&i| {
+                let b = &bodies[i];
+                let Some(e) = broad.get_mut(b.id.slot() as usize) else {
+                    return true;
+                };
+                let (lo, hi) = b.cached_bounds;
+                let keep = b.mass > 0.0
+                    && !b.sleeping
+                    && e.epoch == epoch
+                    && e.lo.0 <= lo.0
+                    && e.lo.1 <= lo.1
+                    && e.lo.2 <= lo.2
+                    && hi.0 <= e.hi.0
+                    && hi.1 <= e.hi.1
+                    && hi.2 <= e.hi.2;
+                if !keep {
+                    e.epoch = 0;
+                }
+                !keep
+            });
+            Some(s.stepped.as_slice())
+        };
         self.query_tree
-            .sync_step(&self.bodies, self.bookkeeping.generation, dt as Real);
+            .sync_step(&self.bodies, moved, generation, dt as Real);
         result
     }
     fn advance_substeps<const PREPARED: bool, const CACHED: bool>(
@@ -1478,6 +1549,46 @@ impl World {
     ) -> Result<Report, Error> {
         let mut report = Report::default();
         let h = substep_length(dt, self.scene.substeps);
+        let layout = self.bookkeeping.generation;
+        // Every per-body loop below runs over the awake bodies only (#412).
+        {
+            let s = &mut self.bookkeeping;
+            s.activity.refresh(&self.bodies, &mut s.work);
+            s.stepped.clear();
+            reserve(&mut s.stepped, s.activity.indices.len(), &mut s.work);
+            s.stepped.extend_from_slice(&s.activity.indices);
+            // Replaced boxes leave their leaves behind in `broad_slots`: keep only the awake
+            // bodies' boxes once that garbage outgrows them.
+            let epoch = s.box_epoch();
+            let live: usize = s
+                .activity
+                .indices
+                .iter()
+                .map(|&i| {
+                    let e = s.broad.get(self.bodies[i].id.slot() as usize);
+                    e.filter(|e| e.epoch == epoch).map_or(0, |e| e.len as usize)
+                })
+                .sum();
+            if s.broad_slots.len() > 1024.max(2 * live) {
+                let mut spare = std::mem::take(&mut s.broad_spare);
+                spare.clear();
+                reserve(&mut spare, live, &mut s.work);
+                for &i in &s.activity.indices {
+                    let Some(e) = s.broad.get_mut(self.bodies[i].id.slot() as usize) else {
+                        continue;
+                    };
+                    if e.epoch == epoch {
+                        let start = spare.len();
+                        spare.extend_from_slice(
+                            &s.broad_slots[e.start as usize..(e.start + e.len) as usize],
+                        );
+                        e.start = start as u32;
+                    }
+                }
+                // Resting bodies hold no box (they dropped it on falling asleep).
+                s.broad_spare = std::mem::replace(&mut s.broad_slots, spare);
+            }
+        }
         // Contacts are generated once per step and their constraints reused by later substeps,
         // as Rapier does (#378). A substep regenerates only after something the reused rows
         // cannot represent: a sweep or CCD advance, a wake, a sleep or a retirement.
@@ -1489,30 +1600,32 @@ impl World {
             self.bookkeeping.ccd_offsets.clear();
             self.bookkeeping.ccd_start.clear();
             self.bookkeeping.ccd_retired.clear();
+            self.rest_per_body();
+            let awake = self.bookkeeping.activity.indices.len();
             // Responses are prepared with the contacts: reused rows keep the step's response,
-            // as their masses do (#378).
+            // as their masses do (#378). Resting bodies keep the default response.
             if !reuse {
-                self.responses
-                    .resize(self.bodies.len(), PreparedResponse::default());
-                for (b, prepared) in self.bodies.iter().zip(&mut self.responses) {
-                    *prepared = if PREPARED {
-                        PreparedResponse::new(b, &mut report)
+                crate::work::add(crate::work::Counter::BodyVisits, awake as u64);
+                for &i in &self.bookkeeping.activity.indices {
+                    self.responses[i] = if PREPARED {
+                        PreparedResponse::new(&self.bodies[i], &mut report)
                     } else {
                         PreparedResponse::default()
                     };
                 }
             }
             // External impulses still apply exactly once, before the first force integration.
+            // Only awake bodies hold them: `apply_impulse` wakes its body.
             if substep == 0 {
-                for (i, (b, cached)) in self.bodies.iter_mut().zip(&self.responses).enumerate() {
-                    if (b.movable() && !b.sleeping)
-                        || b.impulse != Vector::ZERO
-                        || b.angular_impulse != Vector::ZERO
+                crate::work::add(crate::work::Counter::BodyVisits, awake as u64);
+                for &i in &self.bookkeeping.activity.indices {
+                    let b = &mut self.bodies[i];
+                    if b.movable() || b.impulse != Vector::ZERO || b.angular_impulse != Vector::ZERO
                     {
                         self.transaction.body(i, b);
                     }
                     if b.movable() {
-                        let prepared = cached.select::<PREPARED>(b, &mut report);
+                        let prepared = self.responses[i].select::<PREPARED>(b, &mut report);
                         b.velocity += b.impulse * prepared.inverse_mass;
                         b.angular_velocity += prepared.inertia(b, b.angular_impulse, &mut report);
                     }
@@ -1520,8 +1633,10 @@ impl World {
                     b.angular_impulse = Vector::ZERO;
                 }
             }
-            for i in 0..self.bodies.len() {
-                if self.bodies[i].movable() && !self.bodies[i].sleeping {
+            crate::work::add(crate::work::Counter::BodyVisits, awake as u64);
+            for q in 0..awake {
+                let i = self.bookkeeping.activity.indices[q];
+                if self.bodies[i].movable() {
                     self.apply_substep_forces::<PREPARED>(i, h, &mut report);
                 }
             }
@@ -1936,15 +2051,18 @@ impl World {
             let scratch = &mut self.bookkeeping;
             scratch.retired.clear();
             scratch.support_edges.clear();
-            reserve(&mut scratch.supported, self.bodies.len(), &mut scratch.work);
-            scratch.supported.clear();
-            scratch.supported.extend(self.bodies.iter().map(|b| {
-                b.mass == 0.0
-                    || b.sleeping
-                    || (b.external
-                        && b.velocity == Vector::ZERO
-                        && b.angular_velocity == Vector::ZERO)
-            }));
+            // Immovable and sleeping bodies stay supported (`Scratch::per_body`); awake ones
+            // start from whether they are kinematic at rest.
+            scratch.activity.refresh(&self.bodies, &mut scratch.work);
+            crate::work::add(
+                crate::work::Counter::BodyVisits,
+                scratch.activity.indices.len() as u64,
+            );
+            for &i in &scratch.activity.indices {
+                let b = &self.bodies[i];
+                scratch.supported[i] =
+                    b.external && b.velocity == Vector::ZERO && b.angular_velocity == Vector::ZERO;
+            }
             // Reuse point allocations when the pair survives. Warm starting has already read the
             // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
             // Cache entries and a pair's contiguous constraint run are both in pair order: walk
@@ -2062,6 +2180,10 @@ impl World {
                 &mut scratch.work,
             );
             scratch.activity.refresh(&self.bodies, &mut scratch.work);
+            crate::work::add(
+                crate::work::Counter::BodyVisits,
+                scratch.activity.indices.len() as u64,
+            );
             for &i in &scratch.activity.indices {
                 let b = &mut self.bodies[i];
                 self.transaction.body(i, b);
@@ -2138,7 +2260,17 @@ impl World {
                         }
                     });
                     self.transaction.remove(i, b);
+                    // Later substeps look bodies up by query-tree slot.
+                    self.shift_slots(i);
+                    let synced = self.query_tree.current(self.bookkeeping.generation);
                     self.bookkeeping.layout_changed();
+                    if synced {
+                        self.query_tree
+                            .removed(handle.slot(), self.bookkeeping.generation);
+                    } else {
+                        self.bookkeeping.forget_boxes();
+                    }
+                    self.bookkeeping.drop_box(handle.slot());
                     report.retired.push(handle);
                 }
             }
@@ -2146,7 +2278,18 @@ impl World {
             reuse = reuse_next && self.bookkeeping.retired.is_empty();
             self.last_h = widen_time(h);
         }
-        for (i, b) in self.bodies.iter_mut().enumerate() {
+        // Only bodies awake at the step's start hold forces: `add_force` wakes its body.
+        let s = &mut self.bookkeeping;
+        let all = s.generation != layout;
+        let count = if all {
+            self.bodies.len()
+        } else {
+            s.stepped.len()
+        };
+        crate::work::add(crate::work::Counter::BodyVisits, count as u64);
+        for q in 0..count {
+            let i = if all { q } else { s.stepped[q] };
+            let b = &mut self.bodies[i];
             if b.force != Vector::ZERO || b.torque != Vector::ZERO {
                 self.transaction.body(i, b);
             }
@@ -2243,16 +2386,73 @@ impl World {
             }) {
                 for &i in &s.traversal.island {
                     let b = &mut self.bodies[i];
+                    if b.sleeping {
+                        continue;
+                    }
                     self.transaction.body(i, b);
-                    slept += usize::from(!b.sleeping);
+                    slept += 1;
                     b.sleeping = true;
                     b.velocity = Vector::ZERO;
                     b.angular_velocity = Vector::ZERO;
+                    // Resting values (`Scratch::per_body`), and a leaf at the body's bounds:
+                    // later substeps find it as a resting body. Boxes that overlapped its box
+                    // may not hold its leaf (it may have held theirs): they query again.
+                    self.responses[i] = PreparedResponse::default();
+                    s.supported[i] = true;
+                    let slot = b.id.slot();
+                    if self.query_tree.current(s.generation) {
+                        let e = s.broad.get(slot as usize).copied().unwrap_or_default();
+                        let near = if e.epoch == s.broad_epoch + 1 {
+                            (e.lo, e.hi)
+                        } else {
+                            b.cached_bounds
+                        };
+                        drop_boxes_near(
+                            &self.query_tree,
+                            &mut s.broad,
+                            near,
+                            self.scene.contact_slop,
+                        );
+                        self.query_tree.moved(b);
+                    } else {
+                        s.broad_epoch += 1;
+                    }
+                    if let Some(e) = s.broad.get_mut(slot as usize) {
+                        e.epoch = 0;
+                    }
                 }
             }
         }
         s.activity.count -= slept;
-        s.activity.dirty |= slept > 0;
+        if slept > 0 {
+            s.activity.slept(&self.bodies);
+        }
+    }
+    /// Gives every resting body its resting per-body values (`Scratch::per_body`) after a
+    /// layout change or rollback; O(1) otherwise.
+    fn rest_per_body(&mut self) {
+        let s = &mut self.bookkeeping;
+        s.activity.refresh(&self.bodies, &mut s.work);
+        let n = self.bodies.len();
+        if s.per_body == Some(s.generation)
+            && self.responses.len() == n
+            && s.supported.len() == n
+            && s.earliest.len() == n
+        {
+            return;
+        }
+        crate::work::add(crate::work::Counter::BodyVisits, n as u64);
+        self.responses.clear();
+        reserve(&mut self.responses, n, &mut s.work);
+        self.responses.resize(n, PreparedResponse::default());
+        s.supported.clear();
+        reserve(&mut s.supported, n, &mut s.work);
+        s.supported.resize(n, true);
+        s.earliest.clear();
+        reserve(&mut s.earliest, n, &mut s.work);
+        s.earliest.resize(n, Real::INFINITY);
+        s.earliest_set.clear();
+        s.per_body = Some(s.generation);
     }
 
     /// Contacts for this substep plus `lookahead`, the rest of the step: pairs within reach
@@ -2271,28 +2471,36 @@ impl World {
         // Displacement per unit of constant acceleration over the later substeps: velocity
         // gains a·h per substep after this one, so the step ends a·L·(L + h)/2 further on.
         let gain = lookahead * interval * 0.5;
+        let step = h * Real::from(self.scene.substeps);
+        self.rest_per_body();
+        let in_order = self.storage_sorted();
         let s = &mut self.bookkeeping;
         if CACHED {
             self.geometry.begin(self.bodies.len());
         }
         out.clear();
-        if s.bounds.len() != self.bodies.len() {
-            reserve(&mut s.bounds, self.bodies.len(), &mut s.work);
-            s.bounds.clear();
-            s.bounds
-                .extend((0..self.bodies.len()).map(|index| SweepRow {
-                    index,
-                    lo: Vector::ZERO,
-                    hi: Vector::ZERO,
-                    active: true,
-                }));
+        // Broad phase (#412), as Rapier's: the query tree holds every body, so pairs come only
+        // from awake bodies and a static, sleeping or resting kinematic body is visited only when
+        // an awake one reaches it. Pairs of two resting bodies produce no contact. An awake
+        // body's leaf holds its box (`BroadBox`, a fat AABB with room for a few steps of motion);
+        // the body queries the tree only when its swept bounds leave the box, and keeps the
+        // leaves it found until then. Of two awake bodies whose bounds overlap, the one whose box
+        // queried last found the other. A resting body that changes drops the boxes near it.
+        if !self.query_tree.current(s.generation) {
+            crate::work::add(crate::work::Counter::BodyVisits, self.bodies.len() as u64);
+            self.query_tree.sync(&self.bodies, s.generation);
+            s.forget_boxes();
         }
-        for row in &mut s.bounds {
-            let b = &self.bodies[row.index];
-            let active = b.mass > 0.0 && !b.sleeping;
-            if !active && !row.active {
-                continue;
-            }
+        s.activity.refresh(&self.bodies, &mut s.work);
+        s.bounds.clear();
+        reserve(&mut s.bounds, s.activity.indices.len(), &mut s.work);
+        crate::work::add(
+            crate::work::Counter::BodyVisits,
+            s.activity.indices.len() as u64,
+        );
+        // A body's candidate bounds over the rest of the step; a resting body's are its bounds
+        // padded by the contact slop.
+        let swept = |b: &Body| {
             let (lo, hi) = b.cached_bounds;
             let delta = if b.sleeping {
                 Vector::ZERO
@@ -2309,50 +2517,161 @@ impl World {
                         // Endpoint addition can round at the displacement's scale even
                         // when the original pose and collider are small.
                         + 8.0 * Real::EPSILON * delta.abs().max_component());
-            row.lo = lo.min(lo + delta) - pad;
-            row.hi = hi.max(hi + delta) + pad;
-            row.active = active;
-            s.work.bounds_updates += 1;
-        }
-        // The key is total and unique (BodyId), so unstable sort preserves canonical pair order
-        // while avoiding stable-sort allocation. Stationary rows retain their valid padded bounds.
-        let compare = |a: &SweepRow, b: &SweepRow| {
-            a.lo.0
-                .total_cmp(&b.lo.0)
-                .then_with(|| self.bodies[a.index].order.cmp(&self.bodies[b.index].order))
+            (lo.min(lo + delta) - pad, hi.max(hi + delta) + pad)
         };
-        let ordered = s.bounds.windows(2).all(|rows| {
-            s.work.bounds_order_checks += 1;
-            !compare(&rows[0], &rows[1]).is_gt()
-        });
-        if !ordered {
-            s.bounds.sort_unstable_by(compare);
-            s.work.bound_rows_sorted += s.bounds.len() as u64;
+        let finite = |(lo, hi): (Vector, Vector)| lo.finite() && hi.finite();
+        let epoch = s.box_epoch();
+        if s.broad.len() < self.slots.len() {
+            reserve(&mut s.broad, self.slots.len(), &mut s.work);
+            s.broad
+                .resize(self.slots.len(), bookkeeping::BroadBox::default());
         }
-        let bounds = &s.bounds;
-        for p in 0..bounds.len() {
-            let SweepRow {
-                index: i, lo, hi, ..
-            } = bounds[p];
-            for &SweepRow {
-                index: j,
-                lo: bl,
-                hi: bh,
-                ..
-            } in bounds.iter().skip(p + 1)
+        // Room a new box leaves around the swept bounds, besides the motion it predicts.
+        let room = Vector(1.0, 1.0, 1.0) * (20.0 * self.scene.contact_slop);
+        let ahead = step * BOX_STEPS;
+        let mut made = 0;
+        for &i in &s.activity.indices {
+            let b = &self.bodies[i];
+            let (lo, hi) = swept(b);
+            let e = &mut s.broad[b.id.slot() as usize];
+            e.row = s.bounds.len() as u32;
+            push(&mut s.bounds, (i, lo, hi), &mut s.work);
+            s.work.bounds_updates += 1;
+            // Non-finite bounds (an overflowing velocity) cannot enter the tree: that body
+            // tests every body below, and its narrow phase reports the failure.
+            if !finite((lo, hi)) {
+                e.epoch = 0;
+                continue;
+            }
+            if e.epoch == epoch
+                && e.lo.0 <= lo.0
+                && e.lo.1 <= lo.1
+                && e.lo.2 <= lo.2
+                && hi.0 <= e.hi.0
+                && hi.1 <= e.hi.1
+                && hi.2 <= e.hi.2
             {
-                if bl.0 > hi.0 {
-                    break;
+                continue;
+            }
+            let d = b.velocity * ahead;
+            let (bl, bh) = (lo.min(lo + d) - room, hi.max(hi + d) + room);
+            if !finite((bl, bh)) {
+                e.epoch = 0;
+                continue;
+            }
+            (e.epoch, e.lo, e.hi) = (epoch, bl, bh);
+            // Marks the box for a query below.
+            e.len = u32::MAX;
+            self.query_tree.swept(b, (bl, bh), step);
+            made += 1;
+        }
+        // New boxes query the tree once every awake leaf holds its box. The leaves a box
+        // overlaps within the contact slop are kept with it.
+        let slop = Vector(1.0, 1.0, 1.0) * self.scene.contact_slop;
+        let mut nodes = 0;
+        if made > 0 {
+            let needed = s.broad_slots.len() + made * 4;
+            reserve(&mut s.broad_slots, needed, &mut s.work);
+        }
+        for &i in &s.activity.indices {
+            let own = self.bodies[i].id.slot();
+            let e = s.broad[own as usize];
+            if e.epoch != epoch || e.len != u32::MAX {
+                continue;
+            }
+            let start = s.broad_slots.len();
+            nodes += self.query_tree.tree().visit_aabb(
+                spatial_kernels::Aabb {
+                    min: [e.lo.0 - slop.0, e.lo.1 - slop.1, e.lo.2 - slop.2],
+                    max: [e.hi.0 + slop.0, e.hi.1 + slop.1, e.hi.2 + slop.2],
+                },
+                |leaf| {
+                    if leaf.id != own {
+                        push(&mut s.broad_slots, leaf.id, &mut s.work);
+                    }
+                },
+            );
+            s.queries += 1;
+            let e = &mut s.broad[own as usize];
+            e.query = s.queries;
+            e.start = start as u32;
+            e.len = (s.broad_slots.len() - start) as u32;
+        }
+        crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
+        let mut candidates = std::mem::take(&mut s.candidates);
+        candidates.clear();
+        let (rows, broad) = (&s.bounds, &s.broad);
+        let has_box = |b: &Body| broad[b.id.slot() as usize].epoch == epoch;
+        // The candidate pair of awake `i` (bounds `lo`, `hi`) and any body `j`, reported once:
+        // a pair of awake bodies by the one whose box queried last (it holds the other's leaf),
+        // a pair with a body without a box by that body's scan.
+        let mut consider = |i: usize, (lo, hi): (Vector, Vector), j: usize| {
+            let Some(b) = self.bodies.get(j) else {
+                // The slot of a body removed since the box queried.
+                return;
+            };
+            if j == i || b.id == BodyId::NONE {
+                return;
+            }
+            let (bl, bh) = if b.mass > 0.0 && !b.sleeping {
+                let e = broad[b.id.slot() as usize];
+                let (_, bl, bh) = rows[e.row as usize];
+                match (has_box(&self.bodies[i]), has_box(b)) {
+                    (true, true) if broad[self.bodies[i].id.slot() as usize].query < e.query => {
+                        return;
+                    }
+                    (true, false) => return,
+                    (false, false) if j < i => return,
+                    _ => {}
                 }
-                report.pair_tests += 1;
-                if bl.1 > hi.1 || bh.1 < lo.1 || bl.2 > hi.2 || bh.2 < lo.2 {
-                    continue;
+                (bl, bh)
+            } else if b.velocity == Vector::ZERO && b.angular_velocity == Vector::ZERO {
+                // `swept` of a body at rest.
+                let (bl, bh) = b.cached_bounds;
+                (bl - slop, bh + slop)
+            } else {
+                swept(b)
+            };
+            report.pair_tests += 1;
+            if bl.0 > hi.0
+                || bh.0 < lo.0
+                || bl.1 > hi.1
+                || bh.1 < lo.1
+                || bl.2 > hi.2
+                || bh.2 < lo.2
+            {
+                return;
+            }
+            let pair = if self.bodies[i].order < b.order {
+                (i, j)
+            } else {
+                (j, i)
+            };
+            push(&mut candidates, pair, &mut s.work);
+        };
+        for &(i, lo, hi) in rows {
+            let e = broad[self.bodies[i].id.slot() as usize];
+            if e.epoch != epoch {
+                crate::work::add(crate::work::Counter::BodyVisits, self.bodies.len() as u64);
+                for j in 0..self.bodies.len() {
+                    consider(i, (lo, hi), j);
                 }
-                let (i, j) = if self.bodies[i].order < self.bodies[j].order {
-                    (i, j)
-                } else {
-                    (j, i)
-                };
+                continue;
+            }
+            for &slot in &s.broad_slots[e.start as usize..(e.start + e.len) as usize] {
+                consider(i, (lo, hi), self.slots[slot as usize].index as usize);
+            }
+        }
+        // Narrow phase in pair order, so the first failure and every cache visit are canonical.
+        // Settled storage is in body order.
+        if in_order {
+            candidates.sort_unstable();
+        } else {
+            candidates.sort_unstable_by_key(|&(i, j)| (self.bodies[i].order, self.bodies[j].order));
+        }
+        debug_assert!(candidates.windows(2).all(|w| w[0] != w[1]));
+        for &(i, j) in &candidates {
+            {
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
                 let driven_contact_candidate = (a.movable()
@@ -2496,13 +2815,15 @@ impl World {
                 }
             }
         }
+        s.candidates = candidates;
         if CACHED {
             self.geometry.finish(&mut report.geometry);
         }
-        // Pairs are solved in pair order. Sort the sweep's few pairs here; each halfspace's
-        // pairs below already come in pair order.
+        // Pairs are solved in pair order. The broad phase's pairs were tested in pair order, a
+        // pair's several manifolds (a box on heightfield triangles) in generation order; each
+        // halfspace's pairs below come in pair order too.
         let sorted = self.storage_sorted();
-        out.sort_unstable_by(pair_order(&self.bodies, sorted));
+        debug_assert!(out.is_sorted_by(|x, y| pair_order(&self.bodies, sorted)(x, y).is_le()));
         let swept_pairs = out.len();
         // Halfspaces are unbounded and stay out of the sweep: each one is tested against every
         // awake dynamic body. The approach over the substep is admitted as a speculative margin,
@@ -2512,7 +2833,11 @@ impl World {
                 continue;
             };
             let n = self.bodies[plane].orientation.rotate(Vector::Y);
-            for k in 0..self.bodies.len() {
+            let awake = self.bookkeeping.activity.indices.len();
+            crate::work::add(crate::work::Counter::BodyVisits, awake as u64);
+            // Only awake dynamic bodies take halfspace contacts.
+            for q in 0..awake {
+                let k = self.bookkeeping.activity.indices[q];
                 let (a, b) = (&self.bodies[plane], &self.bodies[k]);
                 if b.id == BodyId::NONE
                     || b.inverse_mass() == 0.0
@@ -2558,12 +2883,13 @@ impl World {
         // A fast projectile's original trajectory must not activate bodies behind its first hit.
         // Keep all equal-time contacts, but defer later speculative contacts to the next substep,
         // where the already-updated velocity becomes authoritative. No event-restart loop is added.
-        reserve(&mut s.earliest, self.bodies.len(), &mut s.work);
-        s.earliest.clear();
-        s.earliest.resize(self.bodies.len(), Real::INFINITY);
+        // `earliest` is infinity outside this pass (see `Scratch::per_body`).
         for (i, j, m) in out.iter() {
             for index in [*i, *j] {
                 if self.bodies[index].ccd {
+                    if s.earliest[index] == Real::INFINITY {
+                        push(&mut s.earliest_set, index, &mut s.work);
+                    }
                     s.earliest[index] = s.earliest[index].min(m.time);
                 }
             }
@@ -2584,8 +2910,54 @@ impl World {
             }
             keep
         });
+        for &index in &s.earliest_set {
+            s.earliest[index] = Real::INFINITY;
+        }
+        s.earliest_set.clear();
         Ok(regenerate)
     }
+    /// A resting body's bounds change between `before` and its current bounds (it moved, was
+    /// added or is about to be removed): broad-phase boxes near either may lack its leaf.
+    fn resting_changed(&mut self, i: usize, before: (Vector, Vector)) {
+        let s = &mut self.bookkeeping;
+        if s.broad.is_empty() {
+            return;
+        }
+        if !self.query_tree.current(s.generation) {
+            s.forget_boxes();
+            return;
+        }
+        let slop = self.scene.contact_slop;
+        drop_boxes_near(&self.query_tree, &mut s.broad, before, slop);
+        let now = self.bodies[i].cached_bounds;
+        if now != before {
+            drop_boxes_near(&self.query_tree, &mut s.broad, now, slop);
+        }
+    }
+}
+/// Drops the broad-phase boxes whose leaves overlap `(lo, hi)` padded by `slop` (#412).
+fn drop_boxes_near(
+    tree: &query::QueryTree,
+    broad: &mut [bookkeeping::BroadBox],
+    (lo, hi): (Vector, Vector),
+    slop: Real,
+) {
+    if broad.is_empty() || !(lo.finite() && hi.finite()) {
+        return;
+    }
+    let pad = slop
+        + 64.0 * Real::EPSILON * (1.0 + lo.abs().max_component().max(hi.abs().max_component()));
+    tree.tree().visit_aabb(
+        spatial_kernels::Aabb {
+            min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
+            max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],
+        },
+        |leaf| {
+            if let Some(e) = broad.get_mut(leaf.id as usize) {
+                e.epoch = 0;
+            }
+        },
+    );
 }
 /// Pair order. Settled storage (`sorted`) is in body order, so storage positions compare
 /// pairs as their body orders do.

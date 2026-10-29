@@ -251,6 +251,7 @@ impl Journal {
         // These are disposable accelerators. Invalidating on failure avoids
         // accepting evidence about the discarded intermediate poses/layout.
         world.bookkeeping.layout_changed();
+        world.bookkeeping.forget_boxes();
         world.bookkeeping.work = super::BookkeepingStats::default();
         world.geometry.invalidate();
         world.responses.clear();

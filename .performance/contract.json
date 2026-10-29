@@ -1264,6 +1264,127 @@
           "notes": "Counting global allocator in the test binary (alloc + realloc)."
         }
       ]
+    },
+    {
+      "id": "step",
+      "description": "One warm World::step (1/60 s, default config) in towns of 2^log2Statics boxes with `awake` debris spheres resting on box tops (#412).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "statics": {
+          "description": "static boxes in the town (doubling sizes)"
+        },
+        "awake": {
+          "description": "awake dynamic bodies, each resting on one box"
+        }
+      },
+      "scalePoints": [
+        { "statics": 512, "awake": 8 },
+        { "statics": 1024, "awake": 8 },
+        { "statics": 2048, "awake": 8 },
+        { "statics": 4096, "awake": 8 },
+        { "statics": 8192, "awake": 8 },
+        { "statics": 16384, "awake": 8 },
+        { "statics": 4096, "awake": 1 },
+        { "statics": 4096, "awake": 2 },
+        { "statics": 4096, "awake": 4 },
+        { "statics": 4096, "awake": 16 },
+        { "statics": 4096, "awake": 32 },
+        { "statics": 4096, "awake": 64 },
+        { "statics": 4096, "awake": 128 }
+      ],
+      "metrics": [
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Broad-phase candidate tests in a warm step (Report::pair_tests). Awake bodies keep the query-tree leaves their broad-phase box found (#412), so a static is tested only when an awake body reaches it: O(awake · log statics); awake-awake pairs O(awake log awake). Before #412 the sweep tested static-static pairs, about statics^1.5 (3,968 at 512 statics to 1,041,408 at 16,384).",
+          "growth": [
+            { "dimension": "statics", "bound": "logarithmic" },
+            { "dimension": "awake", "bound": "linearithmic" },
+            {
+              "product": [
+                { "dimension": "awake", "bound": "linear" },
+                { "dimension": "statics", "bound": "logarithmic" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "box-query-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "Query-tree nodes the broad phase visits in the first step, where every awake body makes its box: one descent each (warm steps keep the boxes and visit none here). `tolerance: 1` because the measured 174, 184, 200, 216, 232, 248 (8 awake) have a flat first interval and then two nodes per awake body per doubling (one tree level), as `place-static`.",
+          "growth": [
+            { "dimension": "statics", "bound": "logarithmic", "tolerance": 1 },
+            {
+              "product": [
+                { "dimension": "awake", "bound": "linear" },
+                { "dimension": "statics", "bound": "logarithmic" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "Bodies visited by the step's per-body loops (work::Counter::BodyVisits): they run over the awake bodies only (#412); a layout change rescans once.",
+          "growth": [
+            { "dimension": "statics", "bound": "constant" },
+            { "dimension": "awake", "bound": "linear" }
+          ]
+        },
+        {
+          "name": "contact-points",
+          "unit": "points",
+          "signal": "operation-count",
+          "notes": "Contact constraint rows over the step's substeps (Report::contact_points).",
+          "growth": [
+            { "dimension": "statics", "bound": "constant" },
+            { "dimension": "awake", "bound": "linear" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-zone",
+      "description": "MMORPG zone scale (#412): one warm tick of 139 character moves and a World::step among 1,280 bodies (1,013 static boxes, 139 characters, 128 awake debris spheres resting on box tops).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "bodies": {
+          "description": "bodies in the world"
+        },
+        "characters": {
+          "description": "kinematic characters moved before the step"
+        },
+        "awake": {
+          "description": "awake debris bodies"
+        }
+      },
+      "scalePoints": [{ "bodies": 1280, "characters": 139, "awake": 128 }],
+      "metrics": [
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Budget: the value measured after #412 (129) plus 25%. Before #412: 20,379.",
+          "budget": { "max": 162 }
+        },
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "Budget: the value measured after #412 (4,272: 267 awake bodies, 16 visits each) plus 25%.",
+          "budget": { "max": 5340 }
+        },
+        {
+          "name": "heap-allocations",
+          "unit": "allocations",
+          "signal": "allocation-count",
+          "notes": "Counting global allocator in the test binary (alloc + realloc), over the whole tick.",
+          "budget": { "max": 0 }
+        }
+      ]
     }
   ]
 }

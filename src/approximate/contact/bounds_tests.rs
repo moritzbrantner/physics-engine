@@ -102,13 +102,13 @@ fn real_sweep_rows_cover_endpoint_rounding_for_large_displacements() {
                 let initial = moving.clone();
                 world.add_body(moving).unwrap();
                 world.step(1.0 / 60.0).unwrap();
-                let row = &world.bookkeeping.bounds[0];
+                let (_, lo, hi) = world.bookkeeping.bounds[0];
                 for body in [
                     &initial,
                     world.body_id(1).and_then(|id| world.body(id)).unwrap(),
                 ] {
                     for point in surface_extrema(body) {
-                        contains((row.lo, row.hi), point);
+                        contains((lo, hi), point);
                     }
                 }
             }
