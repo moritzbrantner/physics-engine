@@ -4,6 +4,7 @@ pub mod capsule_normals;
 pub mod character_move;
 pub mod crowd;
 pub mod debris;
+pub mod embedded_starts;
 pub mod materials;
 pub mod mmorpg_tick;
 pub mod platforms;

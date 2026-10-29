@@ -3,8 +3,8 @@
 use physics_engine::{
     BodyId,
     approximate::{
-        Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Shape, Vector as V,
-        World,
+        Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Embedded, Shape,
+        Vector as V, World,
     },
 };
 
@@ -168,6 +168,46 @@ fn penetration_is_resolved_and_reported_apart_from_motion() {
     assert!(r.depenetration.1 > 0.09, "{r:?}");
     assert_eq!(r.translation, V::ZERO);
     assert!(r.grounded);
+}
+
+#[test]
+fn an_embedded_start_left_in_place_resolves_only_the_motion() {
+    // #404: `Embedded::Stay` keeps Rapier's embedded start. Walking along the floor it is
+    // inside is free, motion into it is held (stepping off by Rapier's 0.1 mm nudge), and
+    // leaving it is free.
+    let mut w = world();
+    let mut body = Body::keyed(
+        10,
+        Shape::capsule(HALF, RADIUS),
+        V(0.0, FOOT - 0.05, 0.0),
+        1.0,
+    );
+    body.external = true;
+    let c = w.add_body(body).unwrap();
+    w.add_character(
+        c,
+        CharacterSettings {
+            embedded: Embedded::Stay,
+            ..CharacterSettings::default()
+        },
+    )
+    .unwrap();
+    let r = step(&mut w, c, V::ZERO);
+    assert_eq!((r.translation, r.depenetration), (V::ZERO, V::ZERO));
+    assert!(r.grounded);
+    let r = step(&mut w, c, V(0.05, 0.0, 0.0));
+    assert_eq!(
+        (r.translation, r.depenetration),
+        (V(0.05, 0.0, 0.0), V::ZERO)
+    );
+    let r = step(&mut w, c, V(0.0, -0.05, 0.0));
+    assert!(
+        r.translation.1.abs() <= 1e-4 && r.depenetration == V::ZERO,
+        "{r:?}"
+    );
+    assert!(r.grounded);
+    let r = step(&mut w, c, V(0.0, 0.1, 0.0));
+    assert!((r.translation.1 - 0.1).abs() < 1e-6, "{r:?}");
 }
 
 #[test]

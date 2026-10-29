@@ -31,6 +31,8 @@ pub struct Controller {
     pub snap: Option<f32>,
     /// Autostep `(max_height, min_width)`.
     pub autostep: Option<(f32, f32)>,
+    /// The engine leaves an embedded start in place (`Embedded::Stay`), as Rapier always does.
+    pub stay: bool,
 }
 
 impl Default for Controller {
@@ -42,6 +44,7 @@ impl Default for Controller {
             max_slope: core::f32::consts::FRAC_PI_4,
             snap: Some(0.05),
             autostep: None,
+            stay: false,
         }
     }
 }
@@ -128,7 +131,7 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
 #[cfg(feature = "engine")]
 pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
     use physics_engine::approximate::{
-        Autostep, Body, CharacterMove, CharacterSettings, Config, Shape, Vector, World,
+        Autostep, Body, CharacterMove, CharacterSettings, Config, Embedded, Shape, Vector, World,
     };
     let v = |a: [f32; 3]| Vector(a[0], a[1], a[2]);
     let mut world = World::new(Config {
@@ -170,6 +173,11 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
                     max_height,
                     min_width,
                 }),
+                embedded: if c.stay {
+                    Embedded::Stay
+                } else {
+                    Embedded::PushOut
+                },
                 ..CharacterSettings::default()
             },
         )
