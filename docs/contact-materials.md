@@ -56,7 +56,7 @@ Penetration bias can inject kinetic energy even when restitution is zero. The
 unforced initial-overlap control measures that separately while preserving linear
 momentum. Restitution is consequently not a general upper bound on energy for
 penetrating contacts or a dense bounded-iteration constraint system. Position
-correction is a distinct optional stage; see [its policy](dense-contact-correction.md).
+correction is a distinct optional stage.
 
 ## Tangential response
 
@@ -101,16 +101,9 @@ checkpoints exactly across repeated runs on each build/target.
 Each contact control uses one substep, at most eight velocity passes, no convergence
 shortcut, no position correction or sleeping, and complete requested time. These
 choices isolate material behavior; production defaults and work limits are unchanged.
-The existing dense-contact native/WASM driver executes these controls without
-shipping diagnostic exports or adding a workflow:
 
 ```sh
 cargo test --locked --test contact_materials
-cargo test -p physics-engine-demo --locked --example dense-contact-contract
-cargo build -p physics-engine-demo --locked --release \
-  --target wasm32-unknown-unknown --example dense-contact-contract
-node scripts/test-dense-contact-wasm.mjs \
-  target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
 ```
 
 These isolated controls do not prove dense-rubble quality, all primitive manifold

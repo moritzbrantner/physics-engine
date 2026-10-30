@@ -51,11 +51,9 @@ regressions, not a general angular CCD or dense-contact quality claim.
 ```sh
 cargo test --locked --test floating_conservative_bounds
 cargo test --locked --lib bounds_tests
-cargo test -p physics-engine-demo --locked --example shape-query-contract
 ```
 
-The complete Pages build runs the same public fixture in a separate query
-acceptance WASM module. Production demo exports remain unchanged. The capability
+The capability
 ledger in #183 remains a following slice; it must consume these repaired bounds
 rather than advertise the earlier unpadded helper as conservative.
 

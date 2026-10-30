@@ -23,8 +23,7 @@ A stack cannot calculate every contact impulse independently: changing one body'
 changes the velocity seen at its other contacts. The approximation therefore uses a **bounded**
 sequential-impulse constraint solve. The default is four substeps and at most eight velocity iterations
 per substep. Convergence probes can end the solve early; `Config::convergence = None`
-retains the fixed-pass reference. See `docs/velocity-convergence.md` for the residual
-checks, tolerances, probe schedule and comparison evidence. Each iteration updates velocities using incremental impulses; accumulated normal
+retains the fixed-pass reference. Each iteration updates velocities using incremental impulses; accumulated normal
 impulses clamp at zero, and accumulated tangential impulses clamp to the Coulomb friction disk.
 Prepared contact points and effective masses are reused for those iterations. Local contact
 anchors and impulses survive for warm starting on the next step.
@@ -119,15 +118,10 @@ budget is exhausted. Its arithmetic is now f64 by default for time/scaled helper
 and quantized body state remain in that path. `exact-reference` is a diagnostic numerical feature,
 not an alternative promise that the event solver is physically exact.
 
-## Reproduce and compare
+## Reproduce
 
 ```
 cargo test --locked --test fixed_step_approximation
-cargo test -p physics-engine-demo --locked --lib approximate::
-cargo build -p physics-engine-demo --locked --release --target wasm32-unknown-unknown
-node scripts/benchmark-fixed-step.mjs \
-  target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
-  fixed-step-results.json [older-event-engine.wasm]
 ```
 
 Both modes use the real Pages tower-reset exports. The approximation imports the same Rust fixture

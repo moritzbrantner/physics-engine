@@ -85,11 +85,9 @@ character movement #194 and wedge COM-centered response #176.
 ```sh
 cargo test --locked --test primitive_capabilities
 cargo test --locked --lib approximate::capabilities
-cargo test -p physics-engine-demo --locked --example shape-query-contract
 ```
 
-The complete Pages build runs three actual WASM replays of the separate query
-acceptance module. JSON parsing uses `serde_json` only as a development dependency;
+JSON parsing uses `serde_json` only as a development dependency;
 the engine's production graph, demo exports and physical continuation format do
 not acquire a JSON parser. Collision Lab adoption is the following consumer slice.
 

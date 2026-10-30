@@ -105,19 +105,13 @@ coverage additionally includes 1024 seeded intersections and near-parallel/short
 skeleton controls. The subsequent [capsule row acceptance](capsule-row-acceptance.md) supplies the complete sphere/box/capsule row reference and work contract, with public native/WASM query and physical-step propagation.
 
 A 512-body sparse fixture ratchets N bound visits but one exact query and zero warmed
-output growth. Native and WASM run the same public contract driver, separately from
-the shipped demo. Reproduce:
+output growth. Reproduce:
 
 ```sh
 cargo test --locked --test floating_shape_queries
 cargo test --locked --test capsule_contact_normals
 cargo test --locked --test capsule_row_work
 cargo test --locked --lib approximate::query
-cargo test -p physics-engine-demo --locked --example shape-query-contract
-cargo build -p physics-engine-demo --locked --release \
-  --target wasm32-unknown-unknown --example shape-query-contract
-node scripts/test-shape-query-wasm.mjs \
-  target/wasm32-unknown-unknown/release/examples/shape_query_contract.wasm
 cargo test --release --locked --lib approximate::query::tests::paired_query_workload_evidence \
   -- --ignored --nocapture
 ```
