@@ -4,6 +4,11 @@
 members = [".", "oracle", "demo-wasm"]
 default-members = ["."]
 
+# Debug builds run the numeric test suites about 6x faster at opt-level 1 (#419). Debug
+# assertions and overflow checks stay on, and Rust has no fast-math, so f32 results match.
+[profile.dev]
+opt-level = 1
+
 [package]
 name = "physics-engine"
 version = "0.1.0"

@@ -1105,14 +1105,8 @@ impl World {
             self.bookkeeping.forget_boxes();
         }
         // The slot's previous body's box is gone; boxes near a new resting body lack its leaf
-        // (an awake one makes its own box).
-        let s = &mut self.bookkeeping;
-        if s.broad.len() < self.slots.len() {
-            reserve(&mut s.broad, self.slots.len(), &mut s.work);
-            s.broad
-                .resize(self.slots.len(), bookkeeping::BroadBox::default());
-        }
-        s.drop_box(id.slot());
+        // (an awake one makes its own box). The broad phase sizes `broad` for new slots.
+        self.bookkeeping.drop_box(id.slot());
         let b = &self.bodies[at];
         if !(b.mass > 0.0 && !b.sleeping) {
             let bounds = b.cached_bounds;
@@ -2416,6 +2410,7 @@ impl World {
                         self.query_tree.moved(b);
                     } else {
                         s.broad_epoch += 1;
+                        s.boxes_live = false;
                     }
                     if let Some(e) = s.broad.get_mut(slot as usize) {
                         e.epoch = 0;
@@ -2560,6 +2555,7 @@ impl World {
                 continue;
             }
             (e.epoch, e.lo, e.hi) = (epoch, bl, bh);
+            s.boxes_live = true;
             // Marks the box for a query below.
             e.len = u32::MAX;
             self.query_tree.swept(b, (bl, bh), step);
@@ -2920,7 +2916,7 @@ impl World {
     /// added or is about to be removed): broad-phase boxes near either may lack its leaf.
     fn resting_changed(&mut self, i: usize, before: (Vector, Vector)) {
         let s = &mut self.bookkeeping;
-        if s.broad.is_empty() {
+        if !s.boxes_live {
             return;
         }
         if !self.query_tree.current(s.generation) {

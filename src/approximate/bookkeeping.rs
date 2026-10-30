@@ -305,6 +305,9 @@ pub(super) struct Scratch {
     pub broad_spare: Vec<u32>,
     /// Bumping it drops every broad-phase box (`BroadBox::epoch`).
     pub broad_epoch: u64,
+    /// False while no box of the current epoch can exist (none made since the last
+    /// `forget_boxes`): a resting body's change then skips the tree walk (#419).
+    pub boxes_live: bool,
     /// Counts broad-phase queries, for `BroadBox::query`.
     pub queries: u64,
     /// Broadphase pairs (lower, higher body order) before the narrow phase.
@@ -345,6 +348,7 @@ impl Scratch {
     /// Drops every broad-phase box.
     pub fn forget_boxes(&mut self) {
         self.broad_epoch += 1;
+        self.boxes_live = false;
     }
     /// Drops the broad-phase box of the body in `slot`.
     pub fn drop_box(&mut self, slot: u32) {
