@@ -68,17 +68,10 @@ Four new shared native/WASM fixtures verify public overlap/cast work for all
 three pairs, retained hit output, a one-iteration exhausted search (two discarded
 segment problems), exact checkpoint preservation including a pending force, and
 actual physical-step report propagation and discarded work after an atomic failed
-physical step. The existing native/WASM shape-query
-acceptance driver runs these alongside the prior three capsule-normal fixtures;
-its exports remain separate from the production demo.
+physical step.
 
 ```sh
 cargo test --locked --test capsule_contact_normals --test capsule_row_work
-cargo test -p physics-engine-demo --locked --example shape-query-contract
-cargo build -p physics-engine-demo --locked --release \
-  --target wasm32-unknown-unknown --example shape-query-contract
-node scripts/test-shape-query-wasm.mjs \
-  target/wasm32-unknown-unknown/release/examples/shape_query_contract.wasm
 ```
 
 The broader ten-pair matrix remains partial. This capsule-row evidence does not
