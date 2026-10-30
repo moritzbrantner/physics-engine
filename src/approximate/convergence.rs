@@ -1,5 +1,6 @@
 //! Bounded velocity solving with a projected fixed-point residual, never a wall-clock budget.
-use super::{Body, Constraint, PreparedResponse, Real, Report, apply, contact_velocity};
+use super::step::{apply, contact_velocity};
+use super::{Body, Constraint, PreparedResponse, Real, Report};
 
 /// Absolute scene-unit tolerances plus a relative per-contact scale. Zero selects exact checks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,7 +216,7 @@ pub(super) fn record_substep(outcome: Outcome, limit: u8, report: &mut Report) {
     }
 }
 
-pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
+pub(super) fn solve<const EARLY: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     constraints: &mut [Constraint],
@@ -223,7 +224,7 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
     tolerance: Convergence,
     report: &mut Report,
 ) {
-    let outcome = solve_rows::<PREPARED, EARLY, 0, false, _>(
+    let outcome = solve_rows::<EARLY, 0, false, _>(
         bodies,
         responses,
         constraints,
@@ -235,7 +236,7 @@ pub(super) fn solve<const PREPARED: bool, const EARLY: bool>(
     record_substep(outcome, iterations, report);
 }
 
-pub(super) fn solve_selected<const PREPARED: bool>(
+pub(super) fn solve_selected(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     constraints: &mut [Constraint],
@@ -244,7 +245,7 @@ pub(super) fn solve_selected<const PREPARED: bool>(
     tolerance: Convergence,
     report: &mut Report,
 ) -> Outcome {
-    solve_rows::<PREPARED, true, 2, false, _>(
+    solve_rows::<true, 2, false, _>(
         bodies,
         responses,
         constraints,
@@ -255,7 +256,7 @@ pub(super) fn solve_selected<const PREPARED: bool>(
     )
 }
 
-pub(super) fn solve_all_after_prefix<const PREPARED: bool>(
+pub(super) fn solve_all_after_prefix(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     constraints: &mut [Constraint],
@@ -263,7 +264,7 @@ pub(super) fn solve_all_after_prefix<const PREPARED: bool>(
     tolerance: Convergence,
     report: &mut Report,
 ) -> Outcome {
-    solve_rows::<PREPARED, true, 2, false, _>(
+    solve_rows::<true, 2, false, _>(
         bodies,
         responses,
         constraints,
@@ -274,7 +275,7 @@ pub(super) fn solve_all_after_prefix<const PREPARED: bool>(
     )
 }
 
-pub(super) fn solve_prefix<const PREPARED: bool>(
+pub(super) fn solve_prefix(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     constraints: &mut [Constraint],
@@ -282,7 +283,7 @@ pub(super) fn solve_prefix<const PREPARED: bool>(
     tolerance: Convergence,
     report: &mut Report,
 ) -> Outcome {
-    solve_rows::<PREPARED, true, 0, true, _>(
+    solve_rows::<true, 0, true, _>(
         bodies,
         responses,
         constraints,
@@ -293,13 +294,7 @@ pub(super) fn solve_prefix<const PREPARED: bool>(
     )
 }
 
-fn solve_rows<
-    const PREPARED: bool,
-    const EARLY: bool,
-    const START: u8,
-    const PREFIX: bool,
-    R: Rows,
->(
+fn solve_rows<const EARLY: bool, const START: u8, const PREFIX: bool, R: Rows>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     constraints: &mut [Constraint],
@@ -330,7 +325,7 @@ fn solve_rows<
                 let c = &mut constraints[rows.index(n)];
                 unchecked = n + 1;
                 report.convergence.delta_constraint_checks += 1;
-                let change = solve_row::<PREPARED, true>(bodies, responses, c, report);
+                let change = solve_row::<true>(bodies, responses, c, report);
                 let impulse_scale = c
                     .normal_impulse
                     .abs()
@@ -363,12 +358,7 @@ fn solve_rows<
         }
         // Never omit the rest of a pass after a large correction: use the identical cheaper kernel.
         for n in unchecked..rows.len() {
-            solve_row::<PREPARED, false>(
-                bodies,
-                responses,
-                &mut constraints[rows.index(n)],
-                report,
-            );
+            solve_row::<false>(bodies, responses, &mut constraints[rows.index(n)], report);
         }
         // Check final velocities of every row in this island after completing the ENTIRE pass.
         // Partition construction includes mutable read dependencies, including one-way responses.
@@ -421,7 +411,7 @@ struct Change {
 // The arithmetic order is identical in both specializations. READ_CHANGE=false removes only
 // observation calculations; it is also the fixed-iteration reference row, not different physics.
 #[inline(always)]
-fn solve_row<const PREPARED: bool, const READ_CHANGE: bool>(
+fn solve_row<const READ_CHANGE: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     c: &mut Constraint,
@@ -433,7 +423,7 @@ fn solve_row<const PREPARED: bool, const READ_CHANGE: bool>(
     let next = next_normal(c, vn);
     let dj = next - c.normal_impulse;
     c.normal_impulse = next;
-    apply::<PREPARED>(bodies, responses, c, c.n * dj, report);
+    apply(bodies, responses, c, c.n * dj, report);
     let rel =
         contact_velocity(&bodies[c.b], c.rb, c.spin) - contact_velocity(&bodies[c.a], c.ra, c.spin);
     let vt = [rel.dot(c.t1), rel.dot(c.t2)];
@@ -456,7 +446,7 @@ fn solve_row<const PREPARED: bool, const READ_CHANGE: bool>(
     ];
     let jt = c.t1 * dt[0] + c.t2 * dt[1];
     c.tangent_impulse = tangent;
-    apply::<PREPARED>(bodies, responses, c, jt, report);
+    apply(bodies, responses, c, jt, report);
     if READ_CHANGE {
         Change {
             impulse: [dj, dt[0], dt[1]],

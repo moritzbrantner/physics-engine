@@ -42,7 +42,7 @@ fn execute(
         .map(|b| PreparedResponse::new(b, &mut r))
         .collect();
     if local {
-        solve::<true>(
+        solve(
             bodies,
             &responses,
             constraints,
@@ -52,7 +52,7 @@ fn execute(
             &mut r,
         );
     } else {
-        convergence::solve::<true, true>(
+        convergence::solve::<true>(
             bodies,
             &responses,
             constraints,

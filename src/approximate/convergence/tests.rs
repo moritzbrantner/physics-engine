@@ -148,7 +148,7 @@ fn final_residual_catches_an_earlier_constraint_disturbed_by_a_later_contact() {
         .iter()
         .map(|b| PreparedResponse::new(b, &mut report))
         .collect();
-    solve::<true, false>(
+    solve::<false>(
         &mut b,
         &prepared,
         std::slice::from_mut(&mut c),
@@ -242,7 +242,7 @@ fn one_pass_budget_remains_one_and_coupled_chain_reaches_the_ceiling() {
         constraints[1].normal_mass = 0.5;
         let mut r = Report::default();
         let prepared: Vec<_> = b.iter().map(|b| PreparedResponse::new(b, &mut r)).collect();
-        solve::<true, true>(
+        solve::<true>(
             &mut b,
             &prepared,
             &mut constraints,

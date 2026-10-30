@@ -35,15 +35,6 @@ impl PreparedResponse {
         }
     }
 
-    #[inline]
-    pub fn select<const PREPARED: bool>(self, body: &Body, report: &mut Report) -> Self {
-        if PREPARED {
-            self
-        } else {
-            Self::new(body, report)
-        }
-    }
-
     /// Whether impulses also change this body's angular velocity.
     #[inline]
     pub fn spins(self) -> bool {

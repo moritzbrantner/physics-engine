@@ -53,52 +53,6 @@ fn interval_points_preserve_ordinary_admission_witnesses_and_fallbacks() {
     );
 }
 
-#[test]
-fn fixed_interval_contacts_match_fresh_geometry_and_response() {
-    for ids in [[1, 2], [2, 1]] {
-        let mut world = World::new(Config {
-            gravity: Vector(0.0, -10.0, 0.0),
-            substeps: 1,
-            convergence: None,
-            ..Config::default()
-        })
-        .unwrap();
-        world
-            .add_body(Body::fixture(
-                ids[0],
-                Shape::Box(Vector(4.0, 0.5, 4.0)),
-                Vector(0.0, -0.5, 0.0),
-                0.0,
-            ))
-            .unwrap();
-        let mut body = Body::fixture(
-            ids[1],
-            Shape::Box(Vector(1.0, 1.0, 1.0)),
-            Vector(0.0, 1.19, 0.0),
-            2.0,
-        );
-        body.orientation = Quaternion(0.0, 0.0, (0.1 as Real).sin(), (0.1 as Real).cos());
-        body.velocity = Vector(-3.0, -10.0, 0.0);
-        body.angular_velocity = Vector(1.0, 0.0, 3.0);
-        world.add_body(body).unwrap();
-        let mut fresh = world.clone();
-        let mut unprepared = world.clone();
-        for h in [1.0 / 240.0, 1.0 / 480.0, 1.0 / 120.0, 1.0 / 240.0] {
-            let got = world.step(h).unwrap();
-            let expected = fresh.step_with_geometry::<false, false>(h).unwrap();
-            unprepared.step_with_preparation::<false>(h).unwrap();
-            for other in [&fresh, &unprepared] {
-                assert_eq!(world.bodies, other.bodies);
-                assert_eq!(world.cache, other.cache);
-                assert_eq!(world.elapsed, other.elapsed);
-            }
-            assert_eq!(got.contact_points, expected.contact_points);
-            assert_eq!(got.swept_contacts, expected.swept_contacts);
-            assert_eq!(got.impulse_iterations, expected.impulse_iterations);
-        }
-    }
-}
-
 fn pair() -> [Body; 2] {
     [
         Body::fixture(1, Shape::Box(Vector(3.0, 1.0, 2.0)), Vector::ZERO, 0.0),
@@ -273,23 +227,18 @@ fn cached_negative_contact_does_not_suppress_changed_velocity_or_dt_ccd() {
     projectile.velocity = Vector(40.0, 0.0, 0.0);
     w.add_body(projectile).unwrap();
     let mut out = Vec::new();
-    w.manifolds::<true>(0.1, 0.0, &mut Report::default(), &mut out)
+    w.manifolds(0.1, 0.0, &mut Report::default(), &mut out)
         .unwrap();
     assert!(out.is_empty(), "rounded corner near miss must stay a miss");
     w.set_velocity(w.body_id(2).unwrap(), Vector(40.0, -2.0, 0.0))
         .unwrap();
     let mut report = Report::default();
-    w.manifolds::<true>(0.1, 0.0, &mut report, &mut out)
-        .unwrap();
+    w.manifolds(0.1, 0.0, &mut report, &mut out).unwrap();
     assert_eq!(report.geometry.negative_hits, 1);
     assert_eq!(report.geometry.sweep_queries, 1);
     assert_eq!(out.len(), 1, "new trajectory must still be swept");
     assert!(out[0].2.swept);
-    let mut reference = Vec::new();
-    w.manifolds::<false>(0.1, 0.0, &mut Report::default(), &mut reference)
-        .unwrap();
-    assert_eq!(out, reference);
-    w.manifolds::<true>(0.001, 0.0, &mut Report::default(), &mut out)
+    w.manifolds(0.001, 0.0, &mut Report::default(), &mut out)
         .unwrap();
     assert!(
         out.is_empty(),
@@ -349,73 +298,6 @@ fn prepared_axes_match_uncached_geometry_through_tumbling_sliding_and_edge_trans
         query(&mut cache, &b, 0.02);
         b[1].position += Vector(0.02, -0.001, 0.017);
         query(&mut cache, &b, 0.02);
-    }
-}
-
-#[test]
-fn cached_and_uncached_worlds_preserve_complete_motion_and_contact_impulses() {
-    for policy in [
-        super::super::PositionCorrection::FixedColliders,
-        super::super::PositionCorrection::AdmittedContacts,
-    ] {
-        for locked in [false, true] {
-            let mut candidate = World::new(Config {
-                fixed_position_iterations: 2,
-                position_correction: policy,
-                ..Config::default()
-            })
-            .unwrap();
-            candidate
-                .add_body(Body::fixture(
-                    1,
-                    Shape::Box(Vector(50.0, 1.0, 50.0)),
-                    Vector(0.0, -1.0, 0.0),
-                    0.0,
-                ))
-                .unwrap();
-            for i in 0..4 {
-                let mut b = Body::fixture(
-                    10 + i,
-                    Shape::Box(Vector(2.0, 2.0, 2.0)),
-                    Vector(0.0, 2.0 + 4.0 * i as Real, 0.0),
-                    2.0 + i as Real,
-                );
-                b.rotation_locked = locked;
-                candidate.add_body(b).unwrap();
-            }
-            let mut reference = candidate.clone();
-            for tick in 0..400 {
-                if tick == 200 {
-                    for w in [&mut candidate, &mut reference] {
-                        w.set_velocity(w.body_id(12).unwrap(), Vector(10.0, 0.0, 0.0))
-                            .unwrap();
-                    }
-                }
-                if tick == 300 {
-                    candidate.remove_body(candidate.body_id(10).unwrap());
-                    reference.remove_body(reference.body_id(10).unwrap());
-                }
-                let mut actual = candidate
-                    .step_with_geometry::<true, true>(1.0 / 60.0)
-                    .unwrap();
-                let mut expected = reference
-                    .step_with_geometry::<true, false>(1.0 / 60.0)
-                    .unwrap();
-                assert_eq!(candidate.bodies, reference.bodies, "body state tick {tick}");
-                assert_eq!(
-                    format!("{:?}", candidate.cache),
-                    format!("{:?}", reference.cache),
-                    "warm-start impulses tick {tick}"
-                );
-                actual.geometry = GeometryStats::default();
-                expected.geometry = GeometryStats::default();
-                assert_eq!(
-                    format!("{actual:?}"),
-                    format!("{expected:?}"),
-                    "old work counters tick {tick}"
-                );
-            }
-        }
     }
 }
 

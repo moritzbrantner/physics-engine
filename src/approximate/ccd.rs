@@ -7,8 +7,10 @@
 //! when that is exhausted the body stays at its last impact for the rest of the substep
 //! (`GeometryStats::ccd_budget_fallbacks`). Rotation and non-CCD bodies are unchanged.
 use super::{
-    Body, Error, Real, Report, Vector, World, bookkeeping::push, contact, contact_velocity,
-    effective_mass,
+    Body, Error, Real, Report, Vector, World,
+    bookkeeping::push,
+    contact,
+    step::{contact_velocity, effective_mass},
 };
 
 /// Whether a body advances through its own swept impacts in this substep.
@@ -38,17 +40,13 @@ fn union((lo, hi): (Vector, Vector), (bl, bh): (Vector, Vector)) -> (Vector, Vec
 
 impl World {
     /// Advance every queued CCD body in canonical BodyId (index) order.
-    pub(super) fn advance_ccd_bodies<const PREPARED: bool>(
-        &mut self,
-        h: Real,
-        report: &mut Report,
-    ) -> Result<(), Error> {
+    pub(super) fn advance_ccd_bodies(&mut self, h: Real, report: &mut Report) -> Result<(), Error> {
         let mut queued = std::mem::take(&mut self.bookkeeping.ccd);
         queued.sort_unstable();
         queued.dedup();
         let mut result = Ok(());
         for &i in &queued {
-            result = self.advance_ccd_body::<PREPARED>(i, h, report);
+            result = self.advance_ccd_body(i, h, report);
             if result.is_err() {
                 break;
             }
@@ -74,12 +72,7 @@ impl World {
         }
     }
 
-    fn advance_ccd_body<const PREPARED: bool>(
-        &mut self,
-        i: usize,
-        h: Real,
-        report: &mut Report,
-    ) -> Result<(), Error> {
+    fn advance_ccd_body(&mut self, i: usize, h: Real, report: &mut Report) -> Result<(), Error> {
         if !advances(&self.bodies[i]) {
             return Ok(());
         }
@@ -200,7 +193,7 @@ impl World {
             // body's skipped forces) are active before its impulse.
             if self.bodies[j].sleeping && self.bodies[j].movable() {
                 let id = self.bodies[j].order;
-                let woke = self.wake_contact_island::<PREPARED>(id, h, report);
+                let woke = self.wake_contact_island(id, h, report);
                 report.woken_bodies += woke;
             }
             let body = &self.bodies[i];
@@ -211,7 +204,7 @@ impl World {
             self.transaction.body(j, partner);
             let pair = [(body, &self.responses[i]), (partner, &self.responses[j])];
             let arms = [r_self, r_other];
-            let k = effective_mass::<PREPARED>(pair, arms, n, [true, true], true, report);
+            let k = effective_mass(pair, arms, n, [true, true], true, report);
             if k > 1e-14 {
                 let restitution = if approach < -self.restitution_speed {
                     super::pair_restitution(body, partner)
@@ -224,7 +217,7 @@ impl World {
                 let mu = super::pair_friction(body, partner);
                 if mu > 0.0 && tangential.length() > 0.0 {
                     let t = tangential.unit();
-                    let kt = effective_mass::<PREPARED>(pair, arms, t, [true, true], true, report);
+                    let kt = effective_mass(pair, arms, t, [true, true], true, report);
                     if kt > 1e-14 {
                         impulse -= t * (tangential.length() / kt).min(mu * normal);
                     }
@@ -232,7 +225,7 @@ impl World {
                 let before = self.bodies[j].velocity;
                 for (index, arm, impulse) in [(i, r_self, -impulse), (j, r_other, impulse)] {
                     let b = &mut self.bodies[index];
-                    let prepared = self.responses[index].select::<PREPARED>(b, report);
+                    let prepared = self.responses[index];
                     b.velocity += impulse * prepared.inverse_mass;
                     b.angular_velocity += prepared.inertia(b, arm.cross(impulse), report);
                 }
