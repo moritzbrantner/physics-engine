@@ -34,7 +34,8 @@ jobs:
           done
           echo "docs-only=true" >> "$GITHUB_OUTPUT"
 
-  validate:
+  # Three parallel jobs (#419); each timing gate still runs alone on its own runner.
+  tests:
     needs: docs-scope
     if: needs.docs-scope.outputs.docs-only != 'true'
     runs-on: ubuntu-latest
@@ -48,6 +49,8 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -64,6 +67,21 @@ jobs:
 
       - name: Test every suite on BodyStorage::Indexed
         run: cargo test --locked --features checkpoints,indexed-storage
+
+  work-contracts:
+    needs: docs-scope
+    if: needs.docs-scope.outputs.docs-only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the rust-toolchain.toml toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Check out coding-tooling for the work contracts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,6 +109,26 @@ jobs:
           sys.exit(0 if report["status"] == "passed" else 1)
           PY
 
+  oracle:
+    needs: docs-scope
+    if: needs.docs-scope.outputs.docs-only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the rust-toolchain.toml toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: lts/*
+
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked -p physics-oracle
 
@@ -117,11 +155,11 @@ jobs:
   merge-ready:
     name: merge-ready
     if: ${{ always() }}
-    needs: [docs-scope, validate, build-pages]
+    needs: [docs-scope, tests, work-contracts, oracle, build-pages]
     runs-on: ubuntu-latest
     steps:
       - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@b0f25f241d76af2584dfc9e375084ff5c5cb97da
         with:
           needs: ${{ toJSON(needs) }}
-          required: '["docs-scope", "validate", "build-pages"]'
-          allow-skipped: ${{ needs.docs-scope.outputs.docs-only == 'true' && '["validate", "build-pages"]' || '[]' }}
+          required: '["docs-scope", "tests", "work-contracts", "oracle", "build-pages"]'
+          allow-skipped: ${{ needs.docs-scope.outputs.docs-only == 'true' && '["tests", "work-contracts", "oracle", "build-pages"]' || '[]' }}
