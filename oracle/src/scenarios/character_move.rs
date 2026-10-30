@@ -5,15 +5,10 @@
 //! `KinematicCharacterController::move_shape` per character in id order, `set_translation` and `detect_collisions` after each move, a downward static-only
 //! support cast for grounded. Both engines stand on a halfspace ground, as MMORPG does (C2).
 
-use crate::{Obs, Rng, Scenario, Trace};
+use crate::kcc::{DT, GRAVITY, HALF, Lanes, OFFSET, RADIUS, SNAP};
+use crate::{Rng, Scenario, Trace};
 
 const TICKS: u32 = 240;
-pub(crate) const DT: f32 = 1.0 / 60.0;
-pub(crate) const GRAVITY: f32 = 9.81;
-pub(crate) const OFFSET: f32 = 0.0025;
-pub(crate) const SNAP: f32 = 0.05;
-pub(crate) const HALF: f32 = 0.5;
-pub(crate) const RADIUS: f32 = 0.3;
 pub(crate) const FOOT: f32 = HALF + RADIUS;
 pub(crate) const CEILING_UNDERSIDE: f32 = 2.5;
 pub(crate) const PLATFORM_TOP: f32 = 1.0;
@@ -142,7 +137,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C2 C4 C5",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -177,20 +172,13 @@ pub(crate) fn capsule_box_gap(p: [f32; 3], (c, h): BoxSpec) -> f32 {
 fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let chars = characters();
     let n = chars.len();
-    if engine.0.len() != rapier.0.len() || engine.0.len() != 2 * n * TICKS as usize {
-        return Err("trace lengths differ".into());
-    }
-    let at = |t: &Trace, tick: usize, i: usize| -> ([f32; 3], bool) {
-        let base = (tick * n + i) * 2;
-        match (t.0[base], t.0[base + 1]) {
-            (Obs::Position(p), Obs::Grounded(g)) => (p, g),
-            _ => ([f32::NAN; 3], false),
-        }
-    };
+    let engine = Lanes::new(engine, TICKS, n, 2, 0)?;
+    let rapier = Lanes::new(rapier, TICKS, n, 2, 0)?;
+    let at = |t: &Lanes, tick: usize, i: usize| (t.position(tick, i), t.grounded(tick, i, 1));
     let boxes = layout();
     for tick in (0..TICKS as usize).step_by(30).chain([TICKS as usize - 1]) {
         for i in 0..n {
-            let (p, _) = at(engine, tick, i);
+            let (p, _) = at(&engine, tick, i);
             for b in &boxes {
                 let gap = capsule_box_gap(p, *b);
                 if gap < -1e-3 {
@@ -204,9 +192,9 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     }
     for (i, &(_, role)) in chars.iter().enumerate() {
         let settle = 120;
-        let (rest, grounded) = at(engine, settle, i);
+        let (rest, grounded) = at(&engine, settle, i);
         for tick in settle..TICKS as usize {
-            let (p, g) = at(engine, tick, i);
+            let (p, g) = at(&engine, tick, i);
             match role {
                 Role::Idle | Role::Platform | Role::Wall => {
                     if p != rest || !g || !grounded {
@@ -235,7 +223,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
                     rest[1]
                 ));
             }
-            let (r, rg) = at(rapier, TICKS as usize - 1, i);
+            let (r, rg) = at(&rapier, TICKS as usize - 1, i);
             if !rg || (0..3).any(|a| (r[a] - rest[a]).abs() > RAPIER_REST_TOLERANCE) {
                 return Err(format!(
                     "{role:?} character {i}: engine {rest:?}, rapier {r:?} grounded {rg}"
@@ -249,104 +237,54 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
-    use physics_engine::{
-        BodyId,
-        approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Shape, Vector,
-            World,
-        },
-    };
+    use crate::Obs;
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
+    use physics_engine::approximate::{BodyStorage, CharacterSettings, Shape};
 
     const CHARACTER_BASE: u64 = 100_000;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: World,
-        ids: Vec<BodyId>,
+        characters: Characters,
         roles: Vec<Role>,
         intents: Vec<Intent>,
         grounded: Vec<bool>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
     }
     impl Sim {
-        pub fn new() -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
-            for (i, (c, h)) in layout().into_iter().enumerate() {
-                world
-                    .add_body(if i == 0 {
-                        // The consumers' ground is a halfspace through the floor box's top.
-                        Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0)
-                    } else {
-                        Body::keyed(1 + i as u64, Shape::Box(v(h)), v(c), 0.0)
-                    })
-                    .unwrap();
-            }
+        pub fn new(storage: BodyStorage) -> Self {
+            let statics = layout().into_iter().enumerate().map(|(i, (c, h))| {
+                if i == 0 {
+                    // The consumers' ground is a halfspace through the floor box's top.
+                    fixed(1, Shape::HalfSpace, [0.0; 3])
+                } else {
+                    fixed(1 + i as u64, Shape::Box(v(h)), c)
+                }
+            });
             let settings = CharacterSettings {
                 offset: OFFSET,
                 snap_to_ground: Some(SNAP),
                 ..CharacterSettings::default()
             };
-            let mut roles = Vec::new();
-            let mut ids = Vec::new();
-            for (i, (p, role)) in characters().into_iter().enumerate() {
-                let mut body = Body::keyed(
-                    CHARACTER_BASE + i as u64,
-                    Shape::capsule(HALF, RADIUS),
-                    v(p),
-                    1.0,
-                );
-                body.external = true;
-                let id = world.add_body(body).unwrap();
-                world.add_character(id, settings).unwrap();
-                ids.push(id);
-                roles.push(role);
-            }
+            let (starts, roles): (Vec<_>, Vec<_>) = characters().into_iter().unzip();
+            let bodies = capsules(CHARACTER_BASE, Shape::capsule(HALF, RADIUS), starts);
             let n = roles.len();
             Self {
-                world,
-                ids,
+                characters: Characters::new(world(storage, statics), bodies, settings),
                 roles,
                 intents: vec![Intent { vy: 0.0 }; n],
                 grounded: vec![false; n],
-                moves: Vec::with_capacity(n),
-                results: Vec::with_capacity(n),
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            self.moves.clear();
-            for i in 0..self.roles.len() {
-                let d = desired(
-                    self.roles[i],
-                    i,
-                    tick,
-                    self.grounded[i],
-                    &mut self.intents[i],
-                );
-                self.moves.push(CharacterMove {
-                    body: self.ids[i],
-                    desired: v(d),
-                    exclude: None,
-                    autostep: None,
-                });
-            }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for (i, r) in self.results.iter().enumerate() {
+            let (roles, grounded, intents) = (&self.roles, &self.grounded, &mut self.intents);
+            self.characters
+                .move_all(|i| v(desired(roles[i], i, tick, grounded[i], &mut intents[i])));
+            for (i, r) in self.characters.results.iter().enumerate() {
                 self.grounded[i] = r.grounded;
-                let p = self.world.body(r.body).unwrap().position;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
                 trace.0.push(Obs::Grounded(r.grounded));
             }
         }
@@ -356,101 +294,42 @@ mod engine {
 #[cfg(feature = "rapier")]
 mod rapier {
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::{DefaultQueryDispatcher, ShapeCastOptions};
+    use crate::Obs;
+    use crate::kcc::rapier::{Characters, cuboid, halfspace, mirror_controller, v, walkable};
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: PhysicsWorld,
-        controller: KinematicCharacterController,
-        bodies: Vec<RigidBodyHandle>,
+        characters: Characters,
         roles: Vec<Role>,
         intents: Vec<Intent>,
         grounded: Vec<bool>,
-        shape: Capsule,
-        /// MMORPG rebuilds the whole world in body-id order every tick (#292).
-        rebuild: bool,
-        positions: Vec<Vector>,
-    }
-
-    /// Ground halfspace, static boxes and character bodies at `positions`, in id order.
-    fn build(positions: &[Vector], shape: Capsule) -> (PhysicsWorld, Vec<RigidBodyHandle>) {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vector::ZERO;
-        world.integration_parameters.dt = DT;
-        // MMORPG's ground is a halfspace: Rapier falls through a large thin floor box.
-        world
-            .colliders
-            .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
-        for (c, h) in layout().into_iter().skip(1) {
-            world.colliders.insert(
-                ColliderBuilder::cuboid(h[0], h[1], h[2])
-                    .translation(v(c))
-                    .build(),
-            );
-        }
-        let bodies = positions
-            .iter()
-            .map(|&p| {
-                let body = world.bodies.insert(
-                    RigidBodyBuilder::kinematic_position_based()
-                        .translation(p)
-                        .build(),
-                );
-                world.colliders.insert_with_parent(
-                    ColliderBuilder::new(SharedShape::new(shape)).build(),
-                    body,
-                    &mut world.bodies,
-                );
-                body
-            })
-            .collect();
-        world.detect_collisions(&(), &());
-        (world, bodies)
     }
 
     impl Sim {
         pub fn new(rebuild: bool) -> Self {
-            let shape = Capsule::new_y(HALF, RADIUS);
-            let (positions, roles): (Vec<_>, Vec<_>) = characters()
-                .into_iter()
-                .map(|(p, role)| (v(p), role))
-                .unzip();
-            let (world, bodies) = build(&positions, shape);
-            let controller = KinematicCharacterController {
-                up: Vector::Y,
-                offset: CharacterLength::Absolute(OFFSET),
-                slide: true,
-                autostep: None,
-                max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                snap_to_ground: Some(CharacterLength::Absolute(OFFSET + SNAP)),
-                normal_nudge_factor: KinematicCharacterController::default().normal_nudge_factor,
-            };
+            // MMORPG's ground is a halfspace: Rapier falls through a large thin floor box.
+            let mut statics = vec![halfspace()];
+            statics.extend(layout().into_iter().skip(1).map(cuboid));
+            let (starts, roles): (Vec<_>, Vec<_>) = characters().into_iter().unzip();
             let n = roles.len();
             Self {
-                world,
-                controller,
-                bodies,
+                characters: Characters::new(
+                    statics,
+                    starts,
+                    Capsule::new_y(HALF, RADIUS),
+                    mirror_controller(OFFSET, Some(SNAP), None),
+                    rebuild,
+                ),
                 roles,
                 intents: vec![Intent { vy: 0.0 }; n],
                 grounded: vec![false; n],
-                shape,
-                rebuild,
-                positions,
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            if self.rebuild {
-                (self.world, self.bodies) = build(&self.positions, self.shape);
-            }
-            let dispatcher = DefaultQueryDispatcher;
+            let c = &mut self.characters;
+            c.start_tick();
             for i in 0..self.roles.len() {
                 let d = desired(
                     self.roles[i],
@@ -459,51 +338,12 @@ mod rapier {
                     self.grounded[i],
                     &mut self.intents[i],
                 );
-                let body = self.bodies[i];
-                let from = self.world.bodies[body].translation();
-                let w = &self.world;
-                let queries = w.broad_phase.as_query_pipeline(
-                    &dispatcher,
-                    &w.bodies,
-                    &w.colliders,
-                    QueryFilter::default().exclude_rigid_body(body),
-                );
-                let movement = self.controller.move_shape(
-                    DT,
-                    &queries,
-                    &self.shape,
-                    &Pose::from_translation(from),
-                    v(d),
-                    |_| {},
-                );
-                let to = from + movement.translation;
+                let movement = c.move_shape(i, v(d));
+                let to = c.end(i, &movement);
                 // MMORPG/ARPG pattern: grounded only on static support below.
-                let fixed = w.broad_phase.as_query_pipeline(
-                    &dispatcher,
-                    &w.bodies,
-                    &w.colliders,
-                    QueryFilter::only_fixed(),
-                );
-                let support = movement.grounded
-                    && fixed
-                        .cast_shape(
-                            &Pose::from_translation(to),
-                            -Vector::Y,
-                            &self.shape,
-                            ShapeCastOptions {
-                                target_distance: OFFSET,
-                                stop_at_penetration: false,
-                                max_time_of_impact: OFFSET + SNAP,
-                                compute_impact_geometry_on_penetration: true,
-                            },
-                        )
-                        .is_some_and(|(_, hit)| {
-                            hit.normal1.dot(Vector::Y) >= core::f32::consts::FRAC_PI_4.cos()
-                        });
+                let support = movement.grounded && c.support(to).is_some_and(|(_, h)| walkable(&h));
                 self.grounded[i] = support;
-                self.positions[i] = to;
-                self.world.bodies[body].set_translation(to, false);
-                self.world.detect_collisions(&(), &());
+                c.commit(i, to);
                 trace.0.push(Obs::Position([to.x, to.y, to.z]));
                 trace.0.push(Obs::Grounded(support));
             }

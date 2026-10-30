@@ -8,15 +8,10 @@
 //! `terrain-holes` is MMORPG's terrain pattern: the same hills clamped at 0, every flat cell
 //! removed (`removed_cells` / `CELL_REMOVED`) and a floor plane at 0 under the holes.
 
+use crate::kcc::{DT, GRAVITY, HALF, Lanes, OFFSET, RADIUS, SNAP};
 use crate::{Obs, Rng, Scenario, Trace};
 
 const TICKS: u32 = 240;
-const DT: f32 = 1.0 / 60.0;
-const GRAVITY: f32 = 9.81;
-const OFFSET: f32 = 0.0025;
-const SNAP: f32 = 0.05;
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
 const FOOT: f32 = HALF + RADIUS;
 const N: usize = 65;
 const CELL: f32 = 2.0;
@@ -177,7 +172,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C17",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new(false)),
+        engine: |storage| Box::new(engine::Sim::new(storage, false)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true, false)),
         #[cfg(feature = "rapier")]
@@ -192,7 +187,7 @@ pub fn scenario_holes() -> Scenario {
         capabilities: "C17",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new(true)),
+        engine: |storage| Box::new(engine::Sim::new(storage, true)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true, true)),
         #[cfg(feature = "rapier")]
@@ -203,16 +198,13 @@ pub fn scenario_holes() -> Scenario {
 
 fn check(engine: &Trace, rapier: &Trace, holes: bool) -> Result<(), String> {
     let n = WALKERS + IDLE;
-    let per_tick = 2 * n + RAYS + PROBES;
-    if engine.0.len() != rapier.0.len() || engine.0.len() != per_tick * TICKS as usize {
-        return Err("trace lengths differ".into());
-    }
+    let engine = Lanes::new(engine, TICKS, n, 2, RAYS + PROBES)?;
+    let rapier = Lanes::new(rapier, TICKS, n, 2, RAYS + PROBES)?;
     let mut rest = vec![None; n];
     for tick in 0..TICKS as usize {
-        let base = tick * per_tick;
         for (i, slot) in rest.iter_mut().enumerate() {
             let (Obs::Position(p), Obs::Grounded(g)) =
-                (engine.0[base + 2 * i], engine.0[base + 2 * i + 1])
+                (engine.obs(tick, i, 0), engine.obs(tick, i, 1))
             else {
                 return Err("unexpected observation".into());
             };
@@ -237,7 +229,7 @@ fn check(engine: &Trace, rapier: &Trace, holes: bool) -> Result<(), String> {
         }
         for k in 0..RAYS {
             let [x, z] = ray(tick as u32, k);
-            match engine.0[base + 2 * n + k] {
+            match engine.extra(tick, k) {
                 Obs::Ray(Some((t, normal))) => {
                     let y = 50.0 - 100.0 * t;
                     if (y - ground(x, z, holes)).abs() > 2e-3 || normal[1] <= 0.0 {
@@ -251,8 +243,9 @@ fn check(engine: &Trace, rapier: &Trace, holes: bool) -> Result<(), String> {
             }
         }
         for k in 0..PROBES {
-            let at = base + 2 * n + RAYS + k;
-            let (Obs::Penetrates(e), Obs::Penetrates(r)) = (engine.0[at], rapier.0[at]) else {
+            let (Obs::Penetrates(e), Obs::Penetrates(r)) =
+                (engine.extra(tick, RAYS + k), rapier.extra(tick, RAYS + k))
+            else {
                 return Err("unexpected probe observation".into());
             };
             if let Some(want) = probe_reference(tick as u32, k, holes)
@@ -270,37 +263,26 @@ fn check(engine: &Trace, rapier: &Trace, holes: bool) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
     use physics_engine::{
-        BodyId, CollisionLayers3d,
+        CollisionLayers3d,
         approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, HeightfieldDesc,
-            Quaternion, QueryFilter, QueryHit, QueryPose, RayCast, Shape, Vector, World,
+            BodyStorage, CharacterSettings, HeightfieldDesc, Quaternion, QueryFilter, QueryHit,
+            QueryPose, RayCast, Shape, Vector,
         },
     };
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: World,
-        ids: Vec<BodyId>,
+        characters: Characters,
         intents: Vec<Intent>,
         grounded: Vec<bool>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
         hits: Vec<QueryHit>,
         holes: bool,
     }
     impl Sim {
-        pub fn new(holes: bool) -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
-            let terrain = world
+        pub fn new(storage: BodyStorage, holes: bool) -> Self {
+            let mut world = world(storage, []);
+            world
                 .add_heightfield(
                     HeightfieldDesc {
                         origin: Vector(ORIGIN, 0.0, ORIGIN),
@@ -314,10 +296,9 @@ mod engine {
                     Some(1),
                 )
                 .unwrap();
-            let _ = terrain;
             if holes {
                 // The floor under the holes; its own layer keeps it out of the door probes.
-                let mut floor = Body::keyed(2, Shape::HalfSpace, Vector::ZERO, 0.0);
+                let mut floor = fixed(2, Shape::HalfSpace, [0.0; 3]);
                 floor.layers = CollisionLayers3d::new(FLOOR_LAYER, u32::MAX);
                 world.add_body(floor).unwrap();
             }
@@ -326,27 +307,17 @@ mod engine {
                 snap_to_ground: Some(SNAP),
                 ..CharacterSettings::default()
             };
-            let ids: Vec<_> = starts(holes)
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let mut body =
-                        Body::keyed(100 + i as u64, Shape::capsule(HALF, RADIUS), v(p), 1.0);
-                    body.external = true;
+            let bodies =
+                capsules(100, Shape::capsule(HALF, RADIUS), starts(holes)).map(|mut body| {
                     body.layers = CollisionLayers3d::new(2, u32::MAX);
-                    let id = world.add_body(body).unwrap();
-                    world.add_character(id, settings).unwrap();
-                    id
-                })
-                .collect();
-            let n = ids.len();
+                    body
+                });
+            let characters = Characters::new(world, bodies, settings);
+            let n = characters.ids.len();
             Self {
-                world,
-                ids,
+                characters,
                 intents: vec![Intent { vy: 0.0 }; n],
                 grounded: vec![false; n],
-                moves: Vec::new(),
-                results: Vec::new(),
                 hits: Vec::new(),
                 holes,
             }
@@ -354,25 +325,17 @@ mod engine {
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            self.moves.clear();
-            for (i, &body) in self.ids.iter().enumerate() {
-                let d = desired(i, tick, self.grounded[i], &mut self.intents[i]);
-                self.moves.push(CharacterMove {
-                    body,
-                    desired: v(d),
-                    exclude: None,
-                    autostep: None,
-                });
-            }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for (i, r) in self.results.iter().enumerate() {
+            let (grounded, intents) = (&self.grounded, &mut self.intents);
+            self.characters
+                .move_all(|i| v(desired(i, tick, grounded[i], &mut intents[i])));
+            for (i, r) in self.characters.results.iter().enumerate() {
                 self.grounded[i] = r.grounded;
-                let p = self.world.body(r.body).unwrap().position;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
                 trace.0.push(Obs::Grounded(r.grounded));
             }
+            let world = &self.characters.world;
             let terrain_only = QueryFilter {
                 layers: CollisionLayers3d::new(1, 1),
                 ..QueryFilter::default()
@@ -383,8 +346,7 @@ mod engine {
             };
             for k in 0..RAYS {
                 let [x, z] = ray(tick, k);
-                let hit = self
-                    .world
+                let hit = world
                     .cast_ray_first(
                         RayCast::new(Vector(x, 50.0, z), Vector(0.0, -100.0, 0.0)),
                         ground_only,
@@ -398,7 +360,7 @@ mod engine {
                 let (c, yaw) = probe(tick, k, self.holes);
                 let mut pose = QueryPose::new(Shape::Box(v(PROBE)), v(c));
                 pose.orientation = Quaternion(0.0, (yaw * 0.5).sin(), 0.0, (yaw * 0.5).cos());
-                self.world
+                world
                     .overlap_shape(pose, terrain_only, &mut self.hits)
                     .unwrap();
                 trace.0.push(Obs::Penetrates(!self.hits.is_empty()));
@@ -410,67 +372,18 @@ mod engine {
 #[cfg(feature = "rapier")]
 mod rapier {
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher, ShapeCastOptions};
+    use crate::kcc::rapier::{Characters, halfspace, mirror_controller, v};
+    use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher};
     use rapier3d::parry::shape::{HeightField, HeightFieldCellStatus};
     use rapier3d::parry::utils::Array2;
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: PhysicsWorld,
+        characters: Characters,
         terrain: SharedShape,
-        controller: KinematicCharacterController,
-        bodies: Vec<RigidBodyHandle>,
-        positions: Vec<Vector>,
         intents: Vec<Intent>,
         grounded: Vec<bool>,
-        shape: Capsule,
-        rebuild: bool,
         holes: bool,
-    }
-
-    fn build(
-        terrain: &SharedShape,
-        positions: &[Vector],
-        shape: Capsule,
-        holes: bool,
-    ) -> (PhysicsWorld, Vec<RigidBodyHandle>) {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vector::ZERO;
-        world.integration_parameters.dt = DT;
-        if holes {
-            world
-                .colliders
-                .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
-        }
-        let centre = ORIGIN + CELL * (N - 1) as f32 * 0.5;
-        world.colliders.insert(
-            ColliderBuilder::new(terrain.clone())
-                .translation(Vector::new(centre, 0.0, centre))
-                .build(),
-        );
-        let bodies = positions
-            .iter()
-            .map(|&p| {
-                let body = world.bodies.insert(
-                    RigidBodyBuilder::kinematic_position_based()
-                        .translation(p)
-                        .build(),
-                );
-                world.colliders.insert_with_parent(
-                    ColliderBuilder::new(SharedShape::new(shape)).build(),
-                    body,
-                    &mut world.bodies,
-                );
-                body
-            })
-            .collect();
-        world.detect_collisions(&(), &());
-        (world, bodies)
     }
 
     impl Sim {
@@ -488,95 +401,46 @@ mod rapier {
                 }
             }
             let terrain = SharedShape::new(field);
-            let shape = Capsule::new_y(HALF, RADIUS);
-            let positions: Vec<Vector> = starts(holes).into_iter().map(v).collect();
-            let (world, bodies) = build(&terrain, &positions, shape, holes);
-            let n = positions.len();
+            let centre = ORIGIN + CELL * (N - 1) as f32 * 0.5;
+            let mut statics = Vec::new();
+            if holes {
+                statics.push(halfspace());
+            }
+            statics.push(
+                ColliderBuilder::new(terrain.clone()).translation(Vector::new(centre, 0.0, centre)),
+            );
+            let starts = starts(holes);
+            let n = starts.len();
             Self {
-                world,
+                characters: Characters::new(
+                    statics,
+                    starts,
+                    Capsule::new_y(HALF, RADIUS),
+                    mirror_controller(OFFSET, Some(SNAP), None),
+                    rebuild,
+                ),
                 terrain,
-                controller: KinematicCharacterController {
-                    up: Vector::Y,
-                    offset: CharacterLength::Absolute(OFFSET),
-                    slide: true,
-                    autostep: None,
-                    max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                    min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                    snap_to_ground: Some(CharacterLength::Absolute(OFFSET + SNAP)),
-                    normal_nudge_factor: KinematicCharacterController::default()
-                        .normal_nudge_factor,
-                },
-                bodies,
-                positions,
                 intents: vec![Intent { vy: 0.0 }; n],
                 grounded: vec![false; n],
-                shape,
-                rebuild,
                 holes,
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            if self.rebuild {
-                (self.world, self.bodies) =
-                    build(&self.terrain, &self.positions, self.shape, self.holes);
-            }
-            let dispatcher = DefaultQueryDispatcher;
-            for i in 0..self.bodies.len() {
+            let c = &mut self.characters;
+            c.start_tick();
+            for i in 0..self.grounded.len() {
                 let d = desired(i, tick, self.grounded[i], &mut self.intents[i]);
-                let body = self.bodies[i];
-                let from = self.positions[i];
-                let w = &self.world;
-                let queries = w.broad_phase.as_query_pipeline(
-                    &dispatcher,
-                    &w.bodies,
-                    &w.colliders,
-                    QueryFilter::default().exclude_rigid_body(body),
-                );
-                let movement = self.controller.move_shape(
-                    DT,
-                    &queries,
-                    &self.shape,
-                    &Pose::from_translation(from),
-                    v(d),
-                    |_| {},
-                );
-                let to = from + movement.translation;
-                let fixed = w.broad_phase.as_query_pipeline(
-                    &dispatcher,
-                    &w.bodies,
-                    &w.colliders,
-                    QueryFilter::only_fixed(),
-                );
-                let support = movement.grounded
-                    && fixed
-                        .cast_shape(
-                            &Pose::from_translation(to),
-                            -Vector::Y,
-                            &self.shape,
-                            ShapeCastOptions {
-                                target_distance: OFFSET,
-                                stop_at_penetration: false,
-                                max_time_of_impact: OFFSET + SNAP,
-                                compute_impact_geometry_on_penetration: true,
-                            },
-                        )
-                        .is_some();
+                let movement = c.move_shape(i, v(d));
+                let to = c.end(i, &movement);
+                let support = movement.grounded && c.support(to).is_some();
                 self.grounded[i] = support;
-                self.positions[i] = to;
-                self.world.bodies[body].set_translation(to, false);
-                self.world.detect_collisions(&(), &());
+                c.commit(i, to);
                 trace.0.push(Obs::Position([to.x, to.y, to.z]));
                 trace.0.push(Obs::Grounded(support));
             }
-            let w = &self.world;
-            let fixed = w.broad_phase.as_query_pipeline(
-                &dispatcher,
-                &w.bodies,
-                &w.colliders,
-                QueryFilter::only_fixed(),
-            );
+            let fixed = c.queries(QueryFilter::only_fixed());
             for k in 0..RAYS {
                 let [x, z] = ray(tick, k);
                 let hit = fixed.cast_ray_and_get_normal(
@@ -596,7 +460,7 @@ mod rapier {
             for k in 0..PROBES {
                 let (c, yaw) = probe(tick, k, self.holes);
                 let pose = Pose::from_parts(v(c), Rotation::from_axis_angle(Vector::Y, yaw));
-                let hit = dispatcher
+                let hit = DefaultQueryDispatcher
                     .contact(
                         &pose.inv_mul(&terrain_pose),
                         &leaf,

@@ -111,7 +111,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C1 C11 C12",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new()),
         #[cfg(feature = "rapier")]
@@ -179,9 +179,7 @@ mod engine {
     const FLOOR_KEY: u64 = 1;
     const DOOR_BASE: u64 = 10_000;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
+    use crate::kcc::engine::v;
     fn fixed(key: u64, (c, h): BoxSpec) -> Body {
         Body::keyed(key, Shape::Box(v(h)), v(c), 0.0)
     }
@@ -195,9 +193,9 @@ mod engine {
         hits: Vec<QueryHit>,
     }
     impl Sim {
-        pub fn new() -> Self {
+        pub fn new(storage: physics_engine::approximate::BodyStorage) -> Self {
             let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
+                body_storage: storage,
                 gravity: Vector::ZERO,
                 ..Config::default()
             })
@@ -276,9 +274,7 @@ mod rapier {
     use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher};
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
+    use crate::kcc::rapier::v;
     fn cuboid((c, h): BoxSpec) -> Collider {
         ColliderBuilder::cuboid(h[0], h[1], h[2])
             .translation(v(c))

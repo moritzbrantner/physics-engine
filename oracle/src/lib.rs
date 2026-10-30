@@ -2,6 +2,7 @@
 //! and on physics-engine, records comparable observations, and checks behaviour invariants. The
 //! native binary also times both sides and fails when physics-engine is slower than Rapier.
 
+pub mod kcc;
 pub mod probe;
 pub mod scenarios;
 #[cfg(target_arch = "wasm32")]
@@ -49,28 +50,15 @@ pub enum Side {
     EngineIndexed,
 }
 
-/// Body storage of engine worlds built next; scenarios read it through [`engine_storage`].
-#[cfg(feature = "engine")]
-static INDEXED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// The body storage mode the engine side being built uses.
-#[cfg(feature = "engine")]
-pub fn engine_storage() -> physics_engine::approximate::BodyStorage {
-    if INDEXED.load(std::sync::atomic::Ordering::Relaxed) {
-        physics_engine::approximate::BodyStorage::Indexed
-    } else {
-        physics_engine::approximate::BodyStorage::Ordered
-    }
-}
-
 /// A parity scenario: the same workload on both engines.
 pub struct Scenario {
     pub name: &'static str,
     /// Capability ids from docs/consumer-capabilities.md.
     pub capabilities: &'static str,
     pub ticks: u32,
+    /// physics-engine with the given body storage.
     #[cfg(feature = "engine")]
-    pub engine: fn() -> Box<dyn Sim>,
+    pub engine: fn(physics_engine::approximate::BodyStorage) -> Box<dyn Sim>,
     /// Rapier with the consumer's actual call pattern: the perf gate's baseline.
     #[cfg(feature = "rapier")]
     pub rapier: fn() -> Box<dyn Sim>,
@@ -86,15 +74,9 @@ impl Scenario {
     pub fn build(&self, side: Side) -> Box<dyn Sim> {
         match side {
             #[cfg(feature = "engine")]
-            Side::Engine => (self.engine)(),
+            Side::Engine => (self.engine)(physics_engine::approximate::BodyStorage::Ordered),
             #[cfg(feature = "engine")]
-            Side::EngineIndexed => {
-                use std::sync::atomic::Ordering;
-                INDEXED.store(true, Ordering::Relaxed);
-                let sim = (self.engine)();
-                INDEXED.store(false, Ordering::Relaxed);
-                sim
-            }
+            Side::EngineIndexed => (self.engine)(physics_engine::approximate::BodyStorage::Indexed),
             #[cfg(feature = "rapier")]
             Side::Rapier => (self.rapier)(),
             #[cfg(feature = "rapier")]

@@ -242,7 +242,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C18",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -399,9 +399,7 @@ mod engine {
         approximate::{Body, Config, HeightfieldDesc, Material, Quaternion, Shape, Vector, World},
     };
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
+    use crate::kcc::engine::v;
 
     struct Piece {
         id: BodyId,
@@ -421,9 +419,9 @@ mod engine {
     }
 
     impl Sim {
-        pub fn new() -> Self {
+        pub fn new(storage: physics_engine::approximate::BodyStorage) -> Self {
             let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
+                body_storage: storage,
                 gravity: Vector(0.0, -GRAVITY, 0.0),
                 // Two substeps of four passes stop a landing plank's corners well within
                 // Rapier's sinking. Slop and sleep are the metre defaults (#318).
@@ -521,9 +519,7 @@ mod rapier {
     use rapier3d::parry::utils::Array2;
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
+    use crate::kcc::rapier::v;
 
     struct Piece {
         position: Vector,

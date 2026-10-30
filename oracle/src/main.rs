@@ -10,7 +10,7 @@
 //! oracle --only stairs [--only ...]  run only these scenarios
 //! oracle --no-timing                 invariants only
 //! oracle --keep-going                time scenarios whose invariants fail
-//! oracle --dump DIR                  write each side's trace to DIR/<scenario>.<side>.txt
+//! oracle --dump DIR                  write every side's trace to DIR/<scenario>.<side>.txt
 //! ```
 
 use physics_oracle::{Scenario, Side, Trace, all};
@@ -49,7 +49,16 @@ fn options() -> Result<Options, String> {
 /// Writes both sides' traces, one observation per line (`tick-ordered index<TAB>observation`).
 fn dump(scenario: &Scenario, dir: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    for (side, name) in [(Side::Engine, "engine"), (Side::Rapier, "rapier")] {
+    let sides = [
+        (Side::Engine, "engine"),
+        (Side::EngineIndexed, "indexed"),
+        (Side::Rapier, "rapier"),
+        (Side::RapierRaw, "rapier_raw"),
+    ];
+    for (side, name) in sides {
+        if side == Side::RapierRaw && scenario.rapier_raw.is_none() {
+            continue;
+        }
         let mut trace = Trace::default();
         scenario.run(&mut *scenario.build(side), &mut trace);
         let path = dir.join(format!("{}.{name}.txt", scenario.name));

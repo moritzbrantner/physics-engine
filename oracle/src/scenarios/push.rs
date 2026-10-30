@@ -4,13 +4,10 @@
 //! around it. Rapier mirrors MMORPG: a world rebuild per tick, `move_shape` per
 //! character in id order (Rapier characters never push: the pusher sidesteps or blocks).
 
+use crate::kcc::{DT, HALF, OFFSET, RADIUS, positions};
 use crate::{Obs, Scenario, Trace};
 
 const TICKS: u32 = 240;
-const DT: f32 = 1.0 / 60.0;
-const OFFSET: f32 = 0.0025;
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
 const REST: f32 = HALF + RADIUS + OFFSET;
 const LANES: usize = 24;
 const SPEED: f32 = 1.5;
@@ -38,7 +35,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C2 C7 C16",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -50,13 +47,9 @@ pub fn scenario() -> Scenario {
 fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let chars = characters();
     let n = chars.len();
-    if engine.0.len() != rapier.0.len() || engine.0.len() != n * TICKS as usize {
-        return Err("trace lengths differ".into());
-    }
-    let at = |tick: usize, i: usize| match engine.0[tick * n + i] {
-        Obs::Position(p) => p,
-        _ => [f32::NAN; 3],
-    };
+    positions(rapier, TICKS, n)?;
+    let engine = positions(engine, TICKS, n)?;
+    let at = |tick, i| engine.position(tick, i);
     let step = SPEED * DT;
     for tick in 0..TICKS as usize {
         for k in 0..LANES {
@@ -100,82 +93,41 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
-    use physics_engine::{
-        BodyId,
-        approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Shape, Vector,
-            World,
-        },
-    };
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
+    use physics_engine::approximate::{BodyStorage, CharacterSettings, Shape};
 
     pub struct Sim {
-        world: World,
-        ids: Vec<BodyId>,
+        characters: Characters,
         directions: Vec<[f32; 3]>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
     }
     impl Sim {
-        pub fn new() -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
-            world
-                .add_body(Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0))
-                .unwrap();
-            world
-                .add_body(Body::keyed(2, Shape::Box(v(WALL_HALF)), v(WALL), 0.0))
-                .unwrap();
+        pub fn new(storage: BodyStorage) -> Self {
+            let statics = [
+                fixed(1, Shape::HalfSpace, [0.0; 3]),
+                fixed(2, Shape::Box(v(WALL_HALF)), WALL),
+            ];
             let settings = CharacterSettings {
                 offset: OFFSET,
                 plane: Some(REST),
                 max_push: Some(SPEED * DT),
                 ..CharacterSettings::default()
             };
-            let mut ids = Vec::new();
-            let mut directions = Vec::new();
-            for (i, (p, d)) in characters().into_iter().enumerate() {
-                let mut body =
-                    Body::keyed(1_000 + i as u64, Shape::capsule(HALF, RADIUS), v(p), 1.0);
-                body.external = true;
-                let id = world.add_body(body).unwrap();
-                world.add_character(id, settings).unwrap();
-                ids.push(id);
-                directions.push(d);
-            }
+            let (starts, directions): (Vec<_>, Vec<_>) = characters().into_iter().unzip();
+            let bodies = capsules(1_000, Shape::capsule(HALF, RADIUS), starts);
             Self {
-                world,
-                ids,
+                characters: Characters::new(world(storage, statics), bodies, settings),
                 directions,
-                moves: Vec::new(),
-                results: Vec::new(),
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, _tick: u32, trace: &mut Trace) {
-            self.moves.clear();
-            for (i, &body) in self.ids.iter().enumerate() {
-                self.moves.push(CharacterMove {
-                    body,
-                    desired: v(self.directions[i]),
-                    exclude: None,
-                    autostep: None,
-                });
-            }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for r in &self.results {
-                let p = self.world.body(r.body).unwrap().position;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+            let directions = &self.directions;
+            self.characters.move_all(|i| v(directions[i]));
+            for r in &self.characters.results {
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
             }
         }
     }
@@ -184,117 +136,38 @@ mod engine {
 #[cfg(feature = "rapier")]
 mod rapier {
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::DefaultQueryDispatcher;
+    use crate::kcc::rapier::{Characters, cuboid, halfspace, mirror_controller, v};
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: PhysicsWorld,
-        floor: ColliderHandle,
-        controller: KinematicCharacterController,
-        bodies: Vec<RigidBodyHandle>,
-        positions: Vec<Vector>,
+        characters: Characters,
         directions: Vec<[f32; 3]>,
-        shape: Capsule,
-        rebuild: bool,
-    }
-
-    fn build(
-        positions: &[Vector],
-        shape: Capsule,
-    ) -> (PhysicsWorld, ColliderHandle, Vec<RigidBodyHandle>) {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vector::ZERO;
-        world.integration_parameters.dt = DT;
-        let floor = world
-            .colliders
-            .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
-        world.colliders.insert(
-            ColliderBuilder::cuboid(WALL_HALF[0], WALL_HALF[1], WALL_HALF[2])
-                .translation(v(WALL))
-                .build(),
-        );
-        let bodies = positions
-            .iter()
-            .map(|&p| {
-                let body = world.bodies.insert(
-                    RigidBodyBuilder::kinematic_position_based()
-                        .translation(p)
-                        .build(),
-                );
-                world.colliders.insert_with_parent(
-                    ColliderBuilder::new(SharedShape::new(shape)).build(),
-                    body,
-                    &mut world.bodies,
-                );
-                body
-            })
-            .collect();
-        world.detect_collisions(&(), &());
-        (world, floor, bodies)
     }
 
     impl Sim {
         pub fn new(rebuild: bool) -> Self {
-            let shape = Capsule::new_y(HALF, RADIUS);
-            let (positions, directions): (Vec<_>, Vec<_>) =
-                characters().into_iter().map(|(p, d)| (v(p), d)).unzip();
-            let (world, floor, bodies) = build(&positions, shape);
-            Self {
-                world,
-                floor,
-                controller: KinematicCharacterController {
-                    up: Vector::Y,
-                    offset: CharacterLength::Absolute(OFFSET),
-                    slide: true,
-                    autostep: None,
-                    max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                    min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                    snap_to_ground: None,
-                    normal_nudge_factor: KinematicCharacterController::default()
-                        .normal_nudge_factor,
-                },
-                bodies,
-                positions,
-                directions,
-                shape,
+            let (starts, directions): (Vec<_>, Vec<_>) = characters().into_iter().unzip();
+            let mut characters = Characters::new(
+                vec![halfspace(), cuboid((WALL, WALL_HALF))],
+                starts,
+                Capsule::new_y(HALF, RADIUS),
+                mirror_controller(OFFSET, None, None),
                 rebuild,
+            );
+            characters.exclude = Some(0);
+            characters.planar = true;
+            Self {
+                characters,
+                directions,
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, _tick: u32, trace: &mut Trace) {
-            if self.rebuild {
-                (self.world, self.floor, self.bodies) = build(&self.positions, self.shape);
-            }
-            let dispatcher = DefaultQueryDispatcher;
-            for i in 0..self.bodies.len() {
-                let body = self.bodies[i];
-                let from = self.positions[i];
-                let w = &self.world;
-                let filter = QueryFilter::default()
-                    .exclude_rigid_body(body)
-                    .exclude_collider(self.floor);
-                let queries =
-                    w.broad_phase
-                        .as_query_pipeline(&dispatcher, &w.bodies, &w.colliders, filter);
-                let movement = self.controller.move_shape(
-                    DT,
-                    &queries,
-                    &self.shape,
-                    &Pose::from_translation(from),
-                    v(self.directions[i]),
-                    |_| {},
-                );
-                let to = from + Vector::new(movement.translation.x, 0.0, movement.translation.z);
-                self.positions[i] = to;
-                self.world.bodies[body].set_translation(to, false);
-                self.world.detect_collisions(&(), &());
-                trace.0.push(Obs::Position([to.x, to.y, to.z]));
+            let directions = &self.directions;
+            self.characters.move_all(|i| v(directions[i]));
+            for i in 0..self.directions.len() {
+                trace.0.push(Obs::Position(self.characters.position(i)));
             }
         }
     }

@@ -66,7 +66,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C18",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new()),
         #[cfg(feature = "rapier")]
@@ -122,18 +122,16 @@ mod engine {
         approximate::{Body, CombineRule, Config, Shape, Vector, World},
     };
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
+    use crate::kcc::engine::v;
 
     pub struct Sim {
         world: World,
         crates: Vec<BodyId>,
     }
     impl Sim {
-        pub fn new() -> Self {
+        pub fn new(storage: physics_engine::approximate::BodyStorage) -> Self {
             let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
+                body_storage: storage,
                 gravity: Vector(0.0, -GRAVITY, 0.0),
                 // As in `props`: two substeps of one pass, the MMORPG adapter's crate step.
                 substeps: 2,
@@ -190,9 +188,7 @@ mod rapier {
     use super::*;
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
+    use crate::kcc::rapier::v;
 
     pub struct Sim {
         world: PhysicsWorld,
