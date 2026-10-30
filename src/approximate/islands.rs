@@ -210,7 +210,7 @@ fn record_island(outcome: Outcome, rows: usize, limit: u8, stats: &mut IslandSta
     }
 }
 
-pub(super) fn solve<const PREPARED: bool>(
+pub(super) fn solve(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     constraints: &mut [Constraint],
@@ -223,7 +223,7 @@ pub(super) fn solve<const PREPARED: bool>(
         // After the shared two-pass attempt, the next local probe is at four. At a ceiling
         // of four or less there can be no further early exit: avoid all grouping cost.
         let visits = report.convergence.constraint_visits;
-        convergence::solve::<PREPARED, true>(
+        convergence::solve::<true>(
             bodies,
             responses,
             constraints,
@@ -239,7 +239,7 @@ pub(super) fn solve<const PREPARED: bool>(
     // Most quiescent contact systems converge after two passes. Try the original global proof
     // first, without allocating/indexing anything. If it fails, build fresh partitions and resume
     // from pass three. The next unchanged per-island certificate is after total pass four.
-    let prefix = convergence::solve_prefix::<PREPARED>(
+    let prefix = convergence::solve_prefix(
         bodies,
         responses,
         constraints,
@@ -258,7 +258,7 @@ pub(super) fn solve<const PREPARED: bool>(
     scratch.prepare(bodies, constraints, &mut report.islands);
     let outcome = if scratch.roots.len() == 1 {
         report.islands.single_island_substeps += 1;
-        let result = convergence::solve_all_after_prefix::<PREPARED>(
+        let result = convergence::solve_all_after_prefix(
             bodies,
             responses,
             constraints,
@@ -275,7 +275,7 @@ pub(super) fn solve<const PREPARED: bool>(
         };
         for bounds in scratch.offsets.windows(2) {
             let selected = &scratch.rows[bounds[0]..bounds[1]];
-            let island = convergence::solve_selected::<PREPARED>(
+            let island = convergence::solve_selected(
                 bodies,
                 responses,
                 constraints,

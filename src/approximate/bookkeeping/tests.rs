@@ -179,7 +179,7 @@ fn active_membership_tracks_noops_forces_external_bodies_and_lifecycle() {
 }
 fn check_bounds(w: &mut World, h: Real) {
     let mut out = Vec::new();
-    w.manifolds::<true>(h, 0.0, &mut super::super::Report::default(), &mut out)
+    w.manifolds(h, 0.0, &mut super::super::Report::default(), &mut out)
         .unwrap();
     // Only awake bodies take swept bounds (#412), in storage order.
     let expected = w
