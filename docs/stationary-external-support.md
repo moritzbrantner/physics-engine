@@ -108,8 +108,8 @@ outside the production Pages module.
 
 ```sh
 cargo test --release --locked --test stationary_external_support -- --nocapture
-cargo build --manifest-path demo-wasm/Cargo.toml --release --locked \
+cargo build -p physics-engine-demo --release --locked \
   --target wasm32-unknown-unknown --example dense-contact-contract
 node scripts/test-dense-contact-wasm.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
+  target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
 ```

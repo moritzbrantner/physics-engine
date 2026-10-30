@@ -1,5 +1,4 @@
 /target
-/demo-wasm/target
 /pages-dist
 /performance-evidence
 /physics-performance-log-*.tar.gz
@@ -7,6 +6,5 @@
 /experiments/contact-islands/target
 
 /experiments/solver-budget/target
-/oracle/target
 /.coding-tooling-src
 /work-report.json

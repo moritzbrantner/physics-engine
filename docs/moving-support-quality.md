@@ -104,10 +104,10 @@ or stronger cross-platform replay promises.
 
 ```sh
 cargo test --release --locked --test moving_support_quality
-cargo build --manifest-path demo-wasm/Cargo.toml --release --locked \
+cargo build -p physics-engine-demo --release --locked \
   --target wasm32-unknown-unknown --example dense-contact-contract
 node scripts/test-dense-contact-wasm.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
+  target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
 ```
 
 No production physics, ownership, material policy, damping, sleep threshold or

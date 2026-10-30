@@ -2,8 +2,8 @@
 set -euo pipefail
 
 rustup target add wasm32-unknown-unknown
-cargo build --manifest-path demo-wasm/Cargo.toml --target wasm32-unknown-unknown --release --locked
-WASM=demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm
+cargo build -p physics-engine-demo --target wasm32-unknown-unknown --release --locked
+WASM=target/wasm32-unknown-unknown/release/physics_engine_demo.wasm
 
 # Smoke-test the shipped module: reset, settle, shoot, step, snapshot.
 node --input-type=module - "$WASM" <<'NODE'

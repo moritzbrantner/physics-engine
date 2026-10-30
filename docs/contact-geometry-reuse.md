@@ -87,8 +87,8 @@ or any structural-performance threshold. Report memory alongside timing, not as 
 cargo test --locked --lib approximate::geometry::
 cargo test --locked --test fixed_step_approximation
 cargo test --locked
-cargo test --manifest-path demo-wasm/Cargo.toml --locked
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release --target wasm32-unknown-unknown
+cargo test -p physics-engine-demo --locked
+cargo build -p physics-engine-demo --locked --release --target wasm32-unknown-unknown
 TRIALS=6 node scripts/benchmark-prepared-response.mjs base.wasm candidate.wasm paired.json --geometry-inline
 ```
 

@@ -123,10 +123,10 @@ not an alternative promise that the event solver is physically exact.
 
 ```
 cargo test --locked --test fixed_step_approximation
-cargo test --manifest-path demo-wasm/Cargo.toml --locked --lib approximate::
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release --target wasm32-unknown-unknown
+cargo test -p physics-engine-demo --locked --lib approximate::
+cargo build -p physics-engine-demo --locked --release --target wasm32-unknown-unknown
 node scripts/benchmark-fixed-step.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
+  target/wasm32-unknown-unknown/release/physics_engine_demo.wasm \
   fixed-step-results.json [older-event-engine.wasm]
 ```
 

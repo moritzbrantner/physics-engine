@@ -32,18 +32,19 @@ Fast-moving bodies must be tested across the requested interval. Do not replace 
 | `site/` | Pages UI over `demo-wasm`; never reconstructs collision truth in JavaScript |
 | `oracle/` | Rapier oracle: every parity scenario on Rapier (`rapier3d =0.36.1`) and Physics Engine |
 
+All three crates are one Cargo workspace with one `Cargo.lock` and one `target/`. Plain `cargo build`/`test` cover only `physics-engine` (`default-members`); select the others with `-p physics-oracle` / `-p physics-engine-demo` or `--workspace`.
+
 ```sh
 cargo fmt --all -- --check
-cargo clippy --all-targets --features checkpoints --locked -- -D warnings
-cargo clippy --all-targets --locked -- -D warnings
-(cd demo-wasm && cargo clippy --all-targets --locked -- -D warnings)
-cargo build --locked
-cargo test --locked --features checkpoints
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings   # crate, oracle, demo-wasm
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo build --workspace --locked
+cargo test --workspace --locked --features physics-engine/checkpoints
 cargo test --locked --features checkpoints,indexed-storage   # every suite on BodyStorage::Indexed
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
-cargo run --release --locked --manifest-path oracle/Cargo.toml   # Rapier oracle: invariants + native perf gate
-cargo run --release --locked --manifest-path oracle/Cargo.toml -- --only stairs --no-timing --dump /tmp/traces   # debugging; --list, --keep-going
-cargo run --release --locked --manifest-path oracle/Cargo.toml --bin probe -- --floor --box 2,1,0,0.25,1,2 --at 0,0.8025,0 --desired 2,0,0   # one move on both engines
+cargo run --release --locked -p physics-oracle   # Rapier oracle: invariants + native perf gate
+cargo run --release --locked -p physics-oracle -- --only stairs --no-timing --dump /tmp/traces   # debugging; --list, --keep-going
+cargo run --release --locked -p physics-oracle --bin probe -- --floor --box 2,1,0,0.25,1,2 --at 0,0.8025,0 --desired 2,0,0   # one move on both engines
 node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes
 cargo test --release --features work-counters --test work_complexity   # Big-O work contracts (self-checking)
 bun <coding-tooling>/src/router.ts performance work --root .            # the same, judged by coding-tooling as in CI

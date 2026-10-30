@@ -51,7 +51,7 @@ regressions, not a general angular CCD or dense-contact quality claim.
 ```sh
 cargo test --locked --test floating_conservative_bounds
 cargo test --locked --lib bounds_tests
-cargo test --manifest-path demo-wasm/Cargo.toml --locked --example shape-query-contract
+cargo test -p physics-engine-demo --locked --example shape-query-contract
 ```
 
 The complete Pages build runs the same public fixture in a separate query

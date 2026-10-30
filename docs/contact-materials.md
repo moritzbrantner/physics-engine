@@ -106,11 +106,11 @@ shipping diagnostic exports or adding a workflow:
 
 ```sh
 cargo test --locked --test contact_materials
-cargo test --manifest-path demo-wasm/Cargo.toml --locked --example dense-contact-contract
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release \
+cargo test -p physics-engine-demo --locked --example dense-contact-contract
+cargo build -p physics-engine-demo --locked --release \
   --target wasm32-unknown-unknown --example dense-contact-contract
 node scripts/test-dense-contact-wasm.mjs \
-  demo-wasm/target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
+  target/wasm32-unknown-unknown/release/examples/dense_contact_contract.wasm
 ```
 
 These isolated controls do not prove dense-rubble quality, all primitive manifold

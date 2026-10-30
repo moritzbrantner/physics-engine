@@ -73,7 +73,7 @@ there is no JavaScript physics or per-frame state round-trip.
 ```sh
 cargo test --locked --lib approximate::convergence::
 cargo test --locked --test fixed_step_approximation
-cargo build --manifest-path demo-wasm/Cargo.toml --locked --release --target wasm32-unknown-unknown
+cargo build -p physics-engine-demo --locked --release --target wasm32-unknown-unknown
 TRIALS=6 node scripts/benchmark-convergence.mjs candidate.wasm convergence.json baseline.wasm
 ```
 

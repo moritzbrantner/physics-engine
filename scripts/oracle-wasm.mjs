@@ -4,10 +4,9 @@
 import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 
-const manifest = "oracle/Cargo.toml";
-const target = "oracle/target/wasm32-unknown-unknown/release/physics_oracle.wasm";
+const target = "target/wasm32-unknown-unknown/release/physics_oracle.wasm";
 const build = (features) => {
-  execFileSync("cargo", ["build", "--manifest-path", manifest, "--release", "--locked",
+  execFileSync("cargo", ["build", "-p", "physics-oracle", "--release", "--locked",
     "--target", "wasm32-unknown-unknown", "--lib", "--no-default-features", "--features", features],
     { stdio: "inherit" });
   return stat(target).then((s) => s.size);

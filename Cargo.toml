@@ -1,3 +1,9 @@
+[workspace]
+# One lockfile and one target/ for the crate, the Rapier oracle and the Pages adapter. Plain
+# `cargo build`/`test` stay on the published crate; the gates pass `--workspace` or `-p`.
+members = [".", "oracle", "demo-wasm"]
+default-members = ["."]
+
 [package]
 name = "physics-engine"
 version = "0.1.0"
