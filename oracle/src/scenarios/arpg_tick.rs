@@ -12,15 +12,10 @@
 
 use super::character_move::capsule_box_gap;
 use super::static_queries::{BoxSpec, layout};
+use crate::kcc::{DT, HALF, OFFSET, RADIUS, SNAP};
 use crate::{Obs, Rng, Scenario, Trace};
 
 const TICKS: u32 = 240;
-const DT: f32 = 1.0 / 60.0;
-const OFFSET: f32 = 0.0025;
-const SNAP: f32 = 0.05;
-const SUPPORT_REACH: f32 = OFFSET + SNAP;
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
 /// Resting centre height: one offset above the floor.
 const HEIGHT: f32 = HALF + RADIUS + OFFSET;
 const GRAVITY: f32 = 9.81 * DT * DT;
@@ -112,7 +107,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C15",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -201,55 +196,44 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
     use physics_engine::{
         BodyId, CollisionLayers3d,
         approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, QueryFilter,
-            QueryHit, QueryPose, RayCast, Shape, Vector, World,
+            BodyStorage, CharacterMove, CharacterSettings, QueryFilter, QueryHit, QueryPose,
+            RayCast, Shape, Vector,
         },
     };
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
 
     const CHARACTERS: CollisionLayers3d = CollisionLayers3d::new(2, u32::MAX);
 
     pub struct Sim {
-        world: World,
+        characters: Characters,
         floor: BodyId,
-        ids: Vec<BodyId>,
         vy: Vec<f32>,
         grounded: Vec<bool>,
         doors: Vec<BoxSpec>,
         door_ids: Vec<Option<BodyId>>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
         hits: Vec<QueryHit>,
     }
 
     impl Sim {
-        pub fn new() -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
+        pub fn new(storage: BodyStorage) -> Self {
             let (walls, doors, starts) = scene();
+            let mut world = world(storage, []);
             let floor = world
-                .add_body(Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0))
+                .add_body(fixed(1, Shape::HalfSpace, [0.0; 3]))
                 .unwrap();
-            for (i, (c, h)) in walls.iter().enumerate() {
+            for (i, &(c, h)) in walls.iter().enumerate() {
                 world
-                    .add_body(Body::keyed(2 + i as u64, Shape::Box(v(*h)), v(*c), 0.0))
+                    .add_body(fixed(2 + i as u64, Shape::Box(v(h)), c))
                     .unwrap();
             }
             let door_ids = doors
                 .iter()
                 .enumerate()
-                .map(|(i, (c, h))| {
-                    let body = Body::keyed(DOOR_BASE + i as u64, Shape::Box(v(*h)), v(*c), 0.0);
+                .map(|(i, &(c, h))| {
+                    let body = fixed(DOOR_BASE + i as u64, Shape::Box(v(h)), c);
                     Some(world.add_body(body).unwrap())
                 })
                 .collect();
@@ -264,36 +248,19 @@ mod engine {
                 plane: Some(HEIGHT),
                 ..CharacterSettings::default()
             };
-            let ids = starts
-                .iter()
-                .enumerate()
-                .map(|(c, p)| {
-                    let mut body = Body::keyed(
-                        CHARACTER_BASE + c as u64,
-                        Shape::capsule(HALF, RADIUS),
-                        v(*p),
-                        1.0,
-                    );
-                    body.external = true;
-                    body.layers = CHARACTERS;
-                    let id = world.add_body(body).unwrap();
-                    world
-                        .add_character(id, if c < PLAYERS { player } else { monster })
-                        .unwrap();
-                    id
-                })
-                .collect::<Vec<_>>();
-            let n = ids.len();
+            let mut characters = Characters::new(world, [], player);
+            let bodies = capsules(CHARACTER_BASE, Shape::capsule(HALF, RADIUS), starts);
+            for (c, mut body) in bodies.enumerate() {
+                body.layers = CHARACTERS;
+                characters.add(body, if c < PLAYERS { player } else { monster });
+            }
             Self {
-                world,
+                characters,
                 floor,
-                ids,
                 vy: vec![0.0; PLAYERS],
                 grounded: vec![true; PLAYERS],
                 doors,
                 door_ids,
-                moves: Vec::with_capacity(n),
-                results: Vec::with_capacity(n),
                 hits: Vec::new(),
             }
         }
@@ -310,48 +277,43 @@ mod engine {
 
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
+            let world = &mut self.characters.world;
             if let Some(d) = toggle(tick, self.doors.len()) {
                 self.door_ids[d] = match self.door_ids[d].take() {
                     Some(id) => {
-                        self.world.remove_body(id);
+                        world.remove_body(id);
                         None
                     }
                     None => {
                         let (c, h) = self.doors[d];
-                        let body = Body::keyed(DOOR_BASE + d as u64, Shape::Box(v(h)), v(c), 0.0);
-                        Some(self.world.add_body(body).unwrap())
+                        let body = fixed(DOOR_BASE + d as u64, Shape::Box(v(h)), c);
+                        Some(world.add_body(body).unwrap())
                     }
                 };
             }
-            self.moves.clear();
-            for p in 0..PLAYERS {
-                let ([x, z], jump) = player_intent(p, tick);
-                self.vy[p] = if self.grounded[p] && jump {
-                    TAKEOFF
-                } else if self.grounded[p] {
-                    0.0
+            let (grounded, vy) = (&self.grounded, &mut self.vy);
+            self.characters.move_each(|c, body| {
+                let desired = if c < PLAYERS {
+                    let ([x, z], jump) = player_intent(c, tick);
+                    vy[c] = if grounded[c] && jump {
+                        TAKEOFF
+                    } else if grounded[c] {
+                        0.0
+                    } else {
+                        vy[c] - GRAVITY
+                    };
+                    Vector(x, vy[c], z)
                 } else {
-                    self.vy[p] - GRAVITY
+                    v(monster_intent(c - PLAYERS, tick))
                 };
-                self.moves.push(CharacterMove {
-                    body: self.ids[p],
-                    desired: Vector(x, self.vy[p], z),
+                CharacterMove {
+                    body,
+                    desired,
                     exclude: None,
                     autostep: None,
-                });
-            }
-            for m in 0..MONSTERS {
-                self.moves.push(CharacterMove {
-                    body: self.ids[PLAYERS + m],
-                    desired: v(monster_intent(m, tick)),
-                    exclude: None,
-                    autostep: None,
-                });
-            }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for (c, r) in self.results.iter().enumerate() {
+                }
+            });
+            for (c, r) in self.characters.results.iter().enumerate() {
                 if c < PLAYERS {
                     let intended = self.vy[c];
                     self.vy[c] = r.translation.1.clamp(intended.min(0.0), intended.max(0.0));
@@ -360,16 +322,18 @@ mod engine {
                         self.vy[c] = 0.0;
                     }
                 }
-                let p = self.world.body(r.body).unwrap().position;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
                 trace.0.push(Obs::Grounded(c < PLAYERS && self.grounded[c]));
             }
             let filter = self.walls_only();
-            let target = self.world.body(self.ids[0]).unwrap().position;
+            let world = &self.characters.world;
+            let ids = &self.characters.ids;
+            let target = world.body(ids[0]).unwrap().position;
             for m in 0..MONSTERS {
-                let from = self.world.body(self.ids[PLAYERS + m]).unwrap().position;
-                let hit = self
-                    .world
+                let from = world.body(ids[PLAYERS + m]).unwrap().position;
+                let hit = world
                     .cast_ray_first(RayCast::new(from, target - from), filter)
                     .unwrap();
                 trace
@@ -378,8 +342,7 @@ mod engine {
             }
             for k in 0..PROJECTILES {
                 let (origin, translation) = projectile(k, tick);
-                let hit = self
-                    .world
+                let hit = world
                     .cast_ray_first(RayCast::new(v(origin), v(translation)), filter)
                     .unwrap();
                 trace.0.push(Obs::Blocked(hit.is_some()));
@@ -390,7 +353,7 @@ mod engine {
                     ..QueryFilter::default()
                 };
                 for p in placements(tick) {
-                    self.world
+                    world
                         .overlap_shape(
                             QueryPose::new(Shape::capsule(HALF, RADIUS), v(p)),
                             statics,
@@ -412,15 +375,10 @@ mod engine {
 mod rapier {
     use super::super::upright_queries::UprightShapes;
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::{
-        DefaultQueryDispatcher, QueryDispatcher, QueryDispatcherChain, ShapeCastOptions,
-    };
+    use crate::kcc::rapier::{cuboid, mirror_controller, support_cast, v, walkable};
+    use rapier3d::control::KinematicCharacterController;
+    use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher, QueryDispatcherChain};
     use rapier3d::prelude::*;
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
 
     pub struct Sim {
         world: PhysicsWorld,
@@ -439,35 +397,18 @@ mod rapier {
         rebuild: bool,
     }
 
-    fn insert_fixed(world: &mut PhysicsWorld, (c, h): BoxSpec) -> ColliderHandle {
-        world.colliders.insert(
-            ColliderBuilder::cuboid(h[0], h[1], h[2])
-                .translation(v(c))
-                .build(),
-        )
+    fn insert_fixed(world: &mut PhysicsWorld, b: BoxSpec) -> ColliderHandle {
+        world.colliders.insert(cuboid(b).build())
     }
 
     impl Sim {
         pub fn new(rebuild: bool) -> Self {
             let (walls, doors, starts) = scene();
-            let planar = KinematicCharacterController {
-                up: Vector::Y,
-                offset: CharacterLength::Absolute(OFFSET),
-                slide: true,
-                autostep: None,
-                max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                snap_to_ground: None,
-                normal_nudge_factor: KinematicCharacterController::default().normal_nudge_factor,
-            };
             let mut sim = Self {
                 world: PhysicsWorld::new(),
                 queries: UprightShapes.chain(DefaultQueryDispatcher),
-                planar,
-                vertical: KinematicCharacterController {
-                    snap_to_ground: Some(CharacterLength::Absolute(SUPPORT_REACH)),
-                    ..planar
-                },
+                planar: mirror_controller(OFFSET, None, None),
+                vertical: mirror_controller(OFFSET, Some(SNAP), None),
                 walls,
                 doors: doors.into_iter().map(|d| (d, None)).collect(),
                 positions: starts,
@@ -529,21 +470,8 @@ mod rapier {
 
         /// ARPG's `ground_below`: static ground within the support reach.
         fn ground_below(&self, position: [f32; 3]) -> bool {
-            self.pipeline(QueryFilter::only_fixed())
-                .cast_shape(
-                    &Pose::from_translation(v(position)),
-                    -Vector::Y,
-                    &self.shape,
-                    ShapeCastOptions {
-                        target_distance: OFFSET,
-                        stop_at_penetration: false,
-                        max_time_of_impact: SUPPORT_REACH,
-                        compute_impact_geometry_on_penetration: true,
-                    },
-                )
-                .is_some_and(|(_, hit)| {
-                    hit.normal1.dot(Vector::Y) >= self.vertical.max_slope_climb_angle.cos()
-                })
+            let queries = self.pipeline(QueryFilter::only_fixed());
+            support_cast(&queries, &self.shape, v(position)).is_some_and(|(_, hit)| walkable(&hit))
         }
 
         /// ARPG's `set_position`: mirror the body there and `detect_collisions`.

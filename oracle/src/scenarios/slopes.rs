@@ -3,15 +3,10 @@
 //! character stays at their foot instead of climbing and sliding back. Rapier mirrors MMORPG:
 //! wedges as convex hulls, a world rebuild per tick, `move_shape` per character in id order.
 
+use crate::kcc::{DT, GRAVITY, HALF, OFFSET, RADIUS, SNAP, positions};
 use crate::{Obs, Scenario, Trace};
 
 const TICKS: u32 = 240;
-const DT: f32 = 1.0 / 60.0;
-const GRAVITY: f32 = 9.81;
-const OFFSET: f32 = 0.0025;
-const SNAP: f32 = 0.05;
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
 const REST: f32 = HALF + RADIUS + OFFSET;
 const SPEED: f32 = 2.0;
 const LANES: usize = 24;
@@ -48,7 +43,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C2 C4 C5",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -58,19 +53,16 @@ pub fn scenario() -> Scenario {
 }
 
 fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
-    if engine.0.len() != rapier.0.len() || engine.0.len() != LANES * TICKS as usize {
-        return Err("trace lengths differ".into());
-    }
-    let at = |t: &Trace, tick: usize, lane: usize| match t.0[tick * LANES + lane] {
-        Obs::Position(p) => p,
-        _ => [f32::NAN; 3],
-    };
+    let (engine, rapier) = (
+        positions(engine, TICKS, LANES)?,
+        positions(rapier, TICKS, LANES)?,
+    );
     let last = TICKS as usize - 1;
     for lane in 0..LANES {
         let (c, h) = ramp(lane);
         let z = start(lane)[2];
         for tick in 0..TICKS as usize {
-            let p = at(engine, tick, lane);
+            let p = engine.position(tick, lane);
             if p[2] != z || !p.iter().all(|a| a.is_finite()) {
                 return Err(format!("lane {lane} left its line at tick {tick}: {p:?}"));
             }
@@ -85,7 +77,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
                 ));
             }
         }
-        let (e, r) = (at(engine, last, lane), at(rapier, last, lane));
+        let (e, r) = (engine.position(last, lane), rapier.position(last, lane));
         if lane < 12 {
             // Both walked up and over the top.
             let top = c[0] - h[0];
@@ -106,91 +98,47 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
-    use physics_engine::{
-        BodyId,
-        approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Shape, Vector,
-            World,
-        },
-    };
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
+    use physics_engine::approximate::{BodyStorage, CharacterSettings, Shape, Vector};
 
     pub struct Sim {
-        world: World,
-        ids: Vec<BodyId>,
+        characters: Characters,
         vy: Vec<f32>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
     }
     impl Sim {
-        pub fn new() -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
-            world
-                .add_body(Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0))
-                .unwrap();
-            for lane in 0..LANES {
-                let (c, h) = ramp(lane);
-                world
-                    .add_body(Body::keyed(2 + lane as u64, Shape::wedge(v(h)), v(c), 0.0))
-                    .unwrap();
-            }
+        pub fn new(storage: BodyStorage) -> Self {
+            let statics = std::iter::once(fixed(1, Shape::HalfSpace, [0.0; 3])).chain(
+                (0..LANES).map(|lane| {
+                    let (c, h) = ramp(lane);
+                    fixed(2 + lane as u64, Shape::wedge(v(h)), c)
+                }),
+            );
             let settings = CharacterSettings {
                 offset: OFFSET,
                 snap_to_ground: Some(SNAP),
                 ..CharacterSettings::default()
             };
-            let ids = (0..LANES)
-                .map(|lane| {
-                    let mut body = Body::keyed(
-                        1_000 + lane as u64,
-                        Shape::capsule(HALF, RADIUS),
-                        v(start(lane)),
-                        1.0,
-                    );
-                    body.external = true;
-                    let id = world.add_body(body).unwrap();
-                    world.add_character(id, settings).unwrap();
-                    id
-                })
-                .collect();
+            let bodies = capsules(1_000, Shape::capsule(HALF, RADIUS), (0..LANES).map(start));
             Self {
-                world,
-                ids,
+                characters: Characters::new(world(storage, statics), bodies, settings),
                 vy: vec![0.0; LANES],
-                moves: Vec::with_capacity(LANES),
-                results: Vec::with_capacity(LANES),
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, _tick: u32, trace: &mut Trace) {
-            self.moves.clear();
-            for (lane, &body) in self.ids.iter().enumerate() {
-                self.vy[lane] -= GRAVITY * DT;
-                self.moves.push(CharacterMove {
-                    body,
-                    desired: Vector(-SPEED * DT, self.vy[lane] * DT, 0.0),
-                    exclude: None,
-                    autostep: None,
-                });
-            }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for (lane, r) in self.results.iter().enumerate() {
+            let vy = &mut self.vy;
+            self.characters.move_all(|lane| {
+                vy[lane] -= GRAVITY * DT;
+                Vector(-SPEED * DT, vy[lane] * DT, 0.0)
+            });
+            for (lane, r) in self.characters.results.iter().enumerate() {
                 if r.grounded {
                     self.vy[lane] = 0.0;
                 }
-                let p = self.world.body(r.body).unwrap().position;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
             }
         }
     }
@@ -199,13 +147,8 @@ mod engine {
 #[cfg(feature = "rapier")]
 mod rapier {
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::DefaultQueryDispatcher;
+    use crate::kcc::rapier::{Characters, halfspace, mirror_controller, v};
     use rapier3d::prelude::*;
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
 
     /// The wedge as MMORPG builds it: the box's bottom rectangle and its top edge at -X.
     fn wedge(h: [f32; 3]) -> SharedShape {
@@ -222,115 +165,41 @@ mod rapier {
     }
 
     pub struct Sim {
-        world: PhysicsWorld,
-        wedges: Vec<SharedShape>,
-        controller: KinematicCharacterController,
-        bodies: Vec<RigidBodyHandle>,
-        positions: Vec<Vector>,
+        characters: Characters,
         vy: Vec<f32>,
-        shape: Capsule,
-        rebuild: bool,
-    }
-
-    fn build(
-        positions: &[Vector],
-        wedges: &[SharedShape],
-        shape: Capsule,
-    ) -> (PhysicsWorld, Vec<RigidBodyHandle>) {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vector::ZERO;
-        world.integration_parameters.dt = DT;
-        world
-            .colliders
-            .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
-        for (lane, w) in wedges.iter().enumerate() {
-            world.colliders.insert(
-                ColliderBuilder::new(w.clone())
-                    .translation(v(ramp(lane).0))
-                    .build(),
-            );
-        }
-        let bodies = positions
-            .iter()
-            .map(|&p| {
-                let body = world.bodies.insert(
-                    RigidBodyBuilder::kinematic_position_based()
-                        .translation(p)
-                        .build(),
-                );
-                world.colliders.insert_with_parent(
-                    ColliderBuilder::new(SharedShape::new(shape)).build(),
-                    body,
-                    &mut world.bodies,
-                );
-                body
-            })
-            .collect();
-        world.detect_collisions(&(), &());
-        (world, bodies)
     }
 
     impl Sim {
         pub fn new(rebuild: bool) -> Self {
-            let shape = Capsule::new_y(HALF, RADIUS);
-            let wedges: Vec<_> = (0..LANES).map(|lane| wedge(ramp(lane).1)).collect();
-            let positions: Vec<_> = (0..LANES).map(|lane| v(start(lane))).collect();
-            let (world, bodies) = build(&positions, &wedges, shape);
+            let mut statics = vec![halfspace()];
+            statics.extend((0..LANES).map(|lane| {
+                let (c, h) = ramp(lane);
+                ColliderBuilder::new(wedge(h)).translation(v(c))
+            }));
             Self {
-                world,
-                wedges,
-                controller: KinematicCharacterController {
-                    up: Vector::Y,
-                    offset: CharacterLength::Absolute(OFFSET),
-                    slide: true,
-                    autostep: None,
-                    max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                    min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                    snap_to_ground: Some(CharacterLength::Absolute(OFFSET + SNAP)),
-                    normal_nudge_factor: KinematicCharacterController::default()
-                        .normal_nudge_factor,
-                },
-                bodies,
-                positions,
+                characters: Characters::new(
+                    statics,
+                    (0..LANES).map(start),
+                    Capsule::new_y(HALF, RADIUS),
+                    mirror_controller(OFFSET, Some(SNAP), None),
+                    rebuild,
+                ),
                 vy: vec![0.0; LANES],
-                shape,
-                rebuild,
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, _tick: u32, trace: &mut Trace) {
-            if self.rebuild {
-                (self.world, self.bodies) = build(&self.positions, &self.wedges, self.shape);
-            }
-            let dispatcher = DefaultQueryDispatcher;
-            for lane in 0..LANES {
-                let body = self.bodies[lane];
-                let from = self.positions[lane];
-                self.vy[lane] -= GRAVITY * DT;
-                let w = &self.world;
-                let queries = w.broad_phase.as_query_pipeline(
-                    &dispatcher,
-                    &w.bodies,
-                    &w.colliders,
-                    QueryFilter::default().exclude_rigid_body(body),
-                );
-                let movement = self.controller.move_shape(
-                    DT,
-                    &queries,
-                    &self.shape,
-                    &Pose::from_translation(from),
-                    Vector::new(-SPEED * DT, self.vy[lane] * DT, 0.0),
-                    |_| {},
-                );
+            let vy = &mut self.vy;
+            self.characters.move_all(|lane| {
+                vy[lane] -= GRAVITY * DT;
+                Vector::new(-SPEED * DT, vy[lane] * DT, 0.0)
+            });
+            for (lane, movement) in self.characters.movements.iter().enumerate() {
                 if movement.grounded {
                     self.vy[lane] = 0.0;
                 }
-                let to = from + movement.translation;
-                self.positions[lane] = to;
-                self.world.bodies[body].set_translation(to, false);
-                self.world.detect_collisions(&(), &());
-                trace.0.push(Obs::Position([to.x, to.y, to.z]));
+                trace.0.push(Obs::Position(self.characters.position(lane)));
             }
         }
     }

@@ -55,7 +55,7 @@ pub fn scenario() -> Scenario {
         capabilities: "#289 #290",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new()),
         #[cfg(feature = "rapier")]
@@ -126,27 +126,29 @@ fn check(engine: &Trace, _rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
+    use crate::kcc::engine::v;
     use physics_engine::approximate::{
-        Body, Config, QueryFilter, QueryHit, QueryPose, Shape, ShapeCast, Vector, World,
+        Body, BodyStorage, Config, QueryFilter, QueryHit, QueryPose, Shape, ShapeCast, Vector,
+        World,
     };
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
+        storage: BodyStorage,
         hits: Vec<QueryHit>,
     }
     impl Sim {
-        pub fn new() -> Self {
-            Self { hits: Vec::new() }
+        pub fn new(storage: BodyStorage) -> Self {
+            Self {
+                storage,
+                hits: Vec::new(),
+            }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
             // The game moves these bodies every tick: one world holds this tick's targets.
             let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
+                body_storage: self.storage,
                 gravity: Vector::ZERO,
                 ..Config::default()
             })
@@ -201,9 +203,7 @@ mod rapier {
     use rapier3d::parry::query::{DefaultQueryDispatcher, QueryDispatcher, ShapeCastOptions};
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
+    use crate::kcc::rapier::v;
 
     pub struct Sim;
     impl Sim {

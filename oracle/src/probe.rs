@@ -60,23 +60,14 @@ pub struct Outcome {
 /// Rapier's move from `at` by `desired`.
 #[cfg(feature = "rapier")]
 pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
-    use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::DefaultQueryDispatcher;
+    use crate::kcc::rapier::{Characters, cuboid, halfspace, mirror_controller, v};
+    use rapier3d::control::KinematicCharacterController;
     use rapier3d::prelude::*;
-    let v = |a: [f32; 3]| Vector::new(a[0], a[1], a[2]);
-    let mut world = PhysicsWorld::new();
+    let mut statics = Vec::new();
     if geometry.floor {
-        world
-            .colliders
-            .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
+        statics.push(halfspace());
     }
-    for &(centre, h) in &geometry.boxes {
-        world.colliders.insert(
-            ColliderBuilder::cuboid(h[0], h[1], h[2])
-                .translation(v(centre))
-                .build(),
-        );
-    }
+    statics.extend(geometry.boxes.iter().copied().map(cuboid));
     for &(centre, h) in &geometry.wedges {
         let mut points = Vec::with_capacity(6);
         for sx in [-1.0, 1.0] {
@@ -88,39 +79,16 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
             }
         }
         let hull = SharedShape::convex_hull(&points).expect("solid wedge");
-        world
-            .colliders
-            .insert(ColliderBuilder::new(hull).translation(v(centre)).build());
+        statics.push(ColliderBuilder::new(hull).translation(v(centre)));
     }
-    world.detect_collisions(&(), &());
     let controller = KinematicCharacterController {
-        up: Vector::Y,
-        offset: CharacterLength::Absolute(c.offset),
-        slide: true,
-        autostep: c.autostep.map(|(height, width)| CharacterAutostep {
-            max_height: CharacterLength::Absolute(height),
-            min_width: CharacterLength::Absolute(width),
-            include_dynamic_bodies: false,
-        }),
         max_slope_climb_angle: c.max_slope,
         min_slope_slide_angle: c.max_slope,
-        snap_to_ground: c.snap.map(|s| CharacterLength::Absolute(c.offset + s)),
-        normal_nudge_factor: KinematicCharacterController::default().normal_nudge_factor,
+        ..mirror_controller(c.offset, c.snap, c.autostep)
     };
-    let queries = world.broad_phase.as_query_pipeline(
-        &DefaultQueryDispatcher,
-        &world.bodies,
-        &world.colliders,
-        QueryFilter::default(),
-    );
-    let movement = controller.move_shape(
-        1.0 / 60.0,
-        &queries,
-        &Capsule::new_y(c.half_segment, c.radius),
-        &Pose::from_translation(v(at)),
-        v(desired),
-        |_| {},
-    );
+    let shape = Capsule::new_y(c.half_segment, c.radius);
+    let characters = Characters::new(statics, [at], shape, controller, false);
+    let movement = characters.move_shape(0, v(desired));
     let t = movement.translation;
     Outcome {
         translation: [t.x, t.y, t.z],
@@ -131,73 +99,56 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
 /// physics-engine's move from `at` by `desired`.
 #[cfg(feature = "engine")]
 pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
     use physics_engine::approximate::{
-        Autostep, Body, CharacterMove, CharacterSettings, Config, Embedded, Shape, Vector, World,
+        Autostep, BodyStorage, CharacterMove, CharacterSettings, Embedded, Shape,
     };
-    let v = |a: [f32; 3]| Vector(a[0], a[1], a[2]);
-    let mut world = World::new(Config {
-        gravity: Vector::ZERO,
-        ..Config::default()
-    })
-    .expect("world");
-    let mut key = 0;
-    let mut next = || {
-        key += 1;
-        key
+    let statics = geometry
+        .floor
+        .then_some((Shape::HalfSpace, [0.0; 3]))
+        .into_iter()
+        .chain(geometry.boxes.iter().map(|&(c, h)| (Shape::Box(v(h)), c)))
+        .chain(
+            geometry
+                .wedges
+                .iter()
+                .map(|&(c, h)| (Shape::wedge(v(h)), c)),
+        )
+        .enumerate()
+        .map(|(i, (shape, at))| fixed(1 + i as u64, shape, at))
+        .collect::<Vec<_>>();
+    let key = 1 + statics.len() as u64;
+    let settings = CharacterSettings {
+        offset: c.offset,
+        max_slope: c.max_slope,
+        snap_to_ground: c.snap,
+        embedded: if c.stay {
+            Embedded::Stay
+        } else {
+            Embedded::PushOut
+        },
+        ..CharacterSettings::default()
     };
-    if geometry.floor {
-        world
-            .add_body(Body::keyed(next(), Shape::HalfSpace, Vector::ZERO, 0.0))
-            .expect("floor");
-    }
-    for &(centre, h) in &geometry.boxes {
-        world
-            .add_body(Body::keyed(next(), Shape::Box(v(h)), v(centre), 0.0))
-            .expect("box");
-    }
-    for &(centre, h) in &geometry.wedges {
-        world
-            .add_body(Body::keyed(next(), Shape::wedge(v(h)), v(centre), 0.0))
-            .expect("wedge");
-    }
-    let mut body = Body::keyed(next(), Shape::capsule(c.half_segment, c.radius), v(at), 1.0);
-    body.external = true;
-    let id = world.add_body(body).expect("character");
-    world
-        .add_character(
-            id,
-            CharacterSettings {
-                offset: c.offset,
-                max_slope: c.max_slope,
-                snap_to_ground: c.snap,
-                embedded: if c.stay {
-                    Embedded::Stay
-                } else {
-                    Embedded::PushOut
-                },
-                ..CharacterSettings::default()
-            },
-        )
-        .expect("settings");
-    let mut out = Vec::new();
-    world
-        .move_characters(
-            &[CharacterMove {
-                body: id,
-                desired: v(desired),
-                exclude: None,
-                autostep: c.autostep.map(|(max_height, min_width)| Autostep {
-                    max_height,
-                    min_width,
-                }),
-            }],
-            &mut out,
-        )
-        .expect("move");
-    let t = out[0].translation + out[0].depenetration;
+    let shape = Shape::capsule(c.half_segment, c.radius);
+    let mut characters = Characters::new(
+        world(BodyStorage::Ordered, statics),
+        capsules(key, shape, [at]),
+        settings,
+    );
+    characters.move_each(|_, body| CharacterMove {
+        body,
+        desired: v(desired),
+        exclude: None,
+        autostep: c.autostep.map(|(max_height, min_width)| Autostep {
+            max_height,
+            min_width,
+        }),
+    });
+    let r = &characters.results[0];
+    let t = r.translation + r.depenetration;
     Outcome {
         translation: [t.0, t.1, t.2],
-        grounded: out[0].ground_contact,
+        grounded: r.ground_contact,
     }
 }
 

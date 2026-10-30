@@ -15,14 +15,12 @@
 //! `move_characters` batch with `CharacterMove::exclude` naming the floor, the gravity rule
 //! driven by the batch's grounded results.
 
+use crate::kcc::{DT, HALF, Lanes, OFFSET, RADIUS, SNAP};
 use crate::{Obs, Scenario, Trace};
 
 const TICKS: u32 = 11 * 60;
-const DT: f32 = 1.0 / 60.0;
 /// Gravity, metres per tick².
 const G: f32 = -9.81 * DT * DT;
-const OFFSET: f32 = 0.0025;
-const SNAP: f32 = 0.05;
 /// The scripted tolerance on positions (and support gaps). Walking up the far slope, the
 /// engine gains about 1 cm on Rapier (`slopes` allows the same).
 const TOLERANCE: f32 = 0.02;
@@ -31,9 +29,6 @@ const GAP_TOLERANCE: f32 = 1.0e-5;
 const SUPPORT_REACH: f32 = OFFSET + SNAP;
 /// Ground this near the end of a support cast's reach may be found on one engine only.
 const REACH_SLACK: f32 = 1e-3;
-/// MMORPG's unit capsule.
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
 const LANES: usize = 8;
 const LANE: f32 = 4.0;
 /// The basin: depth `DEPTH` at x = 0, rising to the rim at |x| = `RIM` (32° there).
@@ -127,7 +122,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C4 C5",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new()),
         #[cfg(feature = "rapier")]
@@ -139,22 +134,13 @@ pub fn scenario() -> Scenario {
 /// Every tick, every lane: position within the tolerance of Rapier's, the same grounded state
 /// and the same support cast result. Every swimmer dives below the floor and walks out.
 fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
-    if engine.0.len() != rapier.0.len() || engine.0.len() != 3 * LANES * TICKS as usize {
-        return Err("trace lengths differ".into());
-    }
+    let engine = Lanes::new(engine, TICKS, LANES, 2, LANES)?;
+    let rapier = Lanes::new(rapier, TICKS, LANES, 2, LANES)?;
     let mut lowest = [f32::INFINITY; LANES];
     let mut last = [[0.0; 3]; LANES];
-    let per_tick = 3 * LANES;
     for n in 0..LANES * TICKS as usize {
         let (tick, k) = (n / LANES, n % LANES);
-        let at = |t: &Trace| {
-            let base = tick * per_tick;
-            (
-                t.0[base + 2 * k],
-                t.0[base + 2 * k + 1],
-                t.0[base + 2 * LANES + k],
-            )
-        };
+        let at = |t: Lanes| (t.obs(tick, k, 0), t.obs(tick, k, 1), t.extra(tick, k));
         let (
             (Obs::Position(ep), Obs::Grounded(eg), Obs::Support(es)),
             (Obs::Position(rp), Obs::Grounded(rg), Obs::Support(rs)),
@@ -205,11 +191,12 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
+    use crate::kcc::engine::{Characters, capsules, fixed, world};
     use physics_engine::{
         BodyId, CollisionLayers3d,
         approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, HeightfieldDesc,
-            QueryFilter, QueryHit, QueryPose, Shape, ShapeCast, Vector, World,
+            BodyStorage, CharacterMove, CharacterSettings, HeightfieldDesc, QueryFilter, QueryHit,
+            QueryPose, Shape, ShapeCast, Vector,
         },
     };
 
@@ -217,31 +204,21 @@ mod engine {
     const CHARACTERS: CollisionLayers3d = CollisionLayers3d::new(2, u32::MAX);
     const STATIC_ONLY: CollisionLayers3d = CollisionLayers3d::new(1, 1);
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: World,
+        characters: Characters,
         floor: BodyId,
-        ids: Vec<BodyId>,
         vy: Vec<f32>,
         grounded: Vec<bool>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
+        /// Whether each character's footprint is over the open floor this tick.
+        open: Vec<bool>,
         hits: Vec<QueryHit>,
     }
 
     impl Sim {
-        pub fn new() -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
+        pub fn new(storage: BodyStorage) -> Self {
+            let mut world = world(storage, []);
             let floor = world
-                .add_body(Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0))
+                .add_body(fixed(1, Shape::HalfSpace, [0.0; 3]))
                 .unwrap();
             world
                 .add_heightfield(
@@ -262,29 +239,21 @@ mod engine {
                 snap_to_ground: Some(SNAP),
                 ..CharacterSettings::default()
             };
-            let ids = (0..LANES)
-                .map(|k| {
-                    let mut body = Body::keyed(
-                        CHARACTER_BASE + k as u64,
-                        Shape::capsule(HALF, RADIUS),
-                        v(start(k)),
-                        1.0,
-                    );
-                    body.external = true;
-                    body.layers = CHARACTERS;
-                    let id = world.add_body(body).unwrap();
-                    world.add_character(id, settings).unwrap();
-                    id
-                })
-                .collect();
+            let bodies = capsules(
+                CHARACTER_BASE,
+                Shape::capsule(HALF, RADIUS),
+                (0..LANES).map(start),
+            )
+            .map(|mut body| {
+                body.layers = CHARACTERS;
+                body
+            });
             Self {
-                world,
+                characters: Characters::new(world, bodies, settings),
                 floor,
-                ids,
                 vy: vec![0.0; LANES],
                 grounded: vec![false; LANES],
-                moves: Vec::with_capacity(LANES),
-                results: Vec::with_capacity(LANES),
+                open: vec![false; LANES],
                 hits: Vec::new(),
             }
         }
@@ -292,39 +261,41 @@ mod engine {
 
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            self.moves.clear();
             for k in 0..LANES {
-                if let Some(vy) = swim(k, tick) {
-                    self.vy[k] = vy * DT;
-                } else if self.grounded[k] && self.vy[k] <= 0.0 {
-                    self.vy[k] = 0.0;
-                } else {
-                    self.vy[k] += G;
-                }
-                let p = self.world.body(self.ids[k]).unwrap().position;
-                let [x, z] = walk(k);
-                self.moves.push(CharacterMove {
-                    body: self.ids[k],
-                    desired: Vector(x, self.vy[k], z),
-                    exclude: open_floor(p.0, p.2).then_some(self.floor),
-                    autostep: None,
-                });
+                let p = self.characters.position(self.characters.ids[k]);
+                self.open[k] = open_floor(p[0], p[2]);
             }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for (k, r) in self.results.iter().enumerate() {
+            let (vy, grounded, open, floor) =
+                (&mut self.vy, &self.grounded, &self.open, self.floor);
+            self.characters.move_each(|k, body| {
+                if let Some(s) = swim(k, tick) {
+                    vy[k] = s * DT;
+                } else if grounded[k] && vy[k] <= 0.0 {
+                    vy[k] = 0.0;
+                } else {
+                    vy[k] += G;
+                }
+                let [x, z] = walk(k);
+                CharacterMove {
+                    body,
+                    desired: Vector(x, vy[k], z),
+                    exclude: open[k].then_some(floor),
+                    autostep: None,
+                }
+            });
+            for (k, r) in self.characters.results.iter().enumerate() {
                 let vy = self.vy[k];
                 if (r.grounded && vy <= 0.0) || (vy > 0.0 && r.translation.1 < vy - 1e-5) {
                     self.vy[k] = 0.0;
                 }
                 self.grounded[k] = r.grounded;
-                let p = self.world.body(r.body).unwrap().position;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
                 trace.0.push(Obs::Grounded(r.grounded));
             }
             for k in 0..LANES {
-                let p = self.world.body(self.ids[k]).unwrap().position;
+                let p = self.characters.position(self.characters.ids[k]);
                 let gap = self.ground_gap(p);
                 trace.0.push(Obs::Support(gap));
             }
@@ -335,15 +306,19 @@ mod engine {
         /// MMORPG's `ground_gap` on this engine: a static-only cast of the capsule inflated by
         /// the offset (Rapier's target distance) down the support reach, the floor left out
         /// over the basin, and only walkable ground counts.
-        fn ground_gap(&mut self, p: Vector) -> Option<f32> {
+        fn ground_gap(&mut self, p: [f32; 3]) -> Option<f32> {
             let filter = QueryFilter {
                 layers: STATIC_ONLY,
-                exclude: open_floor(p.0, p.2).then_some(self.floor),
+                exclude: open_floor(p[0], p[2]).then_some(self.floor),
                 include_sensors: false,
             };
-            let pose = QueryPose::new(Shape::capsule(HALF, RADIUS + OFFSET), p);
+            let pose = QueryPose::new(
+                Shape::capsule(HALF, RADIUS + OFFSET),
+                Vector(p[0], p[1], p[2]),
+            );
             let down = Vector(0.0, -SUPPORT_REACH, 0.0);
-            self.world
+            self.characters
+                .world
                 .cast_shape(ShapeCast::new(pose, down), filter, &mut self.hits)
                 .unwrap();
             self.hits
@@ -358,15 +333,12 @@ mod engine {
 #[cfg(feature = "rapier")]
 mod rapier {
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::{DefaultQueryDispatcher, ShapeCastOptions};
+    use crate::kcc::rapier::{halfspace, mirror_controller, support_cast, v, walkable};
+    use rapier3d::control::KinematicCharacterController;
+    use rapier3d::parry::query::DefaultQueryDispatcher;
     use rapier3d::parry::shape::HeightField;
     use rapier3d::parry::utils::Array2;
     use rapier3d::prelude::*;
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
 
     pub struct Sim {
         world: PhysicsWorld,
@@ -398,9 +370,7 @@ mod rapier {
             let mut world = PhysicsWorld::new();
             world.gravity = Vector::ZERO;
             world.integration_parameters.dt = DT;
-            let floor = world
-                .colliders
-                .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
+            let floor = world.colliders.insert(halfspace().build());
             // parry: rows along Z, columns along X, column-major storage, centred.
             let h = heights();
             let data = (0..ROWS * COLUMNS)
@@ -442,17 +412,7 @@ mod rapier {
             world.detect_collisions(&(), &());
             Self {
                 world,
-                controller: KinematicCharacterController {
-                    up: Vector::Y,
-                    offset: CharacterLength::Absolute(OFFSET),
-                    slide: true,
-                    autostep: None,
-                    max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                    min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                    snap_to_ground: Some(CharacterLength::Absolute(SUPPORT_REACH)),
-                    normal_nudge_factor: KinematicCharacterController::default()
-                        .normal_nudge_factor,
-                },
+                controller: mirror_controller(OFFSET, Some(SNAP), None),
                 floor,
                 handles,
                 shape,
@@ -473,21 +433,8 @@ mod rapier {
                 &w.colliders,
                 without_open_floor(QueryFilter::only_fixed(), self.floor, position),
             );
-            fixed
-                .cast_shape(
-                    &Pose::from_translation(v(position)),
-                    -Vector::Y,
-                    &self.shape,
-                    ShapeCastOptions {
-                        target_distance: OFFSET,
-                        stop_at_penetration: false,
-                        max_time_of_impact: SUPPORT_REACH,
-                        compute_impact_geometry_on_penetration: true,
-                    },
-                )
-                .filter(|(_, hit)| {
-                    hit.normal1.dot(Vector::Y) >= self.controller.max_slope_climb_angle.cos()
-                })
+            support_cast(&fixed, &self.shape, v(position))
+                .filter(|(_, hit)| walkable(hit))
                 .map(|(_, hit)| hit.time_of_impact)
         }
     }

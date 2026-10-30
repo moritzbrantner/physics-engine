@@ -6,13 +6,10 @@
 
 use super::character_move::capsule_box_gap;
 use super::static_queries::{BoxSpec, FLOOR, layout};
+use crate::kcc::{DT, HALF, Lanes, OFFSET, RADIUS};
 use crate::{Obs, Rng, Scenario, Trace};
 
 const TICKS: u32 = 240;
-const DT: f32 = 1.0 / 60.0;
-const OFFSET: f32 = 0.0025;
-const HALF: f32 = 0.5;
-const RADIUS: f32 = 0.3;
 /// Monster centre height: resting one offset above the floor.
 const HEIGHT: f32 = HALF + RADIUS + OFFSET;
 const MONSTERS: usize = 48;
@@ -66,7 +63,7 @@ pub fn scenario() -> Scenario {
         capabilities: "C2 C6 C8",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: || Box::new(engine::Sim::new()),
+        engine: |storage| Box::new(engine::Sim::new(storage)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -77,13 +74,12 @@ pub fn scenario() -> Scenario {
 
 fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let (boxes, _) = scene();
-    if engine.0.len() != rapier.0.len() || engine.0.len() != 2 * MONSTERS * TICKS as usize {
-        return Err("trace lengths differ".into());
-    }
+    Lanes::new(rapier, TICKS, MONSTERS, 2, 0)?;
+    let engine = Lanes::new(engine, TICKS, MONSTERS, 2, 0)?;
     for tick in 0..TICKS as usize {
         for i in 0..MONSTERS {
-            let base = (tick * MONSTERS + i) * 2;
-            let (Obs::Position(p), Obs::Depenetration(d)) = (engine.0[base], engine.0[base + 1])
+            let (Obs::Position(p), Obs::Depenetration(d)) =
+                (engine.obs(tick, i, 0), engine.obs(tick, i, 1))
             else {
                 return Err("unexpected observation".into());
             };
@@ -112,87 +108,43 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
-    use physics_engine::{
-        BodyId,
-        approximate::{
-            Body, CharacterMove, CharacterMoveResult, CharacterSettings, Config, Shape, Vector,
-            World,
-        },
-    };
-
-    fn v(a: [f32; 3]) -> Vector {
-        Vector(a[0], a[1], a[2])
-    }
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
+    use physics_engine::approximate::{BodyStorage, CharacterSettings, Shape};
 
     pub struct Sim {
-        world: World,
-        ids: Vec<BodyId>,
-        moves: Vec<CharacterMove>,
-        results: Vec<CharacterMoveResult>,
+        characters: Characters,
     }
     impl Sim {
-        pub fn new() -> Self {
-            let mut world = World::new(Config {
-                body_storage: crate::engine_storage(),
-                gravity: Vector::ZERO,
-                ..Config::default()
-            })
-            .unwrap();
+        pub fn new(storage: BodyStorage) -> Self {
             let (boxes, starts) = scene();
-            for (i, (c, h)) in boxes.into_iter().enumerate() {
-                world
-                    .add_body(if i == 0 {
-                        // The consumers' ground is a halfspace through the floor box's top.
-                        Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0)
-                    } else {
-                        Body::keyed(1 + i as u64, Shape::Box(v(h)), v(c), 0.0)
-                    })
-                    .unwrap();
-            }
+            let statics = boxes.into_iter().enumerate().map(|(i, (c, h))| {
+                if i == 0 {
+                    // The consumers' ground is a halfspace through the floor box's top.
+                    fixed(1, Shape::HalfSpace, [0.0; 3])
+                } else {
+                    fixed(1 + i as u64, Shape::Box(v(h)), c)
+                }
+            });
             let settings = CharacterSettings {
                 offset: OFFSET,
                 snap_to_ground: None,
                 plane: Some(HEIGHT),
                 ..CharacterSettings::default()
             };
-            let ids = starts
-                .into_iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    let mut body =
-                        Body::keyed(10_000 + i as u64, Shape::capsule(HALF, RADIUS), v(p), 1.0);
-                    body.external = true;
-                    let id = world.add_body(body).unwrap();
-                    world.add_character(id, settings).unwrap();
-                    id
-                })
-                .collect();
+            let bodies = capsules(10_000, Shape::capsule(HALF, RADIUS), starts);
             Self {
-                world,
-                ids,
-                moves: Vec::with_capacity(MONSTERS),
-                results: Vec::with_capacity(MONSTERS),
+                characters: Characters::new(world(storage, statics), bodies, settings),
             }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            self.moves.clear();
-            for (i, &body) in self.ids.iter().enumerate() {
-                self.moves.push(CharacterMove {
-                    body,
-                    desired: v(desired(i, tick)),
-                    exclude: None,
-                    autostep: None,
-                });
-            }
-            self.world
-                .move_characters(&self.moves, &mut self.results)
-                .unwrap();
-            for r in &self.results {
-                let p = self.world.body(r.body).unwrap().position;
+            self.characters.move_all(|i| v(desired(i, tick)));
+            for r in &self.characters.results {
                 let d = r.depenetration;
-                trace.0.push(Obs::Position([p.0, p.1, p.2]));
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
                 trace.0.push(Obs::Depenetration([d.0, d.1, d.2]));
             }
         }
@@ -202,121 +154,39 @@ mod engine {
 #[cfg(feature = "rapier")]
 mod rapier {
     use super::*;
-    use rapier3d::control::{CharacterLength, KinematicCharacterController};
-    use rapier3d::parry::query::DefaultQueryDispatcher;
+    use crate::kcc::rapier::{Characters, cuboid, halfspace, mirror_controller, v};
     use rapier3d::prelude::*;
 
-    fn v(a: [f32; 3]) -> Vector {
-        Vector::new(a[0], a[1], a[2])
-    }
-
     pub struct Sim {
-        world: PhysicsWorld,
-        floor: ColliderHandle,
-        controller: KinematicCharacterController,
-        bodies: Vec<RigidBodyHandle>,
-        positions: Vec<Vector>,
-        shape: Capsule,
-        rebuild: bool,
-    }
-
-    /// Halfspace floor, static boxes, then monsters at `positions`, in key order.
-    fn build(
-        positions: &[Vector],
-        shape: Capsule,
-    ) -> (PhysicsWorld, ColliderHandle, Vec<RigidBodyHandle>) {
-        let mut world = PhysicsWorld::new();
-        world.gravity = Vector::ZERO;
-        world.integration_parameters.dt = DT;
-        let (boxes, _) = scene();
-        for (c, h) in boxes.into_iter().skip(1) {
-            world.colliders.insert(
-                ColliderBuilder::cuboid(h[0], h[1], h[2])
-                    .translation(v(c))
-                    .build(),
-            );
-        }
-        let bodies = positions
-            .iter()
-            .map(|&p| {
-                let body = world.bodies.insert(
-                    RigidBodyBuilder::kinematic_position_based()
-                        .translation(p)
-                        .build(),
-                );
-                world.colliders.insert_with_parent(
-                    ColliderBuilder::new(SharedShape::new(shape)).build(),
-                    body,
-                    &mut world.bodies,
-                );
-                body
-            })
-            .collect();
-        // ARPG inserts the floor last (its insertion changes how ties break).
-        let floor = world
-            .colliders
-            .insert(ColliderBuilder::new(SharedShape::halfspace(Vector::Y)).build());
-        world.detect_collisions(&(), &());
-        (world, floor, bodies)
+        characters: Characters,
     }
 
     impl Sim {
+        /// Static boxes, then monsters in key order, then the halfspace floor.
         pub fn new(rebuild: bool) -> Self {
-            let shape = Capsule::new_y(HALF, RADIUS);
-            let (_, starts) = scene();
-            let positions: Vec<Vector> = starts.into_iter().map(v).collect();
-            let (world, floor, bodies) = build(&positions, shape);
-            Self {
-                world,
-                floor,
-                controller: KinematicCharacterController {
-                    up: Vector::Y,
-                    offset: CharacterLength::Absolute(OFFSET),
-                    slide: true,
-                    autostep: None,
-                    max_slope_climb_angle: core::f32::consts::FRAC_PI_4,
-                    min_slope_slide_angle: core::f32::consts::FRAC_PI_4,
-                    snap_to_ground: None,
-                    normal_nudge_factor: KinematicCharacterController::default()
-                        .normal_nudge_factor,
-                },
-                bodies,
-                positions,
-                shape,
+            let (boxes, starts) = scene();
+            let statics: Vec<_> = boxes.into_iter().skip(1).map(cuboid).collect();
+            let floor = statics.len();
+            // ARPG inserts the floor last (its insertion changes how ties break).
+            let mut characters = Characters::new(
+                statics,
+                starts,
+                Capsule::new_y(HALF, RADIUS),
+                mirror_controller(OFFSET, None, None),
                 rebuild,
-            }
+            )
+            .with_trailing(vec![halfspace()]);
+            // ARPG keeps monsters on the plane, the floor left out of their moves.
+            characters.exclude = Some(floor);
+            characters.planar = true;
+            Self { characters }
         }
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            if self.rebuild {
-                (self.world, self.floor, self.bodies) = build(&self.positions, self.shape);
-            }
-            let dispatcher = DefaultQueryDispatcher;
-            for i in 0..self.bodies.len() {
-                let body = self.bodies[i];
-                let from = self.positions[i];
-                let w = &self.world;
-                let filter = QueryFilter::default()
-                    .exclude_rigid_body(body)
-                    .exclude_collider(self.floor);
-                let queries =
-                    w.broad_phase
-                        .as_query_pipeline(&dispatcher, &w.bodies, &w.colliders, filter);
-                let movement = self.controller.move_shape(
-                    DT,
-                    &queries,
-                    &self.shape,
-                    &Pose::from_translation(from),
-                    v(desired(i, tick)),
-                    |_| {},
-                );
-                // ARPG keeps monsters on the plane.
-                let to = from + Vector::new(movement.translation.x, 0.0, movement.translation.z);
-                self.positions[i] = to;
-                self.world.bodies[body].set_translation(to, false);
-                self.world.detect_collisions(&(), &());
-                trace.0.push(Obs::Position([to.x, to.y, to.z]));
+            self.characters.move_all(|i| v(desired(i, tick)));
+            for i in 0..MONSTERS {
+                trace.0.push(Obs::Position(self.characters.position(i)));
                 trace.0.push(Obs::Depenetration([0.0; 3]));
             }
         }
