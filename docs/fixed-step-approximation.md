@@ -26,7 +26,10 @@ per substep. Convergence probes can end the solve early; `Config::convergence = 
 retains the fixed-pass reference. Each iteration updates velocities using incremental impulses; accumulated normal
 impulses clamp at zero, and accumulated tangential impulses clamp to the Coulomb friction disk.
 Prepared contact points and effective masses are reused for those iterations. Local contact
-anchors and impulses survive for warm starting on the next step.
+anchors and impulses survive for warm starting on the next step: a new point takes the nearest
+cached point's impulse within a tenth of the smaller body's radius. A halfspace is unbounded,
+so the body on it sets that reach (#424); solved cold every step, a box on the plane sank
+about 7.5 mm and never fell asleep.
 
 ## Contacts once per step
 

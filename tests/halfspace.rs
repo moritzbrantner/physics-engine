@@ -330,3 +330,32 @@ fn damping_scales_velocity_per_substep() {
     bad.linear_damping = -1.0;
     assert!(w.add_body(bad).is_err());
 }
+
+/// #424: a free-rotating box dropped onto the plane with the MMORPG crate step (two substeps of
+/// one pass) settles within the contact slop and falls asleep, as on a box. Its plane contacts
+/// warm-start; solved cold every step it sank 7.5 mm and crept forever.
+#[test]
+fn box_on_the_plane_settles_and_sleeps() {
+    let mut w = World::new(Config {
+        gravity: V(0.0, -9.0, 0.0),
+        substeps: 2,
+        velocity_iterations: 1,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(Body::new(Shape::HalfSpace, V::ZERO, 0.0))
+        .unwrap();
+    let mut body = Body::new(Shape::Box(V(0.2, 0.1, 0.25)), V(30.0, 0.4, 44.0), 48.0);
+    body.velocity = V(0.3, 0.0, 0.2);
+    let id = w.add_body(body).unwrap();
+    for _ in 0..60 {
+        w.step(1.0 / 30.0).unwrap();
+    }
+    let b = w.body(id).unwrap();
+    assert!(b.is_sleeping(), "{b:?}");
+    assert!(
+        (b.position.1 - 0.1).abs() < w.config().contact_slop,
+        "{:?}",
+        b.position
+    );
+}
