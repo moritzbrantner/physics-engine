@@ -537,6 +537,111 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
     );
 }
 
+/// Lattice spacing of a cluster: characters 0.2 m wide, so 0.09 m apart; four in a row span
+/// 0.87 m, inside the 0.905 m a 1 m diagonal move's swept bounds reach.
+const CLUSTER_SPACING: f32 = 0.29;
+
+/// `characters` in clusters of `density` on a lattice (rows of four, or of √density beyond
+/// 16, `CLUSTER_SPACING` apart), one cluster per 4 x 4 m block of the town; a remainder forms
+/// a smaller last cluster. Up to 16 per cluster, every character's 1 m diagonal move reaches
+/// exactly the `density - 1` others of its cluster and no other cluster.
+fn add_clusters(w: &mut World, characters: u64, density: u64) -> Vec<BodyId> {
+    let settings = CharacterSettingsHelper::plane(w);
+    let mut ids = Vec::new();
+    for c in 0..characters {
+        let (cluster, k) = (c / density, c % density);
+        let (bx, bz) = (cluster % 8, cluster / 8);
+        let row = density.isqrt().max(4);
+        let p = V(
+            0.6 + bx as f32 * 4.0 + (k % row) as f32 * CLUSTER_SPACING,
+            BOX + 0.8 + 0.0025,
+            0.6 + bz as f32 * 4.0 + (k / row) as f32 * CLUSTER_SPACING,
+        );
+        let mut body = Body::keyed(1_000_000 + c, Shape::capsule(0.2, 0.1), p, 1.0);
+        body.external = true;
+        let id = w.add_body(body).unwrap();
+        w.add_character(id, settings).unwrap();
+        ids.push(id);
+    }
+    ids
+}
+
+/// Ordered pairs (mover, other character) whose swept bounds overlap: each mover's start and
+/// end bounds, padded by the character offset. The neighbours a batch's casts can meet.
+fn neighbours_in_reach(w: &World, moves: &[CharacterMove]) -> u64 {
+    let pad = w.character_settings().offset;
+    let swept: Vec<_> = moves
+        .iter()
+        .map(|m| {
+            let b = w.body(m.body).unwrap();
+            let r = b.shape.radius() + pad;
+            let (p, q) = (b.position, b.position + m.desired);
+            (
+                [p.0.min(q.0) - r, p.2.min(q.2) - r],
+                [p.0.max(q.0) + r, p.2.max(q.2) + r],
+            )
+        })
+        .collect();
+    let mut pairs = 0;
+    for (i, a) in swept.iter().enumerate() {
+        for (j, b) in swept.iter().enumerate() {
+            if i != j && (0..2).all(|k| a.0[k] <= b.1[k] && b.0[k] <= a.1[k]) {
+                pairs += 1;
+            }
+        }
+    }
+    pairs
+}
+
+#[test]
+fn crowded_batches_scale_with_movers_times_neighbours() {
+    let mut samples = Vec::new();
+    let mut out: Vec<CharacterMoveResult> = Vec::new();
+    // Movers at density 4, then densities at 32 movers, then MMORPG's crowd: 139 movers with
+    // 64 in each fight.
+    let points = [8u64, 16, 32, 64, 128]
+        .map(|m| (m, 4u64))
+        .into_iter()
+        .chain([1u64, 2, 8, 16].map(|d| (32, d)))
+        .chain([(139, 64)]);
+    for (m, density) in points {
+        let mut w = town(12);
+        let ids = add_clusters(&mut w, m, density);
+        let moves: Vec<_> = ids
+            .iter()
+            .map(|&body| CharacterMove {
+                body,
+                desired: V(0.7, 0.0, 0.7),
+                exclude: None,
+                autostep: None,
+            })
+            .collect();
+        w.move_characters(&[], &mut out).unwrap();
+        let near = neighbours_in_reach(&w, &moves);
+        if density <= 16 && m % density == 0 {
+            assert_eq!(
+                near,
+                m * (density - 1),
+                "lattice neighbours at {m}/{density}"
+            );
+        }
+        let (n, e) = counted(|| w.move_characters(&moves, &mut out).unwrap());
+        samples.push((
+            vec![("characters", m), ("density", density)],
+            vec![
+                ("tree-nodes", n),
+                ("exact-tests", e),
+                ("neighbours-in-reach", near),
+            ],
+        ));
+    }
+    judge(
+        "move-characters-crowd",
+        &samples,
+        &[("exact-tests", "characters", "linear")],
+    );
+}
+
 /// Placement scale points: crowd sizes in a 4096-box town, then town sizes with 32 characters.
 fn placement_points() -> impl Iterator<Item = (u32, u64)> {
     [8u64, 16, 32, 64, 128]

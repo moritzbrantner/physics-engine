@@ -712,7 +712,100 @@
               "bound": "linear"
             }
           ],
-          "notes": "Neighbour tests: linear in movers at fixed density. With density they grow faster than linear here (more slides per move when crowded), so density is held by a budget far below all-pairs (32 movers would be 1024 tests per cast)."
+          "notes": "Neighbour tests: linear in movers at fixed density. Density here is a random spawn whose neighbours in reach grow faster than density (0, 8, 20, 58 pairs at density 1, 2, 4, 8), and the tests track movers plus those neighbours (32, 37, 52, 96), so this fixture holds density by a budget; `move-characters-crowd` bounds the work in a controlled neighbour count (#416)."
+        }
+      ]
+    },
+    {
+      "id": "move-characters-crowd",
+      "description": "One World::move_characters batch in a 4096-box town: characters in lattice clusters of `density`, 0.29 m apart, one cluster per 4 x 4 m block, each moving 1 m diagonally, so every mover's swept bounds reach exactly the `density - 1` others of its cluster (up to 16). The last point is MMORPG's crowd: 139 movers in fights of 64.",
+      "publicContract": "physics_engine::approximate::World::move_characters",
+      "dimensions": {
+        "characters": {
+          "description": "characters in the batch"
+        },
+        "density": {
+          "description": "characters per cluster; each reaches the others of its cluster"
+        }
+      },
+      "scalePoints": [
+        { "characters": 8, "density": 4 },
+        { "characters": 16, "density": 4 },
+        { "characters": 32, "density": 4 },
+        { "characters": 64, "density": 4 },
+        { "characters": 128, "density": 4 },
+        { "characters": 32, "density": 1 },
+        { "characters": 32, "density": 2 },
+        { "characters": 32, "density": 8 },
+        { "characters": 32, "density": 16 },
+        { "characters": 139, "density": 64 }
+      ],
+      "metrics": [
+        {
+          "name": "neighbours-in-reach",
+          "unit": "pairs",
+          "signal": "custom",
+          "notes": "The fixture's geometry, not engine work: ordered (mover, other) pairs whose swept bounds overlap, characters x (density - 1) by construction (asserted up to density 16). It makes the density dimension the neighbour count the bounds below are stated in.",
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "linear"
+            },
+            {
+              "dimension": "density",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "O(m · k): each move's casts test the movers its swept bounds reach, about once per neighbour plus once per mover (32, 64, 128, 308, 518 at density 1, 2, 4, 8, 16; 3582 for MMORPG's 139 movers in fights of 64), never all pairs. Slides re-test the same neighbours, which adds under a fifth at density 8 and does not grow beyond it. Rapier's controller also casts once per slide; on the oracle's crowd-fight scenario (139 movers, 64 in one press) the engine runs at 0.24x Rapier.",
+          "budget": {
+            "max": 4096
+          },
+          "growth": [
+            {
+              "dimension": "characters",
+              "bound": "linear"
+            },
+            {
+              "product": [
+                {
+                  "dimension": "characters",
+                  "bound": "linear"
+                },
+                {
+                  "dimension": "density",
+                  "bound": "linear"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "Each slide's cast descends the tree, so node visits per mover grow with the slides a crowd forces (83 to 217 per mover from density 1 to 16, 345 in fights of 64): sub-linear in density, held under O(m · k) and a budget.",
+          "budget": {
+            "max": 65536
+          },
+          "growth": [
+            {
+              "product": [
+                {
+                  "dimension": "characters",
+                  "bound": "linear"
+                },
+                {
+                  "dimension": "density",
+                  "bound": "linear"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
