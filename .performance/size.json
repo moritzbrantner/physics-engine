@@ -12,7 +12,8 @@
       "minification": "not-applicable",
       "toolchains": [["cargo", "--version"], ["rustc", "--version"]],
       "buildInputs": ["Cargo.toml", "Cargo.lock", "oracle/Cargo.toml", "rust-toolchain.toml", "scripts/oracle-wasm.mjs"],
-      "maxBytes": 1048576
+      "maxBytes": 1048576,
+      "maxIncreaseBytes": 16384
     },
     {
       "id": "oracle-rapier-wasm",
@@ -25,7 +26,8 @@
       "minification": "not-applicable",
       "toolchains": [["cargo", "--version"], ["rustc", "--version"]],
       "buildInputs": ["Cargo.toml", "Cargo.lock", "oracle/Cargo.toml", "rust-toolchain.toml", "scripts/oracle-wasm.mjs"],
-      "maxBytes": 3145728
+      "maxBytes": 3145728,
+      "maxIncreaseBytes": 16384
     }
   ]
 }

@@ -38,7 +38,8 @@ over the integer `World`; no consumer enables it).
 Scenarios live in `oracle/src/scenarios/`; `cargo run --release -p physics-oracle`
 checks them natively (invariants + not more than 5% slower than Rapier) and
 `node scripts/oracle-wasm.mjs` gates WASM timings; `bash scripts/size-budget.sh` also
-judges WASM sizes against `.performance/size.json`.
+judges WASM sizes against `.performance/size.json` (with `SIZE_BASE_REF=<commit>`, also each
+size increase over that commit, measured in the same run).
 
 Not used by any consumer today: joints, sensors/contact events, collision
 groups, CCD, triangle meshes. Work on those stays parked until a consumer
