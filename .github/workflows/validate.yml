@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: da4091a07b79bf276c36008c36d459b827dd3dab
+          ref: 506800a8b80b41fc39de111cf9c8d9e6203326eb
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -97,17 +97,7 @@ jobs:
       - name: Big-O work contracts (.performance/contract.json)
         run: |
           (cd .coding-tooling-src && bun install --frozen-lockfile)
-          bun .coding-tooling-src/src/router.ts performance work --root . --json > work-report.json || true
-          python3 - <<'PY'
-          import json, sys
-          report = json.load(open("work-report.json"))
-          for operation in report["data"]["operations"]:
-              for check in operation["checks"]:
-                  print(f"{operation['id']:<24} {check['metric']:<26} {check['kind']:<7} {check.get('dimension') or '':<14} {check['state']}")
-          for d in report.get("diagnostics") or []:
-              print("diagnostic:", d)
-          sys.exit(0 if report["status"] == "passed" else 1)
-          PY
+          bun .coding-tooling-src/src/router.ts performance work --root .
 
       - name: Oracle scenarios take no stale-tree fallback scan (full-scan-bodies 0)
         run: cargo test --release --locked -p physics-oracle --features work-counters --test full_scan
@@ -135,8 +125,21 @@ jobs:
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked -p physics-oracle
 
-      - name: Rapier oracle on WASM (invariants + 1.10x perf gate, sizes)
-        run: node scripts/oracle-wasm.mjs
+      - name: Check out coding-tooling for the size budget
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: moritzbrantner/coding-tooling
+          ref: 506800a8b80b41fc39de111cf9c8d9e6203326eb
+          path: .coding-tooling-src
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Rapier oracle on WASM (invariants + 1.10x perf gate) and size budget (.performance/size.json)
+        run: |
+          (cd .coding-tooling-src && bun install --frozen-lockfile)
+          CODING_TOOLING="bun .coding-tooling-src/src/router.ts" bash scripts/size-budget.sh
 
   build-pages:
     needs: docs-scope

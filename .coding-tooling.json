@@ -39,6 +39,10 @@
       "performance:work": [
         "bash",
         "scripts/collect-work-evidence.sh"
+      ],
+      "size:budget": [
+        "bash",
+        "scripts/size-budget.sh"
       ]
     }
   },

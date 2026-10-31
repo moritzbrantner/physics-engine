@@ -1,19 +1,23 @@
-// Rapier oracle on WASM: invariants, a 1.10× perf gate against both Rapier figures (consumer
-// pattern and bare) per scenario for both engine storage modes (Ordered, Indexed), and the WASM
-// size of each engine's build.
+// Rapier oracle on WASM: invariants and a 1.10× perf gate against both Rapier figures (consumer
+// pattern and bare) per scenario for both engine storage modes (Ordered, Indexed). Each engine's
+// lone build is copied to target/size/<side>.wasm, which `coding-tooling performance size`
+// judges against .performance/size.json.
 import { execFileSync } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { copyFile, mkdir, readFile } from "node:fs/promises";
 
 const target = "target/wasm32-unknown-unknown/release/physics_oracle.wasm";
 const build = (features) => {
   execFileSync("cargo", ["build", "-p", "physics-oracle", "--release", "--locked",
     "--target", "wasm32-unknown-unknown", "--lib", "--no-default-features", "--features", features],
     { stdio: "inherit" });
-  return stat(target).then((s) => s.size);
 };
 
-const sizes = { engine: await build("engine"), rapier: await build("rapier") };
-await build("engine,rapier");
+await mkdir("target/size", { recursive: true });
+for (const side of ["engine", "rapier"]) {
+  build(side);
+  await copyFile(target, `target/size/${side}.wasm`);
+}
+build("engine,rapier");
 const env = { oracle_now: () => performance.now() };
 const { instance } = await WebAssembly.instantiate(await readFile(target), { env });
 const e = instance.exports;
@@ -41,5 +45,4 @@ for (let i = 0; i < e.oracle_scenarios(); i++) {
   failed ||= slow;
   console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${px.toFixed(2).padStart(15)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)} ${(raw === null ? "-" : raw.toFixed(2)).padStart(11)}  ${ok ? "ok" : "FAILED"}${slow ? " SLOWER THAN RAPIER" : ""}`);
 }
-console.log(`WASM size: engine ${(sizes.engine / 1e6).toFixed(2)} MB, rapier ${(sizes.rapier / 1e6).toFixed(2)} MB (scenario workloads included)`);
 process.exit(failed ? 1 : 0);
