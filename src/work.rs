@@ -26,9 +26,13 @@ pub enum Counter {
     /// Per-leaf bound tests of a ray: leaves the query tree hands to the ray test, or targets
     /// whose padded bounds a full scan tests.
     BoundTests,
+    /// Bodies a query or character operation visits through the O(n) stale-tree fallback scan
+    /// (or characters it marks for an overlap re-check) instead of the query tree: 0 while the
+    /// public mutators keep the tree current (#414).
+    FullScanBodies,
 }
 
-const COUNTERS: usize = 9;
+const COUNTERS: usize = 10;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

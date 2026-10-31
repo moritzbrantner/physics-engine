@@ -1,7 +1,8 @@
 //! Query acceleration over `rust-kernels`' AABB trees. A body's leaf ID is its id slot, so
 //! storage layout changes (inserts, tombstones, compaction) never touch the trees; the world's
 //! slot table maps a leaf back to the body. The trees are kept current by the public mutators
-//! and at the end of every step; queries fall back to a full scan whenever they are stale, so
+//! and at the end of every step, so queries always find them current; a stale tree would fall
+//! back to a full scan (debug-asserted and counted as `full-scan-bodies`, budget 0, #414), so
 //! the trees never change a query result, only how many bodies are tested.
 //!
 //! Fixed bodies (level geometry, most of a game's bodies) live apart from moving ones (#415):

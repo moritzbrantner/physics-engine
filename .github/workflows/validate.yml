@@ -109,6 +109,9 @@ jobs:
           sys.exit(0 if report["status"] == "passed" else 1)
           PY
 
+      - name: Oracle scenarios take no stale-tree fallback scan (full-scan-bodies 0)
+        run: cargo test --release --locked -p physics-oracle --features work-counters --test full_scan
+
   oracle:
     needs: docs-scope
     if: needs.docs-scope.outputs.docs-only != 'true'

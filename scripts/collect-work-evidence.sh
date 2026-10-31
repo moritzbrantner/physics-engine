@@ -8,7 +8,7 @@ contract=".performance/contract.json"
 evidence_dir="$(mktemp -d)"
 trap 'rm -rf "$evidence_dir"' EXIT
 export PHYSICS_ENGINE_WORK_EVIDENCE_DIR="$evidence_dir"
-cargo test --quiet --release --locked --features work-counters --test work_complexity -- --test-threads 1 >&2
+cargo test --quiet --release --locked --features work-counters,checkpoints --test work_complexity -- --test-threads 1 >&2
 mapfile -t operations < <(jq -r '.operations[].id' "$contract")
 fragments=()
 for operation in "${operations[@]}"; do

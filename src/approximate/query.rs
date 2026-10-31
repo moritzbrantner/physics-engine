@@ -326,8 +326,14 @@ impl World {
                 }
                 found
             });
-        // Without the tree: every live body, in body order.
-        let scan = candidates.is_none().then(|| self.ordered_positions());
+        // Without the tree: every live body, in body order (the tests' exhaustive reference).
+        let scan = candidates.is_none().then(|| {
+            if prune {
+                self.stale_tree_scan()
+            } else {
+                self.ordered_positions()
+            }
+        });
         let count = candidates
             .as_ref()
             .map_or(scan.as_ref().map_or(0, Vec::len), Candidates::len);

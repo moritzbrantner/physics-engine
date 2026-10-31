@@ -14,6 +14,8 @@ default = ["engine", "rapier"]
 # Each side can be built alone so the WASM size of each engine's workload is measurable.
 engine = ["dep:physics-engine"]
 rapier = ["dep:rapier3d"]
+# Test-only: physics-engine work counters, for tests/full_scan.rs.
+work-counters = ["engine", "physics-engine/work-counters"]
 
 [dependencies]
 physics-engine = { path = "..", optional = true }
@@ -28,3 +30,7 @@ required-features = ["engine", "rapier"]
 name = "probe"
 path = "src/bin/probe.rs"
 required-features = ["engine", "rapier"]
+
+[[test]]
+name = "full_scan"
+required-features = ["work-counters"]
