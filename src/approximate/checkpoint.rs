@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Body, BodyId, BodyStorage, CachedPoint, CollisionLayers3d, CombineRule, Config, Convergence,
-    ConvergenceScope, Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape,
-    Vector, World, contact, narrow_time, substep_length, widen_time,
+    Body, BodyId, BodyStorage, CachedPoint, CombineRule, Config, Convergence, ConvergenceScope,
+    Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, Vector, World, contact,
+    narrow_time, substep_length, widen_time,
 };
+use crate::CollisionLayers3d;
 
 // Each scalar width has its own magic; the layout is otherwise shared. Physical
 // values use `Real` at native width; elapsed/prior-substep time is always f64.
