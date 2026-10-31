@@ -458,9 +458,14 @@ impl World {
                 }
             };
             last_history = Some((key, cached));
-            // A cached point warm-starts only within this reach. A half-space has zero
-            // radius, so its contacts never match and skip the search.
-            let warm_reach = 0.1 * a.shape.radius().min(b.shape.radius());
+            // A cached point warm-starts only within this reach, a tenth of the smaller body.
+            // A half-space is unbounded: the body on it sets the reach (#424), or a box resting
+            // on the plane solves cold every step and never settles.
+            let reach = |s: Shape| match s {
+                Shape::HalfSpace => Real::INFINITY,
+                s => s.radius(),
+            };
+            let warm_reach = 0.1 * reach(a.shape).min(reach(b.shape));
             let used = &mut self.bookkeeping.used;
             used.clear();
             reserve(used, m.points.len(), &mut self.bookkeeping.work);
