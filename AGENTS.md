@@ -45,7 +45,8 @@ bash scripts/build-pages.sh                  # Pages build + WASM smoke test
 cargo run --release --locked -p physics-oracle   # Rapier oracle: invariants + native perf gate
 cargo run --release --locked -p physics-oracle -- --only stairs --no-timing --dump /tmp/traces   # debugging; --list, --keep-going
 cargo run --release --locked -p physics-oracle --bin probe -- --floor --box 2,1,0,0.25,1,2 --at 0,0.8025,0 --desired 2,0,0   # one move on both engines
-node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate, sizes
+node scripts/oracle-wasm.mjs                 # Rapier oracle on WASM: invariants + 1.10× perf gate
+bash scripts/size-budget.sh                  # the WASM oracle, then each engine's WASM against .performance/size.json
 cargo test --release --features work-counters,checkpoints --test work_complexity   # Big-O work contracts (self-checking)
 bun <coding-tooling>/src/router.ts performance work --root .            # the same, judged by coding-tooling as in CI
 cargo test --release --locked -p physics-oracle --features work-counters --test full_scan   # oracle scenarios: no stale-tree fallback scan
