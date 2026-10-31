@@ -264,7 +264,7 @@ impl World {
                 if b.movable() {
                     let prepared = self.responses[i];
                     b.velocity += b.impulse * prepared.inverse_mass;
-                    b.angular_velocity += prepared.inertia(b, b.angular_impulse, report);
+                    b.angular_velocity += prepared.inertia(b.angular_impulse, report);
                 }
                 b.impulse = Vector::ZERO;
                 b.angular_impulse = Vector::ZERO;
@@ -372,13 +372,18 @@ impl World {
             && woke == 0
             && self.bookkeeping.ccd.is_empty()
             && !pairs.iter().any(|&(i, j, ref m)| {
-                // A tumbling corner can reach a feature this manifold lacks.
+                // A tumbling corner can reach a feature this manifold lacks. A halfspace
+                // manifold already holds every corner the step's spin can bring within reach
+                // of the plane (its margin includes it), so it is reused as Rapier reuses
+                // every manifold for the step's substeps (#426).
+                let (a, b) = (&self.bodies[i], &self.bodies[j]);
+                let plane = a.shape == Shape::HalfSpace || b.shape == Shape::HalfSpace;
                 let tumbles = |b: &Body| {
                     !matches!(b.shape, Shape::Sphere(_))
                         && b.angular_velocity.length() * b.shape.radius() * lookahead
                             > self.scene.contact_slop
                 };
-                m.swept || tumbles(&self.bodies[i]) || tumbles(&self.bodies[j])
+                m.swept || (!plane && (tumbles(a) || tumbles(b)))
             }))
     }
     /// Constraint phase: fresh rows for this substep's pairs, warm-started from the contact
@@ -496,9 +501,33 @@ impl World {
                     point.ra += shift;
                     point.rb -= shift;
                 }
-                let response_bodies = [(a, &self.responses[i]), (b, &self.responses[j])];
                 let arms = [point.ra, point.rb];
-                let k = effective_mass(response_bodies, arms, n, response, !linear, report);
+                let mut angular = [[Vector::ZERO; 3]; 2];
+                if row_spin {
+                    for side in 0..2 {
+                        if response[side] && prepared[side].spins() {
+                            // Spelled out: `[n, t1, t2].map(..)` compiles to a drain loop.
+                            let (p, r) = (prepared[side], arms[side]);
+                            angular[side] = [
+                                p.inertia(r.cross(n), report),
+                                p.inertia(r.cross(t1), report),
+                                p.inertia(r.cross(t2), report),
+                            ];
+                        }
+                    }
+                }
+                // Effective mass along each direction: inverse masses plus (r × d)·I⁻¹(r × d).
+                let mass = |d: usize, dir: Vector| {
+                    let mut k = 0.0;
+                    for side in 0..2 {
+                        if response[side] {
+                            k += prepared[side].inverse_mass
+                                + arms[side].cross(dir).dot(angular[side][d]);
+                        }
+                    }
+                    k
+                };
+                let k = mass(0, n);
                 if k <= 1e-14 {
                     continue;
                 }
@@ -525,14 +554,10 @@ impl World {
                     rb: point.rb,
                     t1,
                     t2,
+                    angular,
                     normal_mass: 1.0 / k,
                     tangent_mass: if spins {
-                        [
-                            effective_mass(response_bodies, arms, t1, response, !linear, report)
-                                .recip(),
-                            effective_mass(response_bodies, arms, t2, response, !linear, report)
-                                .recip(),
-                        ]
+                        [mass(1, t1).recip(), mass(2, t2).recip()]
                     } else {
                         [k.recip(); 2]
                     },
@@ -600,8 +625,7 @@ impl World {
                 &mut self.bodies,
                 &self.responses,
                 c,
-                c.n * c.normal_impulse + c.t1 * c.tangent_impulse[0] + c.t2 * c.tangent_impulse[1],
-                report,
+                [c.normal_impulse, c.tangent_impulse[0], c.tangent_impulse[1]],
             );
         }
         match self.scene.convergence {
@@ -927,7 +951,7 @@ impl World {
         self.transaction.body(index, b);
         let prepared = self.responses[index];
         b.velocity += (self.scene.gravity + b.force / b.mass) * h;
-        b.angular_velocity += prepared.inertia(b, b.torque, report) * h;
+        b.angular_velocity += prepared.inertia(b.torque, report) * h;
         if b.linear_damping > 0.0 {
             b.velocity = b.velocity * (1.0 / (1.0 + h * b.linear_damping));
         }
@@ -1548,12 +1572,12 @@ pub(super) fn effective_mass(
     report: &mut Report,
 ) -> Real {
     let mut k = 0.0;
-    for (((body, cached), r), yes) in bodies.into_iter().zip(arms).zip(response) {
+    for (((_, cached), r), yes) in bodies.into_iter().zip(arms).zip(response) {
         if yes {
             let prepared = *cached;
             k += prepared.inverse_mass;
             if spin {
-                k += prepared.inertia(body, r.cross(n), report).cross(r).dot(n);
+                k += prepared.inertia(r.cross(n), report).cross(r).dot(n);
             }
         }
     }
@@ -1564,19 +1588,16 @@ pub(super) fn apply(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     c: &Constraint,
-    j: Vector,
-    report: &mut Report,
+    impulse: [Real; 3],
 ) {
-    for (i, r, j, yes) in [
-        (c.a, c.ra, -j, c.response[0]),
-        (c.b, c.rb, j, c.response[1]),
-    ] {
-        if yes {
+    let j = c.n * impulse[0] + c.t1 * impulse[1] + c.t2 * impulse[2];
+    for (side, i, sign) in [(0, c.a, -1.0), (1, c.b, 1.0)] {
+        if c.response[side] {
             let b = &mut bodies[i];
-            let prepared = responses[i];
-            b.velocity += j * prepared.inverse_mass;
+            b.velocity += j * (sign * responses[i].inverse_mass);
             if c.spin {
-                b.angular_velocity += prepared.inertia(b, r.cross(j), report);
+                let [n, t1, t2] = c.angular[side];
+                b.angular_velocity += (n * impulse[0] + t1 * impulse[1] + t2 * impulse[2]) * sign;
             }
         }
     }

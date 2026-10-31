@@ -16,6 +16,7 @@ fn row(a: usize, b: usize) -> Constraint {
         rb: V::ZERO,
         t1: V::Y,
         t2: V::Z,
+        angular: [[V::ZERO; 3]; 2],
         normal_mass: 1.0,
         tangent_mass: [1.0; 2],
         bias: 0.0,

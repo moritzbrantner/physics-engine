@@ -648,6 +648,10 @@ struct Constraint {
     rb: Vector,
     t1: Vector,
     t2: Vector,
+    /// Per side (a, b): the world inverse inertia applied to `r × d` for d = n, t1, t2, the
+    /// angular velocity change per unit impulse along `d` (zero where the side does not
+    /// spin). Prepared once per row, as Rapier's solver contacts do (#424).
+    angular: [[Vector; 3]; 2],
     normal_mass: Real,
     tangent_mass: [Real; 2],
     bias: Real,

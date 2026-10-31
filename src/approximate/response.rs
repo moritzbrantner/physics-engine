@@ -4,7 +4,8 @@ use super::{Body, Real, Report, Vector};
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct PreparedResponse {
     pub inverse_mass: Real,
-    local_inverse_inertia: Vector,
+    /// Rows of the symmetric world-space inverse inertia at the prepared orientation.
+    world_inverse_inertia: [Vector; 3],
     spin: bool,
 }
 
@@ -28,9 +29,18 @@ impl PreparedResponse {
                 ..Self::default()
             };
         };
+        // R diag(d) Rᵀ as rows, once per preparation: applying it is three dot products, as
+        // Rapier's world-space inverse inertia (#424), instead of two quaternion rotations.
+        let axes = body.orientation.axes();
+        let d = local_inverse_inertia;
+        let row = |i: usize| {
+            axes[0] * (d.0 * axes[0].at(i))
+                + axes[1] * (d.1 * axes[1].at(i))
+                + axes[2] * (d.2 * axes[2].at(i))
+        };
         Self {
             inverse_mass,
-            local_inverse_inertia,
+            world_inverse_inertia: [row(0), row(1), row(2)],
             spin: true,
         }
     }
@@ -41,21 +51,15 @@ impl PreparedResponse {
         self.spin
     }
 
+    /// The world-space inverse inertia at the prepared orientation applied to `v`.
     #[inline]
-    pub fn inertia(self, body: &Body, v: Vector, report: &mut Report) -> Vector {
+    pub fn inertia(self, v: Vector, report: &mut Report) -> Vector {
         if !self.spin {
             return Vector::ZERO;
         }
         report.inertia_applications += 1;
-        // Deliberately preserve the reference's quaternion operations and their evaluation order.
-        // A world-space matrix or pre-scaled contact axes would regroup floating-point operations.
-        // Read orientation from its sole authority; it is constant during velocity solving and
-        // changes only in integration, after the final use of this substep's coefficients.
-        body.orientation.rotate(
-            body.orientation
-                .inverse_rotate(v)
-                .component_mul(self.local_inverse_inertia),
-        )
+        let [x, y, z] = self.world_inverse_inertia;
+        Vector(x.dot(v), y.dot(v), z.dot(v))
     }
 }
 
