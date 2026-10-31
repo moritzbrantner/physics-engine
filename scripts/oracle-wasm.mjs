@@ -1,11 +1,12 @@
 // Rapier oracle on WASM: invariants and a 1.10× perf gate against both Rapier figures (consumer
 // pattern and bare) per scenario for both engine storage modes (Ordered, Indexed). Each engine's
 // lone build is copied to target/size/<side>.wasm, which `coding-tooling performance size`
-// judges against .performance/size.json.
+// judges against .performance/size.json. `--size-only` stops after those two builds (the base-branch
+// size measurement); CARGO_TARGET_DIR lets that build share the PR checkout's dependency cache.
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 
-const target = "target/wasm32-unknown-unknown/release/physics_oracle.wasm";
+const target = `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/physics_oracle.wasm`;
 const build = (features) => {
   execFileSync("cargo", ["build", "-p", "physics-oracle", "--release", "--locked",
     "--target", "wasm32-unknown-unknown", "--lib", "--no-default-features", "--features", features],
@@ -17,6 +18,7 @@ for (const side of ["engine", "rapier"]) {
   build(side);
   await copyFile(target, `target/size/${side}.wasm`);
 }
+if (process.argv.includes("--size-only")) process.exit(0);
 build("engine,rapier");
 const env = { oracle_now: () => performance.now() };
 const { instance } = await WebAssembly.instantiate(await readFile(target), { env });
