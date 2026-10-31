@@ -1,4 +1,4 @@
-use super::{Body, Real, Shape, Vector as V, geometry::GeometryStats, primitive};
+use super::{Body, Quaternion, Real, Shape, Vector as V, geometry::GeometryStats, primitive};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Point {
@@ -114,6 +114,12 @@ pub(super) fn bounds(b: &Body) -> (V, V) {
         Shape::Heightfield { half_extents, .. } => half_extents,
         // Halfspaces are tested outside the bounds structures.
         Shape::HalfSpace => return (b.position, b.position),
+        // A box's extents are |R| h, a few roundings off the exact value at most: well inside
+        // the padding below, without widening every awake box each substep (#426).
+        Shape::Box(h) if b.orientation != Quaternion::IDENTITY => {
+            let [x, y, z] = b.orientation.axes();
+            x.abs() * h.0 + y.abs() * h.1 + z.abs() * h.2
+        }
         _ => primitive::bounds_extents(b),
     };
     // Bounds admission must not depend on contact_slop covering arithmetic error.
@@ -662,14 +668,16 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real, horizon: Real) -> Opti
             // the rotation's zero terms cannot change them (#375: upright crates).
             let identity =
                 body.orientation.0 == 0.0 && body.orientation.1 == 0.0 && body.orientation.2 == 0.0;
+            // The scaled world axes, rotated once: every corner is a signed sum of them (#426).
+            let [x, y, z] = if identity {
+                [V(h.0, 0.0, 0.0), V(0.0, h.1, 0.0), V(0.0, 0.0, h.2)]
+            } else {
+                let [x, y, z] = body.orientation.axes();
+                [x * h.0, y * h.1, z * h.2]
+            };
             for (k, slot) in support.iter_mut().enumerate() {
-                let sign = |bit: usize| if k & bit == 0 { -1.0 } else { 1.0 };
-                let local = V(sign(1) * h.0, sign(2) * h.1, sign(4) * h.2);
-                let offset = if identity {
-                    local
-                } else {
-                    body.orientation.rotate(local)
-                };
+                let pick = |bit: usize, e: V| if k & bit == 0 { -e } else { e };
+                let offset = pick(1, x) + pick(2, y) + pick(4, z);
                 *slot = (body.position + offset, 0.0);
             }
             8

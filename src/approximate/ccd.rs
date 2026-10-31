@@ -227,7 +227,7 @@ impl World {
                     let b = &mut self.bodies[index];
                     let prepared = self.responses[index];
                     b.velocity += impulse * prepared.inverse_mass;
-                    b.angular_velocity += prepared.inertia(b, arm.cross(impulse), report);
+                    b.angular_velocity += prepared.inertia(arm.cross(impulse), report);
                 }
                 // The partner moved with its earlier velocity until the impact.
                 let change = self.bodies[j].velocity - before;

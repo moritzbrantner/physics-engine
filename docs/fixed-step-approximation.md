@@ -44,7 +44,10 @@ accumulated impulses warm-start the next substep, and body responses are prepare
 contacts. A substep regenerates contacts and responses instead after anything the rows cannot
 represent: a swept test or CCD advance, a wake, a sleep, a retirement, two dynamic bodies that
 can close, or a non-sphere body whose rotation moves its surface more than the slop by the end
-of the step. Results of multi-substep worlds therefore differ from stepping `dt / n` with one
+of the step against anything but a halfspace (a halfspace manifold already holds every corner
+the step's rotation can bring within reach, #426). Each row prepares its angular Jacobians
+`I⁻¹(r × d)` for the normal and both tangents with the world-space inverse inertia, as Rapier's
+solver contacts do, so iterations apply no inertia. Results of multi-substep worlds therefore differ from stepping `dt / n` with one
 substep `n` times; one-substep worlds are unchanged.
 
 ## One substep (with generation)

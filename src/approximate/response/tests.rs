@@ -6,7 +6,7 @@ fn vector_bits(v: Vector) -> [u64; 3] {
 }
 
 #[test]
-fn prepared_response_is_bit_identical_to_original_formula() {
+fn prepared_response_matches_the_quaternion_formula() {
     for shape in [Shape::Sphere(0.7), Shape::Box(Vector(0.3, 2.5, 7.0))] {
         for mass in [0.0, 0.01, 2.0, 10_000.0] {
             for q in [
@@ -28,10 +28,14 @@ fn prepared_response_is_bit_identical_to_original_formula() {
                         Vector(0.3, -4.25, 7.5),
                         Vector(1e4, -0.0, 1e-6),
                     ] {
-                        assert_eq!(
-                            vector_bits(p.inertia(&b, v, &mut report)),
-                            vector_bits(b.inverse_inertia(v))
-                        );
+                        let (got, want) = (p.inertia(v, &mut report), b.inverse_inertia(v));
+                        if q == Quaternion::IDENTITY {
+                            // Unrotated, the world matrix is the diagonal itself.
+                            assert_eq!(vector_bits(got), vector_bits(want));
+                        } else {
+                            let scale = want.length().max(1e-30);
+                            assert!((got - want).length() <= 1e-5 * scale, "{got:?} vs {want:?}");
+                        }
                     }
                     assert_eq!(
                         report.response_preparations,
@@ -218,7 +222,8 @@ fn preparation_work_depends_on_bodies_not_iteration_count() {
         assert!(r.inertia_applications > r.inertia_preparations);
         applications.push(r.inertia_applications);
     }
-    assert!(applications[0] < applications[1] && applications[1] < applications[2]);
+    // Rows hold their angular Jacobians (#426): iterations apply no further inertia.
+    assert!(applications[0] == applications[1] && applications[1] == applications[2]);
 }
 
 #[test]
