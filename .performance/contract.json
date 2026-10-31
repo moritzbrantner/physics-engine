@@ -73,6 +73,18 @@
             }
           ],
           "notes": "Bodies tested exactly: independent of the world size."
+        },
+        {
+          "name": "bound-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Per-leaf bound tests (#415): leaves the query tree hands to the ray test. Fixed bodies sit in a four-wide tree with exact leaf bounds, so no per-target slab test repeats the tree's; a regression in candidate filtering shows here as work."
         }
       ]
     },
@@ -162,6 +174,22 @@
               "bound": "linear"
             }
           ]
+        },
+        {
+          "name": "bound-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            },
+            {
+              "dimension": "hits",
+              "bound": "linear"
+            }
+          ],
+          "notes": "Per-leaf bound tests (#415): one per leaf the segment enters, so constant in bodies and linear in hits."
         }
       ]
     },
@@ -313,7 +341,7 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "O(log n + k): logarithmic in bodies at fixed hits and linear in hits at fixed bodies. The hits bound is the tolerant degree-1 class because node visits per extra hit vary by a few nodes, which the exact linear test rejects.",
+          "notes": "O(log n + k): logarithmic in bodies at fixed hits and linear in hits at fixed bodies. The hits bound is the tolerant degree-1 class because node visits per extra hit vary by a few nodes, which the exact linear test rejects. Tolerance 0.5 since #415: the four-wide tree descends in fewer nodes (6, 6, 8, 12, 20 at 1..16 hits), so the constant descent no longer hides the flat first interval.",
           "growth": [
             {
               "dimension": "bodies",
@@ -322,7 +350,8 @@
             {
               "dimension": "hits",
               "bound": "polynomial",
-              "degree": 1
+              "degree": 1,
+              "tolerance": 0.5
             }
           ]
         },
@@ -687,7 +716,7 @@
           "name": "tree-nodes-per-character",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "O(log n) per character, independent of how many characters move.",
+          "notes": "O(log n + log m) per character: the casts descend the fixed bodies' wide tree and the moving-body tree, which holds the m characters (#415; before, one mixed tree dominated by the town hid the log m term). Measured 33, 36, 42, 48, 54 at 8..128 characters, about six nodes per doubling; tolerance 0.5 for the flatter first interval.",
           "growth": [
             {
               "dimension": "bodies",
@@ -695,7 +724,8 @@
             },
             {
               "dimension": "characters",
-              "bound": "constant"
+              "bound": "logarithmic",
+              "tolerance": 0.5
             }
           ]
         },
@@ -868,15 +898,15 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Constant in crowd size (#337): a placement marks only the placed character and characters whose bounds it touches for an overlap re-check, so the rest of the crowd stays known free of overlap. Before, every character re-checked (linear). Logarithmic in world size: the leaf refit and the neighbourhood lookup are tree descents.",
+          "notes": "A placement marks only the placed character and characters whose bounds it touches for an overlap re-check (#337), so the rest of the crowd stays known free of overlap; before, every character re-checked (linear). The neighbourhood lookup is one descent of the moving-body tree, which holds the characters but not the fixed town (#415: fixed bodies live in their own wide tree), so it is logarithmic in crowd size and constant in world size. Measured 23, 29, 35, 41, 47 nodes at 8..128 characters and 35 at every world size.",
           "growth": [
             {
               "dimension": "characters",
-              "bound": "constant"
+              "bound": "logarithmic"
             },
             {
               "dimension": "bodies",
-              "bound": "logarithmic"
+              "bound": "constant"
             }
           ]
         },
@@ -957,16 +987,14 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Constant in crowd size (#352): moving a static body in place keeps the layout, and marks only characters whose bounds it touches for an overlap re-check. Removing and re-adding it changes the layout, so every character re-checked (linear). Logarithmic in world size: the leaf refit and the neighbourhood lookup are tree descents. Measured 21, 21, 23, 25, 27, 29 nodes at 512..16384 bodies, two nodes per doubling after a flat first interval, hence tolerance 1 (upper slope allowed 2.5 per level against the lower half's 1); linear work would add thousands of nodes.",
+          "notes": "Moving a static body in place keeps the layout (#352), and marks only characters whose bounds it touches for an overlap re-check; removing and re-adding it changes the layout, so every character re-checked (linear). The moved body leaves the fixed wide tree for the moving-body tree, which holds the characters but not the fixed town (#415), so the refit and the neighbourhood lookup are descents of that tree: O(log characters), constant in world size. Crowd size is held by the budget, not a class: the measured 9, 7, 9, 11, 15 nodes at 8..128 characters dip before they climb, which the tolerant logarithmic test (fitted to the flat lower half) rejects; linear work would add hundreds of nodes. 9 nodes at every world size.",
+          "budget": {
+            "max": 64
+          },
           "growth": [
             {
-              "dimension": "characters",
-              "bound": "constant"
-            },
-            {
               "dimension": "bodies",
-              "bound": "logarithmic",
-              "tolerance": 1
+              "bound": "constant"
             }
           ]
         },
@@ -1226,12 +1254,13 @@
           "name": "box-query-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Query-tree nodes the broad phase visits in the first step, where every awake body makes its box: one descent each (warm steps keep the boxes and visit none here). `tolerance: 1` because the measured 174, 184, 200, 216, 232, 248 (8 awake) have a flat first interval and then two nodes per awake body per doubling (one tree level), as `place-static`.",
+          "notes": "Query-tree nodes the broad phase visits in the first step, where every awake body makes its box: one descent of the fixed-body tree and one of the moving-body tree each (warm steps keep the boxes and visit none here). Fixed and moving bodies live in separate trees (#415), so a box costs O(log statics + log awake): linearithmic in awake bodies (26, 56, 120, 262 ... 5,328 nodes at 1..128 awake, 4,096 statics; before #415 one mixed tree gave 27 per awake body), and `tolerance: 1` in statics because the measured 220, 230, 246, 262, 278, 294 (8 awake) have a flat first interval and then two nodes per awake body per doubling (one tree level), as `place-static`. A step-only world descends the binary fixed tree; once a query has built the four-wide one, the broad phase uses it too.",
           "growth": [
             { "dimension": "statics", "bound": "logarithmic", "tolerance": 1 },
+            { "dimension": "awake", "bound": "linearithmic" },
             {
               "product": [
-                { "dimension": "awake", "bound": "linear" },
+                { "dimension": "awake", "bound": "linearithmic" },
                 { "dimension": "statics", "bound": "logarithmic" }
               ]
             }

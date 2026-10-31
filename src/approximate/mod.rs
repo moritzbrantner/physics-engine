@@ -1130,7 +1130,7 @@ impl World {
                 .max(lo.abs().max_component())
                 .max(hi.abs().max_component());
             let pad = 64.0 * Real::EPSILON * (1.0 + reach);
-            tree.tree().visit_aabb(
+            tree.visit_moving_aabb(
                 spatial_kernels::Aabb {
                     min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
                     max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],
@@ -1436,7 +1436,7 @@ fn drop_boxes_near(
     }
     let pad = slop
         + 64.0 * Real::EPSILON * (1.0 + lo.abs().max_component().max(hi.abs().max_component()));
-    tree.tree().visit_aabb(
+    tree.visit_moving_aabb(
         spatial_kernels::Aabb {
             min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
             max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],

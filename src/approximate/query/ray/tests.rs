@@ -338,3 +338,92 @@ fn first_hit_matches_the_first_of_all_hits_after_layout_changes() {
         assert_eq!(first, hits.first().copied(), "ray {i}");
     }
 }
+
+/// Fixed bodies live in the wide tree once a query built it; adds wait in the dynamic tree,
+/// removals drop leaves in place, moved fixed bodies leave it, and enough changes rebuild it
+/// (#415). Through all of that, pruned rays and overlaps match the exhaustive scan.
+#[test]
+fn fixed_body_churn_after_the_wide_tree_is_built_matches_exhaustive() {
+    let mut w = world();
+    let mut seed = 0x415_u64;
+    let mut next = move || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (seed >> 33) as Real / (u32::MAX >> 1) as Real
+    };
+    let mut key = 0u64;
+    let mut fixed = Vec::new();
+    for _ in 0..300 {
+        let p = V(next() * 60.0 - 30.0, next() * 4.0, next() * 60.0 - 30.0);
+        fixed.push(key);
+        w.add_body(Body::fixture(key, Shape::Box(V(0.8, 1.0, 0.5)), p, 0.0))
+            .unwrap();
+        key += 1;
+    }
+    for k in 0..16 {
+        let mut b = Body::fixture(
+            1000 + k,
+            Shape::Sphere(0.4),
+            V(k as Real * 3.0 - 24.0, 1.0, 0.0),
+            1.0,
+        );
+        b.velocity = V(0.0, 0.0, 2.0);
+        w.add_body(b).unwrap();
+    }
+    let (mut all, mut exhaustive, mut overlaps, mut reference) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for round in 0..240 {
+        for i in 0..8 {
+            let origin = V(next() * 70.0 - 35.0, next() * 4.0, next() * 70.0 - 35.0);
+            let a = next() * 6.3;
+            let cast = RayCast::new(origin, V(30.0 * a.cos(), next() - 0.5, 30.0 * a.sin()));
+            w.cast_ray(cast, QueryFilter::default(), &mut all).unwrap();
+            w.ray_query(cast, QueryFilter::default(), &mut exhaustive, false)
+                .unwrap();
+            assert_eq!(all, exhaustive, "round {round} ray {i}");
+            let first = w.cast_ray_first(cast, QueryFilter::default()).unwrap();
+            assert_eq!(first, all.first().copied(), "round {round} ray {i}");
+            let pose = QueryPose::new(Shape::Sphere(1.5), origin);
+            w.shape_query(
+                pose,
+                None,
+                QueryFilter::default(),
+                None,
+                &mut overlaps,
+                true,
+            )
+            .unwrap();
+            w.shape_query(
+                pose,
+                None,
+                QueryFilter::default(),
+                None,
+                &mut reference,
+                false,
+            )
+            .unwrap();
+            assert_eq!(overlaps, reference, "round {round} overlap {i}");
+        }
+        match round % 4 {
+            0 => {
+                let p = V(next() * 60.0 - 30.0, next() * 4.0, next() * 60.0 - 30.0);
+                fixed.push(key);
+                w.add_body(Body::fixture(key, Shape::Box(V(0.6, 0.6, 0.6)), p, 0.0))
+                    .unwrap();
+                key += 1;
+            }
+            1 => {
+                let victim =
+                    fixed.swap_remove((next() * fixed.len() as Real) as usize % fixed.len());
+                w.remove_body(w.body_id(victim).unwrap()).unwrap();
+            }
+            2 => {
+                let k = fixed[(next() * fixed.len() as Real) as usize % fixed.len()];
+                let p = V(next() * 60.0 - 30.0, next() * 4.0, next() * 60.0 - 30.0);
+                w.set_static_position(w.body_id(k).unwrap(), p).unwrap();
+            }
+            _ => {
+                w.step(1.0 / 60.0).unwrap();
+            }
+        }
+    }
+}

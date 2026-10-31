@@ -300,7 +300,7 @@ impl World {
                     sweep_bounds.1 + V(pad, pad, pad),
                 );
                 let mut found = Candidates::default();
-                let nodes = tree.tree().visit_aabb(
+                let nodes = tree.visit_aabb(
                     spatial_kernels::Aabb {
                         min: [lo.0, lo.1, lo.2],
                         max: [hi.0, hi.1, hi.2],

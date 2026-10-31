@@ -150,6 +150,7 @@ impl Rng {
 pub fn all() -> Vec<Scenario> {
     vec![
         scenarios::static_queries::scenario(),
+        scenarios::ray_sight::scenario(),
         scenarios::character_move::scenario(),
         scenarios::arpg_planar::scenario(),
         scenarios::crowd::scenario(),

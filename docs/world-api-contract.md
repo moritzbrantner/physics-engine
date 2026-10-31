@@ -105,8 +105,10 @@ When to pick which:
 - `cast_ray` queries a finite segment against current poses with local feature identity; see
   [floating ray queries](floating-ray-queries.md). `cast_ray_first` returns only the earliest
   hit (ties by lower BodyId), the same hit as `cast_ray(..)[0]`, without collecting the rest.
-- Queries traverse an incremental AABB tree (`bvh-kernels`) kept current by `add_body`,
-  `remove_body` and `step`; it changes which bodies are tested, never a result.
+- Queries traverse AABB trees (`bvh-kernels`) kept current by `add_body`, `remove_body` and
+  `step`: an incremental tree of moving bodies, and for fixed bodies an exact incremental tree
+  plus a four-wide `WideBvh` that the first ray or shape query builds (#415). The trees change
+  which bodies are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
 ## Terrain

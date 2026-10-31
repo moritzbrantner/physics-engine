@@ -13,6 +13,7 @@ pub mod mmorpg_tick;
 pub mod platforms;
 pub mod props;
 pub mod push;
+pub mod ray_sight;
 pub mod slopes;
 pub mod stairs;
 pub mod stairs_pace;
