@@ -1,0 +1,170 @@
+//! C7/C16 (MMORPG, #416): MMORPG's crowded tick at its scale. 139 movers, 64 of them in one
+//! fight: an 8 x 8 press 0.7 m apart whose members all push in and around its centre every
+//! tick, while the other 75 walk a lane apart from it. All moves of a tick form one batch, so
+//! this is the dense case `move_characters` has to keep cheap. Rapier mirrors MMORPG as in
+//! `crowd`.
+
+use crate::kcc::{DT, HALF, OFFSET, RADIUS, positions};
+use crate::{Obs, Scenario, Trace};
+
+const TICKS: u32 = 240;
+const REST: f32 = HALF + RADIUS + OFFSET;
+const FIGHT: usize = 64;
+const WALKERS: usize = 75;
+const SPACING: f32 = 0.7;
+const SPEED: f32 = 1.5;
+
+/// Start position and walking direction (unit, horizontal) of every character, in id order.
+fn characters() -> Vec<([f32; 3], [f32; 2])> {
+    let mut out = Vec::new();
+    for k in 0..FIGHT {
+        let x = (k % 8) as f32 * SPACING - 3.5 * SPACING;
+        let z = (k / 8) as f32 * SPACING - 3.5 * SPACING;
+        // In towards the centre and around it, half each.
+        let r = (x * x + z * z).sqrt();
+        let (ix, iz) = (-x / r, -z / r);
+        let (dx, dz) = (ix - iz, iz + ix);
+        let l = (dx * dx + dz * dz).sqrt();
+        out.push(([x, REST, z], [dx / l, dz / l]));
+    }
+    for k in 0..WALKERS {
+        out.push(([-75.0 + 2.0 * k as f32, REST, 20.0], [1.0, 0.0]));
+    }
+    out
+}
+
+fn desired(direction: [f32; 2]) -> [f32; 3] {
+    [direction[0] * SPEED * DT, 0.0, direction[1] * SPEED * DT]
+}
+
+pub fn scenario() -> Scenario {
+    Scenario {
+        name: "crowd-fight",
+        capabilities: "C2 C7 C16",
+        ticks: TICKS,
+        #[cfg(feature = "engine")]
+        engine: |storage| Box::new(engine::Sim::new(storage)),
+        #[cfg(feature = "rapier")]
+        rapier: || Box::new(rapier::Sim::new(true)),
+        #[cfg(feature = "rapier")]
+        rapier_raw: Some(|| Box::new(rapier::Sim::new(false))),
+        check,
+    }
+}
+
+fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
+    let n = characters().len();
+    positions(rapier, TICKS, n)?;
+    let engine = positions(engine, TICKS, n)?;
+    let at = |tick, i| engine.position(tick, i);
+    for tick in (0..TICKS as usize).step_by(5) {
+        for i in 0..n {
+            let a = at(tick, i);
+            if a[1] != REST || !a[0].is_finite() || !a[2].is_finite() {
+                return Err(format!(
+                    "character {i} left the ground plane at tick {tick}"
+                ));
+            }
+            for j in i + 1..n {
+                let b = at(tick, j);
+                let d = ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+                if d < 2.0 * RADIUS - 1e-3 {
+                    return Err(format!(
+                        "characters {i} and {j} overlap by {} at tick {tick}",
+                        2.0 * RADIUS - d
+                    ));
+                }
+            }
+        }
+    }
+    // The walkers never meet anyone: they cover their whole walk.
+    let last = TICKS as usize - 1;
+    for k in FIGHT..n {
+        let walked = at(last, k)[0] - at(0, k)[0];
+        let full = SPEED * DT * (TICKS - 1) as f32;
+        if (walked - full).abs() > 1e-2 {
+            return Err(format!("walker {k} covered {walked} of {full}"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "engine")]
+mod engine {
+    use super::*;
+    use crate::kcc::engine::{Characters, capsules, fixed, v, world};
+    use physics_engine::approximate::{BodyStorage, CharacterSettings, Shape};
+
+    pub struct Sim {
+        characters: Characters,
+        directions: Vec<[f32; 2]>,
+    }
+    impl Sim {
+        pub fn new(storage: BodyStorage) -> Self {
+            let settings = CharacterSettings {
+                offset: OFFSET,
+                plane: Some(REST),
+                ..CharacterSettings::default()
+            };
+            let (starts, directions): (Vec<_>, Vec<_>) = characters().into_iter().unzip();
+            let statics = [fixed(1, Shape::HalfSpace, [0.0; 3])];
+            let bodies = capsules(1_000, Shape::capsule(HALF, RADIUS), starts);
+            Self {
+                characters: Characters::new(world(storage, statics), bodies, settings),
+                directions,
+            }
+        }
+    }
+    impl crate::Sim for Sim {
+        fn tick(&mut self, _tick: u32, trace: &mut Trace) {
+            let directions = &self.directions;
+            self.characters.move_all(|i| v(desired(directions[i])));
+            for r in &self.characters.results {
+                trace
+                    .0
+                    .push(Obs::Position(self.characters.position(r.body)));
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rapier")]
+mod rapier {
+    use super::*;
+    use crate::kcc::rapier::{Characters, halfspace, mirror_controller, v};
+    use rapier3d::prelude::*;
+
+    pub struct Sim {
+        characters: Characters,
+        directions: Vec<[f32; 2]>,
+    }
+
+    impl Sim {
+        pub fn new(rebuild: bool) -> Self {
+            let (starts, directions): (Vec<_>, Vec<_>) = characters().into_iter().unzip();
+            let mut characters = Characters::new(
+                vec![halfspace()],
+                starts,
+                Capsule::new_y(HALF, RADIUS),
+                mirror_controller(OFFSET, None, None),
+                rebuild,
+            );
+            // MMORPG keeps the crowd on its plane, the floor left out of its moves.
+            characters.exclude = Some(0);
+            characters.planar = true;
+            Self {
+                characters,
+                directions,
+            }
+        }
+    }
+    impl crate::Sim for Sim {
+        fn tick(&mut self, _tick: u32, trace: &mut Trace) {
+            let directions = &self.directions;
+            self.characters.move_all(|i| v(desired(directions[i])));
+            for i in 0..self.directions.len() {
+                trace.0.push(Obs::Position(self.characters.position(i)));
+            }
+        }
+    }
+}

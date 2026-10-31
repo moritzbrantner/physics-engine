@@ -4,6 +4,7 @@ pub mod basin;
 pub mod capsule_normals;
 pub mod character_move;
 pub mod crowd;
+pub mod crowd_fight;
 pub mod debris;
 pub mod debris_town;
 pub mod embedded_starts;
