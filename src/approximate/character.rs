@@ -475,7 +475,7 @@ impl World {
         let (lo, hi) = self.bodies[i].cached_bounds;
         let mut nearby = std::mem::take(&mut self.characters.nearby);
         nearby.clear();
-        let nodes = self.query_tree.tree().visit_aabb(
+        let nodes = self.query_tree.visit_moving_aabb(
             spatial_kernels::Aabb {
                 min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
                 max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],

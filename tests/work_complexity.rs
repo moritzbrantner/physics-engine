@@ -208,6 +208,7 @@ fn ray_casts_are_log_n_plus_k() {
     {
         let w = town(log2);
         let (mut n_first, mut e_first, mut n_all, mut e_all) = (0, 0, 0, 0);
+        let (mut b_first, mut b_all) = (0, 0);
         for q in 0..QUERIES as usize {
             let cast = row_ray(q % 8, hits);
             let (n, e) = counted(|| {
@@ -222,6 +223,7 @@ fn ray_casts_are_log_n_plus_k() {
             });
             n_first += n;
             e_first += e;
+            b_first += work::get(Counter::BoundTests);
             let (n, e) = counted(|| {
                 w.cast_ray(cast, QueryFilter::default(), &mut hits_out)
                     .unwrap();
@@ -229,6 +231,7 @@ fn ray_casts_are_log_n_plus_k() {
             assert_eq!(hits_out.len() as u64, hits);
             n_all += n;
             e_all += e;
+            b_all += work::get(Counter::BoundTests);
         }
         if hits == 4 {
             first.push((
@@ -236,6 +239,7 @@ fn ray_casts_are_log_n_plus_k() {
                 vec![
                     ("tree-nodes", n_first / QUERIES),
                     ("exact-tests", e_first / QUERIES),
+                    ("bound-tests", b_first / QUERIES),
                 ],
             ));
         }
@@ -244,13 +248,17 @@ fn ray_casts_are_log_n_plus_k() {
             vec![
                 ("tree-nodes", n_all / QUERIES),
                 ("exact-tests", e_all / QUERIES),
+                ("bound-tests", b_all / QUERIES),
             ],
         ));
     }
     judge(
         "ray-first",
         &first,
-        &[("exact-tests", "bodies", "constant")],
+        &[
+            ("exact-tests", "bodies", "constant"),
+            ("bound-tests", "bodies", "constant"),
+        ],
     );
     judge(
         "ray-all",
@@ -258,6 +266,8 @@ fn ray_casts_are_log_n_plus_k() {
         &[
             ("exact-tests", "bodies", "constant"),
             ("exact-tests", "hits", "linear"),
+            ("bound-tests", "bodies", "constant"),
+            ("bound-tests", "hits", "linear"),
         ],
     );
 }
@@ -683,7 +693,7 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
         "place-character",
         &samples,
         &[
-            ("tree-nodes", "characters", "constant"),
+            ("tree-nodes", "bodies", "constant"),
             ("exact-tests", "characters", "constant"),
             ("exact-tests", "bodies", "constant"),
         ],
@@ -723,7 +733,7 @@ fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
         "place-static",
         &samples,
         &[
-            ("tree-nodes", "characters", "constant"),
+            ("tree-nodes", "bodies", "constant"),
             ("exact-tests", "characters", "constant"),
             ("exact-tests", "bodies", "constant"),
         ],

@@ -174,9 +174,19 @@ impl World {
             (enter <= exit + slack).then_some(enter - slack)
         };
         let first = matches!(hits, RayOut::First(_));
-        let mut test = |index: usize, hits: &mut RayOut<'_>| -> Result<(), QueryFailureReason> {
+        // `bounded`: the tree already entered the target's padded bounds (exact for fixed
+        // bodies, conservative for moving ones) no later than the best hit, so the per-target
+        // slab test below would repeat it.
+        let mut test = |index: usize,
+                        bounded: bool,
+                        hits: &mut RayOut<'_>|
+         -> Result<(), QueryFailureReason> {
             let target = &self.bodies[index];
             stats.bodies_visited += 1;
+            if bounded {
+                stats.bound_tests += 1;
+                crate::work::add(crate::work::Counter::BoundTests, 1);
+            }
             if !filter.admits(target) {
                 stats.filtered_bodies += 1;
                 return Ok(());
@@ -185,8 +195,9 @@ impl World {
                 body: target.id,
                 reason,
             };
-            if prune && target.shape != Shape::HalfSpace {
+            if prune && !bounded && target.shape != Shape::HalfSpace {
                 stats.bound_tests += 1;
+                crate::work::add(crate::work::Counter::BoundTests, 1);
                 let (min, max) = target.cached_bounds;
                 let Some(enter) = entry(min, max) else {
                     return Ok(());
@@ -301,7 +312,7 @@ impl World {
             // Covers every per-target pad above: leaf coordinates are bounded by `magnitude`.
             let pad = 64.0 * Real::EPSILON * (1.0 + ray_magnitude.max(2.0 * tree.magnitude));
             let mut failure = None;
-            let nodes = tree.tree().visit_segment(
+            let nodes = tree.visit_segment(
                 [cast.origin.0, cast.origin.1, cast.origin.2],
                 [
                     cast.displacement.0,
@@ -314,7 +325,7 @@ impl World {
                     let index = self.slot_index(leaf.id);
                     if failure.is_none()
                         && self.bodies[index].shape != Shape::HalfSpace
-                        && let Err(reason) = test(index, hits)
+                        && let Err(reason) = test(index, true, hits)
                     {
                         failure = Some(reason);
                     }
@@ -335,14 +346,14 @@ impl World {
             // Halfspaces are unbounded: every ray tests them (their tree leaves are points).
             for &id in &self.halfspaces {
                 if let Ok(index) = self.index(id) {
-                    test(index, hits)?;
+                    test(index, false, hits)?;
                 }
             }
             Ok(())
         } else {
             self.ordered_positions()
                 .into_iter()
-                .try_for_each(|i| test(i, hits))
+                .try_for_each(|i| test(i, false, hits))
         }
     }
 }

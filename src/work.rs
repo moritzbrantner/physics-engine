@@ -23,9 +23,12 @@ pub enum Counter {
     /// Bodies visited by `World::step`'s per-body loops (preparation, forces, integration,
     /// support, sleep and query-tree refits), including full rebuilds after layout changes.
     BodyVisits,
+    /// Per-leaf bound tests of a ray: leaves the query tree hands to the ray test, or targets
+    /// whose padded bounds a full scan tests.
+    BoundTests,
 }
 
-const COUNTERS: usize = 8;
+const COUNTERS: usize = 9;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

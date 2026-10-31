@@ -1151,7 +1151,7 @@ impl World {
                 continue;
             }
             let start = s.broad_slots.len();
-            nodes += self.query_tree.tree().visit_aabb(
+            nodes += self.query_tree.visit_broad_aabb(
                 spatial_kernels::Aabb {
                     min: [e.lo.0 - slop.0, e.lo.1 - slop.1, e.lo.2 - slop.2],
                     max: [e.hi.0 + slop.0, e.hi.1 + slop.1, e.hi.2 + slop.2],
