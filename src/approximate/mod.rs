@@ -850,6 +850,16 @@ impl World {
                 .collect()
         }
     }
+    /// [`Self::ordered_positions`] for a lookup that wanted the query tree but found it stale:
+    /// unreachable through the public API, whose mutators keep the tree current and whose steps
+    /// end with a sync (#414). Kept so a future mutator that forgets the tree stays correct; the
+    /// `full-scan-bodies` work counter and the debug assertion catch it.
+    fn stale_tree_scan(&self) -> Vec<usize> {
+        debug_assert!(false, "query tree stale outside a step");
+        let all = self.ordered_positions();
+        crate::work::add(crate::work::Counter::FullScanBodies, all.len() as u64);
+        all
+    }
     /// Removes tombstones and sorts storage into body order, so positions are body ranks;
     /// O(1) when already settled. The step and island traversals need settled storage.
     fn settle_storage(&mut self) {
@@ -1144,7 +1154,7 @@ impl World {
             );
             wake.sort_unstable();
         } else {
-            for i in self.ordered_positions() {
+            for i in self.stale_tree_scan() {
                 if touches(&self.bodies[i]) {
                     wake.push(self.bodies[i].order);
                 }

@@ -350,7 +350,12 @@ impl World {
                 }
             }
             Ok(())
+        } else if prune {
+            self.stale_tree_scan()
+                .into_iter()
+                .try_for_each(|i| test(i, false, hits))
         } else {
+            // The tests' exhaustive reference.
             self.ordered_positions()
                 .into_iter()
                 .try_for_each(|i| test(i, false, hits))

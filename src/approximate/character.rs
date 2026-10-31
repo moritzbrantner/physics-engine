@@ -469,6 +469,12 @@ impl World {
             None => self.character_settings().offset,
         };
         if !self.query_tree.current(self.bookkeeping.generation) {
+            // Unreachable through the public API: every mutator keeps the tree current (#414).
+            debug_assert!(false, "query tree stale outside a step");
+            crate::work::add(
+                crate::work::Counter::FullScanBodies,
+                self.characters.ids.len() as u64,
+            );
             self.characters.placed_all();
             return;
         }

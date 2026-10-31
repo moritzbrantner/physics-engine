@@ -12,8 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use physics_engine::{
     BodyId,
     approximate::{
-        Body, BodyStorage, CharacterMove, CharacterMoveResult, Config, HeightfieldDesc,
-        QueryFilter, QueryHit, QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
+        Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config, Error,
+        HeightfieldDesc, QueryFilter, QueryHit, QueryPose, RayCast, RayHit, Shape, ShapeCast,
+        Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -105,6 +106,13 @@ fn judge(operation: &str, samples: &[Sample], bounds: &[(&str, &str, &str)]) {
                 .map(|(_, v)| *v)
                 .unwrap()
         };
+        // The contract's `budget.max: 0`, at every point.
+        if bound == "zero" {
+            for s in samples {
+                assert_eq!(value(s, metric), 0, "{operation}.{metric} at {:?}", s.0);
+            }
+            continue;
+        }
         let mut groups: Vec<Vec<&Sample>> = Vec::new();
         for s in samples {
             let key: Vec<_> = s.0.iter().filter(|(k, _)| *k != dimension).collect();
@@ -177,14 +185,19 @@ fn cell(i: usize, j: usize) -> V {
     V(i as f32 * SPACING, BOX, j as f32 * SPACING)
 }
 
-fn counted(f: impl FnOnce()) -> (u64, u64) {
+/// (tree nodes, exact tests, full-scan bodies) of `f`.
+fn counted(f: impl FnOnce()) -> (u64, u64, u64) {
     work::reset();
     f();
     (
         work::get(Counter::TreeNodes),
         work::get(Counter::ExactTests),
+        work::get(Counter::FullScanBodies),
     )
 }
+
+/// Budget 0 (#414): no query or character operation takes the stale-tree fallback scan.
+const NO_FULL_SCAN: (&str, &str, &str) = ("full-scan-bodies", "", "zero");
 
 const SIZES: [u32; 6] = [9, 10, 11, 12, 13, 14];
 const HITS: [u64; 5] = [1, 2, 4, 8, 16];
@@ -209,9 +222,11 @@ fn ray_casts_are_log_n_plus_k() {
         let w = town(log2);
         let (mut n_first, mut e_first, mut n_all, mut e_all) = (0, 0, 0, 0);
         let (mut b_first, mut b_all) = (0, 0);
+        // Full-scan bodies are totals over every query, so a single fallback shows.
+        let (mut f_first, mut f_all) = (0, 0);
         for q in 0..QUERIES as usize {
             let cast = row_ray(q % 8, hits);
-            let (n, e) = counted(|| {
+            let (n, e, f) = counted(|| {
                 let hit = w
                     .cast_ray_first(cast, QueryFilter::default())
                     .unwrap()
@@ -224,7 +239,8 @@ fn ray_casts_are_log_n_plus_k() {
             n_first += n;
             e_first += e;
             b_first += work::get(Counter::BoundTests);
-            let (n, e) = counted(|| {
+            f_first += f;
+            let (n, e, f) = counted(|| {
                 w.cast_ray(cast, QueryFilter::default(), &mut hits_out)
                     .unwrap();
             });
@@ -232,6 +248,7 @@ fn ray_casts_are_log_n_plus_k() {
             n_all += n;
             e_all += e;
             b_all += work::get(Counter::BoundTests);
+            f_all += f;
         }
         if hits == 4 {
             first.push((
@@ -240,6 +257,7 @@ fn ray_casts_are_log_n_plus_k() {
                     ("tree-nodes", n_first / QUERIES),
                     ("exact-tests", e_first / QUERIES),
                     ("bound-tests", b_first / QUERIES),
+                    ("full-scan-bodies", f_first),
                 ],
             ));
         }
@@ -249,6 +267,7 @@ fn ray_casts_are_log_n_plus_k() {
                 ("tree-nodes", n_all / QUERIES),
                 ("exact-tests", e_all / QUERIES),
                 ("bound-tests", b_all / QUERIES),
+                ("full-scan-bodies", f_all),
             ],
         ));
     }
@@ -258,6 +277,7 @@ fn ray_casts_are_log_n_plus_k() {
         &[
             ("exact-tests", "bodies", "constant"),
             ("bound-tests", "bodies", "constant"),
+            NO_FULL_SCAN,
         ],
     );
     judge(
@@ -268,6 +288,7 @@ fn ray_casts_are_log_n_plus_k() {
             ("exact-tests", "hits", "linear"),
             ("bound-tests", "bodies", "constant"),
             ("bound-tests", "hits", "linear"),
+            NO_FULL_SCAN,
         ],
     );
 }
@@ -284,7 +305,7 @@ fn shape_queries_are_log_n_plus_k() {
         .chain([1u64, 4, 8, 16].iter().map(|&s| (12, s)))
     {
         let w = town(log2);
-        let (mut n, mut e) = (0, 0);
+        let (mut n, mut e, mut scans) = (0, 0, 0);
         for q in 0..QUERIES as usize {
             let corner = cell(q % 8, 2);
             let half = SPACING * side as f32 * 0.5 - 0.6;
@@ -294,7 +315,7 @@ fn shape_queries_are_log_n_plus_k() {
                     0.0,
                     SPACING * (side as f32 - 1.0) * 0.5,
                 );
-            let (a, b) = counted(|| {
+            let (a, b, f) = counted(|| {
                 w.overlap_shape(
                     QueryPose::new(Shape::Box(V(half, 0.4, half)), centre),
                     QueryFilter::default(),
@@ -305,10 +326,15 @@ fn shape_queries_are_log_n_plus_k() {
             assert_eq!(out.len() as u64, side * side);
             n += a;
             e += b;
+            scans += f;
         }
         overlap.push((
             vec![("bodies", 1u64 << log2), ("hits", side * side)],
-            vec![("tree-nodes", n / QUERIES), ("exact-tests", e / QUERIES)],
+            vec![
+                ("tree-nodes", n / QUERIES),
+                ("exact-tests", e / QUERIES),
+                ("full-scan-bodies", scans),
+            ],
         ));
     }
     for (log2, hits) in SIZES
@@ -317,11 +343,11 @@ fn shape_queries_are_log_n_plus_k() {
         .chain(HITS.iter().filter(|&&k| k != 4).map(|&k| (12, k)))
     {
         let w = town(log2);
-        let (mut n, mut e) = (0, 0);
+        let (mut n, mut e, mut scans) = (0, 0, 0);
         for q in 0..QUERIES as usize {
             let cast = row_ray(q % 8, hits);
             let pose = QueryPose::new(Shape::Sphere(0.2), cast.origin);
-            let (a, b) = counted(|| {
+            let (a, b, f) = counted(|| {
                 w.cast_shape(
                     ShapeCast::new(pose, cast.displacement),
                     QueryFilter::default(),
@@ -332,18 +358,128 @@ fn shape_queries_are_log_n_plus_k() {
             assert_eq!(out.len() as u64, hits);
             n += a;
             e += b;
+            scans += f;
         }
         sweep.push((
             vec![("bodies", 1u64 << log2), ("hits", hits)],
-            vec![("tree-nodes", n / QUERIES), ("exact-tests", e / QUERIES)],
+            vec![
+                ("tree-nodes", n / QUERIES),
+                ("exact-tests", e / QUERIES),
+                ("full-scan-bodies", scans),
+            ],
         ));
     }
     let bounds = [
         ("exact-tests", "bodies", "constant"),
         ("exact-tests", "hits", "linear"),
+        NO_FULL_SCAN,
     ];
     judge("overlap-shape", &overlap, &bounds);
     judge("cast-shape", &sweep, &bounds);
+}
+
+/// The relayouts after which [`queries_after_a_relayout_use_the_tree`] queries: a checkpoint
+/// restore, a step whose transaction rolled back, and a step that retired a body.
+const RELAYOUTS: [u64; 3] = [1, 2, 3];
+
+/// `town(log2)` after relayout `kind` (see [`RELAYOUTS`]). The extra bodies sit at z ≤ -20,
+/// away from every query below.
+fn relaid_town(log2: u32, kind: u64) -> World {
+    let mut w = town(log2);
+    match kind {
+        1 => {
+            let context = CheckpointContext {
+                build: [1; 32],
+                content: [2; 32],
+            };
+            w.checkpoint(context).unwrap().restore()
+        }
+        2 => {
+            // A non-finite sweep input fails the collision search (as in
+            // tests/floating_sweep_failures.rs): the step's transaction rolls back.
+            let at = V(0.0, 0.0, -20.0);
+            w.add_body(Body::keyed(1 << 40, Shape::Sphere(1.0), at, 0.0))
+                .unwrap();
+            let capsule = Body::keyed(
+                1 << 41,
+                Shape::capsule(0.0, 1.0),
+                at - V(4.0, 0.0, 0.0),
+                0.1,
+            );
+            let capsule = w.add_body(capsule).unwrap();
+            w.step(0.01).unwrap();
+            w.add_force(capsule, V(f32::MAX, 0.0, 0.0)).unwrap();
+            assert!(matches!(
+                w.step(0.1),
+                Err(Error::CollisionSearchFailed { .. })
+            ));
+            w
+        }
+        _ => {
+            let at = V(0.0, 0.0, -40.0);
+            w.add_body(Body::keyed(1 << 40, Shape::Box(V(0.1, 2.0, 2.0)), at, 0.0))
+                .unwrap();
+            let mut shot = Body::keyed(1 << 41, Shape::Sphere(0.1), at - V(1.0, 0.0, 0.0), 0.3);
+            shot.ccd = true;
+            shot.retire_on_impact = true;
+            shot.velocity = V(40.0, 0.0, 0.0);
+            let shot = w.add_body(shot).unwrap();
+            assert_eq!(w.step(0.1).unwrap().retired, [shot]);
+            w
+        }
+    }
+}
+
+/// Queries straight after a restore, a rolled-back step or a retirement still descend the query
+/// tree: no O(n) stale-tree fallback scan (#414).
+#[test]
+fn queries_after_a_relayout_use_the_tree() {
+    let mut samples = Vec::new();
+    let mut rays: Vec<RayHit> = Vec::with_capacity(64);
+    let mut out: Vec<QueryHit> = Vec::with_capacity(64);
+    for kind in RELAYOUTS {
+        for log2 in SIZES {
+            let w = relaid_town(log2, kind);
+            let (mut nodes, mut scans) = (0, 0);
+            // Spread over the whole town, so the counts average the tree's shape.
+            let (cols, rows) = (1usize << log2.div_ceil(2), 1usize << (log2 / 2));
+            for q in 0..QUERIES as usize {
+                let (i, j) = ((q * 7) % (cols - 6), 1 + (q * 5) % (rows - 3));
+                let start = cell(i, j) - V(SPACING * 0.5, 0.0, 0.0);
+                let cast = RayCast::new(start, V(SPACING * 4.0, 0.0, 0.0));
+                let (n, _, f) = counted(|| {
+                    w.cast_ray_first(cast, QueryFilter::default())
+                        .unwrap()
+                        .unwrap();
+                    w.cast_ray(cast, QueryFilter::default(), &mut rays).unwrap();
+                    let centre = cell(i, j) + V(SPACING * 0.5, 0.0, SPACING * 0.5);
+                    w.overlap_shape(
+                        QueryPose::new(Shape::Box(V(SPACING - 0.6, 0.4, SPACING - 0.6)), centre),
+                        QueryFilter::default(),
+                        &mut out,
+                    )
+                    .unwrap();
+                    assert_eq!(out.len(), 4);
+                    let pose = QueryPose::new(Shape::Sphere(0.2), cast.origin);
+                    w.cast_shape(
+                        ShapeCast::new(pose, cast.displacement),
+                        QueryFilter::default(),
+                        &mut out,
+                    )
+                    .unwrap();
+                    assert_eq!(out.len(), 4);
+                });
+                assert_eq!(rays.len(), 4);
+                nodes += n;
+                scans += f;
+            }
+            samples.push((
+                vec![("bodies", 1u64 << log2), ("relayout", kind)],
+                vec![("tree-nodes", nodes / QUERIES), ("full-scan-bodies", scans)],
+            ));
+        }
+    }
+    judge("query-after-relayout", &samples, &[NO_FULL_SCAN]);
 }
 
 /// Per-operation work of `op` over `count` operations: (storage moves, tree inserts, order
@@ -526,7 +662,7 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
             })
             .collect();
         w.move_characters(&[], &mut out).unwrap();
-        let (n, e) = counted(|| w.move_characters(&moves, &mut out).unwrap());
+        let (n, e, f) = counted(|| w.move_characters(&moves, &mut out).unwrap());
         samples.push((
             vec![
                 ("bodies", 1u64 << log2),
@@ -537,13 +673,14 @@ fn character_batches_scale_with_movers_and_density_not_with_the_world() {
                 ("tree-nodes", n),
                 ("exact-tests", e),
                 ("tree-nodes-per-character", n / m),
+                ("full-scan-bodies", f),
             ],
         ));
     }
     judge(
         "move-characters",
         &samples,
-        &[("exact-tests", "characters", "linear")],
+        &[("exact-tests", "characters", "linear"), NO_FULL_SCAN],
     );
 }
 
@@ -635,20 +772,21 @@ fn crowded_batches_scale_with_movers_times_neighbours() {
                 "lattice neighbours at {m}/{density}"
             );
         }
-        let (n, e) = counted(|| w.move_characters(&moves, &mut out).unwrap());
+        let (n, e, f) = counted(|| w.move_characters(&moves, &mut out).unwrap());
         samples.push((
             vec![("characters", m), ("density", density)],
             vec![
                 ("tree-nodes", n),
                 ("exact-tests", e),
                 ("neighbours-in-reach", near),
+                ("full-scan-bodies", f),
             ],
         ));
     }
     judge(
         "move-characters-crowd",
         &samples,
-        &[("exact-tests", "characters", "linear")],
+        &[("exact-tests", "characters", "linear"), NO_FULL_SCAN],
     );
 }
 
@@ -680,13 +818,17 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
         w.move_characters(&rest, &mut out).unwrap();
         w.move_characters(&rest, &mut out).unwrap();
         let p = w.body(ids[0]).unwrap().position + V(0.01, 0.0, 0.0);
-        let (n, e) = counted(|| {
+        let (n, e, f) = counted(|| {
             w.set_kinematic_position(ids[0], p).unwrap();
             w.move_characters(&rest, &mut out).unwrap();
         });
         samples.push((
             vec![("bodies", 1u64 << log2), ("characters", m)],
-            vec![("tree-nodes", n), ("exact-tests", e)],
+            vec![
+                ("tree-nodes", n),
+                ("exact-tests", e),
+                ("full-scan-bodies", f),
+            ],
         ));
     }
     judge(
@@ -696,6 +838,7 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
             ("tree-nodes", "bodies", "constant"),
             ("exact-tests", "characters", "constant"),
             ("exact-tests", "bodies", "constant"),
+            NO_FULL_SCAN,
         ],
     );
 }
@@ -720,13 +863,17 @@ fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
         w.move_characters(&rest, &mut out).unwrap();
         let platform = w.body_id(0).unwrap();
         let p = w.body(platform).unwrap().position + V(0.0, 0.001, 0.0);
-        let (n, e) = counted(|| {
+        let (n, e, f) = counted(|| {
             w.set_static_position(platform, p).unwrap();
             w.move_characters(&rest, &mut out).unwrap();
         });
         samples.push((
             vec![("bodies", 1u64 << log2), ("characters", m)],
-            vec![("tree-nodes", n), ("exact-tests", e)],
+            vec![
+                ("tree-nodes", n),
+                ("exact-tests", e),
+                ("full-scan-bodies", f),
+            ],
         ));
     }
     judge(
@@ -736,6 +883,7 @@ fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {
             ("tree-nodes", "bodies", "constant"),
             ("exact-tests", "characters", "constant"),
             ("exact-tests", "bodies", "constant"),
+            NO_FULL_SCAN,
         ],
     );
 }

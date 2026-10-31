@@ -85,6 +85,15 @@
             }
           ],
           "notes": "Per-leaf bound tests (#415): leaves the query tree hands to the ray test. Fixed bodies sit in a four-wide tree with exact leaf bounds, so no per-target slab test repeats the tree's; a regression in candidate filtering shows here as work."
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -190,6 +199,15 @@
             }
           ],
           "notes": "Per-leaf bound tests (#415): one per leaf the segment enters, so constant in bodies and linear in hits."
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -279,6 +297,15 @@
               "bound": "linear"
             }
           ]
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -369,6 +396,125 @@
               "bound": "linear"
             }
           ]
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
+        }
+      ]
+    },
+    {
+      "id": "query-after-relayout",
+      "description": "cast_ray_first, cast_ray, overlap_shape and cast_shape (64 of each per point, spread over the town) in the ray-first town straight after a relayout: 1 a checkpoint restore, 2 a step whose transaction rolled back (a failed collision search), 3 a step that retired a CCD body (#414).",
+      "publicContract": "physics_engine::approximate::World::cast_ray_first",
+      "dimensions": {
+        "bodies": {
+          "description": "static bodies in the world (doubling sizes)"
+        },
+        "relayout": {
+          "description": "1 checkpoint restore, 2 rolled-back step, 3 step that retired a body"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 512,
+          "relayout": 1
+        },
+        {
+          "bodies": 1024,
+          "relayout": 1
+        },
+        {
+          "bodies": 2048,
+          "relayout": 1
+        },
+        {
+          "bodies": 4096,
+          "relayout": 1
+        },
+        {
+          "bodies": 8192,
+          "relayout": 1
+        },
+        {
+          "bodies": 16384,
+          "relayout": 1
+        },
+        {
+          "bodies": 512,
+          "relayout": 2
+        },
+        {
+          "bodies": 1024,
+          "relayout": 2
+        },
+        {
+          "bodies": 2048,
+          "relayout": 2
+        },
+        {
+          "bodies": 4096,
+          "relayout": 2
+        },
+        {
+          "bodies": 8192,
+          "relayout": 2
+        },
+        {
+          "bodies": 16384,
+          "relayout": 2
+        },
+        {
+          "bodies": 512,
+          "relayout": 3
+        },
+        {
+          "bodies": 1024,
+          "relayout": 3
+        },
+        {
+          "bodies": 2048,
+          "relayout": 3
+        },
+        {
+          "bodies": 4096,
+          "relayout": 3
+        },
+        {
+          "bodies": 8192,
+          "relayout": 3
+        },
+        {
+          "bodies": 16384,
+          "relayout": 3
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "logarithmic"
+            }
+          ],
+          "notes": "Per round of the four queries, spread over the whole town so the count averages the tree's shape: the relayout leaves the query tree current (restore rebuilds it, a step syncs it), so each query is one tree descent. Measured 34 to 48 nodes from 512 to 16384 bodies; a fallback scan visits no nodes but shows in full-scan-bodies."
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, totalled over every query of a point: 0, because restore rebuilds the tree and every step, failed or retiring, ends with a sync."
         }
       ]
     },
@@ -743,6 +889,15 @@
             }
           ],
           "notes": "Neighbour tests: linear in movers at fixed density. Density here is a random spawn whose neighbours in reach grow faster than density (0, 8, 20, 58 pairs at density 1, 2, 4, 8), and the tests track movers plus those neighbours (32, 37, 52, 96), so this fixture holds density by a budget; `move-characters-crowd` bounds the work in a controlled neighbour count (#416)."
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -759,16 +914,46 @@
         }
       },
       "scalePoints": [
-        { "characters": 8, "density": 4 },
-        { "characters": 16, "density": 4 },
-        { "characters": 32, "density": 4 },
-        { "characters": 64, "density": 4 },
-        { "characters": 128, "density": 4 },
-        { "characters": 32, "density": 1 },
-        { "characters": 32, "density": 2 },
-        { "characters": 32, "density": 8 },
-        { "characters": 32, "density": 16 },
-        { "characters": 139, "density": 64 }
+        {
+          "characters": 8,
+          "density": 4
+        },
+        {
+          "characters": 16,
+          "density": 4
+        },
+        {
+          "characters": 32,
+          "density": 4
+        },
+        {
+          "characters": 64,
+          "density": 4
+        },
+        {
+          "characters": 128,
+          "density": 4
+        },
+        {
+          "characters": 32,
+          "density": 1
+        },
+        {
+          "characters": 32,
+          "density": 2
+        },
+        {
+          "characters": 32,
+          "density": 8
+        },
+        {
+          "characters": 32,
+          "density": 16
+        },
+        {
+          "characters": 139,
+          "density": 64
+        }
       ],
       "metrics": [
         {
@@ -836,6 +1021,15 @@
               ]
             }
           ]
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -925,6 +1119,15 @@
               "bound": "constant"
             }
           ]
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -1013,6 +1216,15 @@
               "bound": "constant"
             }
           ]
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
         }
       ]
     },
@@ -1219,19 +1431,58 @@
         }
       },
       "scalePoints": [
-        { "statics": 512, "awake": 8 },
-        { "statics": 1024, "awake": 8 },
-        { "statics": 2048, "awake": 8 },
-        { "statics": 4096, "awake": 8 },
-        { "statics": 8192, "awake": 8 },
-        { "statics": 16384, "awake": 8 },
-        { "statics": 4096, "awake": 1 },
-        { "statics": 4096, "awake": 2 },
-        { "statics": 4096, "awake": 4 },
-        { "statics": 4096, "awake": 16 },
-        { "statics": 4096, "awake": 32 },
-        { "statics": 4096, "awake": 64 },
-        { "statics": 4096, "awake": 128 }
+        {
+          "statics": 512,
+          "awake": 8
+        },
+        {
+          "statics": 1024,
+          "awake": 8
+        },
+        {
+          "statics": 2048,
+          "awake": 8
+        },
+        {
+          "statics": 4096,
+          "awake": 8
+        },
+        {
+          "statics": 8192,
+          "awake": 8
+        },
+        {
+          "statics": 16384,
+          "awake": 8
+        },
+        {
+          "statics": 4096,
+          "awake": 1
+        },
+        {
+          "statics": 4096,
+          "awake": 2
+        },
+        {
+          "statics": 4096,
+          "awake": 4
+        },
+        {
+          "statics": 4096,
+          "awake": 16
+        },
+        {
+          "statics": 4096,
+          "awake": 32
+        },
+        {
+          "statics": 4096,
+          "awake": 64
+        },
+        {
+          "statics": 4096,
+          "awake": 128
+        }
       ],
       "metrics": [
         {
@@ -1240,12 +1491,24 @@
           "signal": "operation-count",
           "notes": "Broad-phase candidate tests in a warm step (Report::pair_tests). Awake bodies keep the query-tree leaves their broad-phase box found (#412), so a static is tested only when an awake body reaches it: O(awake · log statics); awake-awake pairs O(awake log awake). Before #412 the sweep tested static-static pairs, about statics^1.5 (3,968 at 512 statics to 1,041,408 at 16,384).",
           "growth": [
-            { "dimension": "statics", "bound": "logarithmic" },
-            { "dimension": "awake", "bound": "linearithmic" },
+            {
+              "dimension": "statics",
+              "bound": "logarithmic"
+            },
+            {
+              "dimension": "awake",
+              "bound": "linearithmic"
+            },
             {
               "product": [
-                { "dimension": "awake", "bound": "linear" },
-                { "dimension": "statics", "bound": "logarithmic" }
+                {
+                  "dimension": "awake",
+                  "bound": "linear"
+                },
+                {
+                  "dimension": "statics",
+                  "bound": "logarithmic"
+                }
               ]
             }
           ]
@@ -1256,12 +1519,25 @@
           "signal": "operation-count",
           "notes": "Query-tree nodes the broad phase visits in the first step, where every awake body makes its box: one descent of the fixed-body tree and one of the moving-body tree each (warm steps keep the boxes and visit none here). Fixed and moving bodies live in separate trees (#415), so a box costs O(log statics + log awake): linearithmic in awake bodies (26, 56, 120, 262 ... 5,328 nodes at 1..128 awake, 4,096 statics; before #415 one mixed tree gave 27 per awake body), and `tolerance: 1` in statics because the measured 220, 230, 246, 262, 278, 294 (8 awake) have a flat first interval and then two nodes per awake body per doubling (one tree level), as `place-static`. A step-only world descends the binary fixed tree; once a query has built the four-wide one, the broad phase uses it too.",
           "growth": [
-            { "dimension": "statics", "bound": "logarithmic", "tolerance": 1 },
-            { "dimension": "awake", "bound": "linearithmic" },
+            {
+              "dimension": "statics",
+              "bound": "logarithmic",
+              "tolerance": 1
+            },
+            {
+              "dimension": "awake",
+              "bound": "linearithmic"
+            },
             {
               "product": [
-                { "dimension": "awake", "bound": "linearithmic" },
-                { "dimension": "statics", "bound": "logarithmic" }
+                {
+                  "dimension": "awake",
+                  "bound": "linearithmic"
+                },
+                {
+                  "dimension": "statics",
+                  "bound": "logarithmic"
+                }
               ]
             }
           ]
@@ -1272,8 +1548,14 @@
           "signal": "operation-count",
           "notes": "Bodies visited by the step's per-body loops (work::Counter::BodyVisits): they run over the awake bodies only (#412); a layout change rescans once.",
           "growth": [
-            { "dimension": "statics", "bound": "constant" },
-            { "dimension": "awake", "bound": "linear" }
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "awake",
+              "bound": "linear"
+            }
           ]
         },
         {
@@ -1282,8 +1564,14 @@
           "signal": "operation-count",
           "notes": "Contact constraint rows over the step's substeps (Report::contact_points).",
           "growth": [
-            { "dimension": "statics", "bound": "constant" },
-            { "dimension": "awake", "bound": "linear" }
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "awake",
+              "bound": "linear"
+            }
           ]
         }
       ]
@@ -1303,28 +1591,40 @@
           "description": "awake debris bodies"
         }
       },
-      "scalePoints": [{ "bodies": 1280, "characters": 139, "awake": 128 }],
+      "scalePoints": [
+        {
+          "bodies": 1280,
+          "characters": 139,
+          "awake": 128
+        }
+      ],
       "metrics": [
         {
           "name": "pair-tests",
           "unit": "tests",
           "signal": "operation-count",
           "notes": "Budget: the value measured after #412 (129) plus 25%. Before #412: 20,379.",
-          "budget": { "max": 162 }
+          "budget": {
+            "max": 162
+          }
         },
         {
           "name": "body-visits",
           "unit": "bodies",
           "signal": "operation-count",
           "notes": "Budget: the value measured after #412 (4,272: 267 awake bodies, 16 visits each) plus 25%.",
-          "budget": { "max": 5340 }
+          "budget": {
+            "max": 5340
+          }
         },
         {
           "name": "heap-allocations",
           "unit": "allocations",
           "signal": "allocation-count",
           "notes": "Counting global allocator in the test binary (alloc + realloc), over the whole tick.",
-          "budget": { "max": 0 }
+          "budget": {
+            "max": 0
+          }
         }
       ]
     }

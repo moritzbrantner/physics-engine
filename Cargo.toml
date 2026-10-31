@@ -121,4 +121,4 @@ required-features = ["checkpoints"]
 
 [[test]]
 name = "work_complexity"
-required-features = ["work-counters"]
+required-features = ["work-counters", "checkpoints"]
