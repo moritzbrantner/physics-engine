@@ -136,9 +136,9 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Rapier oracle on WASM (invariants + 1.10x perf gate) and size budget (.performance/size.json)
+      - name: Rapier oracle on WASM (invariants + 1.10x perf gate) and advisory size report (.performance/size.json)
         env:
-          # Pull requests also measure the base commit's WASM for maxIncreaseBytes.
+          # Pull requests also measure the base commit's WASM to report growth (advisory, PRINCIPLE-015).
           SIZE_BASE_REF: ${{ github.event.pull_request.base.sha }}
         run: |
           (cd .coding-tooling-src && bun install --frozen-lockfile)
