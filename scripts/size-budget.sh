@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # size:budget: run the WASM oracle (which builds each engine's lone WASM into target/size/), then
-# judge those files against .performance/size.json. CODING_TOOLING overrides the CLI command
+# report those files against .performance/size.json. CODING_TOOLING overrides the CLI command
 # (CI points it at a pinned checkout).
 #
 # SIZE_BASE_REF (a commit, set by CI on pull requests) also measures that commit's WASM in the
-# same run and passes it as the baseline, so maxIncreaseBytes is checked against the base branch.
+# same run and passes it as the baseline, so growth is reported against the base branch.
+#
+# The size budget is advisory (PRINCIPLE-015): a size over maxBytes or growth over
+# maxIncreaseBytes prints a warning (plus a GitHub annotation and step summary in CI) so an
+# optimization issue can be filed, but never fails. The WASM oracle (parity + 1.10x perf gate)
+# stays blocking.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 repo="$PWD"
@@ -22,4 +27,22 @@ if [[ -n "${SIZE_BASE_REF:-}" ]]; then
   baseline=(--baseline target/size-base.json)
 fi
 node scripts/oracle-wasm.mjs
-ct performance size --root . "${baseline[@]}"
+status=0
+table=$(ct performance size --root . "${baseline[@]}") || status=$?
+printf '%s\n' "$table"
+# 2 (unavailable) and 3 (error) mean the measurement itself broke; only budgets are advisory.
+[[ $status -le 1 ]] || exit "$status"
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+  {
+    echo '### WASM size (advisory)'
+    echo '```'
+    printf '%s\n' "$table"
+    echo '```'
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
+if [[ $status -eq 1 ]]; then
+  msg="WASM size over its .performance/size.json budget (maxBytes or maxIncreaseBytes);"
+  msg+=" advisory per PRINCIPLE-015 - file an optimization issue"
+  echo "warning: $msg" >&2
+  [[ -z "${GITHUB_ACTIONS:-}" ]] || echo "::warning title=WASM size budget::$msg"
+fi
