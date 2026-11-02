@@ -30,9 +30,12 @@ pub enum Counter {
     /// (or characters it marks for an overlap re-check) instead of the query tree: 0 while the
     /// public mutators keep the tree current (#414).
     FullScanBodies,
+    /// Cached contact pairs visited by support lookup, static movement or explicit body removal.
+    /// Removal visits each pair once to find neighbors and again to discard incident contacts.
+    CachedPairVisits,
 }
 
-const COUNTERS: usize = 10;
+const COUNTERS: usize = 11;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

@@ -36,6 +36,7 @@ impl World {
             .cache
             .keys()
             .filter_map(|&(a, b)| {
+                crate::work::add(crate::work::Counter::CachedPairVisits, 1);
                 (a == order)
                     .then_some(b)
                     .or_else(|| (b == order).then_some(a))
@@ -191,6 +192,7 @@ impl World {
         let id = self.bodies[i].order;
         let up = (-self.scene.gravity).unit();
         self.cache.iter().any(|(&(a, b), p)| {
+            crate::work::add(crate::work::Counter::CachedPairVisits, 1);
             p.iter().any(|p| {
                 (b == id && p.normal.dot(up) > 0.5) || (a == id && p.normal.dot(up) < -0.5)
             })

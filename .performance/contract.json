@@ -594,6 +594,15 @@
             }
           ],
           "notes": "The removal that triggers a compaction, or a tree rebuild: O(n)."
+        },
+        {
+          "name": "cached-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "The original body-churn fixture has no persistent contacts; cached-pair work is zero across all removals (#448). Dense-contact removal has its own contract."
         }
       ]
     },
@@ -671,6 +680,15 @@
               "bound": "linear"
             }
           ]
+        },
+        {
+          "name": "cached-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Insert-only middle-order churn does not traverse a contact cache (#448)."
         }
       ]
     },
@@ -749,6 +767,85 @@
             }
           ],
           "notes": "The removal that triggers a compaction sorts the k out-of-order adds and merges them: O(n + k log k)."
+        },
+        {
+          "name": "cached-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Indexed-mode body churn is contact-free, so removal visits no cached pairs (#448)."
+        }
+      ]
+    },
+    {
+      "id": "contact-cache-traversal",
+      "description": "Three independent operations in a world with persistent sphere-on-box contacts: unsupported World::has_support, an unrelated World::set_static_position, and unrelated World::remove_body. Each pair is verified in the warm contact cache; the extra static bodies never touch anything. Includes Ordered and Indexed storage. No wall-clock threshold (#448).",
+      "publicContract": "physics_engine::approximate::World::{has_support,set_static_position,remove_body}",
+      "dimensions": {
+        "pairs": {
+          "description": "live cached contact pairs (including empty, sparse and dense contact worlds)"
+        },
+        "inertStatics": {
+          "description": "extra static bodies without contact, independently of the pair count"
+        },
+        "storage": {
+          "description": "0 for BodyStorage::Ordered, 1 for BodyStorage::Indexed (categorical, not a growth axis)"
+        }
+      },
+      "scalePoints": [
+        { "pairs": 0, "inertStatics": 0, "storage": 0 },
+        { "pairs": 16, "inertStatics": 0, "storage": 0 },
+        { "pairs": 64, "inertStatics": 0, "storage": 0 },
+        { "pairs": 256, "inertStatics": 0, "storage": 0 },
+        { "pairs": 1024, "inertStatics": 0, "storage": 0 },
+        { "pairs": 0, "inertStatics": 1150, "storage": 0 },
+        { "pairs": 16, "inertStatics": 1150, "storage": 0 },
+        { "pairs": 64, "inertStatics": 1150, "storage": 0 },
+        { "pairs": 256, "inertStatics": 1150, "storage": 0 },
+        { "pairs": 1024, "inertStatics": 1150, "storage": 0 },
+        { "pairs": 0, "inertStatics": 0, "storage": 1 },
+        { "pairs": 16, "inertStatics": 0, "storage": 1 },
+        { "pairs": 64, "inertStatics": 0, "storage": 1 },
+        { "pairs": 256, "inertStatics": 0, "storage": 1 },
+        { "pairs": 1024, "inertStatics": 0, "storage": 1 },
+        { "pairs": 0, "inertStatics": 1150, "storage": 1 },
+        { "pairs": 16, "inertStatics": 1150, "storage": 1 },
+        { "pairs": 64, "inertStatics": 1150, "storage": 1 },
+        { "pairs": 256, "inertStatics": 1150, "storage": 1 },
+        { "pairs": 1024, "inertStatics": 1150, "storage": 1 }
+      ],
+      "metrics": [
+        {
+          "name": "support-cache-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "growth": [
+            { "dimension": "pairs", "bound": "linear" },
+            { "dimension": "inertStatics", "bound": "constant" }
+          ],
+          "notes": "A valid unsupported body forces the full has_support scan: exactly P cached pair visits. A supporting body is also checked to preserve the positive outcome."
+        },
+        {
+          "name": "move-cache-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "growth": [
+            { "dimension": "pairs", "bound": "linear" },
+            { "dimension": "inertStatics", "bound": "constant" }
+          ],
+          "notes": "Moving an unrelated fixed body scans exactly P cached keys, while the same move leaves supported bodies undisturbed."
+        },
+        {
+          "name": "remove-cache-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "growth": [
+            { "dimension": "pairs", "bound": "linear" },
+            { "dimension": "inertStatics", "bound": "constant" }
+          ],
+          "notes": "Explicit removal scans P keys to collect neighbors and P entries during retain: exactly 2P visits. Removing a contacted support separately confirms its pair is discarded; wake and support behavior are checked in both storage modes."
         }
       ]
     },
