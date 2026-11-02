@@ -675,8 +675,10 @@ fn contact_cache_world(
     (w, unsupported, movable, removable)
 }
 
-/// Three operations that scan the contact cache (#448). `pairs` and `inertStatics` are
-/// independent; `storage` selects Ordered (0) or Indexed (1) with identical pair visit counts.
+/// Three operations that scan the contact cache (#448). The empty P=0 fixtures are checked
+/// directly but excluded from emitted growth evidence (the contract schema requires positive
+/// dimension values). `inertCase` selects 0 or 1,150 unrelated statics, and `storage` selects
+/// Ordered or Indexed; both are 1-based categorical dimensions in the contract.
 #[test]
 fn cached_pair_traversal_follows_contacts_not_inert_statics() {
     let mut samples = Vec::new();
@@ -723,18 +725,20 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                     assert!(!w.has_support(unsupported));
                     assert_eq!(work::get(Counter::CachedPairVisits), pairs - 1);
                 }
-                samples.push((
-                    vec![
-                        ("pairs", pairs),
-                        ("inertStatics", inert_statics),
-                        ("storage", u64::from(storage == BodyStorage::Indexed)),
-                    ],
-                    vec![
-                        ("support-cache-pair-visits", support_visits),
-                        ("move-cache-pair-visits", move_visits),
-                        ("remove-cache-pair-visits", remove_visits),
-                    ],
-                ));
+                if pairs > 0 {
+                    samples.push((
+                        vec![
+                            ("pairs", pairs),
+                            ("inertCase", 1 + u64::from(inert_statics > 0)),
+                            ("storage", 1 + u64::from(storage == BodyStorage::Indexed)),
+                        ],
+                        vec![
+                            ("support-cache-pair-visits", support_visits),
+                            ("move-cache-pair-visits", move_visits),
+                            ("remove-cache-pair-visits", remove_visits),
+                        ],
+                    ));
+                }
             }
         }
     }
@@ -745,7 +749,7 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
         "remove-cache-pair-visits",
     ] {
         bounds.push((metric, "pairs", "linear"));
-        bounds.push((metric, "inertStatics", "constant"));
+        bounds.push((metric, "inertCase", "constant"));
     }
     judge("contact-cache-traversal", &samples, &bounds);
 }
