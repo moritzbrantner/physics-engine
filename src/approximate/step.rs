@@ -777,11 +777,19 @@ impl World {
                 fresh.push((key, points));
             }
         }
+        #[cfg(feature = "contact-adjacency")]
+        for (key, points) in fresh {
+            self.adjacency.insert(key);
+            self.cache.insert(key, points);
+        }
+        #[cfg(not(feature = "contact-adjacency"))]
         self.cache.extend(fresh);
         self.cache.retain(|&key, points| {
             if points.is_empty() {
                 self.transaction.pair(key, Some(points));
                 scratch.graph.dirty = true;
+                #[cfg(feature = "contact-adjacency")]
+                self.adjacency.remove(key);
                 false
             } else {
                 true
@@ -860,6 +868,14 @@ impl World {
                 let handle = b.id;
                 self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                 self.geometry.remove(id);
+                #[cfg(feature = "contact-adjacency")]
+                for other in self.adjacency.incident(id).to_vec() {
+                    let key = super::contact_adjacency::pair(id, other);
+                    self.transaction.pair(key, self.cache.get(&key));
+                    self.cache.remove(&key);
+                    self.adjacency.remove(key);
+                }
+                #[cfg(not(feature = "contact-adjacency"))]
                 self.cache.retain(|&(a, b), points| {
                     if a == id || b == id {
                         self.transaction.pair((a, b), Some(points));

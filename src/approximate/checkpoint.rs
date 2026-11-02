@@ -160,6 +160,8 @@ impl Checkpoint {
         world.last_h = self.last_h;
         world.bodies = self.bodies;
         world.cache = self.cache;
+        #[cfg(feature = "contact-adjacency")]
+        world.adjacency.rebuild(&world.cache);
         for body in &mut world.bodies {
             body.cached_bounds = contact::bounds(body);
         }

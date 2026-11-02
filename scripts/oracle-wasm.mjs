@@ -8,8 +8,12 @@ import { copyFile, mkdir, readFile } from "node:fs/promises";
 
 const target = `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/physics_oracle.wasm`;
 const build = (features) => {
+  // Explicitly opt into the #443 experimental A/B build. The default oracle is unchanged.
+  const additional = process.env.PHYSICS_CONTACT_ADJACENCY === "1" && features.includes("engine")
+    ? ",physics-engine/contact-adjacency"
+    : "";
   execFileSync("cargo", ["build", "-p", "physics-oracle", "--release", "--locked",
-    "--target", "wasm32-unknown-unknown", "--lib", "--no-default-features", "--features", features],
+    "--target", "wasm32-unknown-unknown", "--lib", "--no-default-features", "--features", features + additional],
     { stdio: "inherit" });
 };
 

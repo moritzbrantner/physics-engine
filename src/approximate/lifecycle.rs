@@ -175,6 +175,16 @@ impl World {
         self.characters.remove(id);
         self.halfspaces.retain(|&h| h != id);
         // Bodies in contact with the removed one wake (its contact pairs, in pair order).
+        #[cfg(feature = "contact-adjacency")]
+        let neighbors = {
+            let incident = self.adjacency.incident(order);
+            crate::work::add(
+                crate::work::Counter::CachedPairVisits,
+                incident.len() as u64,
+            );
+            incident.to_vec()
+        };
+        #[cfg(not(feature = "contact-adjacency"))]
         let neighbors = self
             .cache
             .keys()
@@ -187,12 +197,20 @@ impl World {
             .collect::<Vec<_>>();
         if !neighbors.is_empty() {
             self.sort_storage();
-            for n in neighbors {
+            for &n in &neighbors {
                 self.wake_island(n);
             }
         }
-        // O(contact pairs), independent of the body count.
+        #[cfg(feature = "contact-adjacency")]
+        for &other in &neighbors {
+            let pair = super::contact_adjacency::pair(order, other);
+            crate::work::add(crate::work::Counter::CachedPairVisits, 1);
+            self.cache.remove(&pair);
+            self.adjacency.remove(pair);
+        }
+        // The geometry cache is independent from the derived adjacency view.
         self.geometry.remove(order);
+        #[cfg(not(feature = "contact-adjacency"))]
         self.cache.retain(|&(a, b), _| {
             crate::work::add(crate::work::Counter::CachedPairVisits, 1);
             a != order && b != order

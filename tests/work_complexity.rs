@@ -23,19 +23,25 @@ use physics_engine::{
 struct Counting;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 std::thread_local! { static COUNTING: Cell<bool> = const { Cell::new(false) }; }
+std::thread_local! { static LIVE_REQUESTED_BYTES: Cell<i64> = const { Cell::new(0) }; }
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if COUNTING.with(Cell::get) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            LIVE_REQUESTED_BYTES.with(|v| v.set(v.get() + layout.size() as i64));
         }
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        if COUNTING.with(Cell::get) {
+            LIVE_REQUESTED_BYTES.with(|v| v.set(v.get() - layout.size() as i64));
+        }
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         if COUNTING.with(Cell::get) {
             ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            LIVE_REQUESTED_BYTES.with(|v| v.set(v.get() + size as i64 - layout.size() as i64));
         }
         unsafe { System.realloc(ptr, layout, size) }
     }
@@ -675,6 +681,28 @@ fn contact_cache_world(
     (w, unsupported, movable, removable)
 }
 
+/// Advisory measured live heap *requested bytes* for the same contact fixture in the two
+/// feature builds. Includes every World-owned allocation, not allocator metadata or RSS.
+#[test]
+#[ignore = "local A/B heap measurement; the comparative budget is not a CI gate"]
+fn contact_index_heap_evidence() {
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        for pairs in [0, 64, 256, 1024] {
+            LIVE_REQUESTED_BYTES.with(|v| v.set(0));
+            COUNTING.with(|v| v.set(true));
+            let (world, _, _, _) = contact_cache_world(pairs, 1150, storage);
+            let live = LIVE_REQUESTED_BYTES.with(Cell::get);
+            COUNTING.with(|v| v.set(false));
+            assert_eq!(world.cached_pair_count(), pairs as usize);
+            println!(
+                "HEAP storage={storage:?} pairs={pairs} index={} world_requested_bytes={live} index_payload_min_bytes={}",
+                cfg!(feature = "contact-adjacency"),
+                world.contact_index_payload_bytes()
+            );
+        }
+    }
+}
+
 /// Three operations that scan the contact cache (#448). The empty P=0 fixtures are checked
 /// directly but excluded from emitted growth evidence (the contract schema requires positive
 /// dimension values). `inertCase` selects 0 or 1,150 unrelated statics, and `storage` selects
@@ -690,9 +718,14 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                 work::reset();
                 assert!(!w.has_support(unsupported));
                 let support_visits = work::get(Counter::CachedPairVisits);
+                let expected_full = if cfg!(feature = "contact-adjacency") {
+                    0
+                } else {
+                    pairs
+                };
                 assert_eq!(
-                    support_visits, pairs,
-                    "support lookup must visit every live pair"
+                    support_visits, expected_full,
+                    "unsupported lookup visits only incident pairs when indexed"
                 );
 
                 work::reset();
@@ -701,7 +734,7 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                     .unwrap();
                 assert_eq!(w.body(movable).unwrap().position.1, old_position.1 + 0.1);
                 let move_visits = work::get(Counter::CachedPairVisits);
-                assert_eq!(move_visits, pairs, "static move must visit every live pair");
+                assert_eq!(move_visits, expected_full);
 
                 work::reset();
                 assert!(w.remove_body(removable).is_some());
@@ -709,8 +742,8 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                 let remove_visits = work::get(Counter::CachedPairVisits);
                 assert_eq!(
                     remove_visits,
-                    2 * pairs,
-                    "removal must count both neighbor and retain traversals"
+                    2 * expected_full,
+                    "unrelated removal visits only incident pairs when indexed"
                 );
                 if pairs > 0 {
                     let supported = w.body_id(1).unwrap();
@@ -719,11 +752,25 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                     // changing the other independent cached contacts.
                     work::reset();
                     w.remove_body(w.body_id(0).unwrap()).unwrap();
-                    assert_eq!(work::get(Counter::CachedPairVisits), 2 * pairs);
+                    assert_eq!(
+                        work::get(Counter::CachedPairVisits),
+                        if cfg!(feature = "contact-adjacency") {
+                            2
+                        } else {
+                            2 * pairs
+                        }
+                    );
                     assert!(!w.has_support(supported));
                     work::reset();
                     assert!(!w.has_support(unsupported));
-                    assert_eq!(work::get(Counter::CachedPairVisits), pairs - 1);
+                    assert_eq!(
+                        work::get(Counter::CachedPairVisits),
+                        if cfg!(feature = "contact-adjacency") {
+                            0
+                        } else {
+                            pairs - 1
+                        }
+                    );
                 }
                 if pairs > 0 {
                     samples.push((
@@ -748,7 +795,15 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
         "move-cache-pair-visits",
         "remove-cache-pair-visits",
     ] {
-        bounds.push((metric, "pairs", "linear"));
+        bounds.push((
+            metric,
+            "pairs",
+            if cfg!(feature = "contact-adjacency") {
+                "constant"
+            } else {
+                "linear"
+            },
+        ));
         bounds.push((metric, "inertCase", "constant"));
     }
     judge("contact-cache-traversal", &samples, &bounds);
@@ -791,13 +846,27 @@ fn cached_pair_traversal_preserves_wake_and_removal_semantics() {
         work::reset();
         w.set_static_position(w.body_id(0).unwrap(), V(0.0, 0.1, 0.0))
             .unwrap();
-        assert_eq!(work::get(Counter::CachedPairVisits), 2);
+        assert_eq!(
+            work::get(Counter::CachedPairVisits),
+            if cfg!(feature = "contact-adjacency") {
+                1
+            } else {
+                2
+            }
+        );
         assert!(!w.body(first).unwrap().is_sleeping());
         assert!(w.body(second).unwrap().is_sleeping());
 
         work::reset();
         w.remove_body(w.body_id(2).unwrap()).unwrap();
-        assert_eq!(work::get(Counter::CachedPairVisits), 4);
+        assert_eq!(
+            work::get(Counter::CachedPairVisits),
+            if cfg!(feature = "contact-adjacency") {
+                2
+            } else {
+                4
+            }
+        );
         assert!(!w.body(second).unwrap().is_sleeping());
         assert!(!w.has_support(second));
         assert!(w.has_support(first));

@@ -19,6 +19,9 @@ fn link(w: &mut World, a: u64, b: u64) {
             tangent: Vector::ZERO,
         }],
     );
+    // This fixture writes the authoritative cache directly, outside World mutators.
+    #[cfg(feature = "contact-adjacency")]
+    w.adjacency.insert((ord(a), ord(b)));
     w.bookkeeping.graph.dirty = true;
 }
 // Independent oracle: the original repeated full-edge scan, including its stack ordering.
@@ -110,6 +113,8 @@ fn contact_removal_and_same_id_reinsertion_invalidate_indexed_adjacency() {
     check_activity(&mut w);
     // Contact topology can change without body membership changing.
     w.cache.remove(&(ord(20), ord(21)));
+    #[cfg(feature = "contact-adjacency")]
+    w.adjacency.remove((ord(20), ord(21)));
     link(&mut w, 11, 21);
     check_components(&mut w);
     let before = w.bookkeeping.work.adjacency_rebuilds;

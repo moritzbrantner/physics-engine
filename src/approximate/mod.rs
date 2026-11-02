@@ -47,6 +47,8 @@ fn substep_length(dt: Scalar, substeps: u8) -> Real {
 
 mod bookkeeping;
 mod contact;
+#[cfg(feature = "contact-adjacency")]
+mod contact_adjacency;
 mod mass;
 mod position;
 mod primitive;
@@ -64,6 +66,8 @@ pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, reserve};
+#[cfg(feature = "contact-adjacency")]
+use contact_adjacency::ContactAdjacency;
 use geometry::GeometryCache;
 pub use geometry::GeometryStats;
 mod ccd;
@@ -167,6 +171,9 @@ pub struct World {
     restitution_speed: Real,
     bodies: Vec<Body>,
     cache: BTreeMap<(Order, Order), Vec<CachedPoint>>,
+    /// Derived incident orders only; the contact cache remains the sole source of manifolds.
+    #[cfg(feature = "contact-adjacency")]
+    adjacency: ContactAdjacency,
     /// Prior substep length. Time composition and its checkpoint value stay f64.
     last_h: Scalar,
     // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
@@ -202,6 +209,22 @@ pub struct World {
     settle_scratch: Vec<Body>,
 }
 impl World {
+    /// Number of authoritative cached contact pairs, for benchmark and oracle diagnostics.
+    #[cfg(feature = "work-counters")]
+    pub fn cached_pair_count(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Lower bound on additional allocated index payload, excluding tree nodes and allocator
+    /// overhead. The complete `World` struct itself is also larger when indexing is enabled.
+    #[cfg(feature = "work-counters")]
+    pub fn contact_index_payload_bytes(&self) -> usize {
+        #[cfg(feature = "contact-adjacency")]
+        return self.adjacency.payload_capacity_bytes();
+        #[cfg(not(feature = "contact-adjacency"))]
+        0
+    }
+
     pub fn new(config: Config) -> Result<Self, Error> {
         if !config.gravity.finite()
             || config.substeps == 0
@@ -241,6 +264,8 @@ impl World {
             restitution_speed: unit,
             bodies: Vec::new(),
             cache: BTreeMap::new(),
+            #[cfg(feature = "contact-adjacency")]
+            adjacency: ContactAdjacency::default(),
             last_h: 0.0,
             responses: Vec::new(),
             bookkeeping: Scratch::default(),

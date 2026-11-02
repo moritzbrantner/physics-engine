@@ -223,6 +223,8 @@ mod engine {
         doors: Vec<(BodyId, bool)>,
         segments: Vec<([f32; 3], [f32; 3])>,
         hits: Vec<QueryHit>,
+        #[cfg(feature = "work-counters")]
+        door_removals: u32,
     }
     impl Sim {
         pub fn new(storage: BodyStorage) -> Self {
@@ -264,6 +266,8 @@ mod engine {
                 doors,
                 segments: segments(),
                 hits: Vec::new(),
+                #[cfg(feature = "work-counters")]
+                door_removals: 0,
             }
         }
     }
@@ -288,6 +292,10 @@ mod engine {
                 });
                 if !blocked {
                     world.remove_body(id);
+                    #[cfg(feature = "work-counters")]
+                    {
+                        self.door_removals += 1;
+                    }
                     let body = fixed(DOOR_BASE + d as u64, Shape::Box(v(h)), c);
                     self.doors[d] = (world.add_body(body).unwrap(), !open);
                 }
@@ -323,6 +331,21 @@ mod engine {
                 trace
                     .0
                     .push(Obs::Blocked(hit.is_some_and(|h| h.fraction < 1.0)));
+            }
+            #[cfg(feature = "work-counters")]
+            assert_eq!(
+                self.characters.world.cached_pair_count(),
+                0,
+                "MMORPG's kinematic tick must not construct persistent rigid contacts"
+            );
+            #[cfg(feature = "work-counters")]
+            if tick + 1 == TICKS && std::env::var_os("PHYSICS_CONTACT_WORKLOAD_STATS").is_some() {
+                eprintln!(
+                    "mmorpg-tick {:?}: ticks={}, cached_pairs=0, has_support=0, static_moves=0, door_removals={}",
+                    self.characters.world.config().body_storage,
+                    TICKS,
+                    self.door_removals
+                );
             }
         }
     }

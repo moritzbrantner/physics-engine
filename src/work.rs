@@ -33,9 +33,11 @@ pub enum Counter {
     /// Cached contact pairs visited by support lookup, static movement or explicit body removal.
     /// Removal visits each pair once to find neighbors and again to discard incident contacts.
     CachedPairVisits,
+    /// Incident-order entries inserted or removed in the optional contact index.
+    AdjacencyUpdates,
 }
 
-const COUNTERS: usize = 11;
+const COUNTERS: usize = 12;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

@@ -33,6 +33,8 @@ checkpoints = ["dep:sha2"]
 # Test-only deterministic work counters for the complexity contracts (.performance/contract.json).
 # Off in every release build, so they never affect the Rapier speed gate.
 work-counters = []
+# Temporary A/B prototype for #443. Not a production default until workload evidence supports it.
+contact-adjacency = []
 # Test-only: `Config::default()` uses `BodyStorage::Indexed`, so every suite checks that both
 # storage modes give identical results.
 indexed-storage = []

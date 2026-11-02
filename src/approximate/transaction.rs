@@ -243,6 +243,8 @@ impl Journal {
                 world.cache.remove(&key);
             }
         }
+        #[cfg(feature = "contact-adjacency")]
+        world.adjacency.rebuild(&world.cache);
         self.pairs.clear();
         self.cursor = 0;
         self.points.clear();

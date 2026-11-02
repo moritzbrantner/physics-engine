@@ -32,6 +32,16 @@ impl World {
             return Ok(());
         }
         let order = body.order;
+        #[cfg(feature = "contact-adjacency")]
+        let mut wake = {
+            let incident = self.adjacency.incident(order);
+            crate::work::add(
+                crate::work::Counter::CachedPairVisits,
+                incident.len() as u64,
+            );
+            incident.to_vec()
+        };
+        #[cfg(not(feature = "contact-adjacency"))]
         let mut wake = self
             .cache
             .keys()
@@ -191,6 +201,18 @@ impl World {
         };
         let id = self.bodies[i].order;
         let up = (-self.scene.gravity).unit();
+        #[cfg(feature = "contact-adjacency")]
+        return self.adjacency.incident(id).iter().any(|&other| {
+            crate::work::add(crate::work::Counter::CachedPairVisits, 1);
+            let key = super::contact_adjacency::pair(id, other);
+            self.cache.get(&key).is_some_and(|points| {
+                points.iter().any(|p| {
+                    (key.1 == id && p.normal.dot(up) > 0.5)
+                        || (key.0 == id && p.normal.dot(up) < -0.5)
+                })
+            })
+        });
+        #[cfg(not(feature = "contact-adjacency"))]
         self.cache.iter().any(|(&(a, b), p)| {
             crate::work::add(crate::work::Counter::CachedPairVisits, 1);
             p.iter().any(|p| {
