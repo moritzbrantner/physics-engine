@@ -198,6 +198,8 @@ fn counted(f: impl FnOnce()) -> (u64, u64, u64) {
 
 /// Budget 0 (#414): no query or character operation takes the stale-tree fallback scan.
 const NO_FULL_SCAN: (&str, &str, &str) = ("full-scan-bodies", "", "zero");
+/// Contact-free churn does not traverse retained contact pairs (#448).
+const NO_CACHED_PAIR_VISITS: (&str, &str, &str) = ("cached-pair-visits", "", "zero");
 
 const SIZES: [u32; 6] = [9, 10, 11, 12, 13, 14];
 const HITS: [u64; 5] = [1, 2, 4, 8, 16];
@@ -510,6 +512,7 @@ fn churn(
             "order-comparisons-per-op",
             work::get(Counter::OrderComparisons) / count,
         ),
+        ("cached-pair-visits", work::get(Counter::CachedPairVisits)),
         ("worst-op-work", worst),
     ]
 }
@@ -573,6 +576,7 @@ fn body_churn_is_amortized_over_a_long_sequence() {
             ("storage-shifts-per-op", "bodies", "constant"),
             ("tree-inserts-per-op", "bodies", "constant"),
             ("worst-op-work", "bodies", "linear"),
+            NO_CACHED_PAIR_VISITS,
         ],
     );
     judge(
@@ -581,6 +585,7 @@ fn body_churn_is_amortized_over_a_long_sequence() {
         &[
             ("storage-shifts-per-op", "bodies", "linear"),
             ("tree-inserts-per-op", "bodies", "constant"),
+            NO_CACHED_PAIR_VISITS,
         ],
     );
     judge(
@@ -589,8 +594,214 @@ fn body_churn_is_amortized_over_a_long_sequence() {
         &[
             ("storage-shifts-per-op", "bodies", "constant"),
             ("tree-inserts-per-op", "bodies", "constant"),
+            NO_CACHED_PAIR_VISITS,
         ],
     );
+}
+
+/// Independent sphere-on-box contacts (rather than the contact-free churn town), plus a
+/// separate unsupported sphere, movable fixed box and removable fixed box. Only `pairs`
+/// bodies touch: adding inert fixed bodies changes the world size, not the cached pair count.
+fn contact_cache_world(
+    pairs: u64,
+    inert_statics: u64,
+    storage: BodyStorage,
+) -> (World, BodyId, BodyId, BodyId) {
+    let mut w = World::new(Config {
+        body_storage: storage,
+        ..Config::default()
+    })
+    .unwrap();
+    for k in 0..pairs {
+        let at = V((k % 32) as f32 * 4.0, BOX, (k / 32) as f32 * 4.0);
+        w.add_body(Body::keyed(2 * k, Shape::Box(V(BOX, BOX, BOX)), at, 0.0))
+            .unwrap();
+        let mut sphere = Body::keyed(2 * k + 1, Shape::Sphere(0.3), at + V(0.0, 0.8, 0.0), 1.0);
+        // Keep contacts live through warm steps, independent of the sleep policy.
+        sphere.sleep_allowed = false;
+        w.add_body(sphere).unwrap();
+    }
+    for k in 0..inert_statics {
+        w.add_body(Body::keyed(
+            100_000 + k,
+            Shape::Box(V(BOX, BOX, BOX)),
+            V(10_000.0 + (k % 50) as f32 * 4.0, BOX, (k / 50) as f32 * 4.0),
+            0.0,
+        ))
+        .unwrap();
+    }
+    let unsupported = w
+        .add_body(Body::keyed(
+            200_000,
+            Shape::Sphere(0.3),
+            V(-100.0, 20.0, 0.0),
+            1.0,
+        ))
+        .unwrap();
+    let movable = w
+        .add_body(Body::keyed(
+            200_001,
+            Shape::Box(V(BOX, BOX, BOX)),
+            V(-110.0, BOX, 0.0),
+            0.0,
+        ))
+        .unwrap();
+    let removable = w
+        .add_body(Body::keyed(
+            200_002,
+            Shape::Box(V(BOX, BOX, BOX)),
+            V(-120.0, BOX, 0.0),
+            0.0,
+        ))
+        .unwrap();
+
+    for tick in 0..3 {
+        let report = w.step(1.0 / 60.0).unwrap();
+        if tick > 0 {
+            assert!(
+                report.contact_points >= pairs,
+                "{storage:?}: only {} contact points for {pairs} pairs at tick {tick}",
+                report.contact_points
+            );
+        }
+    }
+    // Verify that the contacts are persistent and correctly oriented, independently of the
+    // unsupported lookup used to measure the exact cache size below.
+    for k in [0, pairs / 2, pairs.saturating_sub(1)] {
+        if k < pairs {
+            assert!(w.has_support(w.body_id(2 * k + 1).unwrap()));
+        }
+    }
+    (w, unsupported, movable, removable)
+}
+
+/// Three operations that scan the contact cache (#448). The empty P=0 fixtures are checked
+/// directly but excluded from emitted growth evidence (the contract schema requires positive
+/// dimension values). `inertCase` selects 0 or 1,150 unrelated statics, and `storage` selects
+/// Ordered or Indexed; both are 1-based categorical dimensions in the contract.
+#[test]
+fn cached_pair_traversal_follows_contacts_not_inert_statics() {
+    let mut samples = Vec::new();
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        for inert_statics in [0, 1150] {
+            for pairs in [0, 16, 64, 256, 1024] {
+                let (mut w, unsupported, movable, removable) =
+                    contact_cache_world(pairs, inert_statics, storage);
+                work::reset();
+                assert!(!w.has_support(unsupported));
+                let support_visits = work::get(Counter::CachedPairVisits);
+                assert_eq!(
+                    support_visits, pairs,
+                    "support lookup must visit every live pair"
+                );
+
+                work::reset();
+                let old_position = w.body(movable).unwrap().position;
+                w.set_static_position(movable, old_position + V(0.0, 0.1, 0.0))
+                    .unwrap();
+                assert_eq!(w.body(movable).unwrap().position.1, old_position.1 + 0.1);
+                let move_visits = work::get(Counter::CachedPairVisits);
+                assert_eq!(move_visits, pairs, "static move must visit every live pair");
+
+                work::reset();
+                assert!(w.remove_body(removable).is_some());
+                assert!(w.body(removable).is_none());
+                let remove_visits = work::get(Counter::CachedPairVisits);
+                assert_eq!(
+                    remove_visits,
+                    2 * pairs,
+                    "removal must count both neighbor and retain traversals"
+                );
+                if pairs > 0 {
+                    let supported = w.body_id(1).unwrap();
+                    assert!(w.has_support(supported), "unrelated edits preserve support");
+                    // Removing an incident platform discards exactly its pair, without
+                    // changing the other independent cached contacts.
+                    work::reset();
+                    w.remove_body(w.body_id(0).unwrap()).unwrap();
+                    assert_eq!(work::get(Counter::CachedPairVisits), 2 * pairs);
+                    assert!(!w.has_support(supported));
+                    work::reset();
+                    assert!(!w.has_support(unsupported));
+                    assert_eq!(work::get(Counter::CachedPairVisits), pairs - 1);
+                }
+                if pairs > 0 {
+                    samples.push((
+                        vec![
+                            ("pairs", pairs),
+                            ("inertCase", 1 + u64::from(inert_statics > 0)),
+                            ("storage", 1 + u64::from(storage == BodyStorage::Indexed)),
+                        ],
+                        vec![
+                            ("support-cache-pair-visits", support_visits),
+                            ("move-cache-pair-visits", move_visits),
+                            ("remove-cache-pair-visits", remove_visits),
+                        ],
+                    ));
+                }
+            }
+        }
+    }
+    let mut bounds = Vec::new();
+    for metric in [
+        "support-cache-pair-visits",
+        "move-cache-pair-visits",
+        "remove-cache-pair-visits",
+    ] {
+        bounds.push((metric, "pairs", "linear"));
+        bounds.push((metric, "inertCase", "constant"));
+    }
+    judge("contact-cache-traversal", &samples, &bounds);
+}
+
+/// The same contacts must still wake only their actual neighbors when a fixed support moves
+/// or disappears; the work counter must not alter island or contact-removal semantics.
+#[test]
+fn cached_pair_traversal_preserves_wake_and_removal_semantics() {
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let mut w = World::new(Config {
+            body_storage: storage,
+            ..Config::default()
+        })
+        .unwrap();
+        for (k, x) in [(0, 0.0), (2, 10.0)] {
+            w.add_body(Body::keyed(
+                k,
+                Shape::Box(V(2.0, 0.25, 2.0)),
+                V(x, 0.25, 0.0),
+                0.0,
+            ))
+            .unwrap();
+            w.add_body(Body::keyed(
+                k + 1,
+                Shape::Sphere(0.25),
+                V(x, 0.75, 0.0),
+                1.0,
+            ))
+            .unwrap();
+        }
+        for _ in 0..240 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        let (first, second) = (w.body_id(1).unwrap(), w.body_id(3).unwrap());
+        assert!(w.body(first).unwrap().is_sleeping());
+        assert!(w.body(second).unwrap().is_sleeping());
+        assert!(w.has_support(first) && w.has_support(second));
+
+        work::reset();
+        w.set_static_position(w.body_id(0).unwrap(), V(0.0, 0.1, 0.0))
+            .unwrap();
+        assert_eq!(work::get(Counter::CachedPairVisits), 2);
+        assert!(!w.body(first).unwrap().is_sleeping());
+        assert!(w.body(second).unwrap().is_sleeping());
+
+        work::reset();
+        w.remove_body(w.body_id(2).unwrap()).unwrap();
+        assert_eq!(work::get(Counter::CachedPairVisits), 4);
+        assert!(!w.body(second).unwrap().is_sleeping());
+        assert!(!w.has_support(second));
+        assert!(w.has_support(first));
+    }
 }
 
 /// `characters` characters in 4 × 4 m blocks of the town's free lanes, `per_block` of them

@@ -179,6 +179,7 @@ impl World {
             .cache
             .keys()
             .filter_map(|&(a, b)| {
+                crate::work::add(crate::work::Counter::CachedPairVisits, 1);
                 (a == order)
                     .then_some(b)
                     .or_else(|| (b == order).then_some(a))
@@ -192,7 +193,10 @@ impl World {
         }
         // O(contact pairs), independent of the body count.
         self.geometry.remove(order);
-        self.cache.retain(|&(a, b), _| a != order && b != order);
+        self.cache.retain(|&(a, b), _| {
+            crate::work::add(crate::work::Counter::CachedPairVisits, 1);
+            a != order && b != order
+        });
         let i = self.index(id).ok()?;
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies[i].clone();
