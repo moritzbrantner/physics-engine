@@ -331,13 +331,17 @@ fn replay_is_deterministic_and_independent_of_insertion_order() {
     }
 }
 
-/// Impacts the contact cache never holds still count: a CCD bounce (a remaining-time impact)
-/// starts and stops; a fast hit that comes to rest through a swept impulse starts once.
+/// Impacts the contact cache never holds still count: a bounce (a CCD remaining-time impact, or
+/// a swept impulse followed by the end-of-step restitution pass, #458) starts and stops; a fast
+/// inelastic hit that comes to rest through a swept impulse starts once.
 #[test]
 fn swept_and_ccd_impacts_start_once_and_bounces_stop() {
-    for speed in [5.0, 20.0, 80.0, 160.0] {
-        // (Without CCD the ball comes to rest at the wall; with it, it bounces.)
-        for ccd in [false, true] {
+    for (speed, ccd, restitution) in [5.0, 20.0, 80.0, 160.0]
+        .into_iter()
+        .flat_map(|s| [(s, false), (s, true)])
+        .flat_map(|(s, c)| [(s, c, 0.0), (s, c, 0.8)])
+    {
+        {
             let mut w = World::new(Config {
                 gravity: Vector::ZERO,
                 substeps: 2,
@@ -351,15 +355,16 @@ fn swept_and_ccd_impacts_start_once_and_bounces_stop() {
                 Vector(3.0, 0.0, 0.0),
                 0.0,
             );
-            wall.restitution = 0.8;
+            wall.restitution = restitution;
             let wall = w.add_body(wall).unwrap();
             let mut ball = Body::keyed(CRATE, Shape::Sphere(0.1), Vector::ZERO, 1.0);
             ball.velocity = Vector(speed, 0.0, 0.0);
-            ball.restitution = 0.8;
+            ball.restitution = restitution;
             ball.ccd = ccd;
             let ball = w.add_body(ball).unwrap();
             let log = run(&mut w, 120);
             let bounced = w.body(ball).unwrap().velocity.0 < 0.0;
+            assert_eq!(bounced, restitution > 0.0, "speed {speed} ccd {ccd}");
             let expected = if bounced {
                 vec![
                     ContactEvent::Started(wall, ball),

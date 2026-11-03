@@ -215,6 +215,9 @@ impl World {
             self.solve_constraints(&mut constraints, &mut report);
             self.cache_contacts(&constraints, &mut report);
             self.integrate(h, &mut report)?;
+            if substep + 1 == self.scene.substeps && !self.bounces.is_empty() {
+                self.bounce_contacts(&constraints);
+            }
             self.constraints = constraints;
             if let Err(error) = self.correct_positions(h, &mut report.position) {
                 return Err(self.fail(&report, error));
@@ -243,8 +246,38 @@ impl World {
         ));
         error
     }
+    /// Restitution phase, after the last substep's integration (Rapier's end-of-step
+    /// `apply_restitution`, box2d-style): each bouncing row that took a normal impulse drives
+    /// its normal velocity up to its bounce. Positions stay where the step left them, at the
+    /// surface for a speculative contact, so a fast body bounces off it rather than short of it.
+    fn bounce_contacts(&mut self, constraints: &[Constraint]) {
+        for c in constraints {
+            if c.bounce <= 0.0 || c.normal_impulse <= 0.0 {
+                continue;
+            }
+            let (a, b) = (&self.bodies[c.a], &self.bodies[c.b]);
+            if a.sleeping || b.sleeping {
+                continue;
+            }
+            let v =
+                (contact_velocity(b, c.rb, c.spin) - contact_velocity(a, c.ra, c.spin)).dot(c.n);
+            let dv = c.bounce - v;
+            if dv <= 0.0 {
+                continue;
+            }
+            self.transaction.body(c.a, &self.bodies[c.a]);
+            self.transaction.body(c.b, &self.bodies[c.b]);
+            apply(
+                &mut self.bodies,
+                &self.responses,
+                c,
+                [dv * c.normal_mass, 0.0, 0.0],
+            );
+        }
+    }
     /// Step setup: every per-body loop of the substeps runs over the awake bodies only (#412).
     fn begin_substeps(&mut self) {
+        self.bounces.clear();
         let s = &mut self.bookkeeping;
         s.activity.refresh(&self.bodies, &mut s.work);
         s.stepped.clear();
@@ -585,6 +618,26 @@ impl World {
                 } else {
                     0.0
                 };
+                // Rapier's restitution seed: a new contact closing faster than the restitution
+                // speed bounces once the step is solved, speculative ones included (#458).
+                let key = (a.order, b.order);
+                let mut bounce = 0.0;
+                if restitution > 0.0 && rel.dot(n) < -self.restitution_speed {
+                    bounce = -restitution * rel.dot(n);
+                    // A later substep's row sees the approach this step already slowed: the
+                    // pair keeps the bounce it was first prepared with, or a larger one.
+                    match self.bounces.binary_search_by(|(k, _)| k.cmp(&key)) {
+                        Ok(at) => {
+                            bounce = bounce.max(self.bounces[at].1);
+                            self.bounces[at].1 = bounce;
+                        }
+                        Err(at) => self.bounces.insert(at, (key, bounce)),
+                    }
+                } else if !self.bounces.is_empty()
+                    && let Ok(at) = self.bounces.binary_search_by(|(k, _)| k.cmp(&key))
+                {
+                    bounce = self.bounces[at].1;
+                }
                 let bias = contact_bias(
                     point.separation,
                     restitution,
@@ -628,6 +681,7 @@ impl World {
                     spin: row_spin,
                     offset: b.position - a.position,
                     restitution,
+                    bounce,
                 };
                 if self.scene.warm_start
                     && warm_reach > 0.0

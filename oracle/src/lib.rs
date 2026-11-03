@@ -178,6 +178,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::arpg_tick::scenario(),
         scenarios::embedded_starts::scenario(),
         scenarios::basin::scenario(),
+        scenarios::bounce::scenario(),
         scenarios::contact_events::scenario(),
     ]
 }

@@ -147,6 +147,9 @@ struct Constraint {
     offset: Vector,
     /// Restitution coefficient while the pair has no cached contact yet; zero afterwards.
     restitution: Real,
+    /// Normal velocity this new contact bounces to at the end of the step (Rapier's
+    /// restitution seed, `-restitution * approach` at preparation); zero when it does not.
+    bounce: Real,
 }
 
 const FREE_SLOT: u32 = u32::MAX;
@@ -200,6 +203,9 @@ pub struct World {
     order_index: BTreeMap<Order, BodyId>,
     /// Reused merge buffer for sorting `Indexed` storage.
     settle_scratch: Vec<Body>,
+    /// This step's bouncing new contacts by pair, sorted: rows regenerated after the pair is
+    /// cached keep the bounce it was first prepared with.
+    bounces: Vec<((Order, Order), Real)>,
     /// Contact cache insertions (`true`) and removals in the order they happened: removals by
     /// `remove_body` since the last successful step, then the current step's.
     contact_changes: Vec<ContactChange>,
@@ -303,6 +309,7 @@ impl World {
             sorted_len: 0,
             order_index: BTreeMap::new(),
             settle_scratch: Vec::new(),
+            bounces: Vec::new(),
             contact_changes: Vec::new(),
             removed_contacts: 0,
             held_contacts: Vec::new(),

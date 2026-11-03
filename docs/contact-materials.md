@@ -37,7 +37,14 @@ targets just because another force or command drives its endpoints together.
 
 Separated speculative constraints always use `-separation / substep_seconds` as
 their normal target, allowing arrival at the surface without a premature bounce,
-even inside slop. For penetration beyond slop, the existing Baumgarte target is
+even inside slop. The bounce is applied once the step is solved, as Rapier's end-of-step
+restitution pass (#458): a new contact (no history entry) closing faster than the threshold
+when its constraint is first prepared in the step keeps `e * closing_speed` as its bounce,
+including a speculative or swept one and rows regenerated later in the step. After the last
+substep's integration, each such row that took a normal impulse is driven up to that
+separating speed, so a fast body stops at the surface and leaves it at `e` times its speed
+instead of stopping dead. Rapier 0.36.1 has no closing-speed threshold; the 1 m/s threshold
+is kept so slow settling contacts do not jitter. For penetration beyond slop, the existing Baumgarte target is
 `min(0.2 * excess_penetration / substep_seconds, 60 scene units/s)`; a restitution
 target can raise that target. Optional diagnostic softened correction remains a
 separate experiment in #158.
