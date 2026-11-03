@@ -20,7 +20,10 @@ if [[ -n "${SIZE_BASE_REF:-}" ]]; then
   base="$repo/target/size-base-src"
   rm -rf "$base" && mkdir -p "$base"
   git archive "$SIZE_BASE_REF" | tar -x -C "$base"
-  (cd "$base" && CARGO_TARGET_DIR="$repo/target" node "$repo/scripts/oracle-wasm.mjs" --size-only)
+  # Its own target dir: Cargo hashes path packages relative to their workspace root, so in a
+  # shared one the base's physics-engine and the PR's are the same artifact, and whichever
+  # build runs second links the other's engine (a fresh checkout is older than either build).
+  (cd "$base" && CARGO_TARGET_DIR="$repo/target/size-base" node "$repo/scripts/oracle-wasm.mjs" --size-only)
   # A base over its own budget (exit 1) is still a usable baseline.
   ct performance size --root "$base" --report "$repo/target/size-base.json" --json > /dev/null ||
     [[ $? -eq 1 ]]
