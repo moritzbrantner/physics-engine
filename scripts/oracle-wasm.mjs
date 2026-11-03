@@ -2,7 +2,7 @@
 // pattern and bare) per scenario for both engine storage modes (Ordered, Indexed). Each engine's
 // lone build is copied to target/size/<side>.wasm, which `coding-tooling performance size`
 // judges against .performance/size.json. `--size-only` stops after those two builds (the base-branch
-// size measurement); CARGO_TARGET_DIR lets that build share the PR checkout's dependency cache.
+// size measurement), which size-budget.sh builds in its own CARGO_TARGET_DIR.
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 
