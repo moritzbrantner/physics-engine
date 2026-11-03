@@ -26,6 +26,7 @@ fn row(a: usize, b: usize) -> Constraint {
         spin: false,
         offset: V::ZERO,
         restitution: 0.0,
+        bounce: 0.0,
     }
 }
 
