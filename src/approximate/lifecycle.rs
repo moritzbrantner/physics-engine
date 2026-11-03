@@ -188,6 +188,20 @@ impl World {
         if !neighbors.is_empty() {
             self.sort_storage();
             for n in neighbors {
+                // Its contacts stop; the next successful step reports them.
+                let other = self.bodies[self.index_of_order(n).expect("live contact")].id;
+                let (key, ids) = if order < n {
+                    ((order, n), (id, other))
+                } else {
+                    ((n, order), (other, id))
+                };
+                self.contact_changes.push(super::ContactChange {
+                    key,
+                    ids,
+                    started: false,
+                    held: false,
+                });
+                self.removed_contacts = self.contact_changes.len();
                 self.wake_island(n);
             }
         }

@@ -236,6 +236,15 @@ impl World {
                 *start = start.max(elapsed);
                 // `contact_points` counts solver rows; a remaining-time impact is not one.
                 report.swept_contacts += 1;
+                let (a, b) = if self.bodies[i].order < self.bodies[j].order {
+                    (&self.bodies[i], &self.bodies[j])
+                } else {
+                    (&self.bodies[j], &self.bodies[i])
+                };
+                if !self.cache.contains_key(&(a.order, b.order)) {
+                    self.contact_changes
+                        .extend(super::ContactChange::impact(a, b));
+                }
                 let s = &mut self.bookkeeping;
                 for index in [i, j] {
                     if self.bodies[index].retire_on_impact {

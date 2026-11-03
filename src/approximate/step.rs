@@ -43,6 +43,7 @@ impl World {
         }
         if dt == 0.0 {
             self.last_report = Report::default();
+            self.last_report.contact_events = self.take_contact_events();
             self.last_report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
             self.last_report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
             self.last_report.position.scratch_retained_bytes =
@@ -56,6 +57,7 @@ impl World {
         if self.is_quiescent() {
             self.elapsed += dt;
             self.finish_bookkeeping(&mut report);
+            report.contact_events = self.take_contact_events();
             self.last_report = report.clone();
             return Ok(report);
         }
@@ -71,8 +73,9 @@ impl World {
             work.transaction = self.last_transaction;
         }
         let result = match result {
-            Ok(report) => {
+            Ok(mut report) => {
                 self.transaction.commit();
+                report.contact_events = self.take_contact_events();
                 self.last_report = report.clone();
                 Ok(report)
             }
@@ -82,11 +85,55 @@ impl World {
                 self.transaction = journal;
                 self.last_h = prior_h;
                 self.bookkeeping.activity.count = prior_activity;
+                // The rollback restored the cache: only changes from before the step (removals, held
+                // impacts) remain.
+                self.contact_changes.truncate(self.removed_contacts);
                 Err(error)
             }
         };
         self.sync_query_tree(layout, dt);
         result
+    }
+    /// Turns the contact cache's insertions and removals since the last successful step into
+    /// its events: per pair, `Started` if its first change was an insertion (it was apart
+    /// before) and `Stopped` if its last change was a removal (it is apart now), in pair order.
+    /// An uncached impact counts as an insertion and a removal held for one step, so a body
+    /// that lands through a speculative or swept impulse and rests is not reported twice.
+    /// O(c log c) in the c changes; nothing when no contact changed.
+    fn take_contact_events(&mut self) -> Vec<super::ContactEvent> {
+        self.removed_contacts = 0;
+        let mut events = Vec::new();
+        if self.contact_changes.is_empty() {
+            return events;
+        }
+        // Stable: each pair keeps its changes in the order they happened.
+        self.contact_changes.sort_by_key(|c| c.key);
+        let mut held = std::mem::take(&mut self.held_contacts);
+        // A keyed body removed and re-added keeps its order but not its id: group by both.
+        for run in self
+            .contact_changes
+            .chunk_by(|x, y| x.key == y.key && x.ids == y.ids)
+        {
+            let (a, b) = run[0].ids;
+            if run[0].started {
+                events.push(super::ContactEvent::Started(a, b));
+            }
+            let last = run[run.len() - 1];
+            if last.held && self.index(a).is_ok() && self.index(b).is_ok() {
+                // Still in contact until the next step shows the pair apart.
+                held.push(super::ContactChange {
+                    held: false,
+                    ..last
+                });
+            } else if !last.started {
+                events.push(super::ContactEvent::Stopped(a, b));
+            }
+        }
+        self.contact_changes.clear();
+        self.contact_changes.append(&mut held);
+        self.held_contacts = held;
+        self.removed_contacts = self.contact_changes.len();
+        events
     }
     /// Commit phase, after the transaction settled: query-tree leaves follow the step's bodies.
     fn sync_query_tree(&mut self, layout: u64, dt: Scalar) {
@@ -746,6 +793,7 @@ impl World {
             .peekable();
         let mut entries = self.cache.iter_mut().peekable();
         let mut fresh = Vec::new();
+        let mut impacts = Vec::new();
         loop {
             let run_key = runs
                 .peek()
@@ -828,19 +876,43 @@ impl World {
                 }
             }
             if let Some(points) = new {
+                self.contact_changes.push(super::ContactChange {
+                    key,
+                    ids: (a.id, b.id),
+                    started: true,
+                    held: false,
+                });
                 fresh.push((key, points));
+            } else if !cached && run.iter().any(|c| c.normal_impulse > 0.0) {
+                // An impulse without a cached point (a bounce or a retiring projectile's hit):
+                // recorded after the removal of the pair's old entry below.
+                impacts.extend(super::ContactChange::impact(a, b));
             }
         }
         self.cache.extend(fresh);
+        let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
         self.cache.retain(|&key, points| {
             if points.is_empty() {
                 self.transaction.pair(key, Some(points));
                 scratch.graph.dirty = true;
+                let id = |order| {
+                    bodies[bodies
+                        .binary_search_by_key(&order, |b| b.order)
+                        .expect("live contact")]
+                    .id
+                };
+                changes.push(super::ContactChange {
+                    key,
+                    ids: (id(key.0), id(key.1)),
+                    started: false,
+                    held: false,
+                });
                 false
             } else {
                 true
             }
         });
+        self.contact_changes.append(&mut impacts);
         let scratch = &mut self.bookkeeping;
         scratch.support.propagate(
             &mut scratch.supported,
@@ -914,9 +986,28 @@ impl World {
                 let handle = b.id;
                 self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                 self.geometry.remove(id);
+                let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
                 self.cache.retain(|&(a, b), points| {
                     if a == id || b == id {
                         self.transaction.pair((a, b), Some(points));
+                        // The retired body has left storage; its partner is still there.
+                        let other = |order| {
+                            bodies[bodies
+                                .binary_search_by_key(&order, |b| b.order)
+                                .expect("live contact")]
+                            .id
+                        };
+                        let ids = if a == id {
+                            (handle, other(b))
+                        } else {
+                            (other(a), handle)
+                        };
+                        changes.push(super::ContactChange {
+                            key: (a, b),
+                            ids,
+                            started: false,
+                            held: false,
+                        });
                         false
                     } else {
                         true

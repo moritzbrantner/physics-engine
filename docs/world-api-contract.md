@@ -207,6 +207,43 @@ bodies it was in contact with or now touches wake, and characters it now reaches
 again. Characters are not carried; the consumer adds a platform's displacement to its riders' moves
 (MMORPG's adapter, the `platforms` oracle scenario).
 
+## Contact events
+
+`Report::contact_events` lists the step's contact enter/exit transitions (Q33,
+[D7](technical-decisions.md#d7--physical-interactions-reuse-the-world-consumer-gated-q32q38)) as
+`ContactEvent::Started(a, b)` and `ContactEvent::Stopped(a, b)`, `a` before `b` in body order.
+They are derived from the persistent contact cache, not tracked separately: a pair is in contact
+while the cache holds it (the solver found a point within twice the contact slop), and an impulse
+on a pair the cache does not hold (a swept or CCD impact, a projectile retired on impact) is a
+contact as well.
+
+- Only physical pairs take part: a dynamic body against another dynamic, static, kinematic,
+  halfspace or terrain body, when their layers collide. Sensors, query-only shapes and
+  `move_characters` produce no events (Rapier's `move_shape` produces none either); sensor
+  areas and other logical zones are game-owned and answered by `overlap_shape` with
+  `QueryFilter::include_sensors`.
+- Per step and pair: at most one `Started` and one `Stopped`, `Started` first. Sustained and
+  sleeping contacts report nothing. A pair that touched and separated within the step reports
+  both; a contact that broke and re-formed within it reports neither. An uncached impact's
+  `Stopped` is held to the next step and dropped if the pair is in contact by then, so a body
+  that lands through a swept impulse and rests starts once; a bounce stops one step later.
+- Ordered by pair (`a`, then `b`, in body order), so identical across worker counts and storage
+  modes, and, for keyed bodies, independent of insertion order.
+- `remove_body` stops the removed body's contacts; the next successful step reports them, with
+  the removed body's id (as Rapier's `Stopped` with `REMOVED`). A body retired on impact reports
+  its `Stopped` in the step that retires it. A keyed body re-added with the same key is a new
+  pair.
+- A failed step reports nothing and keeps the removals and held impacts for the next successful
+  step. `step(0.0)` and a quiescent step report what is pending.
+- Cost: O(c log c) per step in the c cache insertions and removals; nothing when no contact
+  changed. Checked against Rapier's `CollisionEvent`s by the `contact-events` oracle scenario.
+
+Not covered: a kinematic body placed away (`set_kinematic_position`, character moves) from a
+sleeping dynamic body does not wake it, so their contact, and the sleeper's support, stay until
+it wakes; `set_static_position` and `remove_body` do wake. Rapier's sensor intersection events,
+contact forces and per-collider opt-in (`ActiveEvents`) are not provided. Pending transitions are
+not checkpointed: a restored world's events start from its restored cache.
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the

@@ -106,7 +106,7 @@ use control::drop_boxes_near;
 pub use error::{Error, SweepFailure};
 pub use material::{CombineRule, Material};
 use material::{pair_friction, pair_restitution};
-pub use report::Report;
+pub use report::{ContactEvent, Report};
 pub use shape::Shape;
 
 #[derive(Clone, Debug)]
@@ -206,6 +206,44 @@ pub struct World {
     /// This step's bouncing new contacts by pair, sorted: rows regenerated after the pair is
     /// cached keep the bounce it was first prepared with.
     bounces: Vec<((Order, Order), Real)>,
+    /// Contact cache insertions (`true`) and removals in the order they happened: removals by
+    /// `remove_body` since the last successful step, then the current step's.
+    contact_changes: Vec<ContactChange>,
+    /// How many leading `contact_changes` precede the current step (`remove_body` removals and
+    /// held impacts); a failed step keeps them.
+    removed_contacts: usize,
+    /// Reused buffer for the impacts `take_contact_events` holds for the next step.
+    held_contacts: Vec<ContactChange>,
+}
+/// One contact cache insertion or removal, with the pair's ids at that moment.
+#[derive(Clone, Copy, Debug)]
+struct ContactChange {
+    key: (Order, Order),
+    ids: (BodyId, BodyId),
+    started: bool,
+    /// The end of an impact the cache does not hold (an uncached pair took a normal impulse):
+    /// its `Stopped` waits for the next step, which drops it if the pair is cached by then.
+    held: bool,
+}
+impl ContactChange {
+    /// An impact between `a` and `b` (in body order) that the contact cache does not hold.
+    fn impact(a: &Body, b: &Body) -> [Self; 2] {
+        let (key, ids) = ((a.order, b.order), (a.id, b.id));
+        [
+            Self {
+                key,
+                ids,
+                started: true,
+                held: false,
+            },
+            Self {
+                key,
+                ids,
+                started: false,
+                held: true,
+            },
+        ]
+    }
 }
 impl World {
     pub fn new(config: Config) -> Result<Self, Error> {
@@ -272,6 +310,9 @@ impl World {
             order_index: BTreeMap::new(),
             settle_scratch: Vec::new(),
             bounces: Vec::new(),
+            contact_changes: Vec::new(),
+            removed_contacts: 0,
+            held_contacts: Vec::new(),
         })
     }
     /// Work from the most recent step attempt, including a numerical failure.

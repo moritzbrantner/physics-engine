@@ -29,6 +29,12 @@ pub enum Obs {
     Blocked(bool),
     /// The gap a downward support cast found to walkable static ground, if any.
     Support(Option<f32>),
+    /// A contact transition reported by a tick: the pair as scenario labels.
+    ContactEvent {
+        tick: u32,
+        started: bool,
+        pair: [u32; 2],
+    },
 }
 
 /// Observations in the order a scenario recorded them.
@@ -173,5 +179,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::embedded_starts::scenario(),
         scenarios::basin::scenario(),
         scenarios::bounce::scenario(),
+        scenarios::contact_events::scenario(),
     ]
 }

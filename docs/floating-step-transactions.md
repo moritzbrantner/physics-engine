@@ -1,6 +1,6 @@
 # Floating-state failed-step boundary
 
-The `approximate::World::step` returned-error contract is atomic. `InvalidInput` and numerical errors preserve every authoritative body, queued force/torque/impulse, sleep/quiet timer, warm-start point/impulse, membership, substep history and elapsed time. The previous successful `last_report` stays available. An error returns no successful retirement/event report. Zero-duration calls keep their existing successful no-op report behavior. Rust panics/abort, including allocation failure, are outside the returned-error guarantee.
+The `approximate::World::step` returned-error contract is atomic. `InvalidInput` and numerical errors preserve every authoritative body, queued force/torque/impulse, sleep/quiet timer, warm-start point/impulse, membership, substep history and elapsed time. The previous successful `last_report` stays available. An error returns no successful retirement/event report; contact transitions pending from before the attempt (`remove_body` removals, held impacts) stay pending for the next successful step, and the attempt's own are discarded with its cache changes. Zero-duration calls keep their existing successful no-op report behavior, apart from reporting pending contact transitions. Rust panics/abort, including allocation failure, are outside the returned-error guarantee.
 
 ## Transaction mechanics
 
