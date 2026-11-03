@@ -3,15 +3,44 @@
 use super::{BodyId, Error, Order, Real, Shape, Vector, World, bookkeeping, contact, query};
 
 impl World {
-    /// Places an external (kinematic) body at `position` without resolving contact.
+    /// Places an external (kinematic) body at `position` without resolving contact, as Rapier's
+    /// `set_next_kinematic_translation`. Sleeping bodies it was in contact with (within twice
+    /// the contact slop at its old pose) or now touches wake, so a crate left behind falls and
+    /// its contact stops (#456): two descents of the query tree, no contact-cache scan.
     pub fn set_kinematic_position(&mut self, id: BodyId, position: Vector) -> Result<(), Error> {
         // Writing back the current position changes nothing a character relies on.
         let unchanged = self.body(id).is_some_and(|b| b.position == position);
+        let solid = self
+            .body(id)
+            .is_some_and(|b| !b.sensor && !b.shape.query_only());
+        let mut wake = if solid && !unchanged {
+            let i = self.index(id)?;
+            self.sleepers_within(&self.bodies[i], self.scene.contact_slop * 2.0)
+        } else {
+            Vec::new()
+        };
         self.place_kinematic(id, position)?;
         if !unchanged {
+            if solid {
+                let i = self.index(id)?;
+                wake.extend(self.sleepers_touching(&self.bodies[i]));
+            }
+            self.wake_orders(wake);
             self.body_placed(id);
         }
         Ok(())
+    }
+    /// Wakes the islands of `wake` (body orders), once each.
+    fn wake_orders(&mut self, mut wake: Vec<Order>) {
+        if wake.is_empty() {
+            return;
+        }
+        wake.sort_unstable();
+        wake.dedup();
+        self.sort_storage();
+        for order in wake {
+            self.wake_island(order);
+        }
     }
     /// Moves a static body (mass 0, not external) to `position` in place, as Rapier moves a
     /// fixed collider: the layout and every other body's caches stay valid. Sleeping bodies
@@ -54,14 +83,7 @@ impl World {
         if !self.bodies[i].sensor && !self.bodies[i].shape.query_only() {
             wake.extend(self.sleepers_touching(&self.bodies[i]));
         }
-        if !wake.is_empty() {
-            wake.sort_unstable();
-            wake.dedup();
-            self.sort_storage();
-            for order in wake {
-                self.wake_island(order);
-            }
-        }
+        self.wake_orders(wake);
         self.body_placed(id);
         Ok(())
     }
