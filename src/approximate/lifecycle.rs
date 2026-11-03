@@ -133,11 +133,16 @@ impl World {
     }
     /// Orders of sleeping bodies that `body` (not yet stored) touches, in body order.
     pub(super) fn sleepers_touching(&self, body: &Body) -> Vec<Order> {
+        self.sleepers_within(body, 0.0)
+    }
+    /// Sleeping bodies within `margin` of `body` (any pose; its `cached_bounds` must match it).
+    pub(super) fn sleepers_within(&self, body: &Body, margin: Real) -> Vec<Order> {
         let touches = |b: &Body| {
             b.id != BodyId::NONE
+                && b.id != body.id
                 && b.sleeping
                 && b.layers.collides_with(body.layers)
-                && contact::current(b, body, 0.0).is_some()
+                && contact::current(b, body, margin).is_some()
         };
         let mut wake = Vec::new();
         if self.query_tree.current(self.bookkeeping.generation) {
@@ -147,7 +152,7 @@ impl World {
                 .magnitude
                 .max(lo.abs().max_component())
                 .max(hi.abs().max_component());
-            let pad = 64.0 * Real::EPSILON * (1.0 + reach);
+            let pad = margin + 64.0 * Real::EPSILON * (1.0 + reach);
             tree.visit_moving_aabb(
                 spatial_kernels::Aabb {
                     min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],

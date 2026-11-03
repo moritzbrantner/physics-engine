@@ -384,3 +384,66 @@ fn swept_and_ccd_impacts_start_once_and_bounces_stop() {
         }
     }
 }
+
+/// #456: a kinematic body placed away from (or into) a sleeping body wakes it, so a crate left
+/// behind falls and its contact stops instead of floating asleep.
+#[test]
+fn placing_a_kinematic_body_wakes_its_sleeping_partners() {
+    let mut w = world();
+    let mut lift = Body::keyed(
+        PLATE,
+        Shape::Box(Vector(0.6, 0.05, 0.6)),
+        Vector(0.0, 0.05, 0.0),
+        0.0,
+    );
+    lift.external = true;
+    let lift = w.add_body(lift).unwrap();
+    let floor = w
+        .add_body(Body::keyed(
+            FLOOR,
+            Shape::HalfSpace,
+            Vector(0.0, -2.0, 0.0),
+            0.0,
+        ))
+        .unwrap();
+    let c = w.add_body(crate_at(CRATE, 0.0, 0.36)).unwrap();
+    assert_eq!(events(&run(&mut w, 120)), [ContactEvent::Started(lift, c)]);
+    assert!(w.body(c).unwrap().is_sleeping());
+    w.set_kinematic_position(lift, Vector(5.0, 0.05, 0.0))
+        .unwrap();
+    assert!(!w.body(c).unwrap().is_sleeping(), "the crate wakes");
+    let log = run(&mut w, 120);
+    assert_eq!(
+        events(&log),
+        [
+            ContactEvent::Stopped(lift, c),
+            ContactEvent::Started(floor, c)
+        ],
+        "{log:?}"
+    );
+    assert_eq!(log[0].0, 0, "it stops in the next step: {log:?}");
+    assert!(
+        w.body(c).unwrap().position.1 < -1.7,
+        "the crate fell to the floor"
+    );
+    // Placed back into the now sleeping crate's reach, it wakes it again.
+    assert!(w.body(c).unwrap().is_sleeping());
+    let at = w.body(c).unwrap().position;
+    w.set_kinematic_position(lift, Vector(at.0, at.1 + 0.25 + 0.05, at.2))
+        .unwrap();
+    assert!(!w.body(c).unwrap().is_sleeping(), "the crate wakes");
+    // An unrelated sleeper far from both poses stays asleep.
+    let mut w = plate_scene(0.0);
+    let mut door = Body::keyed(
+        PLATE + 1,
+        Shape::Box(Vector(0.5, 1.0, 0.1)),
+        Vector(9.0, 1.0, 0.0),
+        0.0,
+    );
+    door.external = true;
+    let door = w.add_body(door).unwrap();
+    run(&mut w, 120);
+    w.set_kinematic_position(door, Vector(9.0, 1.0, 2.0))
+        .unwrap();
+    assert!(w.body(id(&w, CRATE)).unwrap().is_sleeping());
+}
