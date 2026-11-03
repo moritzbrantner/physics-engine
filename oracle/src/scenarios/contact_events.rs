@@ -1,5 +1,5 @@
-//! C19 (Q33, mmorpg#300): contact enter/exit for physical traps and triggers. Twelve lanes on a
-//! floor plane, two of each kind, each a fixed pressure plate (or none) and one dynamic body:
+//! C19 (Q33, mmorpg#300): contact enter/exit for physical traps and triggers. Fourteen lanes on
+//! a floor plane, two of each kind, each a fixed pressure plate (or none) and one dynamic body:
 //!
 //! - `Drop`: a crate falls onto the plate, rests and sleeps; at tick 150 it is shoved off and
 //!   drops 0.1 m onto the floor.
@@ -12,6 +12,8 @@
 //! - `Layer`: the plate's collision layer excludes the crate, which falls through it.
 //! - `Boulder`: a boulder rolls along the floor into a kinematic capsule (a player), rides a
 //!   little way up its rounded side, drops back onto the floor and rests against it.
+//! - `Lift`: a crate sleeps on a kinematic plate, which is teleported away at tick 200
+//!   (#456); the crate wakes, its contact stops and it falls to the floor.
 //!
 //! Crates are 0.5 m, density 600, rotations locked; 60 Hz, Rapier's defaults otherwise. Rapier
 //! keeps one world with `ActiveEvents::COLLISION_EVENTS` on the dynamic colliders and reads
@@ -23,7 +25,7 @@ use crate::{Obs, Scenario, Trace};
 const TICKS: u32 = 300;
 const DT: f32 = 1.0 / 60.0;
 const GRAVITY: f32 = 9.81;
-const LANES: u32 = 12;
+const LANES: u32 = 14;
 const HALF: f32 = 0.25;
 const DENSITY: f32 = 600.0;
 const MASS: f32 = DENSITY * 8.0 * HALF * HALF * HALF;
@@ -36,6 +38,11 @@ const SPAWN_TICK: u32 = 60;
 const REMOVE_TICK: u32 = 120;
 const SHOVE_TICK: u32 = 150;
 const SHOVE: f32 = 4.0;
+const LIFT_TICK: u32 = 200;
+/// Where a `Lift` lane's kinematic plate is teleported at `LIFT_TICK`.
+fn lift_away(l: u32) -> [f32; 3] {
+    [5.0, PLATE_HALF[1], z(l)]
+}
 /// Acceptance: every pair reports the same sequence of transitions as on Rapier, each within
 /// this many ticks of Rapier's. Rapier detects contact at the start of a step within its 2 mm
 /// prediction; the engine after the step's solve within twice its 5 mm slop.
@@ -60,6 +67,7 @@ enum Lane {
     Sensor,
     Layer,
     Boulder,
+    Lift,
 }
 fn lane(l: u32) -> Lane {
     [
@@ -69,7 +77,8 @@ fn lane(l: u32) -> Lane {
         Lane::Sensor,
         Lane::Layer,
         Lane::Boulder,
-    ][(l % 6) as usize]
+        Lane::Lift,
+    ][(l % 7) as usize]
 }
 fn z(l: u32) -> f32 {
     3.0 * l as f32
@@ -80,8 +89,8 @@ fn plate_centre(l: u32) -> [f32; 3] {
 /// Where the lane's crate starts: above the plate, a little higher in the second set of lanes.
 fn crate_start(l: u32) -> [f32; 3] {
     let drop = match lane(l) {
-        Lane::Remove => 0.001,
-        _ => 0.3 + 0.4 * (l / 6) as f32,
+        Lane::Remove | Lane::Lift => 0.001,
+        _ => 0.3 + 0.4 * (l / 7) as f32,
     };
     [0.0, 2.0 * PLATE_HALF[1] + HALF + drop, z(l)]
 }
@@ -185,7 +194,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     for l in 0..LANES {
         let (plate, body) = (plate_label(l), body_label(l));
         let expected: &[([u32; 2], &[bool])] = match lane(l) {
-            Lane::Drop | Lane::Remove => {
+            Lane::Drop | Lane::Remove | Lane::Lift => {
                 &[([FLOOR, body], &[true]), ([plate, body], &[true, false])]
             }
             Lane::Spawn => &[([plate, body], &[true])],
@@ -299,6 +308,7 @@ mod engine {
                         0.0,
                     );
                     plate.sensor = lane(l) == Lane::Sensor;
+                    plate.external = lane(l) == Lane::Lift;
                     if lane(l) == Lane::Layer {
                         plate.layers = CollisionLayers3d::new(0b10, 0b10);
                     }
@@ -350,6 +360,12 @@ mod engine {
                     (Lane::Remove, REMOVE_TICK) => {
                         let plate = self.lanes[l as usize].0.take().unwrap();
                         self.world.remove_body(plate).unwrap();
+                    }
+                    (Lane::Lift, LIFT_TICK) => {
+                        let plate = self.lanes[l as usize].0.unwrap();
+                        self.world
+                            .set_kinematic_position(plate, v(lift_away(l)))
+                            .unwrap();
                     }
                     (Lane::Drop, SHOVE_TICK) => {
                         let id = self.lanes[l as usize].1.unwrap();
@@ -426,7 +442,20 @@ mod rapier {
                             InteractionTestMode::And,
                         ));
                     }
-                    let handle = sim.world.colliders.insert(plate.build());
+                    let handle = if lane(l) == Lane::Lift {
+                        let lift = sim.world.bodies.insert(
+                            RigidBodyBuilder::kinematic_position_based()
+                                .translation(v(plate_centre(l)))
+                                .build(),
+                        );
+                        sim.world.colliders.insert_with_parent(
+                            plate.translation(Vector::ZERO).build(),
+                            lift,
+                            &mut sim.world.bodies,
+                        )
+                    } else {
+                        sim.world.colliders.insert(plate.build())
+                    };
                     sim.labels.insert(handle, plate_label(l));
                     handle
                 });
@@ -506,6 +535,12 @@ mod rapier {
                     (Lane::Remove, REMOVE_TICK) => {
                         let plate = self.plates[l as usize].take().unwrap();
                         self.world.remove_collider(plate);
+                    }
+                    (Lane::Lift, LIFT_TICK) => {
+                        // A teleport, as the engine's placement: no sweep, no carried friction.
+                        let plate = self.plates[l as usize].unwrap();
+                        let lift = self.world.colliders[plate].parent().unwrap();
+                        self.world.bodies[lift].set_translation(v(lift_away(l)), true);
                     }
                     (Lane::Drop, SHOVE_TICK) => {
                         let body = &mut self.world.bodies[self.bodies[l as usize].unwrap()];

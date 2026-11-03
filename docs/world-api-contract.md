@@ -200,7 +200,8 @@ it is lifted by the step's height and nudged forward by up to `min_width`. A cap
 step's rounded edge may climb it over several moves, as on Rapier. Snapping to the ground applies
 only to moves whose translation did not rise (as Rapier), so a step or a slide up an edge keeps its
 height.
-`set_kinematic_position` places an external body without resolving contact.
+`set_kinematic_position` places an external body without resolving contact; sleeping bodies
+within twice the contact slop of its old pose, or touching its new one, wake.
 `set_static_position` moves a static body (mass 0, not external; not a halfspace or heightfield)
 in place, as Rapier moves a fixed collider (moving platforms): the layout stays valid, sleeping
 bodies it was in contact with or now touches wake, and characters it now reaches check for overlap
@@ -238,9 +239,11 @@ contact as well.
 - Cost: O(c log c) per step in the c cache insertions and removals; nothing when no contact
   changed. Checked against Rapier's `CollisionEvent`s by the `contact-events` oracle scenario.
 
-Not covered: a kinematic body placed away (`set_kinematic_position`, character moves) from a
-sleeping dynamic body does not wake it, so their contact, and the sleeper's support, stay until
-it wakes; `set_static_position` and `remove_body` do wake. Rapier's sensor intersection events,
+`set_kinematic_position`, `set_static_position` and `remove_body` wake the sleeping bodies a
+body touched or now touches, so a crate left behind falls and its contact stops in the next step
+(#456; placement: one query-tree descent at each pose, no contact-cache scan). Not covered: a
+character move does not wake a sleeping body the character leaves, so their contact stays until
+that body wakes. Rapier's sensor intersection events,
 contact forces and per-collider opt-in (`ActiveEvents`) are not provided. Pending transitions are
 not checkpointed: a restored world's events start from its restored cache.
 
