@@ -57,15 +57,26 @@ fn print_first_tick_ccd_vs_nonccd_timings() {
     use std::time::Instant;
 
     for irrelevant in [0, 128] {
-        for count in [1, 8, 16, 32] {
+        for count in [1, 8, 16, 32, 64, 128] {
             for ccd in [false, true] {
                 let mut times = Vec::new();
                 for _ in 0..101 {
                     let mut w =
                         fixture::world_with_ccd(count, irrelevant, BodyStorage::Ordered, ccd);
                     let start = Instant::now();
-                    std::hint::black_box(w.step(fixture::H).unwrap());
+                    let report = w.step(fixture::H).unwrap();
                     times.push(start.elapsed().as_nanos());
+                    if ccd {
+                        assert_eq!(report.swept_contacts, count as u64);
+                        assert_eq!(report.geometry.ccd_budget_fallbacks, 0);
+                        for i in 0..count {
+                            let id = w.body_id(10_000 + i as u64).unwrap();
+                            let ball = w.body(id).unwrap();
+                            assert!((ball.position.0 + 0.15).abs() < 0.01);
+                            assert!((ball.velocity.0 + 45.0).abs() < 0.01);
+                        }
+                    }
+                    std::hint::black_box(report);
                 }
                 times.sort_unstable();
                 eprintln!(
@@ -74,5 +85,28 @@ fn print_first_tick_ccd_vs_nonccd_timings() {
                 );
             }
         }
+    }
+    for count in [32, 64, 128] {
+        let mut times = Vec::new();
+        for _ in 0..101 {
+            let mut w = fixture::ricochet_world(count, 128, BodyStorage::Ordered);
+            let start = Instant::now();
+            let report = w.step(fixture::H).unwrap();
+            times.push(start.elapsed().as_nanos());
+            assert_eq!(report.swept_contacts, 2 * count as u64);
+            assert_eq!(report.geometry.ccd_budget_fallbacks, 0);
+            for i in 0..count {
+                let id = w.body_id(10_000 + i as u64).unwrap();
+                let ball = w.body(id).unwrap();
+                assert!(ball.position.0.abs() < 0.01);
+                assert!((ball.velocity.0 - 24.0).abs() < 0.01);
+            }
+            std::hint::black_box(report);
+        }
+        times.sort_unstable();
+        eprintln!(
+            "ccd-double-first-tick count={count} irrelevant=128 median_us={:.2}",
+            times[times.len() / 2] as f64 / 1000.0
+        );
     }
 }

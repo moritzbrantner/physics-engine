@@ -97,7 +97,11 @@ pub(crate) fn run(count: usize, irrelevant: usize, storage: BodyStorage) -> Samp
 }
 
 pub(crate) fn run_ricochets(count: usize, irrelevant: usize, storage: BodyStorage) -> Sample {
-    sample(build_world(count, irrelevant, storage, true, true), count)
+    sample(ricochet_world(count, irrelevant, storage), count)
+}
+
+pub(crate) fn ricochet_world(count: usize, irrelevant: usize, storage: BodyStorage) -> World {
+    build_world(count, irrelevant, storage, true, true)
 }
 
 fn sample(mut w: World, count: usize) -> Sample {

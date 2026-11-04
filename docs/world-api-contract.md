@@ -245,6 +245,25 @@ With n active CCD spheres, k=1 or 2 impacts per sphere and b unrelated static bo
 are invalidated only if a participant's velocity or wake state changes. The moving-body
 candidate list still makes one O(n+b) preparation traversal per CCD step; fixed-body lookup
 descends the existing query tree. There is no absolute wall-clock ratchet.
+An explicitly ignored first-tick benchmark repeats 101 constructed worlds per point (setup
+excluded) and verifies all admitted hits before reporting the median. On a shared Ubuntu
+x86_64 Xeon Platinum 8573C runner, Rust 1.99.1, release build, with 128 distant statics,
+one bounded run yielded:
+
+| Simultaneous spheres | Non-CCD, one wall | CCD, one impact | CCD, two impacts |
+| ---: | ---: | ---: | ---: |
+| 32 | 55 µs | 337 µs | 468 µs |
+| 64 | 107 µs | 1,452 µs | 2,547 µs |
+| 128 | 303 µs | 6,094 µs | 11,251 µs |
+
+The 128-projectile double-impact stress case alone consumes roughly 68% of a 60 Hz
+16.67 ms frame, without game logic, rendering or other physics. It is deliberately
+synthetic and not a legal MMORPG bomb rate, and these noisy wall-clock observations are
+**advisory**, not absolute CI thresholds. They expose the remaining active-source
+O(n²) event-queue/candidate problem: optimize moving-sweep admission and earliest-event
+selection before claiming high-density CCD scalability. Exact geometric fast paths
+already handle the common sphere/box pairs, so adding another sphere solver will not
+solve this scheduler cost.
 To measure full first-step cost without including world setup (advisory on shared hardware):
 
 ```sh
