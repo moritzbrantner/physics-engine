@@ -637,17 +637,23 @@ impl World {
                         },
                         report,
                     )?;
-                    // If a cached pair vanished under the new clock, its next
-                    // earliest partner is unknown: refresh this source once.
-                    upcoming[slot] = match candidate {
-                        Some(candidate) => Some(candidate),
-                        None => self.next_scheduled_hit(
-                            source,
-                            TickTime { elapsed, h },
-                            &excluded,
-                            options,
-                            report,
-                        )?,
+                    // Unchanged trajectories keep their previously certified
+                    // contact. A later f32 clock may round a thin hit away, so
+                    // never discard that event merely because the resweep
+                    // didn't find it again. Rebase only an observed partner.
+                    let previous = upcoming[slot].take();
+                    upcoming[slot] = match (previous, candidate) {
+                        (Some(old), Some(new))
+                            if new.other == old.other
+                                || new.absolute < old.absolute
+                                || (new.absolute == old.absolute
+                                    && self.bodies[new.other].order
+                                        < self.bodies[old.other].order) =>
+                        {
+                            Some(new)
+                        }
+                        (Some(old), _) => Some(old),
+                        (None, candidate) => candidate,
                     };
                     true
                 } else if !changed.is_empty() {
