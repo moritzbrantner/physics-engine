@@ -1,6 +1,24 @@
-//! WASM exports for `scripts/oracle-wasm.mjs`: run a scenario side with the host clock.
+//! WASM oracle exports for CI timing and the read-only Pages comparison lab.
 
-use crate::{Side, Trace, all};
+use std::cell::RefCell;
+
+use crate::{Obs, Side, Trace, all};
+
+// Browser-only presentation data. The full, unsampled traces are still checked by `verify`.
+// Each row is [tick, observation ordinal, kind, six numeric values]. The ordinal is kept
+// when display rows are sampled so the two sides can be matched without inventing physics.
+const DISPLAY_STRIDE: usize = 9;
+const MAX_DISPLAY_OBSERVATIONS_PER_TICK: usize = 64;
+
+#[derive(Default)]
+struct DisplayTrace {
+    rows: Vec<f64>,
+    total_observations: u32,
+}
+
+std::thread_local! {
+    static DISPLAY: RefCell<DisplayTrace> = RefCell::new(DisplayTrace::default());
+}
 
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
@@ -66,4 +84,154 @@ pub extern "C" fn oracle_name_ptr(index: u32) -> usize {
 #[unsafe(no_mangle)]
 pub extern "C" fn oracle_name_len(index: u32) -> usize {
     all()[index as usize].name.len()
+}
+
+/// Capability ids attached to the registered scenario (space-separated, UTF-8).
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_capabilities_ptr(index: u32) -> usize {
+    all()[index as usize].capabilities.as_ptr() as usize
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_capabilities_len(index: u32) -> usize {
+    all()[index as usize].capabilities.len()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_ticks(index: u32) -> u32 {
+    all()[index as usize].ticks
+}
+
+/// Encode one authoritative oracle observation for browser display. `kind` has this stable
+/// display-only mapping: 1 ray, 2 penetration, 3 position, 4 rotation, 5 grounded,
+/// 6 depenetration, 7 contact, 8 blocked, 9 support, 10 contact transition.
+fn display_values(obs: &Obs) -> (u8, [f64; 6]) {
+    let mut data = [0.0; 6];
+    let kind = match *obs {
+        Obs::Ray(hit) => {
+            if let Some((fraction, normal)) = hit {
+                data[..5].copy_from_slice(&[
+                    1.0,
+                    f64::from(fraction),
+                    f64::from(normal[0]),
+                    f64::from(normal[1]),
+                    f64::from(normal[2]),
+                ]);
+            }
+            1
+        }
+        Obs::Penetrates(value) => {
+            data[0] = f64::from(u8::from(value));
+            2
+        }
+        Obs::Position(p) => {
+            data[..3].copy_from_slice(&p.map(f64::from));
+            3
+        }
+        Obs::Rotation(q) => {
+            data[..4].copy_from_slice(&q.map(f64::from));
+            4
+        }
+        Obs::Grounded(value) => {
+            data[0] = f64::from(u8::from(value));
+            5
+        }
+        Obs::Depenetration(v) => {
+            data[..3].copy_from_slice(&v.map(f64::from));
+            6
+        }
+        Obs::Contact(hit) => {
+            if let Some((depth, normal)) = hit {
+                data[..5].copy_from_slice(&[
+                    1.0,
+                    f64::from(depth),
+                    f64::from(normal[0]),
+                    f64::from(normal[1]),
+                    f64::from(normal[2]),
+                ]);
+            }
+            7
+        }
+        Obs::Blocked(value) => {
+            data[0] = f64::from(u8::from(value));
+            8
+        }
+        Obs::Support(gap) => {
+            if let Some(gap) = gap {
+                data[0] = 1.0;
+                data[1] = f64::from(gap);
+            }
+            9
+        }
+        Obs::ContactEvent { started, pair, .. } => {
+            data[..3].copy_from_slice(&[
+                f64::from(u8::from(started)),
+                f64::from(pair[0]),
+                f64::from(pair[1]),
+            ]);
+            10
+        }
+    };
+    (kind, data)
+}
+
+/// Replay the *actual* scenario side and collect a bounded, deterministic display projection.
+/// Side 0 is physics-engine, 1 is Rapier, 3 is Indexed. Returns -1 for invalid inputs, 0 on
+/// success. This does not replace the full scenario invariant checks or perf oracle.
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_trace(index: u32, which: u32) -> i32 {
+    let scenarios = all();
+    let Some(scenario) = scenarios.get(index as usize) else {
+        return -1;
+    };
+    if !matches!(which, 0 | 1 | 3) {
+        return -1;
+    }
+    let mut sim = scenario.build(side(which));
+    DISPLAY.with(|display| {
+        let mut display = display.borrow_mut();
+        display.rows.clear();
+        display.total_observations = 0;
+        let mut step = Trace::default();
+        for tick in 0..scenario.ticks {
+            step.0.clear();
+            sim.tick(tick, &mut step);
+            let count = step.0.len();
+            display.total_observations = display.total_observations.saturating_add(count as u32);
+            let samples = count.min(MAX_DISPLAY_OBSERVATIONS_PER_TICK);
+            for sample in 0..samples {
+                let ordinal = if samples <= 1 || samples == count {
+                    sample
+                } else {
+                    sample * (count - 1) / (samples - 1)
+                };
+                let (kind, values) = display_values(&step.0[ordinal]);
+                display
+                    .rows
+                    .extend([f64::from(tick), ordinal as f64, f64::from(kind)]);
+                display.rows.extend(values);
+            }
+        }
+    });
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_trace_ptr() -> usize {
+    DISPLAY.with(|display| display.borrow().rows.as_ptr() as usize)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_trace_len() -> usize {
+    DISPLAY.with(|display| display.borrow().rows.len())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_trace_total() -> u32 {
+    DISPLAY.with(|display| display.borrow().total_observations)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_trace_stride() -> usize {
+    DISPLAY_STRIDE
 }

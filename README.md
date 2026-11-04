@@ -24,7 +24,12 @@ Physics Engine is slower than Rapier. See [technical decisions](docs/technical-d
   `.performance/size.json`, judged by `coding-tooling performance size`.
 - **Complexity contracts:** `.performance/contract.json` declares each public operation's
   Big-O class, measured with deterministic test-only work counters; CI fails on a violation.
-- **Pages sandbox:** `site/` + `demo-wasm/` show the parity scenarios side by side with Rapier.
+- **Pages comparison lab:** [open the scenarios](https://moritzbrantner.github.io/physics-engine/)
+  to select a consumer capability and replay its Rust-authored oracle observations side by side
+  with Rapier, including invariant status and optional exploratory WASM timing. The separate
+  [tower lab](https://moritzbrantner.github.io/physics-engine/tower.html) retains free-play
+  shooting. The comparison plots observations, not collider meshes, and the authoritative native
+  and WASM performance/correctness gates remain in CI.
 
 Consumer API, units and query conventions: [world API contract](docs/world-api-contract.md).
 Precision rules: [numerics](docs/numerics.md).

@@ -64,7 +64,7 @@ fn push(tick: u32) -> Option<f32> {
 pub fn scenario() -> Scenario {
     Scenario {
         name: "props",
-        capabilities: "C18",
+        capabilities: "C13 C18",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: |storage| Box::new(engine::Sim::new(storage)),

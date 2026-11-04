@@ -134,7 +134,7 @@ pub(crate) fn walk(role: Role, index: usize, tick: u32) -> (f32, f32) {
 pub fn scenario() -> Scenario {
     Scenario {
         name: "character-move",
-        capabilities: "C2 C4 C5",
+        capabilities: "C2 C3 C4 C5",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: |storage| Box::new(engine::Sim::new(storage)),

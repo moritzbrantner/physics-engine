@@ -1,0 +1,9 @@
+# Recommended CLI utilities for coding agents and human contributors.
+# Optional: install them with `mise install`; builds and CI keep their existing toolchains.
+# These tools deliberately track the latest stable release because they are conveniences,
+# not version-sensitive build inputs. Pin individual tools when reproducibility is required.
+[tools]
+jq = "latest"
+ripgrep = "latest"
+fd = "latest"
+gh = "latest"

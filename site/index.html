@@ -1,30 +1,78 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>physics-engine · tower lab</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Physics Engine · Rapier comparisons</title>
   <style>
-    :root{color-scheme:light dark;--bg:#0d1a24;--panel:#142532;--text:#dbe8ef;--line:#304955}
-    body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}
-    main{max-width:1200px;margin:auto;padding:24px 16px}h1{font-size:28px;margin:0 0 8px}
-    .controls{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:16px 0}
-    label{display:grid;gap:6px;font-size:13px}
-    select,button{font:inherit;color:var(--text);background:var(--panel);border:1px solid #4d6576;border-radius:6px;padding:8px 12px}
-    button{cursor:pointer}button:disabled{opacity:.45}
-    .world{border:1px solid var(--line);border-radius:8px;overflow:hidden}
-    canvas{display:block;width:100%;height:520px}@media(max-width:700px){canvas{height:360px}}
-    .status{margin:0;padding:10px 14px;background:var(--panel);font:13px ui-monospace,monospace}
+    :root{color-scheme:dark;--bg:#0a141d;--surface:#12222e;--raised:#192e3a;--line:#35505d;--text:#e7f2f6;--muted:#abc1ce;--accent:#7de6c4;--rapier:#f5b56c;--danger:#ff9090}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:15px/1.48 system-ui,-apple-system,sans-serif}
+    a{color:#a6dffc}button,select,input{font:inherit}button,select{background:var(--surface);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:9px 12px}
+    button{cursor:pointer}button:hover:not(:disabled),button:focus-visible,select:focus-visible{border-color:var(--accent)}button:disabled{opacity:.45;cursor:not-allowed}
+    button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+    header{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:17px clamp(16px,3vw,42px);border-bottom:1px solid var(--line);background:#101e29}
+    header strong{font-size:18px;letter-spacing:.02em}header nav{display:flex;gap:22px;flex-wrap:wrap}header nav a{text-decoration:none;color:var(--muted)}header nav a[aria-current="page"]{color:var(--accent);font-weight:650}
+    .layout{display:grid;grid-template-columns:270px minmax(0,1fr);max-width:1650px;margin:auto;min-height:calc(100vh - 68px)}
+    aside{border-right:1px solid var(--line);padding:22px 12px;min-width:0}aside h2{font-size:13px;text-transform:uppercase;color:var(--muted);letter-spacing:.09em;margin:0 12px 13px}
+    #capabilities{display:grid;gap:3px}#capabilities button{width:100%;padding:9px 11px;text-align:left;border:1px solid transparent;background:transparent;line-height:1.25;display:flex;gap:9px;align-items:start}
+    #capabilities button[aria-current="true"]{background:var(--raised);border-color:#527c80;color:var(--accent)}#capabilities button:hover{background:var(--surface)}
+    .cid{font:12px/1.5 ui-monospace,monospace;color:var(--accent);flex:0 0 28px}.feature-name{font-size:13px}
+    .workspace{padding:24px clamp(16px,3vw,34px);min-width:0}h1{font-size:clamp(22px,2.2vw,29px);line-height:1.2;margin:0 0 9px}
+    .muted{color:var(--muted)}.summary{margin:0 0 16px;max-width:82ch}
+    .tools{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin-bottom:14px}.field{display:grid;gap:5px;font-size:13px;color:var(--muted)}.field select{min-width:170px;max-width:100%}
+    .readout{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:11px 14px;display:flex;gap:12px 22px;align-items:center;flex-wrap:wrap;margin:0 0 17px;font-size:13px}
+    .readout strong{color:var(--accent)}.readout [data-result="failed"]{color:var(--danger)}
+    .comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+    .panel{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+    .panel h2{margin:0;padding:12px 15px;font-size:16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .engine{color:var(--accent)}.rapier{color:var(--rapier)}.panel .hint{font-size:12px;color:var(--muted);font-weight:400}
+    canvas{width:100%;height:320px;display:block;background:#0d1b26}.panel footer{border-top:1px solid var(--line);padding:8px 14px;color:var(--muted);font:12px ui-monospace,monospace;min-height:35px}
+    .playback{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:17px 0 8px}.playback button{min-width:72px}
+    .playback input[type="range"]{flex:1 1 240px;accent-color:var(--accent);cursor:pointer}.tick{font:14px ui-monospace,monospace;min-width:118px;text-align:right}
+    .detail{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin:15px 0 8px}
+    h2{font-size:17px;margin:0}#sample-info{font-size:13px;color:var(--muted)}
+    .table-wrap{max-height:380px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+    table{border-collapse:collapse;width:100%;font:12px/1.6 ui-monospace,SFMono-Regular,monospace;font-variant-numeric:tabular-nums}
+    th,td{text-align:left;border-bottom:1px solid #2d4452;padding:7px 12px;vertical-align:top}thead th{position:sticky;top:0;background:var(--raised);z-index:1}tbody th{color:var(--muted);font-weight:500}tbody tr:last-child>*{border-bottom:0}
+    .footnote{max-width:95ch;color:var(--muted);font-size:12px;margin:14px 0}details{font-size:13px;color:var(--muted);margin-top:16px}details summary{cursor:pointer;color:var(--text)}
+    @media(max-width:980px){.layout{grid-template-columns:210px minmax(0,1fr)}aside{padding:16px 7px}.feature-name{font-size:12px}.workspace{padding:20px 15px}}
+    @media(max-width:740px){header{align-items:flex-start}header nav{gap:14px}.layout{display:block}aside{border:0;border-bottom:1px solid var(--line);padding:11px 13px}aside h2{margin:0 0 8px 3px}#capabilities{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x proximity}#capabilities button{min-width:172px;max-width:220px;scroll-snap-align:start}.workspace{padding:20px 13px}.comparison{grid-template-columns:1fr}canvas{height:250px}.panel h2{font-size:15px}.tools{gap:9px}.field{flex:1 1 145px}.field select{width:100%;min-width:0}th,td{padding:7px 8px}table{font-size:11px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
   </style>
 </head>
-<body><main>
-  <h1>Tower lab</h1>
-  <p>A 32-crate tower on <code>approximate::World</code> (f32). Rust owns all bodies, contacts and steps; this page sends commands and renders snapshots. Side-by-side Rapier parity scenarios replace this page as they land.</p>
-  <div class="controls">
-    <label>Crate rotation<select id="crates"><option value="free">Free rotation</option><option value="upright">Locked upright</option></select></label>
-    <label>Projectile<select id="projectile"><option value="1">Arrow</option><option value="0">Sphere</option><option value="2">Rigid box</option></select></label>
-    <button id="hit" disabled>Shoot tower</button><button id="miss" disabled>Shoot beside tower</button><button id="pause" disabled>Resume</button><button id="reset" disabled>Reset</button>
+<body>
+  <header>
+    <strong>Physics Engine</strong>
+    <nav aria-label="Main navigation"><a href="index.html" aria-current="page">Rapier comparisons</a><a href="tower.html">Tower lab</a><a href="https://github.com/moritzbrantner/physics-engine">Source</a></nav>
+  </header>
+  <div class="layout">
+    <aside><h2>Consumer capabilities</h2><nav id="capabilities" aria-label="Select a physics capability"></nav></aside>
+    <main class="workspace">
+      <h1 id="feature-title">Loading scenarios…</h1>
+      <p class="summary" id="feature-description">The same deterministic workloads run in Physics Engine and Rapier's Rust implementations, compiled to WASM.</p>
+      <div class="tools">
+        <label class="field">Scenario<select id="scenario" disabled></select></label>
+        <label class="field">Engine storage<select id="storage" disabled><option value="0">Ordered</option><option value="3">Indexed</option></select></label>
+        <label class="field">Trajectory axes<select id="axes" disabled><option value="xy">X / Y (elevation)</option><option value="xz">X / Z (ground)</option></select></label>
+        <button id="benchmark" disabled>Measure in browser</button>
+      </div>
+      <p class="readout" id="status" role="status" aria-live="polite">Loading Rust/WASM oracle…</p>
+      <div class="comparison" aria-label="Synchronized oracle observations">
+        <section class="panel"><h2><span class="engine">Physics Engine</span><span class="hint">f32 · Rust/WASM</span></h2><canvas id="engine" role="img" aria-label="Physics Engine scenario trace"></canvas><footer id="engine-summary">—</footer></section>
+        <section class="panel"><h2><span class="rapier">Rapier</span><span class="hint">0.36.1 · Rust/WASM</span></h2><canvas id="rapier" role="img" aria-label="Rapier scenario trace"></canvas><footer id="rapier-summary">—</footer></section>
+      </div>
+      <div class="playback" aria-label="Replay controls">
+        <button id="play" disabled>Play</button><button id="step" disabled>Step</button><button id="reset" disabled>Reset</button>
+        <input type="range" id="tick" min="0" max="0" value="0" aria-label="Replay tick" disabled>
+        <output class="tick" id="tick-label" for="tick">Tick 0 / 0</output>
+      </div>
+      <div class="detail"><h2>Recorded observations</h2><span id="sample-info">Select a scenario</span></div>
+      <div class="table-wrap"><table><thead><tr><th scope="col">#</th><th scope="col">Physics Engine</th><th scope="col">Rapier</th></tr></thead><tbody id="observations"></tbody></table></div>
+      <p class="footnote" id="qualifier">Plots are projections of Rust-authored observations, not reconstructed collider geometry. The browser replay shows a bounded, consistently sampled trace; the oracle's correctness checks use every observation. Differences in trajectories are expected where the scenario's invariant permits them.</p>
+      <details><summary>What is compared?</summary><p>Each named scenario is the real workload from <a href="https://github.com/moritzbrantner/physics-engine/tree/main/oracle/src/scenarios/">the oracle harness</a>, including the consumers' Rapier call pattern. The pass/fail result runs the scenario's own invariant checks, also enforced in native/WASM CI. A capability link points to a relevant workload; not every property within a capability has a separate isolated visual test. “Measure in browser” reports exploratory, same-browser WASM timings per simulation tick—not device FPS or a substitute for controlled native/CI benchmarks. Both views share a tick and display scale.</p></details>
+    </main>
   </div>
-  <section class="world"><canvas id="scene" width="1280" height="520" aria-label="Tower of crates"></canvas>
-    <p class="status" id="status" role="status" aria-live="polite">Loading Rust/WASM…</p></section>
-  <script type="module" src="lab.js"></script>
-</main></body></html>
+  <script type="module" src="compare.js"></script>
+</body>
+</html>
