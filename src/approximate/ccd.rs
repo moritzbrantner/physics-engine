@@ -50,6 +50,12 @@ impl TickTime {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ImpactTime {
+    clock: TickTime,
+    frozen_partner: bool,
+}
+
 /// An unchanged body's earliest contact stays valid on the shared clock when an unrelated
 /// pair collides. Keep the original manifold as well as its absolute substep time: re-sweeping
 /// an equal-time contact after advancing the clock can round past a thin obstacle.
@@ -351,7 +357,17 @@ impl World {
             let step = time * remaining;
             position += self.bodies[i].velocity * (step * h);
             elapsed += step;
-            if !self.respond_ccd_impact(i, j, &m, first, TickTime { elapsed, h }, false, report) {
+            if !self.respond_ccd_impact(
+                i,
+                j,
+                &m,
+                first,
+                ImpactTime {
+                    clock: TickTime { elapsed, h },
+                    frozen_partner: false,
+                },
+                report,
+            ) {
                 // Touching while separating is not an impact and does not use the budget;
                 // do not re-test this partner.
                 push(&mut excluded, j, &mut self.bookkeeping.work);
@@ -465,8 +481,10 @@ impl World {
                 j,
                 &event.manifold,
                 event.first,
-                TickTime { elapsed, h },
-                queued.binary_search(&j).is_ok_and(|k| is_frozen[k]),
+                ImpactTime {
+                    clock: TickTime { elapsed, h },
+                    frozen_partner: queued.binary_search(&j).is_ok_and(|k| is_frozen[k]),
+                },
                 report,
             );
             if !closing {
@@ -826,10 +844,13 @@ impl World {
         j: usize,
         m: &contact::Manifold,
         first: bool,
-        clock: TickTime,
-        frozen_partner: bool,
+        impact: ImpactTime,
         report: &mut Report,
     ) -> bool {
+        let ImpactTime {
+            clock,
+            frozen_partner,
+        } = impact;
         let count = m.points.len().max(1) as Real;
         let (mut ra, mut rb) = (Vector::ZERO, Vector::ZERO);
         for p in &m.points {
