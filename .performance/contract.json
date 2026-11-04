@@ -781,8 +781,8 @@
     },
     {
       "id": "contact-cache-traversal",
-      "description": "Three operations in a world with persistent sphere-on-box contacts: unsupported World::has_support, unrelated World::set_static_position and World::remove_body. Empty P=0 fixtures are asserted in the same test but omitted from growth samples because the contract schema requires positive dimensions. Includes both storage modes. No wall-clock threshold (#448).",
-      "publicContract": "physics_engine::approximate::World::{has_support,set_static_position,remove_body}",
+      "description": "Four operations in a world with persistent sphere-on-box contacts: unsupported World::has_support, unrelated World::set_static_position, unrelated World::set_layers and World::remove_body. Empty P=0 fixtures are asserted in the same test but omitted from growth samples because the contract schema requires positive dimensions. Includes both storage modes. No wall-clock threshold (#448).",
+      "publicContract": "physics_engine::approximate::World::{has_support,set_static_position,set_layers,remove_body}",
       "dimensions": {
         "pairs": {
           "description": "positive number of live cached contact pairs (sparse through dense; P=0 is tested separately)"
@@ -832,6 +832,16 @@
             { "dimension": "inertCase", "bound": "constant" }
           ],
           "notes": "Moving an unrelated fixed body scans exactly P cached keys, while the same move leaves supported bodies undisturbed."
+        },
+        {
+          "name": "layers-cache-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "growth": [
+            { "dimension": "pairs", "bound": "linear" },
+            { "dimension": "inertCase", "bound": "constant" }
+          ],
+          "notes": "New with World::set_layers (#451): changing an unrelated body's layers scans exactly P cached keys for pairs the new layers exclude (their sleeping side wakes), plus one query-tree descent for sleepers the new layers admit; supported bodies stay undisturbed."
         },
         {
           "name": "remove-cache-pair-visits",

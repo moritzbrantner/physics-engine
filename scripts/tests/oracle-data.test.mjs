@@ -42,6 +42,8 @@ test("display labels retain semantic units and distinguish absent hits", () => {
   assert.equal(observationText({ kind: 3, values: [1, 2.34, 3] }), "Position · [1, 2.34, 3] m");
   assert.equal(observationText({ kind: 1, values: [0, 0, 0, 0, 0, 0] }), "Ray · clear");
   assert.match(observationText({ kind: 10, values: [1, 11, 12] }), /Contact started.*11 \/ 12/);
+  assert.equal(observationText({ kind: 13, values: [1, 3, 0.25] }), "Hit · body 3 at t=0.25");
+  assert.equal(observationText({ kind: 14, values: [48, 0] }), "Overlaps · bodies 4, 5");
 });
 
 test("trace decoding copies the WASM buffer before the next side overwrites it", () => {

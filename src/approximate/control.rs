@@ -1,6 +1,7 @@
 //! Body placement, velocity, impulses and forces, and the island wake they trigger.
 
 use super::{BodyId, Error, Order, Real, Shape, Vector, World, bookkeeping, contact, query};
+use crate::CollisionLayers3d;
 
 impl World {
     /// Places an external (kinematic) body at `position` without resolving contact, as Rapier's
@@ -81,6 +82,50 @@ impl World {
         }
         self.resting_changed(i, before);
         if !self.bodies[i].sensor && !self.bodies[i].shape.query_only() {
+            wake.extend(self.sleepers_touching(&self.bodies[i]));
+        }
+        self.wake_orders(wake);
+        self.body_placed(id);
+        Ok(())
+    }
+    /// Replaces a body's collision layers, as Rapier's `Collider::set_collision_groups`; the
+    /// solver, CCD, queries and character moves read the new layers from the next call. Its
+    /// cached contact pairs the new layers exclude stop in the next step (`ContactEvent::Stopped`):
+    /// the sleeping side of each wakes, as does the body itself when it sleeps. Sleeping bodies it
+    /// now touches under the new layers wake; characters near it check for overlap again. One
+    /// contact-cache scan and one query-tree descent; no other cache depends on layers.
+    pub fn set_layers(&mut self, id: BodyId, layers: CollisionLayers3d) -> Result<(), Error> {
+        if self.bodies[self.index(id)?].layers == layers {
+            return Ok(());
+        }
+        // Cached pairs name bodies by order: look them up in sorted storage.
+        self.sort_storage();
+        let i = self.index(id)?;
+        let body = &self.bodies[i];
+        let (order, solid) = (body.order, !body.sensor && !body.shape.query_only());
+        let sleeper = |b: &super::Body| b.movable() && b.sleeping;
+        let mut wake = Vec::new();
+        let mut excluded = false;
+        for &(a, b) in self.cache.keys() {
+            crate::work::add(crate::work::Counter::CachedPairVisits, 1);
+            let other = match (a == order, b == order) {
+                (true, _) => b,
+                (_, true) => a,
+                _ => continue,
+            };
+            let j = self.index_of_order(other).expect("live contact");
+            if !layers.collides_with(self.bodies[j].layers) {
+                excluded = true;
+                if sleeper(&self.bodies[j]) {
+                    wake.push(other);
+                }
+            }
+        }
+        if excluded && sleeper(&self.bodies[i]) {
+            wake.push(order);
+        }
+        self.bodies[i].layers = layers;
+        if solid {
             wake.extend(self.sleepers_touching(&self.bodies[i]));
         }
         self.wake_orders(wake);
