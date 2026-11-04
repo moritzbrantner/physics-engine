@@ -19,6 +19,9 @@ use physics_engine::{
     work::{self, Counter},
 };
 
+#[path = "support/ccd_scaling.rs"]
+mod ccd_fixture;
+
 // ---- counting allocator (this test binary only) ----
 struct Counting;
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
@@ -1304,6 +1307,88 @@ fn step_work(w: &mut World) -> (u64, u64, u64, u64) {
         work::get(Counter::BodyVisits),
         r.contact_points,
     )
+}
+
+/// Same-time CCD impacts are each real work, but must not cause every other projectile to
+/// rescan the world after every bounce. Covers both single wall hits and two chronological
+/// ricochets per body; sweep calls are linear in actual impacts, candidate tests quadratic
+/// in active bodies and independent of distant statics.
+#[test]
+fn ccd_scheduling_scales_with_impacts_and_unrelated_statics() {
+    let mut samples = Vec::new();
+    for impacts_per_body in [1u64, 2] {
+        let points = [1, 2, 4, 8, 16, 32]
+            .into_iter()
+            .map(|projectiles| (projectiles, 128))
+            .chain([0, 64, 256].into_iter().flat_map(|irrelevant| {
+                [8, 32]
+                    .into_iter()
+                    .map(move |projectiles| (projectiles, irrelevant))
+            }));
+        for (projectiles, irrelevant) in points {
+            let s = if impacts_per_body == 1 {
+                ccd_fixture::run(projectiles, irrelevant, BodyStorage::Ordered)
+            } else {
+                ccd_fixture::run_ricochets(projectiles, irrelevant, BodyStorage::Ordered)
+            };
+            let (n, b) = (projectiles as u64, irrelevant as u64);
+            assert_eq!(s.impacts, impacts_per_body * n);
+            assert_eq!(s.fallbacks, 0);
+            let (expected_position, expected_speed) = if impacts_per_body == 1 {
+                (-0.15, -45.0)
+            } else {
+                (0.0, 24.0)
+            };
+            assert!(
+                s.states.iter().all(|(position, velocity)| {
+                    (f32::from_bits(position[0]) - expected_position).abs() < 0.01
+                        && (f32::from_bits(velocity[0]) - expected_speed).abs() < 0.01
+                }),
+                "synchronized projectiles tunneled: {s:?} at {projectiles}/{irrelevant}"
+            );
+            // Reproducible work cap, not a wall-clock budget; distinct work ceilings for one
+            // and two physically necessary impacts, independent of unrelated static bodies.
+            assert!(
+                s.pairs <= (2 + 2 * impacts_per_body) * n * n,
+                "quadratic work budget exceeded: {s:?} at {projectiles}/{irrelevant}"
+            );
+            samples.push((
+                vec![
+                    ("projectiles", n),
+                    ("irrelevant", b),
+                    ("impactsPerBody", impacts_per_body),
+                ],
+                vec![
+                    ("pair-tests", s.pairs),
+                    ("narrow-tests", s.narrows),
+                    ("sweep-queries", s.sweeps),
+                    ("tree-nodes", s.tree_nodes),
+                    ("impacts", s.impacts),
+                    ("budget-fallbacks", s.fallbacks),
+                ],
+            ));
+        }
+    }
+    judge(
+        "ccd-scheduled-step",
+        &samples,
+        &[
+            ("pair-tests", "irrelevant", "constant"),
+            ("pair-tests", "impactsPerBody", "linear"),
+            ("tree-nodes", "irrelevant", "linear"),
+            ("tree-nodes", "impactsPerBody", "linear"),
+            ("narrow-tests", "projectiles", "linear"),
+            ("narrow-tests", "impactsPerBody", "linear"),
+            ("narrow-tests", "irrelevant", "constant"),
+            ("sweep-queries", "projectiles", "linear"),
+            ("sweep-queries", "impactsPerBody", "linear"),
+            ("sweep-queries", "irrelevant", "constant"),
+            ("impacts", "projectiles", "linear"),
+            ("impacts", "impactsPerBody", "linear"),
+            ("impacts", "irrelevant", "constant"),
+            ("budget-fallbacks", "", "zero"),
+        ],
+    );
 }
 
 /// A step's broadphase and per-body loops follow the awake bodies, not the static town (#412).

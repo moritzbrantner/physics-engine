@@ -1670,6 +1670,112 @@
       ]
     },
     {
+      "id": "ccd-scheduled-step",
+      "description": "One 60 Hz tick with n independent CCD spheres striking either one wall once or two walls successively, at synchronized TOIs, plus b distant non-contacting static boxes. Every sphere must complete 1 or 2 impacts and retain its remaining-time trajectory; the event scheduler preserves unchanged future contacts and locally invalidates only affected exclusions. Distant statics are pruned through the existing query tree.",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "projectiles": {
+          "description": "simultaneously active, non-interacting CCD spheres with one real impact each"
+        },
+        "irrelevant": {
+          "description": "distant static boxes never reached by a CCD sweep"
+        },
+        "impactsPerBody": {
+          "description": "independent elastic wall impacts per projectile within one tick (one wall or two-wall ricochet)"
+        }
+      },
+      "scalePoints": [
+        { "projectiles": 1, "irrelevant": 128, "impactsPerBody": 1 },
+        { "projectiles": 2, "irrelevant": 128, "impactsPerBody": 1 },
+        { "projectiles": 4, "irrelevant": 128, "impactsPerBody": 1 },
+        { "projectiles": 8, "irrelevant": 128, "impactsPerBody": 1 },
+        { "projectiles": 16, "irrelevant": 128, "impactsPerBody": 1 },
+        { "projectiles": 32, "irrelevant": 128, "impactsPerBody": 1 },
+        { "projectiles": 8, "irrelevant": 0, "impactsPerBody": 1 },
+        { "projectiles": 32, "irrelevant": 0, "impactsPerBody": 1 },
+        { "projectiles": 8, "irrelevant": 64, "impactsPerBody": 1 },
+        { "projectiles": 32, "irrelevant": 64, "impactsPerBody": 1 },
+        { "projectiles": 8, "irrelevant": 256, "impactsPerBody": 1 },
+        { "projectiles": 32, "irrelevant": 256, "impactsPerBody": 1 },
+        { "projectiles": 1, "irrelevant": 128, "impactsPerBody": 2 },
+        { "projectiles": 2, "irrelevant": 128, "impactsPerBody": 2 },
+        { "projectiles": 4, "irrelevant": 128, "impactsPerBody": 2 },
+        { "projectiles": 8, "irrelevant": 128, "impactsPerBody": 2 },
+        { "projectiles": 16, "irrelevant": 128, "impactsPerBody": 2 },
+        { "projectiles": 32, "irrelevant": 128, "impactsPerBody": 2 },
+        { "projectiles": 8, "irrelevant": 0, "impactsPerBody": 2 },
+        { "projectiles": 32, "irrelevant": 0, "impactsPerBody": 2 },
+        { "projectiles": 8, "irrelevant": 64, "impactsPerBody": 2 },
+        { "projectiles": 32, "irrelevant": 64, "impactsPerBody": 2 },
+        { "projectiles": 8, "irrelevant": 256, "impactsPerBody": 2 },
+        { "projectiles": 32, "irrelevant": 256, "impactsPerBody": 2 }
+      ],
+      "metrics": [
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "O(k·n²) tests in these fixtures with n projectiles and k=1 or 2 wall impacts each: fixed bodies are pruned through the existing query tree, while moving bodies remain eligible after velocity changes. The test enforces <= 4n² for k=1, <= 6n² for k=2, independent of b. Building the unpruned moving-body list visits all bodies once per CCD step; tree traversal is accounted separately.",
+          "growth": [
+            { "dimension": "projectiles", "bound": "polynomial", "degree": 2 },
+            { "dimension": "irrelevant", "bound": "constant" },
+            { "dimension": "impactsPerBody", "bound": "linear" }
+          ]
+        },
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "Conservative fixed-body tree candidate visits plus the ordinary step broad phase; can grow quadratically with simultaneous sources but no worse than linearly in unrelated statics.",
+          "growth": [
+            { "dimension": "projectiles", "bound": "polynomial", "degree": 2 },
+            { "dimension": "irrelevant", "bound": "linear" },
+            { "dimension": "impactsPerBody", "bound": "linear" }
+          ]
+        },
+        {
+          "name": "narrow-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "True overlapping candidate geometry, independent of distant statics.",
+          "growth": [
+            { "dimension": "projectiles", "bound": "linear" },
+            { "dimension": "irrelevant", "bound": "constant" },
+            { "dimension": "impactsPerBody", "bound": "linear" }
+          ]
+        },
+        {
+          "name": "sweep-queries",
+          "unit": "queries",
+          "signal": "operation-count",
+          "notes": "Exact shape sweeps, one initial contact and revalidation per independent projectile, with no extra sweeps from irrelevant statics.",
+          "growth": [
+            { "dimension": "projectiles", "bound": "linear" },
+            { "dimension": "irrelevant", "bound": "constant" },
+            { "dimension": "impactsPerBody", "bound": "linear" }
+          ]
+        },
+        {
+          "name": "impacts",
+          "unit": "contacts",
+          "signal": "operation-count",
+          "notes": "One admitted CCD impact per projectile, with complete remaining-time rebound.",
+          "growth": [
+            { "dimension": "projectiles", "bound": "linear" },
+            { "dimension": "irrelevant", "bound": "constant" },
+            { "dimension": "impactsPerBody", "bound": "linear" }
+          ]
+        },
+        {
+          "name": "budget-fallbacks",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": { "max": 0 },
+          "notes": "Independent one-impact trajectories must never exhaust the velocity iteration budget."
+        }
+      ]
+    },
+    {
       "id": "step-zone",
       "description": "MMORPG zone scale (#412): one warm tick of 139 character moves and a World::step among 1,280 bodies (1,013 static boxes, 139 characters, 128 awake debris spheres resting on box tops).",
       "publicContract": "physics_engine::approximate::World::step",

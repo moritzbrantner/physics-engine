@@ -7,7 +7,7 @@
 //! when that is exhausted the body stays at its last impact for the rest of the substep
 //! (`GeometryStats::ccd_budget_fallbacks`). Rotation and non-CCD bodies are unchanged.
 use super::{
-    Body, Error, Real, Report, Vector, World,
+    Body, Error, Real, Report, Shape, Vector, World,
     bookkeeping::push,
     contact,
     step::{contact_velocity, effective_mass},
@@ -50,16 +50,46 @@ impl TickTime {
     }
 }
 
+/// An unchanged body's earliest contact stays valid on the shared clock when an unrelated
+/// pair collides. Keep the original manifold as well as its absolute substep time: re-sweeping
+/// an equal-time contact after advancing the clock can round past a thin obstacle.
+struct ScheduledHit {
+    absolute: Real,
+    other: usize,
+    manifold: contact::Manifold,
+    first: bool,
+}
+
+/// Search constraints are passed together so single-body and event-queue paths keep the same
+/// candidate admission policy without growing a long positional-argument API.
+struct SearchOptions<'a> {
+    frozen: &'a [(usize, Vector)],
+    always: &'a [usize],
+    targets: Option<&'a [usize]>,
+}
+
 impl World {
     /// Advance queued CCD bodies, sharing a time-of-impact clock when they can interact.
     pub(super) fn advance_ccd_bodies(&mut self, h: Real, report: &mut Report) -> Result<(), Error> {
         let mut queued = std::mem::take(&mut self.bookkeeping.ccd);
         queued.sort_unstable();
         queued.dedup();
+        if queued.is_empty() {
+            self.bookkeeping.ccd = queued;
+            return Ok(());
+        }
+        // Fixed geometry stays in the query tree. Moving or unbounded targets can acquire a
+        // different swept bound after an impulse, so they remain in the unpruned candidate set.
+        let always: Vec<_> = self
+            .bodies
+            .iter()
+            .enumerate()
+            .filter_map(|(index, b)| Self::ccd_unpruned_target(b).then_some(index))
+            .collect();
         let result = if queued.len() > 1 {
-            self.advance_ccd_group(&queued, h, report)
+            self.advance_ccd_group(&queued, h, &always, report)
         } else if let Some(&i) = queued.first() {
-            self.advance_ccd_body(i, h, report)
+            self.advance_ccd_body(i, h, &always, report)
         } else {
             Ok(())
         };
@@ -93,7 +123,70 @@ impl World {
         }
     }
 
-    fn advance_ccd_body(&mut self, i: usize, h: Real, report: &mut Report) -> Result<(), Error> {
+    fn ccd_unpruned_target(b: &Body) -> bool {
+        b.mass > 0.0
+            || b.external
+            || b.velocity != Vector::ZERO
+            || matches!(b.shape, Shape::HalfSpace)
+    }
+
+    /// Query only conservatively swept fixed-body bounds from the existing world tree.
+    /// Keep every movable/kinematic/unbounded body as a candidate: its velocity can change
+    /// during CCD response before the tree is refitted. A stale tree falls back to a scan.
+    fn ccd_candidates(
+        &self,
+        swept_bounds: (Vector, Vector),
+        probe: &Body,
+        travel: Vector,
+        always: &[usize],
+    ) -> Vec<usize> {
+        if !self.query_tree.current(self.bookkeeping.generation)
+            || !swept_bounds.0.finite()
+            || !swept_bounds.1.finite()
+        {
+            return (0..self.bodies.len()).collect();
+        }
+        let magnitude = self
+            .query_tree
+            .magnitude
+            .max(probe.position.abs().max_component())
+            .max(travel.abs().max_component())
+            + probe.shape.radius();
+        // Bounding-tree coordinates and swept endpoint additions can round independently.
+        // Err wide: pruning is not allowed to turn a narrow-phase failure into a missed hit.
+        let pad = 128.0 * Real::EPSILON * (1.0 + magnitude) + self.scene.contact_slop;
+        let query = spatial_kernels::Aabb {
+            min: [
+                swept_bounds.0.0 - pad,
+                swept_bounds.0.1 - pad,
+                swept_bounds.0.2 - pad,
+            ],
+            max: [
+                swept_bounds.1.0 + pad,
+                swept_bounds.1.1 + pad,
+                swept_bounds.1.2 + pad,
+            ],
+        };
+        let mut candidates = always.to_vec();
+        let nodes = self.query_tree.visit_broad_aabb(query, |leaf| {
+            let index = self.slot_index(leaf.id);
+            if !Self::ccd_unpruned_target(&self.bodies[index]) {
+                candidates.push(index);
+            }
+        });
+        crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
+        candidates.sort_unstable_by_key(|&index| self.bodies[index].order);
+        candidates.dedup();
+        candidates
+    }
+
+    fn advance_ccd_body(
+        &mut self,
+        i: usize,
+        h: Real,
+        always: &[usize],
+        report: &mut Report,
+    ) -> Result<(), Error> {
         if !advances(&self.bodies[i]) {
             return Ok(());
         }
@@ -123,7 +216,11 @@ impl World {
                 position,
                 TickTime { elapsed, h },
                 |j| excluded.contains(&j),
-                &[],
+                SearchOptions {
+                    frozen: &[],
+                    always,
+                    targets: None,
+                },
                 report,
             );
             let Some((time, j, m, first)) = (match hit {
@@ -167,6 +264,7 @@ impl World {
         &mut self,
         queued: &[usize],
         h: Real,
+        always: &[usize],
         report: &mut Report,
     ) -> Result<(), Error> {
         self.ensure_ccd_offsets();
@@ -178,58 +276,165 @@ impl World {
         let mut excluded: Vec<(usize, usize)> = Vec::new();
         let limit = self.scene.velocity_iterations.max(1);
         let mut elapsed = 0.0;
+
+        // The old all-sources re-sweep after every hit both repeated O(m*n) work and lost
+        // independent equal-time contacts to f32 TOI rounding. Cache each source's first hit;
+        // after an impulse only the changed partners can introduce new earlier contacts.
+        let mut upcoming = Vec::new();
+        super::reserve(&mut upcoming, queued.len(), &mut self.bookkeeping.work);
+        for &i in queued {
+            upcoming.push(self.next_scheduled_hit(
+                i,
+                TickTime { elapsed, h },
+                &excluded,
+                SearchOptions {
+                    frozen: &frozen,
+                    always,
+                    targets: None,
+                },
+                report,
+            )?);
+        }
+        let mut dirty = vec![false; queued.len()];
         while elapsed < 1.0 {
-            let mut best: Option<(Real, usize, usize, contact::Manifold, bool)> = None;
-            for &i in queued {
-                if frozen.iter().any(|(index, _)| *index == i) || !advances(&self.bodies[i]) {
-                    continue;
-                }
-                let at = self.position_at(i, elapsed, h);
-                let candidate = self.next_ccd_hit(
-                    i,
-                    at,
-                    TickTime { elapsed, h },
-                    |j| excluded.contains(&(i.min(j), i.max(j))),
-                    &frozen,
-                    report,
-                )?;
-                if let Some((time, j, manifold, first)) = candidate {
-                    let key = |i: usize, j: usize| {
-                        let a = self.bodies[i].order;
-                        let b = self.bodies[j].order;
+            let mut best_slot: Option<usize> = None;
+            for (slot, event) in upcoming.iter().enumerate() {
+                let Some(event) = event else { continue };
+                let earlier = best_slot.is_none_or(|previous| {
+                    let old = upcoming[previous]
+                        .as_ref()
+                        .expect("selected candidate exists");
+                    let key = |source: usize, target: usize| {
+                        let a = self.bodies[source].order;
+                        let b = self.bodies[target].order;
                         (a.min(b), a.max(b))
                     };
-                    if best.as_ref().is_none_or(|(t, a, b, ..)| {
-                        time < *t || (time == *t && key(i, j) < key(*a, *b))
-                    }) {
-                        best = Some((time, i, j, manifold, first));
+                    event.absolute < old.absolute
+                        || (event.absolute == old.absolute
+                            && key(queued[slot], event.other) < key(queued[previous], old.other))
+                });
+                if earlier {
+                    best_slot = Some(slot);
+                }
+            }
+            let Some(slot) = best_slot else {
+                break;
+            };
+            let event = upcoming[slot].take().expect("selected candidate exists");
+            let (i, j) = (queued[slot], event.other);
+            elapsed = event.absolute;
+            dirty.fill(false);
+            dirty[slot] = true;
+            let pair = (i.min(j), i.max(j));
+            let previous = [
+                (self.bodies[i].velocity, self.bodies[i].angular_velocity),
+                (self.bodies[j].velocity, self.bodies[j].angular_velocity),
+            ];
+            let wakes = report.woken_bodies;
+            let closing = self.respond_ccd_impact(
+                i,
+                j,
+                &event.manifold,
+                event.first,
+                TickTime { elapsed, h },
+                report,
+            );
+            if !closing {
+                push(&mut excluded, pair, &mut self.bookkeeping.work);
+                // Both sources of the excluded pair might have cached the same event.
+                for (k, &source) in queued.iter().enumerate() {
+                    dirty[k] |= source == i || source == j;
+                }
+            } else {
+                for index in [i, j] {
+                    if let Some(k) = queued.iter().position(|&source| source == index) {
+                        if counts[k] >= limit {
+                            continue;
+                        }
+                        counts[k] += 1;
+                        if counts[k] == limit && elapsed < 1.0 {
+                            let position = self.position_at(index, elapsed, h);
+                            push(&mut frozen, (index, position), &mut self.bookkeeping.work);
+                            report.geometry.ccd_budget_fallbacks += 1;
+                        }
                     }
                 }
             }
-            let Some((time, i, j, manifold, first)) = best else {
-                break;
-            };
-            elapsed += time * (1.0 - elapsed);
-            let pair = (i.min(j), i.max(j));
-            if !self.respond_ccd_impact(i, j, &manifold, first, TickTime { elapsed, h }, report) {
-                push(&mut excluded, pair, &mut self.bookkeeping.work);
-                continue;
-            }
-            excluded.clear();
-            push(&mut excluded, pair, &mut self.bookkeeping.work);
-            for index in [i, j] {
-                if let Some(k) = queued
-                    .iter()
-                    .position(|&queued_index| queued_index == index)
+            // Detect both changed velocities and newly frozen bodies. Static walls do not
+            // change, so one ball's wall impact cannot invalidate the other balls' contacts.
+            let mut changed = [usize::MAX; 2];
+            let mut changed_len = 0;
+            for (index, before) in [(i, previous[0]), (j, previous[1])] {
+                let b = &self.bodies[index];
+                if (b.velocity, b.angular_velocity) != before
+                    || frozen.iter().any(|(k, _)| *k == index)
                 {
-                    if counts[k] >= limit {
-                        continue;
-                    }
-                    counts[k] += 1;
-                    if counts[k] == limit && elapsed < 1.0 {
-                        let position = self.position_at(index, elapsed, h);
-                        push(&mut frozen, (index, position), &mut self.bookkeeping.work);
-                        report.geometry.ccd_budget_fallbacks += 1;
+                    changed[changed_len] = index;
+                    changed_len += 1;
+                }
+            }
+            if report.woken_bodies != wakes {
+                // Waking an island can change admissibility beyond the two responding bodies.
+                excluded.clear();
+                dirty.fill(true);
+            } else if closing {
+                // Exclusions are valid until an endpoint changes trajectory. An unrelated
+                // ball hitting the same static wall must not re-admit every other ball's
+                // just-hit wall pair and resweep their entire remaining trajectories.
+                excluded.retain(|&(a, b)| {
+                    !changed[..changed_len].contains(&a) && !changed[..changed_len].contains(&b)
+                });
+            }
+            if closing {
+                push(&mut excluded, pair, &mut self.bookkeeping.work);
+            }
+            for (slot, &source) in queued.iter().enumerate() {
+                if frozen.iter().any(|(index, _)| *index == source)
+                    || !advances(&self.bodies[source])
+                {
+                    upcoming[slot] = None;
+                    continue;
+                }
+                if dirty[slot]
+                    || upcoming[slot]
+                        .as_ref()
+                        .is_some_and(|candidate| changed[..changed_len].contains(&candidate.other))
+                {
+                    upcoming[slot] = self.next_scheduled_hit(
+                        source,
+                        TickTime { elapsed, h },
+                        &excluded,
+                        SearchOptions {
+                            frozen: &frozen,
+                            always,
+                            targets: None,
+                        },
+                        report,
+                    )?;
+                } else if changed_len != 0 {
+                    // A changed partner may now be the earliest hit even if the source's
+                    // previously predicted partner was unchanged.
+                    let candidate = self.next_scheduled_hit(
+                        source,
+                        TickTime { elapsed, h },
+                        &excluded,
+                        SearchOptions {
+                            frozen: &frozen,
+                            always,
+                            targets: Some(&changed[..changed_len]),
+                        },
+                        report,
+                    )?;
+                    if let Some(candidate) = candidate {
+                        let replace = upcoming[slot].as_ref().is_none_or(|old| {
+                            candidate.absolute < old.absolute
+                                || (candidate.absolute == old.absolute
+                                    && self.bodies[candidate.other].order
+                                        < self.bodies[old.other].order)
+                        });
+                        if replace {
+                            upcoming[slot] = Some(candidate);
+                        }
                     }
                 }
             }
@@ -243,13 +448,39 @@ impl World {
         Ok(())
     }
 
+    fn next_scheduled_hit(
+        &mut self,
+        i: usize,
+        clock: TickTime,
+        excluded: &[(usize, usize)],
+        search: SearchOptions<'_>,
+        report: &mut Report,
+    ) -> Result<Option<ScheduledHit>, Error> {
+        let at = self.position_at(i, clock.elapsed, clock.h);
+        Ok(self
+            .next_ccd_hit(
+                i,
+                at,
+                clock,
+                |j| excluded.contains(&(i.min(j), i.max(j))),
+                search,
+                report,
+            )?
+            .map(|(time, other, manifold, first)| ScheduledHit {
+                absolute: clock.elapsed + time * (1.0 - clock.elapsed),
+                other,
+                manifold,
+                first,
+            }))
+    }
+
     fn next_ccd_hit(
         &mut self,
         i: usize,
         position: Vector,
         clock: TickTime,
         excluded: impl Fn(usize) -> bool,
-        frozen: &[(usize, Vector)],
+        search: SearchOptions<'_>,
         report: &mut Report,
     ) -> Result<Option<(Real, usize, contact::Manifold, bool)>, Error> {
         let mut probe = self.bodies[i].clone();
@@ -260,7 +491,11 @@ impl World {
             union(now, (now.0 + travel, now.1 + travel))
         };
         let mut best: Option<(Real, usize, contact::Manifold, bool)> = None;
-        for j in 0..self.bodies.len() {
+        let candidates = search.targets.map_or_else(
+            || self.ccd_candidates(swept_bounds, &probe, travel, search.always),
+            <[usize]>::to_vec,
+        );
+        for j in candidates {
             if j == i || excluded(j) {
                 continue;
             }
@@ -270,7 +505,7 @@ impl World {
             }
             report.pair_tests += 1;
             let mut target = other.clone();
-            if let Some((_, position)) = frozen.iter().find(|(index, _)| *index == j) {
+            if let Some((_, position)) = search.frozen.iter().find(|(index, _)| *index == j) {
                 target.position = *position;
                 target.velocity = Vector::ZERO;
             } else {
