@@ -167,7 +167,9 @@ fn dense_co_moving_sweeps_never_create_collisions() {
 
 #[test]
 fn converging_sweeps_produce_deterministic_real_impacts() {
-    for count in [8, 16, 32] {
+    // The 64-body case exhausts every CCD budget on #484 and stresses
+    // near-imminent event scheduling under both storage layouts.
+    for count in [8, 16, 32, 64] {
         let ordered = sample(Case::Converging, count, BodyStorage::Ordered);
         let indexed = sample(Case::Converging, count, BodyStorage::Indexed);
         verify_converging(&ordered);
