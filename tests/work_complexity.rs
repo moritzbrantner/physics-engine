@@ -1311,8 +1311,8 @@ fn step_work(w: &mut World) -> (u64, u64, u64, u64) {
 
 /// Same-time CCD impacts are each real work, but must not cause every other projectile to
 /// rescan the world after every bounce. Covers both single wall hits and two chronological
-/// ricochets per body; sweep calls are linear in actual impacts, candidate tests quadratic
-/// in active bodies and independent of distant statics.
+/// ricochets per body; sweep calls and candidate tests are linear in actual impacts and
+/// independent of distant statics: moving targets are pruned by their swept bounds (#469).
 #[test]
 fn ccd_scheduling_scales_with_impacts_and_unrelated_statics() {
     let mut samples = Vec::new();
@@ -1347,10 +1347,11 @@ fn ccd_scheduling_scales_with_impacts_and_unrelated_statics() {
                 "synchronized projectiles tunneled: {s:?} at {projectiles}/{irrelevant}"
             );
             // Reproducible work cap, not a wall-clock budget; distinct work ceilings for one
-            // and two physically necessary impacts, independent of unrelated static bodies.
+            // and two physically necessary impacts, independent of unrelated static bodies
+            // and of the other, mutually distant projectiles.
             assert!(
-                s.pairs <= (2 + 2 * impacts_per_body) * n * n,
-                "quadratic work budget exceeded: {s:?} at {projectiles}/{irrelevant}"
+                s.pairs <= (2 + 2 * impacts_per_body) * n,
+                "linear work budget exceeded: {s:?} at {projectiles}/{irrelevant}"
             );
             samples.push((
                 vec![
@@ -1373,6 +1374,7 @@ fn ccd_scheduling_scales_with_impacts_and_unrelated_statics() {
         "ccd-scheduled-step",
         &samples,
         &[
+            ("pair-tests", "projectiles", "linear"),
             ("pair-tests", "irrelevant", "constant"),
             ("pair-tests", "impactsPerBody", "linear"),
             ("tree-nodes", "irrelevant", "linear"),

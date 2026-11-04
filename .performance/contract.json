@@ -1671,7 +1671,7 @@
     },
     {
       "id": "ccd-scheduled-step",
-      "description": "One 60 Hz tick with n independent CCD spheres striking either one wall once or two walls successively, at synchronized TOIs, plus b distant non-contacting static boxes. Every sphere must complete 1 or 2 impacts and retain its remaining-time trajectory; the event scheduler preserves unchanged future contacts and locally invalidates only affected exclusions. Distant statics are pruned through the existing query tree.",
+      "description": "One 60 Hz tick with n independent CCD spheres striking either one wall once or two walls successively, at synchronized TOIs, plus b distant non-contacting static boxes. Every sphere must complete 1 or 2 impacts and retain its remaining-time trajectory; the event scheduler preserves unchanged future contacts and locally invalidates only affected exclusions. Distant statics are pruned through the existing query tree and distant moving sweeps through a transient swept-bound tree (#469); cached events wait in a versioned chronological heap.",
       "publicContract": "physics_engine::approximate::World::step",
       "dimensions": {
         "projectiles": {
@@ -1711,9 +1711,9 @@
           "name": "pair-tests",
           "unit": "tests",
           "signal": "operation-count",
-          "notes": "O(k·n²) tests in these fixtures with n projectiles and k=1 or 2 wall impacts each: fixed bodies are pruned through the existing query tree, while moving bodies remain eligible after velocity changes. The test enforces <= 4n² for k=1, <= 6n² for k=2, independent of b. Building the unpruned moving-body list visits all bodies once per CCD step; tree traversal is accounted separately.",
+          "notes": "O(k·n) tests in these fixtures with n mutually distant projectiles and k=1 or 2 wall impacts each (#469, was O(k·n²)): fixed bodies are pruned through the existing query tree and moving targets through a transient tree of their conservative remaining swept bounds, refreshed from the impact time when an impact changes a trajectory; an impact re-searches only sources overlapping a changed body's old or new sweep. The test enforces <= 4n for k=1, <= 6n for k=2, independent of b. Building the unpruned moving-body list visits all bodies once per CCD step; tree traversal is accounted separately.",
           "growth": [
-            { "dimension": "projectiles", "bound": "polynomial", "degree": 2 },
+            { "dimension": "projectiles", "bound": "linear" },
             { "dimension": "irrelevant", "bound": "constant" },
             { "dimension": "impactsPerBody", "bound": "linear" }
           ]
@@ -1722,9 +1722,9 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Conservative fixed-body tree candidate visits plus the ordinary step broad phase; can grow quadratically with simultaneous sources but no worse than linearly in unrelated statics.",
+          "notes": "Conservative fixed-body tree candidate visits, the transient moving-sweep tree's candidate and invalidation queries (#469, O(log n) per search for distant sources, was O(n²) linear candidate checks) plus the ordinary step broad phase; no worse than linearly in unrelated statics.",
           "growth": [
-            { "dimension": "projectiles", "bound": "polynomial", "degree": 2 },
+            { "dimension": "projectiles", "bound": "linearithmic" },
             { "dimension": "irrelevant", "bound": "linear" },
             { "dimension": "impactsPerBody", "bound": "linear" }
           ]
