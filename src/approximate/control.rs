@@ -184,7 +184,7 @@ impl World {
             return 0;
         };
         let s = &mut self.bookkeeping;
-        s.ensure_graph(&self.bodies, &self.cache);
+        s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
         s.traversal.begin(self.bodies.len(), &mut s.work);
         s.traversal
             .collect(root, &self.bodies, &s.graph, &mut s.work);

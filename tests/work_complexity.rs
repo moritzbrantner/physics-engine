@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use physics_engine::{
     BodyId,
     approximate::{
-        Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config, Error,
-        HeightfieldDesc, QueryFilter, QueryHit, QueryPose, RayCast, RayHit, Shape, ShapeCast,
-        Vector as V, World,
+        Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config,
+        DistanceJoint, Error, HeightfieldDesc, QueryFilter, QueryHit, QueryPose, RayCast, RayHit,
+        Shape, ShapeCast, Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -1483,4 +1483,74 @@ fn a_zone_step_stays_within_its_budgets() {
     if evidence_dir().is_none() && std::env::var_os("WORK_PRINT").is_none() {
         assert_eq!(allocs, 0, "{samples:?}");
     }
+}
+
+/// `ropes` loads swinging on ropes from fixed anchors high above a static town of
+/// `statics` boxes (#453): one row per joint per substep, and the town is never visited.
+fn rope_town(statics: usize, ropes: u64) -> World {
+    let mut w = debris_town(statics, 1 << (statics.trailing_zeros().div_ceil(2)), 0);
+    for k in 0..ropes {
+        let top = cell((k % 16) as usize * 2, (k / 16) as usize * 2) + V(0.0, 20.0, 0.0);
+        let mut anchor = Body::keyed(3_000_000 + k, Shape::Sphere(0.05), top, 0.0);
+        anchor.sensor = true;
+        let anchor = w.add_body(anchor).unwrap();
+        // Released 30° out: it is still swinging at the measured step.
+        let load = top + V(-1.0, -(3.0f32.sqrt()), 0.0);
+        let load = w
+            .add_body(Body::keyed(4_000_000 + k, Shape::Sphere(0.2), load, 1.0))
+            .unwrap();
+        w.add_joint(DistanceJoint::rope(anchor, load, 2.0)).unwrap();
+    }
+    w
+}
+
+/// Joint rows are linear in the joints and independent of the static town (#453).
+#[test]
+fn joint_rows_follow_the_joints_not_the_town() {
+    let mut samples = Vec::new();
+    let points = [9u32, 10, 11, 12, 13]
+        .iter()
+        .map(|&s| (s, 8u64))
+        .chain([1u64, 2, 4, 16, 32, 64].iter().map(|&r| (12, r)));
+    for (log2, ropes) in points {
+        let statics = 1usize << log2;
+        let mut w = rope_town(statics, ropes);
+        w.step(1.0 / 60.0).unwrap();
+        w.step(1.0 / 60.0).unwrap();
+        work::reset();
+        let report = w.step(1.0 / 60.0).unwrap();
+        let (visits, records) = (
+            work::get(Counter::BodyVisits),
+            work::get(Counter::JointRows),
+        );
+        let substeps = u64::from(Config::default().substeps);
+        assert_eq!(report.joint_rows, ropes * substeps);
+        let swinging = w
+            .bodies()
+            .filter(|b| b.mass > 0.0)
+            .all(|b| !b.is_sleeping() && b.velocity.length() > 0.1);
+        assert!(swinging, "every load still swings");
+        samples.push((
+            vec![("statics", statics as u64), ("joints", ropes)],
+            vec![
+                ("joint-rows", report.joint_rows),
+                ("joint-record-visits", records),
+                ("body-visits", visits),
+                ("pair-tests", report.pair_tests),
+            ],
+        ));
+    }
+    judge(
+        "step-joints",
+        &samples,
+        &[
+            ("joint-rows", "statics", "constant"),
+            ("joint-rows", "joints", "linear"),
+            ("joint-record-visits", "statics", "constant"),
+            ("joint-record-visits", "joints", "linear"),
+            ("body-visits", "statics", "constant"),
+            ("body-visits", "joints", "linear"),
+            ("pair-tests", "statics", "constant"),
+        ],
+    );
 }

@@ -17,6 +17,11 @@ next creation serial, so restored ids stay valid and stale ids stay rejected.
 Character registrations (`add_character` settings and grounded state) are not part of a
 checkpoint; register the characters again after `restore`.
 
+Joints (#453) are not part of the format: `checkpoint` of a world with any joint returns
+`CheckpointError::UnsupportedJoints` without capturing anything, so a checkpoint never drops a
+joint silently. Worlds without joints keep format 6 and algorithm 11 unchanged; their
+continuation is unaffected because a world without joints builds no joint rows.
+
 ## Interface and compatibility
 
 ```rust
