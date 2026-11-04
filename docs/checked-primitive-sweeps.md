@@ -17,10 +17,11 @@ previous successful report are restored. Repeated attempts preserve those inputs
 The failed-work report includes broad/narrow tests, actual search iterations and
 `GeometryStats::primitive_sweep_failures`; it publishes no successful events.
 
-This repair covers the shared capsule/wedge translation searches. The optimized
-engine sphere/sphere, sphere/box and box/box analytic lanes retain their existing
-behavior; this does not establish complete extreme-scale numerical coverage for
-those lanes. Fixed-orientation substeps still defer secondary ricochets, and
+The sphere/sphere sweep lane now uses the shared checked f64 analytic first-contact
+kernel through the engine's conservative widen/narrow adapter. Moving sphere pairs
+honor the requested contact margin and report initial overlap at time zero. Local
+sphere/box and box/box analytic lanes retain their previous behavior; this does
+not establish complete extreme-scale numerical coverage for those lanes. Fixed-orientation substeps still defer secondary ricochets, and
 angular motion is not continuously swept. See [the floating-world limitations](fixed-step-approximation.md).
 
 ## Evidence and scope

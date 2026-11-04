@@ -1075,19 +1075,9 @@ pub(super) fn swept(
             sphere_box_time(left, right, radius, dt)
         }
         primitive::PrimitivePair::SphereSphere => {
-            let Shape::Sphere(ra) = left.shape else {
-                unreachable!()
-            };
-            let Shape::Sphere(rb) = right.shape else {
-                unreachable!()
-            };
-            let d = right.position - left.position;
-            let v = (right.velocity - left.velocity) * dt;
-            roots(v.dot(v), 2.0 * d.dot(v), d.dot(d) - (ra + rb) * (ra + rb))
-                .into_iter()
-                .flatten()
-                .filter(|t| (0.0..=1.0).contains(t))
-                .min_by(Real::total_cmp)
+            // The shared checked analytic kernel handles margins, starting overlaps and
+            // relative motion in f64; the adapter rounds the first contact earlier.
+            primitive::swept_time(left, right, dt, margin, work)?
         }
         primitive::PrimitivePair::BoxBox => box_sweep_time(
             left,
