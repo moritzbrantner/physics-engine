@@ -294,6 +294,36 @@ fn metrics(input: &[Initial], states: &[State]) -> Metrics {
     }
 }
 
+/// #481 regression: high-resolution Rapier retains nonpenetrating poses for
+/// these adversarial pileups. Their exact velocities are solver-dependent; the
+/// safety property is that the engine cannot leave two 0.2 m-diameter balls
+/// deeply inside one another after a 60 Hz tick, even on budget exhaustion.
+#[test]
+fn budget_frozen_dense_contacts_do_not_deeply_interpenetrate() {
+    const MAX_OVERLAP: f64 = 0.01;
+    for (count, iterations) in [(15, 4), (23, 8), (38, 16)] {
+        let input = radial_convergence(count);
+        let ordered = engine(&input, iterations, BodyStorage::Ordered);
+        let indexed = engine(&input, iterations, BodyStorage::Indexed);
+        assert_eq!(
+            ordered.states, indexed.states,
+            "storage divergence at n={count}, iterations={iterations}"
+        );
+        let depth = metrics(&input, &ordered.states).max_overlap;
+        let rapier_depth = metrics(&input, &rapier(&input, 128)).max_overlap;
+        assert!(
+            rapier_depth <= MAX_OVERLAP,
+            "reference is invalid at n={count}: overlap {rapier_depth:.5} m"
+        );
+        assert!(
+            depth <= MAX_OVERLAP,
+            "deep CCD overlap at n={count} iterations={iterations}: depth={depth:.5} m, impacts={}, fallbacks={}",
+            ordered.impacts,
+            ordered.fallbacks,
+        );
+    }
+}
+
 /// Non-blocking sensitivity and high-resolution reference. `velocity_iterations`
 /// also controls the ordinary solver, so changing it does *not* isolate just
 /// the CCD event cap. Compare work/fallback counts and state invariants; avoid
@@ -379,10 +409,7 @@ fn print_first_deep_overlap_by_budget() {
                 let (depth, i, j) = worst;
                 println!(
                     "ccd-overlap-first iterations={iterations} count={count} depth={depth:.5} pair=({i},{j}) impacts={} fallbacks={} a={:?} b={:?}",
-                    run.impacts,
-                    run.fallbacks,
-                    run.states[i],
-                    run.states[j],
+                    run.impacts, run.fallbacks, run.states[i], run.states[j],
                 );
                 break;
             }

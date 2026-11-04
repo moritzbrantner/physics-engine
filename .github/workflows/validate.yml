@@ -125,10 +125,6 @@ jobs:
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked -p physics-oracle
 
-      # One-time, advisory #481 minimization run. Remove after collecting evidence.
-      - name: Discover smallest deep CCD overlap per budget (#481)
-        run: cargo test --release --locked -p physics-oracle --test ccd_dense_reference print_first_deep_overlap_by_budget -- --ignored --nocapture
-
       - name: Check out coding-tooling for the size budget
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

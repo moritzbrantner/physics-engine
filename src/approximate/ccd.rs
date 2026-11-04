@@ -351,7 +351,7 @@ impl World {
             let step = time * remaining;
             position += self.bodies[i].velocity * (step * h);
             elapsed += step;
-            if !self.respond_ccd_impact(i, j, &m, first, TickTime { elapsed, h }, report) {
+            if !self.respond_ccd_impact(i, j, &m, first, TickTime { elapsed, h }, false, report) {
                 // Touching while separating is not an impact and does not use the budget;
                 // do not re-test this partner.
                 push(&mut excluded, j, &mut self.bookkeeping.work);
@@ -466,6 +466,7 @@ impl World {
                 &event.manifold,
                 event.first,
                 TickTime { elapsed, h },
+                queued.binary_search(&j).is_ok_and(|k| is_frozen[k]),
                 report,
             );
             if !closing {
@@ -817,6 +818,8 @@ impl World {
 
     /// Apply exactly one admitted impact at its TOI, retaining piecewise linear trajectories
     /// for both participants. Returns false for non-closing touches (which do not use a pass).
+    /// A budget-frozen partner is stationary and has zero inverse mass for the remainder of
+    /// this substep, even though its stored velocity is preserved for the following tick.
     fn respond_ccd_impact(
         &mut self,
         i: usize,
@@ -824,6 +827,7 @@ impl World {
         m: &contact::Manifold,
         first: bool,
         clock: TickTime,
+        frozen_partner: bool,
         report: &mut Report,
     ) -> bool {
         let count = m.points.len().max(1) as Real;
@@ -838,9 +842,12 @@ impl World {
         } else {
             (-m.normal, rb, ra)
         };
-        let closing = (contact_velocity(&self.bodies[j], r_other, true)
-            - contact_velocity(&self.bodies[i], r_self, true))
-        .dot(n);
+        let other_velocity = if frozen_partner {
+            Vector::ZERO
+        } else {
+            contact_velocity(&self.bodies[j], r_other, true)
+        };
+        let closing = (other_velocity - contact_velocity(&self.bodies[i], r_self, true)).dot(n);
         if closing >= 0.0 {
             return false;
         }
@@ -853,14 +860,14 @@ impl World {
         }
         let body = &self.bodies[i];
         let partner = &self.bodies[j];
-        let relative =
-            contact_velocity(partner, r_other, true) - contact_velocity(body, r_self, true);
+        let relative = other_velocity - contact_velocity(body, r_self, true);
         let approach = relative.dot(n).min(0.0);
         self.transaction.body(i, body);
         self.transaction.body(j, partner);
         let pair = [(body, &self.responses[i]), (partner, &self.responses[j])];
         let arms = [r_self, r_other];
-        let k = effective_mass(pair, arms, n, [true, true], true, report);
+        let response = [true, !frozen_partner];
+        let k = effective_mass(pair, arms, n, response, true, report);
         if k > 1e-14 {
             let restitution = if approach < -self.restitution_speed {
                 super::pair_restitution(body, partner)
@@ -873,19 +880,25 @@ impl World {
             let mu = super::pair_friction(body, partner);
             if mu > 0.0 && tangential.length() > 0.0 {
                 let t = tangential.unit();
-                let kt = effective_mass(pair, arms, t, [true, true], true, report);
+                let kt = effective_mass(pair, arms, t, response, true, report);
                 if kt > 1e-14 {
                     impulse -= t * (tangential.length() / kt).min(mu * normal);
                 }
             }
             let before = [self.bodies[i].velocity, self.bodies[j].velocity];
             for (index, arm, impulse) in [(i, r_self, -impulse), (j, r_other, impulse)] {
+                if frozen_partner && index == j {
+                    continue;
+                }
                 let b = &mut self.bodies[index];
                 let prepared = self.responses[index];
                 b.velocity += impulse * prepared.inverse_mass;
                 b.angular_velocity += prepared.inertia(arm.cross(impulse), report);
             }
             for (index, velocity) in [(i, before[0]), (j, before[1])] {
+                if frozen_partner && index == j {
+                    continue;
+                }
                 let change = self.bodies[index].velocity - velocity;
                 self.bookkeeping.ccd_offsets[index] -= change * (clock.elapsed * clock.h);
             }
