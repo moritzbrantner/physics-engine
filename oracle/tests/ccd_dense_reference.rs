@@ -39,6 +39,7 @@ struct EngineResult {
     pairs: u64,
     narrows: u64,
     sweeps: u64,
+    single_tick_us: f64,
 }
 
 fn paired_lanes(pairs: usize) -> Vec<Initial> {
@@ -114,10 +115,14 @@ fn engine(input: &[Initial], iterations: u8, storage: BodyStorage) -> EngineResu
         body.sleep_allowed = false;
         world.add_body(body).unwrap();
     }
+    let start = std::time::Instant::now();
     let r = world.step(f64::from(DT)).unwrap();
+    let single_tick_us = start.elapsed().as_secs_f64() * 1e6;
     let states = (0..input.len())
         .map(|i| {
-            let body = world.body(world.body_id(10_000 + i as u64).unwrap()).unwrap();
+            let body = world
+                .body(world.body_id(10_000 + i as u64).unwrap())
+                .unwrap();
             State {
                 position: [body.position.0, body.position.1, body.position.2],
                 velocity: [body.velocity.0, body.velocity.1, body.velocity.2],
@@ -131,6 +136,7 @@ fn engine(input: &[Initial], iterations: u8, storage: BodyStorage) -> EngineResu
         pairs: r.pair_tests,
         narrows: r.narrow_tests,
         sweeps: r.geometry.sweep_queries,
+        single_tick_us,
     }
 }
 
@@ -198,10 +204,16 @@ fn eight_simultaneous_sphere_pair_impacts_match_analytic_and_rapier() {
     let ordered = engine(&input, 8, BodyStorage::Ordered);
     let indexed = engine(&input, 8, BodyStorage::Indexed);
     let reference = rapier(&input, 64);
-    assert_eq!(ordered.states, indexed.states, "CCD storage order divergence");
+    assert_eq!(
+        ordered.states, indexed.states,
+        "CCD storage order divergence"
+    );
     assert_eq!(ordered.impacts, 8, "one real impact per head-on pair");
     assert_eq!(ordered.impacts, indexed.impacts);
-    assert_eq!(ordered.fallbacks, 0, "isolated pairs must not exhaust CCD budget");
+    assert_eq!(
+        ordered.fallbacks, 0,
+        "isolated pairs must not exhaust CCD budget"
+    );
     assert_eq!(indexed.fallbacks, 0);
     for (i, (observed, rapier_state)) in ordered.states.iter().zip(&reference).enumerate() {
         let side = if i.is_multiple_of(2) { -1.0 } else { 1.0 };
@@ -210,8 +222,18 @@ fn eight_simultaneous_sphere_pair_impacts_match_analytic_and_rapier() {
         assert_near(observed.velocity[0], side * 45.0, 0.15, "engine final vx");
         assert_near(observed.position[1], y, 0.001, "engine final y");
         assert_near(observed.velocity[1], 0.0, 0.001, "engine final vy");
-        assert_near(observed.position[0], rapier_state.position[0], 0.05, "Rapier x");
-        assert_near(observed.velocity[0], rapier_state.velocity[0], 1.0, "Rapier vx");
+        assert_near(
+            observed.position[0],
+            rapier_state.position[0],
+            0.05,
+            "Rapier x",
+        );
+        assert_near(
+            observed.velocity[0],
+            rapier_state.velocity[0],
+            1.0,
+            "Rapier vx",
+        );
     }
 }
 
@@ -226,11 +248,21 @@ struct Metrics {
 fn metrics(input: &[Initial], states: &[State]) -> Metrics {
     let before_energy: f64 = input
         .iter()
-        .map(|s| s.velocity.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>())
+        .map(|s| {
+            s.velocity
+                .iter()
+                .map(|v| f64::from(*v).powi(2))
+                .sum::<f64>()
+        })
         .sum();
     let after_energy: f64 = states
         .iter()
-        .map(|s| s.velocity.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>())
+        .map(|s| {
+            s.velocity
+                .iter()
+                .map(|v| f64::from(*v).powi(2))
+                .sum::<f64>()
+        })
         .sum();
     let momentum = (0..3)
         .map(|axis| {
@@ -265,12 +297,11 @@ fn metrics(input: &[Initial], states: &[State]) -> Metrics {
 /// Non-blocking sensitivity and high-resolution reference. `velocity_iterations`
 /// also controls the ordinary solver, so changing it does *not* isolate just
 /// the CCD event cap. Compare work/fallback counts and state invariants; avoid
-/// per-ball parity assertions for a maximally symmetric, chaotic pileup.
+/// per-ball parity assertions for a maximally symmetric, chaotic pileup. The
+/// single-tick timings have no warmup and are not stable performance evidence.
 #[test]
 #[ignore = "diagnostic radial multi-impact reference; run explicitly with --ignored --nocapture"]
 fn print_radial_budget_sensitivity_against_rapier() {
-    use std::time::Instant;
-
     for count in [8, 16, 32, 64] {
         let input = radial_convergence(count);
         let reference = rapier(&input, 128);
@@ -283,11 +314,13 @@ fn print_radial_budget_sensitivity_against_rapier() {
             reference_metrics.max_overlap,
         );
         for iterations in [4, 8, 16, 32] {
-            let start = Instant::now();
             let result = engine(&input, iterations, BodyStorage::Ordered);
-            let micros = start.elapsed().as_secs_f64() * 1e6;
             assert!(result.states.iter().all(|state| {
-                state.position.iter().chain(state.velocity.iter()).all(|x| x.is_finite())
+                state
+                    .position
+                    .iter()
+                    .chain(state.velocity.iter())
+                    .all(|x| x.is_finite())
             }));
             let state_metrics = metrics(&input, &result.states);
             let mean_position_gap = result
@@ -303,8 +336,13 @@ fn print_radial_budget_sensitivity_against_rapier() {
                 .sum::<f64>()
                 / count as f64;
             println!(
-                "ccd-dense-budget count={count} iterations={iterations} impacts={} fallbacks={} pairs={} narrows={} sweeps={} run_us={micros:.0} mean_rapier_position_gap={mean_position_gap:.4} energy_delta_pct={:.4} momentum={:.5} mean_radius={:.5} max_overlap={:.5}",
-                result.impacts, result.fallbacks, result.pairs, result.narrows, result.sweeps,
+                "ccd-dense-budget count={count} iterations={iterations} impacts={} fallbacks={} pairs={} narrows={} sweeps={} single_tick_us={:.0} mean_rapier_position_gap={mean_position_gap:.4} energy_delta_pct={:.4} momentum={:.5} mean_radius={:.5} max_overlap={:.5}",
+                result.impacts,
+                result.fallbacks,
+                result.pairs,
+                result.narrows,
+                result.sweeps,
+                result.single_tick_us,
                 state_metrics.energy_pct,
                 state_metrics.momentum,
                 state_metrics.mean_radius,

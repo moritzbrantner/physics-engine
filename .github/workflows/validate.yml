@@ -125,10 +125,6 @@ jobs:
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked -p physics-oracle
 
-      # Temporary, advisory experiment for #477. Remove after collecting hosted logs.
-      - name: Advisory dense CCD budget sensitivity against Rapier (#477)
-        run: cargo test --release --locked -p physics-oracle --test ccd_dense_reference -- --ignored --nocapture
-
       - name: Check out coding-tooling for the size budget
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
