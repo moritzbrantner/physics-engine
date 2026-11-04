@@ -3,8 +3,8 @@
 //! re-swept against every candidate.
 use physics_engine::{
     approximate::{
-        Body, Checkpoint, CheckpointContext, CheckpointLimits, CombineRule, Config, Real, Report,
-        Shape, Vector as V, World,
+        Body, BodyStorage, Checkpoint, CheckpointContext, CheckpointLimits, CombineRule, Config,
+        ContactEvent, Real, Report, Shape, Vector as V, World,
     },
     numeric::Scalar,
 };
@@ -34,6 +34,15 @@ fn elastic_sphere(id: u64, position: V, velocity: V) -> Body {
     b
 }
 
+fn small_elastic_sphere(id: u64, velocity: V) -> Body {
+    let mut b = Body::keyed(id, Shape::Sphere(0.1), V::ZERO, 1.0);
+    b.velocity = velocity;
+    b.restitution = 1.0;
+    b.friction = 0.0;
+    b.ccd = true;
+    b
+}
+
 fn one_substep(gravity: V) -> World {
     World::new(Config {
         gravity,
@@ -49,6 +58,157 @@ fn state(w: &World) -> Vec<u8> {
 
 fn close(actual: Real, expected: Real, tolerance: Real) -> bool {
     (actual - expected).abs() <= tolerance
+}
+
+/// MMORPG's persistent projectile: the first wall returns the sphere toward a second wall,
+/// which it hits in the same 60 Hz tick. A frame-end sweep or a first-hit-only CCD pass cannot
+/// produce this position and velocity while consuming the entire requested timestep.
+#[test]
+fn persistent_projectile_hits_two_walls_and_consumes_the_whole_tick() {
+    let mut w = one_substep(V::ZERO);
+    w.add_body(fixed(1, V(0.05, 1.0, 1.0), V(0.45, 0.0, 0.0), 1.0, 0.0))
+        .unwrap();
+    w.add_body(fixed(2, V(0.05, 1.0, 1.0), V(-0.25, 0.0, 0.0), 1.0, 0.0))
+        .unwrap();
+    w.add_body(small_elastic_sphere(3, V(45.0, 0.0, 0.0)))
+        .unwrap();
+    // Contact centres are x=0.30 (right) and x=-0.10 (left). After two reflections the
+    // remaining 1/900 second advances the sphere from -0.10 to -0.05.
+    let report = w.step(1.0 / 60.0).unwrap();
+    let p = w.body(w.body_id(3).unwrap()).unwrap();
+    assert!(close(p.position.0, -0.05, 1e-3), "{:?}", p.position);
+    assert!(close(p.velocity.0, 45.0, 1e-3), "{:?}", p.velocity);
+    assert!(report.swept_contacts >= 2, "{report:?}");
+    assert_eq!(report.geometry.ccd_budget_fallbacks, 0);
+    assert!((w.elapsed_seconds() - 1.0 / 60.0).abs() < 1e-12);
+}
+
+/// The far wall is inserted before the near one, but the admitted first impact must be the
+/// smallest TOI, not the first candidate. It cannot be skipped by a frame-end overlap query.
+#[test]
+fn closest_ccd_impact_wins_independent_of_body_storage_and_insertion() {
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let mut w = World::new(Config {
+            gravity: V::ZERO,
+            substeps: 1,
+            body_storage: storage,
+            ..Config::default()
+        })
+        .unwrap();
+        w.add_body(fixed(20, V(0.05, 1.0, 1.0), V(0.65, 0.0, 0.0), 1.0, 0.0))
+            .unwrap();
+        w.add_body(fixed(10, V(0.05, 1.0, 1.0), V(0.45, 0.0, 0.0), 1.0, 0.0))
+            .unwrap();
+        let id = w
+            .add_body(small_elastic_sphere(30, V(45.0, 0.0, 0.0)))
+            .unwrap();
+        let report = w.step(1.0 / 60.0).unwrap();
+        let b = w.body(id).unwrap();
+        assert!(
+            close(b.position.0, -0.15, 1e-3),
+            "{storage:?}: {:?}",
+            b.position
+        );
+        assert!(
+            close(b.velocity.0, -45.0, 1e-3),
+            "{storage:?}: {:?}",
+            b.velocity
+        );
+        assert_eq!(report.swept_contacts, 1);
+        assert_eq!(report.geometry.ccd_budget_fallbacks, 0);
+    }
+}
+
+/// Chronological TOI across two CCD bodies: B reaches a wall before the two spheres' projected
+/// meeting. After B rebounds, the spheres move in the same direction and cannot meet this tick.
+/// Processing A's later predicted impact first would produce a spurious A–B collision.
+#[test]
+fn earlier_wall_impact_prevents_a_later_spurious_ccd_pair() {
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let mut w = World::new(Config {
+            gravity: V::ZERO,
+            substeps: 1,
+            body_storage: storage,
+            ..Config::default()
+        })
+        .unwrap();
+        let mut first = small_elastic_sphere(10, V(80.0, 0.0, 0.0));
+        first.position = V(-1.2, 0.0, 0.0);
+        let mut second = small_elastic_sphere(20, V(-40.0, 0.0, 0.0));
+        second.position = V(0.8, 0.0, 0.0);
+        let wall = fixed(30, V(0.05, 1.0, 1.0), V(0.55, 0.0, 0.0), 1.0, 0.0);
+        if storage == BodyStorage::Indexed {
+            // The body indices now disagree with the stable key order.
+            w.add_body(wall).unwrap();
+            w.add_body(second).unwrap();
+            w.add_body(first).unwrap();
+        } else {
+            w.add_body(first).unwrap();
+            w.add_body(second).unwrap();
+            w.add_body(wall).unwrap();
+        }
+        let (a, b) = (w.body_id(10).unwrap(), w.body_id(20).unwrap());
+        let report = w.step(1.0 / 60.0).unwrap();
+        let (a_after, b_after) = (w.body(a).unwrap(), w.body(b).unwrap());
+        assert!(
+            close(a_after.position.0, 0.133333, 0.02),
+            "{storage:?} A: {a_after:?}"
+        );
+        assert!(
+            close(a_after.velocity.0, 80.0, 0.1),
+            "{storage:?} A: {a_after:?}"
+        );
+        assert!(
+            close(b_after.position.0, 1.266667, 0.02),
+            "{storage:?} B: {b_after:?}"
+        );
+        assert!(
+            close(b_after.velocity.0, 40.0, 0.1),
+            "{storage:?} B: {b_after:?}"
+        );
+        assert_eq!(report.swept_contacts, 1, "{storage:?}: {report:?}");
+        assert!(!report.contact_events.iter().any(|event| {
+            matches!(event, ContactEvent::Started(x, y) if (*x == a && *y == b) || (*x == b && *y == a))
+        }));
+    }
+}
+
+/// Equal-time obstructions must resolve in stable body-key order, independent of storage layout
+/// or insertion order. The two identical walls are deliberately overlapping: the observed
+/// Started event identifies the chosen first collision even though either wall reflects x.
+#[test]
+fn tied_ccd_impacts_choose_the_lower_stable_key_in_both_storages() {
+    let winner = |storage| {
+        let mut w = World::new(Config {
+            gravity: V::ZERO,
+            substeps: 1,
+            body_storage: storage,
+            ..Config::default()
+        })
+        .unwrap();
+        for key in [20, 10] {
+            w.add_body(fixed(key, V(0.05, 1.0, 1.0), V(0.45, 0.0, 0.0), 1.0, 0.0))
+                .unwrap();
+        }
+        let shot = w
+            .add_body(small_elastic_sphere(30, V(45.0, 0.0, 0.0)))
+            .unwrap();
+        let report = w.step(1.0 / 60.0).unwrap();
+        let partner = report.contact_events.iter().find_map(|event| {
+            if let ContactEvent::Started(a, b) = event {
+                if *a == shot {
+                    return Some(*b);
+                }
+                if *b == shot {
+                    return Some(*a);
+                }
+            }
+            None
+        });
+        partner.and_then(|id| w.body(id)).and_then(|b| b.key)
+    };
+    assert_eq!(winner(BodyStorage::Ordered), Some(10));
+    assert_eq!(winner(BodyStorage::Indexed), Some(10));
 }
 
 /// Case 1: the minimised elastic wall from #246.

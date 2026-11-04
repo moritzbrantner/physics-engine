@@ -208,6 +208,27 @@ bodies it was in contact with or now touches wake, and characters it now reaches
 again. Characters are not carried; the consumer adds a platform's displacement to its riders' moves
 (MMORPG's adapter, the `platforms` oracle scenario).
 
+## Persistent projectile CCD
+
+`Body::ccd = true` advances a non-retiring movable body through each admitted swept impact
+*within the requested substep*: it resolves an impulse at the earliest time of impact and
+re-sweeps the remaining time with the response velocity. Repeated impacts use the existing
+`Config::velocity_iterations` budget. On exhaustion, the body remains at its last impact for
+the rest of that substep rather than tunnelling (`Report::geometry.ccd_budget_fallbacks`).
+`retire_on_impact` bodies instead stop at their impact and leave the world; the game owns their
+damage and other attack rules. `Report::swept_contacts` counts admitted remaining-time impulses.
+This is **translational** CCD: orientations are held fixed during each sweep, with rotation
+integrated between substeps. Sampled rotation is not exact rotational swept collision.
+
+`ccd-ricochet`, `ccd-glancing` and `ccd-moving-wall` (C20, MMORPG #290) exercise two elastic
+impacts in one 60 Hz tick, a moving kinematic obstacle and a glancing hit. When multiple CCD bodies
+have admitted sweeps, their impacts are processed in global time-of-impact order rather than one
+body's full trajectory before the next. Rapier 0.36.1's single 60 Hz CCD step stops at its first
+impact; the behavioral reference advances the same interval in 64 smaller Rapier steps, while
+the ordinary single-step Rapier cost remains a separate blocking performance baseline. Analytic
+and independent tests cover full-time continuation, tie order, no tunnelling, budget exhaustion
+and checkpoint replay. This proves the engine-side fixture, not adoption in the MMORPG adapter.
+
 ## Contact events
 
 `Report::contact_events` lists the step's contact enter/exit transitions (Q33,

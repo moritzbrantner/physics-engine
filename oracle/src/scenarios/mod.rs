@@ -3,6 +3,7 @@ pub mod arpg_tick;
 pub mod basin;
 pub mod bounce;
 pub mod capsule_normals;
+pub mod ccd_projectiles;
 pub mod character_move;
 pub mod contact_events;
 pub mod crowd;
