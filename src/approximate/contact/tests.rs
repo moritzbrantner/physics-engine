@@ -298,11 +298,11 @@ fn sphere_sphere_sweeps_use_shared_analytic_first_contact() {
     assert!(hit.swept);
     assert_eq!(work.primitive_sweep_iterations, 1);
 
-    // The requested contact margin shifts the first hit earlier.
+    // Physical impact time is unchanged by the speculative admission margin.
     let margin = swept(&moving, &target, 1.0, 0.4, &mut GeometryStats::default())
         .unwrap()
-        .expect("margin-expanded spheres must hit");
-    assert!((margin.time - 0.2).abs() < 1.0e-5, "{margin:?}");
+        .expect("margin-admitted spheres must hit");
+    assert!((margin.time - 0.25).abs() < 1.0e-6, "{margin:?}");
 
     // Initially overlapping pairs moving apart touch at t=0, not the exit time.
     moving.position = V(-1.5, 0.0, 0.0);

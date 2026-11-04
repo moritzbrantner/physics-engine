@@ -18,10 +18,11 @@ The failed-work report includes broad/narrow tests, actual search iterations and
 `GeometryStats::primitive_sweep_failures`; it publishes no successful events.
 
 The sphere/sphere sweep lane now uses the shared checked f64 analytic first-contact
-kernel through the engine's conservative widen/narrow adapter. Moving sphere pairs
-honor the requested contact margin and report initial overlap at time zero. Local
-sphere/box and box/box analytic lanes retain their previous behavior; this does
-not establish complete extreme-scale numerical coverage for those lanes. Fixed-orientation substeps still defer secondary ricochets, and
+kernel through the engine's conservative widen/narrow adapter. Physical impact
+time uses zero sweep margin (as before); the caller's margin is admission-only
+and must not start restitution early. Initially overlapping spheres report time
+zero. Local sphere/box and box/box analytic lanes retain their previous behavior;
+this does not establish complete extreme-scale numerical coverage for those lanes. Fixed-orientation substeps still defer secondary ricochets, and
 angular motion is not continuously swept. See [the floating-world limitations](fixed-step-approximation.md).
 
 ## Evidence and scope
