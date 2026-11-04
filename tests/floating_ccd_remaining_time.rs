@@ -394,7 +394,8 @@ fn remaining_time_cases_replay_and_continue_from_a_checkpoint() {
     drop(midpoint);
     let restored = Checkpoint::from_bytes(&saved, CONTEXT, CheckpointLimits::default())
         .unwrap()
-        .restore();
+        .restore(&[])
+        .unwrap();
     assert_eq!(state(&run(30, restored)), state(&reference));
 }
 

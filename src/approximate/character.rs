@@ -192,6 +192,40 @@ impl Characters {
     fn placed_all(&mut self) {
         self.placements += 1;
     }
+    /// Every registration in slot order with the state a next move reads: its settings, the
+    /// body its latest move excluded and whether it is known free of overlap at `generation`
+    /// (checkpoint capture, #452). Push totals and batch scratch are per batch.
+    #[cfg(feature = "checkpoints")]
+    pub fn entries(
+        &self,
+        generation: u64,
+    ) -> impl Iterator<Item = (BodyId, CharacterSettings, Option<BodyId>, bool)> + '_ {
+        (0..self.ids.len())
+            .filter(|&s| self.ids[s] != BodyId::NONE)
+            .map(move |s| {
+                (
+                    self.ids[s],
+                    self.settings[s],
+                    self.exclude[s],
+                    self.clear[s] == (generation, self.placements),
+                )
+            })
+    }
+    /// Registers a restored character with its latest exclusion, free of overlap at
+    /// `clear` (a layout generation) when known.
+    #[cfg(feature = "checkpoints")]
+    pub fn restore(
+        &mut self,
+        id: BodyId,
+        settings: CharacterSettings,
+        exclude: Option<BodyId>,
+        clear: Option<u64>,
+    ) {
+        self.insert(id, settings);
+        let slot = id.slot() as usize;
+        self.exclude[slot] = exclude;
+        self.set_clear(id, clear);
+    }
     pub fn remove(&mut self, id: BodyId) {
         if let Some(slot) = self.slot(id) {
             self.ids[slot] = BodyId::NONE;
@@ -231,6 +265,26 @@ const EMBEDDED_NUDGE: Real = 1e-4;
 /// Contact normals within about 5 degrees of the motion count as head-on.
 const HEAD_ON_COS: Real = 0.996;
 
+impl CharacterSettings {
+    pub(super) fn valid(&self) -> bool {
+        self.offset.is_finite()
+            && self.offset > 0.0
+            && self.max_slope.is_finite()
+            && (0.0..core::f32::consts::FRAC_PI_2).contains(&self.max_slope)
+            && self
+                .snap_to_ground
+                .is_none_or(|s| s.is_finite() && s >= 0.0)
+            && self.max_slides > 0
+            && self.plane.is_none_or(Real::is_finite)
+            && self.max_push.is_none_or(|p| p.is_finite() && p >= 0.0)
+    }
+}
+
+/// Characters are external (kinematic) capsules.
+pub(super) fn can_be_character(b: &Body) -> bool {
+    matches!(b.shape, Shape::Capsule { .. }) && b.external
+}
+
 fn is_static(b: &Body) -> bool {
     b.mass == 0.0 && !b.external
 }
@@ -250,18 +304,7 @@ impl World {
     /// Makes an existing upright capsule body a kinematic character.
     pub fn add_character(&mut self, id: BodyId, settings: CharacterSettings) -> Result<(), Error> {
         let i = self.index(id)?;
-        let valid = settings.offset.is_finite()
-            && settings.offset > 0.0
-            && settings.max_slope.is_finite()
-            && (0.0..core::f32::consts::FRAC_PI_2).contains(&settings.max_slope)
-            && settings
-                .snap_to_ground
-                .is_none_or(|s| s.is_finite() && s >= 0.0)
-            && settings.max_slides > 0
-            && settings.plane.is_none_or(Real::is_finite)
-            && settings.max_push.is_none_or(|p| p.is_finite() && p >= 0.0);
-        let body = &self.bodies[i];
-        if !valid || !matches!(body.shape, Shape::Capsule { .. }) || !body.external {
+        if !settings.valid() || !can_be_character(&self.bodies[i]) {
             return Err(Error::InvalidInput);
         }
         self.characters.insert(id, settings);

@@ -63,6 +63,14 @@ required-features = ["checkpoints"]
 name = "floating_ccd_remaining_time"
 required-features = ["checkpoints"]
 
+[[example]]
+name = "checkpoint_zone"
+required-features = ["checkpoints"]
+
+[[test]]
+name = "checkpoint_zone"
+required-features = ["checkpoints"]
+
 [[test]]
 name = "floating_checkpoints"
 required-features = ["checkpoints"]

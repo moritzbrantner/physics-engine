@@ -126,8 +126,9 @@ rigid contacts with terrain automatically, one manifold per triangle under the b
 Rapier: the triangle's upward normal is the contact normal, the box face most opposed to it is
 clipped to the triangle's prism (so ridges and peaks under a face give points), and up to four
 points within the contact slop plus the step's approach are kept, ranked by their separation
-after the body's current motion. Other dynamic shapes take no terrain contacts. Worlds with
-terrain are not checkpointed. `add_body` rejects
+after the body's current motion. Other dynamic shapes take no terrain contacts. Checkpoints record
+a fingerprint of each heightfield's description; `Checkpoint::restore` takes the descriptions
+again (#452). `add_body` rejects
 heightfield shapes.
 
 ## Halfspaces
@@ -141,7 +142,7 @@ substep tests every halfspace against every awake dynamic body (O(halfspaces · 
 up to four support points within the contact slop plus the substep's approach (the deepest
 after the body's current motion, so a tumbling corner about to swing in is kept),
 and lets the solver close speculative points exactly to the plane, so fast bodies do not pass
-through it. Worlds with a halfspace are not checkpointed.
+through it. Checkpoints hold halfspaces inline.
 
 ## Collision layers
 
@@ -408,7 +409,14 @@ Checkpoints are opt-in (Cargo feature `checkpoints`) for debugging and logging. 
 checkpoints restore only on their own build and target
 ([floating checkpoints](floating-checkpoints.md)). Moving between providers or targets
 reconstructs physics from consumer-owned game state; Rapier state is never deserialized into a
-Physics Engine checkpoint. Worlds with joints, terrain or halfspaces are not checkpointed.
+Physics Engine checkpoint. Worlds with joints are not checkpointed (`UnsupportedJoints`).
+Heightfield heights stay game content: `checkpoint` records a fingerprint of each live
+heightfield's description, `Checkpoint::heightfield_bodies()` lists them and
+`Checkpoint::restore(&[HeightfieldDesc]) -> Result<World, CheckpointError>` takes their
+descriptions in that order, rejecting any other with `TerrainMismatch { index }`. Halfspaces and
+character registrations (settings, latest exclusion, known-clear flag) are inline, so a restored
+world's characters need no `add_character`; grounded/support state is recomputed by every move
+and is not stored (#452).
 
 ## Example
 

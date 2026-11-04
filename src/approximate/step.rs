@@ -1482,7 +1482,10 @@ impl World {
                     contact::heightfield_box(
                         a,
                         b,
-                        &self.terrains[terrain.0 as usize].prepared,
+                        self.terrains[terrain.0 as usize]
+                            .prepared
+                            .as_deref()
+                            .expect("a live heightfield body's terrain"),
                         self.scene.contact_slop + approach,
                         interval,
                         |m| push(out, (i, j, m), &mut s.work),

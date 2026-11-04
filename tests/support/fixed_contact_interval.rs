@@ -115,7 +115,7 @@ pub fn run() -> [Real; 6] {
                                 CheckpointLimits::default(),
                             )
                             .unwrap();
-                            let mut restored = checkpoint.restore();
+                            let mut restored = checkpoint.restore(&[]).unwrap();
                             let report = world.step(dt).unwrap();
                             replay.step(dt).unwrap();
                             restored.step(dt).unwrap();

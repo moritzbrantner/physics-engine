@@ -397,7 +397,7 @@ fn relaid_town(log2: u32, kind: u64) -> World {
                 build: [1; 32],
                 content: [2; 32],
             };
-            w.checkpoint(context).unwrap().restore()
+            w.checkpoint(context).unwrap().restore(&[]).unwrap()
         }
         2 => {
             // A non-finite sweep input fails the collision search (as in

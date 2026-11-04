@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Body, BodyId, BodyStorage, CachedPoint, CombineRule, Config, Convergence, ConvergenceScope,
-    Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, Vector, World, contact,
-    narrow_time, substep_length, widen_time,
+    Body, BodyId, BodyStorage, CachedPoint, CharacterSettings, CombineRule, Config, Convergence,
+    ConvergenceScope, Embedded, HeightfieldDesc, Order, PositionCorrection, Quaternion, REAL_BITS,
+    Real, Scalar, Shape, TerrainId, Vector, World, character, contact, narrow_time, substep_length,
+    terrain, widen_time,
 };
 use crate::CollisionLayers3d;
 
@@ -19,13 +20,16 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 6;
+const FORMAT: u32 = 7;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 11;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
-// Fixed fields: id 8, shape tag 1, flags 2, layers 8, support tag 1; 32 physical scalars.
-const MIN_BODY_BYTES: usize = 29 + 32 * REAL_BYTES;
+// Fixed fields: id 8, key tag 1, key or serial 8, shape tag 1, flags 2, layers 8, support tag
+// 1; 31 physical scalars (a halfspace has no dimensions).
+const MIN_BODY_BYTES: usize = 29 + 31 * REAL_BYTES;
+// Id 8, offset and slope, four option/count/policy tags, exclusion tag and clear flag.
+const MIN_CHARACTER_BYTES: usize = 15 + 2 * REAL_BYTES;
 const POINT_BYTES: usize = 13 * REAL_BYTES;
 // Conservative envelopes for stored normalization/rotated-normal results. The
 // existing normalization can lose unit length for extreme finite input scales;
@@ -74,6 +78,12 @@ pub enum CheckpointError {
     ResourceLimit,
     /// The world has joints, which checkpoints do not hold (#453); nothing is captured.
     UnsupportedJoints,
+    /// Restore was given heightfields that differ from the checkpoint's live terrain (#452):
+    /// `index` is the first entry of [`Checkpoint::heightfield_bodies`] whose description is
+    /// missing, extra or not the one the world was built with. No world is created.
+    TerrainMismatch {
+        index: usize,
+    },
     /// The bytes come from a build whose floating-solver scalar width differs
     /// from this build's `Real`. Rejected before the version fields.
     ScalarWidthMismatch {
@@ -112,23 +122,69 @@ pub struct Checkpoint {
     slot_generations: Vec<u32>,
     /// Creation serial of the next keyless body.
     next_serial: u64,
+    /// Every terrain the world ever added; restore keeps their [`TerrainId`]s.
+    terrain_slots: u32,
+    /// Live heightfields in terrain order: terrain index and geometry fingerprint. Heights are
+    /// consumer content: restore takes their descriptions and checks them against these.
+    heightfields: Vec<(u32, [u8; 32])>,
+    /// Halfspace bodies in the order the step tests them (their creation order).
+    halfspaces: Vec<BodyId>,
+    /// Character registrations in slot order.
+    characters: Vec<SavedCharacter>,
+}
+
+/// A character registration and the state its next move reads (#452).
+#[derive(Clone, Copy, Debug)]
+struct SavedCharacter {
+    id: BodyId,
+    settings: CharacterSettings,
+    /// The body its latest move excluded; pushes it receives before its next move exclude it.
+    exclude: Option<BodyId>,
+    /// Known free of overlap: its next move skips separation and depenetration.
+    clear: bool,
 }
 
 impl World {
-    /// Capture exact floating state/history, including queued input. This explicit
-    /// product copies all bodies and contact history; ordinary step never calls it.
-    /// Worlds with heightfield terrain or halfspaces are not checkpointed (`InvalidData`), nor
-    /// worlds with joints (`UnsupportedJoints`).
+    /// Capture exact floating state/history, including queued input and character
+    /// registrations. This explicit product copies all bodies and contact history; ordinary
+    /// step never calls it. Heightfields are recorded by a fingerprint of their description,
+    /// which [`Checkpoint::restore`] takes again; halfspaces are inline bodies. Worlds with
+    /// joints are not checkpointed (`UnsupportedJoints`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
         if !self.joints.is_empty() {
             return Err(CheckpointError::UnsupportedJoints);
         }
-        if !self.terrains.is_empty() || self.bodies().any(|b| b.shape.query_only()) {
-            return Err(CheckpointError::InvalidData);
-        }
         // Live bodies in body order, whatever the storage holds between steps.
         let bodies = self.bodies().cloned().collect::<Vec<_>>();
         validate(self.config, self.elapsed, self.last_h, &bodies, &self.cache)?;
+        let mut heightfields = bodies
+            .iter()
+            .filter_map(|b| match b.shape {
+                Shape::Heightfield { terrain, .. } => {
+                    Some((terrain.0, self.terrains[terrain.0 as usize].fingerprint))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        heightfields.sort_unstable_by_key(|h| h.0);
+        let characters = self
+            .characters
+            .entries(self.bookkeeping.generation)
+            .map(|(id, settings, exclude, clear)| SavedCharacter {
+                id,
+                settings,
+                exclude,
+                clear,
+            })
+            .collect::<Vec<_>>();
+        let terrain_slots = u32::try_from(self.terrains.len()).expect("terrain ids are u32");
+        validate_parts(
+            &bodies,
+            terrain_slots,
+            &heightfields,
+            &self.halfspaces,
+            &characters,
+        )?;
         Ok(Checkpoint {
             context,
             config: self.config(),
@@ -138,6 +194,10 @@ impl World {
             cache: self.cache.clone(),
             slot_generations: self.slots.iter().map(|s| s.generation).collect(),
             next_serial: self.next_serial,
+            terrain_slots,
+            heightfields,
+            halfspaces: self.halfspaces.clone(),
+            characters,
         })
     }
 }
@@ -153,15 +213,69 @@ impl Checkpoint {
                     .cache
                     .values()
                     .map(|p| p.capacity() * size_of::<CachedPoint>())
-                    .sum::<usize>(),
+                    .sum::<usize>()
+                + self.heightfields.capacity() * size_of::<(u32, [u8; 32])>()
+                + self.halfspaces.capacity() * size_of::<BodyId>()
+                + self.characters.capacity() * size_of::<SavedCharacter>(),
         }
+    }
+
+    /// The heightfield bodies whose descriptions [`Checkpoint::restore`] takes, in that order
+    /// (the order the world added them).
+    pub fn heightfield_bodies(&self) -> impl Iterator<Item = BodyId> + '_ {
+        self.heightfields.iter().map(|&(index, _)| {
+            self.bodies
+                .iter()
+                .find(
+                    |b| matches!(b.shape, Shape::Heightfield { terrain, .. } if terrain.0 == index),
+                )
+                .expect("validated heightfield body")
+                .id
+        })
     }
 
     /// Consume the validated product into one new mutable authority. Orientation
     /// is not normalized again. Derived bounds/views rebuild; the report starts empty
     /// so restoring cannot re-emit already completed events. Cold-cache work can differ.
-    pub fn restore(self) -> World {
+    ///
+    /// `heightfields` are the descriptions of [`Checkpoint::heightfield_bodies`], in that
+    /// order: terrain content stays the consumer's, and each one must be the description the
+    /// world was built with (`TerrainMismatch` otherwise). Characters come back registered.
+    pub fn restore(self, heightfields: &[HeightfieldDesc]) -> Result<World, CheckpointError> {
+        if heightfields.len() != self.heightfields.len() {
+            return Err(CheckpointError::TerrainMismatch {
+                index: heightfields.len().min(self.heightfields.len()),
+            });
+        }
+        let mut terrains = (0..self.terrain_slots)
+            .map(|_| terrain::Terrain {
+                prepared: None,
+                fingerprint: [0; 32],
+            })
+            .collect::<Vec<_>>();
+        for (index, (&(slot, fingerprint), desc)) in
+            self.heightfields.iter().zip(heightfields).enumerate()
+        {
+            let mismatch = CheckpointError::TerrainMismatch { index };
+            let (prepared, centre, half) = terrain::prepare(desc).map_err(|_| mismatch)?;
+            let body = self
+                .bodies
+                .iter()
+                .find(
+                    |b| matches!(b.shape, Shape::Heightfield { terrain, .. } if terrain.0 == slot),
+                )
+                .expect("validated heightfield body");
+            if prepared.fingerprint != fingerprint
+                || body.position != centre
+                || body.shape.half_extents() != half
+            {
+                return Err(mismatch);
+            }
+            terrains[slot as usize] = prepared;
+        }
         let mut world = World::new(self.config).expect("checkpoint configuration was validated");
+        world.terrains = terrains;
+        world.halfspaces = self.halfspaces;
         world.elapsed = self.elapsed;
         world.last_h = self.last_h;
         world.bodies = self.bodies;
@@ -188,7 +302,13 @@ impl Checkpoint {
         world
             .query_tree
             .sync(&world.bodies, world.bookkeeping.generation);
-        world
+        let generation = world.bookkeeping.generation;
+        for c in self.characters {
+            world
+                .characters
+                .restore(c.id, c.settings, c.exclude, c.clear.then_some(generation));
+        }
+        Ok(world)
     }
 
     /// Canonical little-endian encoding of exact `Real` bits (f64 time). SHA-256 detects damaged
@@ -229,6 +349,20 @@ impl Checkpoint {
         count(&mut out, self.slot_generations.len());
         for generation in &self.slot_generations {
             out.extend_from_slice(&generation.to_le_bytes());
+        }
+        out.extend_from_slice(&self.terrain_slots.to_le_bytes());
+        count(&mut out, self.heightfields.len());
+        for (index, fingerprint) in &self.heightfields {
+            out.extend_from_slice(&index.to_le_bytes());
+            out.extend_from_slice(fingerprint);
+        }
+        count(&mut out, self.halfspaces.len());
+        for id in &self.halfspaces {
+            out.extend_from_slice(&id.to_bits().to_le_bytes());
+        }
+        count(&mut out, self.characters.len());
+        for c in &self.characters {
+            encode_character(&mut out, c);
         }
         let digest = Sha256::digest(&out);
         out.extend_from_slice(&digest);
@@ -331,10 +465,40 @@ impl Checkpoint {
         for _ in 0..slot_count {
             slot_generations.push(reader.u32()?);
         }
+        let terrain_slots = reader.u32()?;
+        // Every terrain was added with a body, so there are at most as many as bodies created.
+        if u64::from(terrain_slots) > next_serial {
+            return Err(CheckpointError::InvalidData);
+        }
+        if terrain_slots as usize > limits.bodies {
+            return Err(CheckpointError::ResourceLimit);
+        }
+        let heightfield_count = reader.count(limits.bodies, 36)?;
+        let mut heightfields = Vec::with_capacity(heightfield_count);
+        for _ in 0..heightfield_count {
+            heightfields.push((reader.u32()?, reader.array()?));
+        }
+        let halfspace_count = reader.count(limits.bodies, 8)?;
+        let mut halfspaces = Vec::with_capacity(halfspace_count);
+        for _ in 0..halfspace_count {
+            halfspaces.push(BodyId::from_bits(reader.u64()?));
+        }
+        let character_count = reader.count(limits.bodies, MIN_CHARACTER_BYTES)?;
+        let mut characters = Vec::with_capacity(character_count);
+        for _ in 0..character_count {
+            characters.push(reader.character()?);
+        }
         if !reader.bytes.is_empty() {
             return Err(CheckpointError::InvalidData);
         }
         validate(config, elapsed, last_h, &bodies, &cache)?;
+        validate_parts(
+            &bodies,
+            terrain_slots,
+            &heightfields,
+            &halfspaces,
+            &characters,
+        )?;
         let mut keys = std::collections::BTreeSet::new();
         if bodies.iter().any(|b| {
             slot_generations.get(b.id.slot() as usize) != Some(&b.id.generation())
@@ -352,8 +516,101 @@ impl Checkpoint {
             cache,
             slot_generations,
             next_serial,
+            terrain_slots,
+            heightfields,
+            halfspaces,
+            characters,
         })
     }
+}
+
+/// Identity of a heightfield description's geometry: the exact bits of its origin, cell
+/// size, grid dimensions, heights and removed cells. The material is the body's, saved inline.
+pub(super) fn heightfield_fingerprint(desc: &HeightfieldDesc) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"PEHFLD1\0");
+    let o = desc.origin;
+    for x in [o.0, o.1, o.2, desc.cell_size.0, desc.cell_size.1] {
+        hash.update(x.to_bits().to_le_bytes());
+    }
+    hash.update((desc.columns as u64).to_le_bytes());
+    hash.update((desc.rows as u64).to_le_bytes());
+    for h in &desc.heights {
+        hash.update(h.to_bits().to_le_bytes());
+    }
+    match &desc.removed_cells {
+        None => hash.update([0]),
+        Some(cells) => {
+            hash.update([1]);
+            for &removed in cells {
+                hash.update([u8::from(removed)]);
+            }
+        }
+    }
+    let mut fingerprint = [0; 32];
+    fingerprint.copy_from_slice(&hash.finalize());
+    fingerprint
+}
+
+/// Terrain, halfspace and character records agree with the bodies: each live heightfield
+/// listed once in terrain order, each halfspace once, each character a live kinematic capsule
+/// with valid settings, in slot order.
+fn validate_parts(
+    bodies: &[Body],
+    terrain_slots: u32,
+    heightfields: &[(u32, [u8; 32])],
+    halfspaces: &[BodyId],
+    characters: &[SavedCharacter],
+) -> Result<(), CheckpointError> {
+    let invalid = Err(CheckpointError::InvalidData);
+    let by_id = bodies
+        .iter()
+        .map(|b| (b.id.to_bits(), b))
+        .collect::<BTreeMap<_, _>>();
+    if by_id.len() != bodies.len() {
+        return invalid;
+    }
+    let mut terrain = bodies
+        .iter()
+        .filter_map(|b| match b.shape {
+            Shape::Heightfield { terrain, .. } => Some(terrain.0),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    terrain.sort_unstable();
+    if heightfields.windows(2).any(|w| w[0].0 >= w[1].0)
+        || heightfields.last().is_some_and(|h| h.0 >= terrain_slots)
+        || !terrain.iter().eq(heightfields.iter().map(|h| &h.0))
+    {
+        return invalid;
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    if halfspaces.iter().any(|id| {
+        !seen.insert(id.to_bits())
+            || by_id
+                .get(&id.to_bits())
+                .is_none_or(|b| b.shape != Shape::HalfSpace)
+    }) || halfspaces.len()
+        != bodies
+            .iter()
+            .filter(|b| b.shape == Shape::HalfSpace)
+            .count()
+    {
+        return invalid;
+    }
+    if characters
+        .windows(2)
+        .any(|w| w[0].id.slot() >= w[1].id.slot())
+        || characters.iter().any(|c| {
+            !c.settings.valid()
+                || by_id
+                    .get(&c.id.to_bits())
+                    .is_none_or(|b| !character::can_be_character(b))
+        })
+    {
+        return invalid;
+    }
+    Ok(())
 }
 
 fn validate(
@@ -512,9 +769,15 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             out.push(3);
             vector(out, h);
         }
-        Shape::Heightfield { .. } | Shape::HalfSpace => {
-            unreachable!("terrain and halfspace worlds are not checkpointed")
+        Shape::Heightfield {
+            terrain,
+            half_extents,
+        } => {
+            out.push(4);
+            out.extend_from_slice(&terrain.0.to_le_bytes());
+            vector(out, half_extents);
         }
+        Shape::HalfSpace => out.push(5),
     }
     for x in [
         b.mass,
@@ -547,6 +810,32 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
     for v in [b.force, b.torque, b.impulse, b.angular_impulse] {
         vector(out, v);
     }
+}
+
+fn optional_scalar(out: &mut Vec<u8>, x: Option<Real>) {
+    out.push(u8::from(x.is_some()));
+    if let Some(x) = x {
+        scalar(out, x);
+    }
+}
+fn encode_character(out: &mut Vec<u8>, c: &SavedCharacter) {
+    out.extend_from_slice(&c.id.to_bits().to_le_bytes());
+    let s = c.settings;
+    scalar(out, s.offset);
+    scalar(out, s.max_slope);
+    optional_scalar(out, s.snap_to_ground);
+    out.push(s.max_slides);
+    optional_scalar(out, s.plane);
+    optional_scalar(out, s.max_push);
+    out.push(match s.embedded {
+        Embedded::PushOut => 0,
+        Embedded::Stay => 1,
+    });
+    out.push(u8::from(c.exclude.is_some()));
+    if let Some(id) = c.exclude {
+        out.extend_from_slice(&id.to_bits().to_le_bytes());
+    }
+    out.push(u8::from(c.clear));
 }
 
 struct Reader<'a> {
@@ -603,6 +892,40 @@ impl<'a> Reader<'a> {
         } else {
             Ok(None)
         }
+    }
+    fn optional_scalar(&mut self) -> Result<Option<Real>, CheckpointError> {
+        if self.boolean()? {
+            Ok(Some(self.scalar()?))
+        } else {
+            Ok(None)
+        }
+    }
+    fn character(&mut self) -> Result<SavedCharacter, CheckpointError> {
+        let id = BodyId::from_bits(self.u64()?);
+        let settings = CharacterSettings {
+            offset: self.scalar()?,
+            max_slope: self.scalar()?,
+            snap_to_ground: self.optional_scalar()?,
+            max_slides: self.u8()?,
+            plane: self.optional_scalar()?,
+            max_push: self.optional_scalar()?,
+            embedded: match self.u8()? {
+                0 => Embedded::PushOut,
+                1 => Embedded::Stay,
+                _ => return Err(CheckpointError::InvalidData),
+            },
+        };
+        let exclude = if self.boolean()? {
+            Some(BodyId::from_bits(self.u64()?))
+        } else {
+            None
+        };
+        Ok(SavedCharacter {
+            id,
+            settings,
+            exclude,
+            clear: self.boolean()?,
+        })
     }
     fn count(&mut self, limit: usize, minimum: usize) -> Result<usize, CheckpointError> {
         let count = usize::try_from(self.u64()?).map_err(|_| CheckpointError::ResourceLimit)?;
@@ -680,6 +1003,11 @@ impl<'a> Reader<'a> {
             1 => Shape::Sphere(self.scalar()?),
             2 => Shape::capsule(self.scalar()?, self.scalar()?),
             3 => Shape::Wedge(self.vector()?),
+            4 => Shape::Heightfield {
+                terrain: TerrainId(self.u32()?),
+                half_extents: self.vector()?,
+            },
+            5 => Shape::HalfSpace,
             _ => return Err(CheckpointError::InvalidData),
         };
         let mut body = Body::new(shape, position, self.scalar()?);
