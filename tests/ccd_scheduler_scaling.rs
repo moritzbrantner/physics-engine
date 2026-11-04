@@ -40,7 +40,8 @@ fn synchronized_double_ricochets_keep_every_collision_in_chronological_order() {
                 assert!(f32::from_bits(p[0]).abs() < 0.01, "{ordered:?}");
                 assert!((f32::from_bits(v[0]) - 24.0).abs() < 0.01, "{ordered:?}");
             }
-            assert!(ordered.pairs <= 10 * (count as u64).pow(2), "{ordered:?}");
+            // Distant projectiles never become each other's candidates (#469).
+            assert!(ordered.pairs <= 6 * count as u64, "{ordered:?}");
             eprintln!(
                 "ccd-double-ricochet count={count} irrelevant={irrelevant} pairs={} sweeps={} impacts={}",
                 ordered.pairs, ordered.sweeps, ordered.impacts
@@ -56,6 +57,21 @@ fn synchronized_double_ricochets_keep_every_collision_in_chronological_order() {
 fn print_first_tick_ccd_vs_nonccd_timings() {
     use std::time::Instant;
 
+    // Deterministic work split for the timed points (tree nodes need `work-counters`).
+    for count in [32, 64, 128] {
+        for (label, s) in [
+            ("one-hit", fixture::run(count, 128, BodyStorage::Ordered)),
+            (
+                "two-hit",
+                fixture::run_ricochets(count, 128, BodyStorage::Ordered),
+            ),
+        ] {
+            eprintln!(
+                "ccd-work {label} count={count} irrelevant=128 pairs={} narrows={} sweeps={} tree_nodes={} impacts={}",
+                s.pairs, s.narrows, s.sweeps, s.tree_nodes, s.impacts
+            );
+        }
+    }
     for irrelevant in [0, 128] {
         for count in [1, 8, 16, 32, 64, 128] {
             for ccd in [false, true] {

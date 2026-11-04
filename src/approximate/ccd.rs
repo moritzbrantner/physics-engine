@@ -66,6 +66,116 @@ struct SearchOptions<'a> {
     frozen: &'a [(usize, Vector)],
     always: &'a [usize],
     targets: Option<&'a [usize]>,
+    /// Swept bounds of the bounded moving targets that are not in `always` (#469).
+    moving: Option<&'a MovingIndex>,
+}
+
+/// Transient, conservative index of the bodies that `ccd_unpruned_target` keeps out of the
+/// fixed-body tree pruning: each leaf is the padded swept bound of the body's committed
+/// trajectory from the clock time it was last set to the end of the substep (#469).
+///
+/// A linear trajectory's later remainder lies inside its whole remainder, so a leaf stays
+/// conservative while the clock advances. Every trajectory change goes through an impact
+/// response, which refreshes both participants' leaves from the impact time (never from the
+/// pre-impact pose); a wake can change bodies beyond the pair and rebuilds every leaf.
+/// Unbounded targets (half-spaces, non-finite bounds) stay in the unpruned list.
+struct MovingIndex {
+    tree: bvh_kernels::DynamicAabbTree,
+    /// Current leaf per body index; `None` when the body is not indexed.
+    leaves: Vec<Option<spatial_kernels::Aabb>>,
+}
+
+impl MovingIndex {
+    fn bounds(&self, index: usize) -> Option<spatial_kernels::Aabb> {
+        self.leaves.get(index).copied().flatten()
+    }
+
+    fn set(&mut self, index: usize, aabb: spatial_kernels::Aabb) {
+        let leaf = spatial_kernels::Body {
+            id: index as u32,
+            aabb,
+        };
+        if self.leaves[index].replace(aabb).is_some() {
+            if self.tree.update(leaf) {
+                crate::work::add(crate::work::Counter::TreeInserts, 1);
+            }
+        } else {
+            self.tree.insert(leaf);
+            crate::work::add(crate::work::Counter::TreeInserts, 1);
+        }
+    }
+
+    fn remove(&mut self, index: usize) {
+        if self.leaves[index].take().is_some() {
+            self.tree.remove(index as u32);
+        }
+    }
+
+    fn visit(&self, query: spatial_kernels::Aabb, visit: impl FnMut(spatial_kernels::Body)) {
+        let nodes = self.tree.visit_aabb(query, visit);
+        crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
+    }
+}
+
+/// Excluded pairs of the shared clock. An exclusion lasts until either endpoint changes
+/// trajectory; per-body epochs retire such entries in O(1) instead of rescanning every
+/// exclusion after each impact (#469).
+struct Exclusions {
+    pairs: std::collections::BTreeMap<(usize, usize), (u32, u32)>,
+    epochs: Vec<u32>,
+}
+
+impl Exclusions {
+    fn contains(&self, a: usize, b: usize) -> bool {
+        let pair = (a.min(b), a.max(b));
+        self.pairs
+            .get(&pair)
+            .is_some_and(|&epochs| epochs == (self.epochs[pair.0], self.epochs[pair.1]))
+    }
+
+    fn insert(&mut self, (a, b): (usize, usize)) {
+        self.pairs.insert((a, b), (self.epochs[a], self.epochs[b]));
+    }
+
+    /// Drops every exclusion with `index` as an endpoint.
+    fn retire(&mut self, index: usize) {
+        self.epochs[index] += 1;
+    }
+}
+
+/// Heap entry of one source's cached event: the earliest absolute time first, then the stable
+/// body-order key of the pair, then the source slot, exactly the linear scan's selection order.
+/// `version` marks entries superseded by a later reschedule of the same slot.
+struct Pending {
+    absolute: Real,
+    key: (super::Order, super::Order),
+    slot: usize,
+    version: u32,
+}
+
+impl PartialEq for Pending {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Pending {}
+
+impl PartialOrd for Pending {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Pending {
+    /// Reversed: `BinaryHeap` is a max-heap and the scheduler pops the earliest event.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other
+            .absolute
+            .total_cmp(&self.absolute)
+            .then_with(|| other.key.cmp(&self.key))
+            .then_with(|| other.slot.cmp(&self.slot))
+    }
 }
 
 impl World {
@@ -139,6 +249,7 @@ impl World {
         probe: &Body,
         travel: Vector,
         always: &[usize],
+        moving: Option<&MovingIndex>,
     ) -> Vec<usize> {
         if !self.query_tree.current(self.bookkeeping.generation)
             || !swept_bounds.0.finite()
@@ -175,6 +286,9 @@ impl World {
             }
         });
         crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
+        if let Some(moving) = moving {
+            moving.visit(query, |leaf| candidates.push(leaf.id as usize));
+        }
         candidates.sort_unstable_by_key(|&index| self.bodies[index].order);
         candidates.dedup();
         candidates
@@ -220,6 +334,7 @@ impl World {
                     frozen: &[],
                     always,
                     targets: None,
+                    moving: None,
                 },
                 report,
             );
@@ -260,6 +375,11 @@ impl World {
     /// Multiple CCD bodies share a chronological clock. Advancing one body's entire trajectory
     /// before another's earlier collision would let a later, no-longer-possible CCD pair fire.
     /// The single-body path above retains its no-allocation fast path and exact budget fallback.
+    ///
+    /// Each source caches its earliest event; the events wait in a versioned min-heap in the
+    /// same chronological order as a linear scan, and moving targets' swept bounds live in a
+    /// transient [`MovingIndex`]. After an impact only the sources whose swept bound overlaps
+    /// a changed participant's old or new trajectory are re-searched (#469).
     fn advance_ccd_group(
         &mut self,
         queued: &[usize],
@@ -268,20 +388,29 @@ impl World {
         report: &mut Report,
     ) -> Result<(), Error> {
         self.ensure_ccd_offsets();
+        let n = queued.len();
         let mut counts = Vec::new();
-        super::reserve(&mut counts, queued.len(), &mut self.bookkeeping.work);
-        counts.resize(queued.len(), 0u8);
+        super::reserve(&mut counts, n, &mut self.bookkeeping.work);
+        counts.resize(n, 0u8);
         // A budget-exhausted body remains at the impact pose for the rest of this substep.
         let mut frozen: Vec<(usize, Vector)> = Vec::new();
-        let mut excluded: Vec<(usize, usize)> = Vec::new();
+        let mut is_frozen = vec![false; n];
+        let mut excluded = Exclusions {
+            pairs: std::collections::BTreeMap::new(),
+            epochs: vec![0; self.bodies.len()],
+        };
         let limit = self.scene.velocity_iterations.max(1);
         let mut elapsed = 0.0;
+        let (mut moving, mut unbounded) =
+            self.ccd_moving_index(always, &frozen, TickTime { elapsed, h });
+        // A source outside the index is never found by an overlap query: rescan every source.
+        let mut sources_indexed = queued.iter().all(|&i| moving.bounds(i).is_some());
 
         // The old all-sources re-sweep after every hit both repeated O(m*n) work and lost
         // independent equal-time contacts to f32 TOI rounding. Cache each source's first hit;
         // after an impulse only the changed partners can introduce new earlier contacts.
         let mut upcoming = Vec::new();
-        super::reserve(&mut upcoming, queued.len(), &mut self.bookkeeping.work);
+        super::reserve(&mut upcoming, n, &mut self.bookkeeping.work);
         for &i in queued {
             upcoming.push(self.next_scheduled_hit(
                 i,
@@ -289,42 +418,42 @@ impl World {
                 &excluded,
                 SearchOptions {
                     frozen: &frozen,
-                    always,
+                    always: &unbounded,
                     targets: None,
+                    moving: Some(&moving),
                 },
                 report,
             )?);
         }
-        let mut dirty = vec![false; queued.len()];
-        while elapsed < 1.0 {
-            let mut best_slot: Option<usize> = None;
-            for (slot, event) in upcoming.iter().enumerate() {
-                let Some(event) = event else { continue };
-                let earlier = best_slot.is_none_or(|previous| {
-                    let old = upcoming[previous]
-                        .as_ref()
-                        .expect("selected candidate exists");
-                    let key = |source: usize, target: usize| {
-                        let a = self.bodies[source].order;
-                        let b = self.bodies[target].order;
-                        (a.min(b), a.max(b))
-                    };
-                    event.absolute < old.absolute
-                        || (event.absolute == old.absolute
-                            && key(queued[slot], event.other) < key(queued[previous], old.other))
-                });
-                if earlier {
-                    best_slot = Some(slot);
-                }
+        let mut versions = vec![0u32; n];
+        let mut heap = std::collections::BinaryHeap::with_capacity(n);
+        for (slot, event) in upcoming.iter().enumerate() {
+            if let Some(event) = event {
+                heap.push(self.pending(queued[slot], event, slot, 0));
             }
-            let Some(slot) = best_slot else {
+        }
+        // Per-slot re-search mark: 0 none, 1 may newly hit a changed body, 2 full re-search.
+        let mut marks = vec![0u8; n];
+        let mut affected: Vec<usize> = Vec::new();
+        // The first event re-checks every source's admission, as the linear scheduler did.
+        let mut check_all = true;
+        while elapsed < 1.0 {
+            let slot = loop {
+                match heap.pop() {
+                    None => break None,
+                    Some(entry) if entry.version == versions[entry.slot] => break Some(entry.slot),
+                    Some(_) => {}
+                }
+            };
+            let Some(slot) = slot else {
                 break;
             };
             let event = upcoming[slot].take().expect("selected candidate exists");
+            versions[slot] += 1;
             let (i, j) = (queued[slot], event.other);
             elapsed = event.absolute;
-            dirty.fill(false);
-            dirty[slot] = true;
+            affected.clear();
+            push(&mut affected, slot, &mut self.bookkeeping.work);
             let pair = (i.min(j), i.max(j));
             let previous = [
                 (self.bodies[i].velocity, self.bodies[i].angular_velocity),
@@ -340,14 +469,16 @@ impl World {
                 report,
             );
             if !closing {
-                push(&mut excluded, pair, &mut self.bookkeeping.work);
+                excluded.insert(pair);
                 // Both sources of the excluded pair might have cached the same event.
-                for (k, &source) in queued.iter().enumerate() {
-                    dirty[k] |= source == i || source == j;
+                for index in [i, j] {
+                    if let Ok(k) = queued.binary_search(&index) {
+                        push(&mut affected, k, &mut self.bookkeeping.work);
+                    }
                 }
             } else {
                 for index in [i, j] {
-                    if let Some(k) = queued.iter().position(|&source| source == index) {
+                    if let Ok(k) = queued.binary_search(&index) {
                         if counts[k] >= limit {
                             continue;
                         }
@@ -355,6 +486,7 @@ impl World {
                         if counts[k] == limit && elapsed < 1.0 {
                             let position = self.position_at(index, elapsed, h);
                             push(&mut frozen, (index, position), &mut self.bookkeeping.work);
+                            is_frozen[k] = true;
                             report.geometry.ccd_budget_fallbacks += 1;
                         }
                     }
@@ -367,51 +499,113 @@ impl World {
             for (index, before) in [(i, previous[0]), (j, previous[1])] {
                 let b = &self.bodies[index];
                 if (b.velocity, b.angular_velocity) != before
-                    || frozen.iter().any(|(k, _)| *k == index)
+                    || queued.binary_search(&index).is_ok_and(|k| is_frozen[k])
                 {
                     changed[changed_len] = index;
                     changed_len += 1;
                 }
             }
-            if report.woken_bodies != wakes {
+            let changed = &changed[..changed_len];
+            let woke = report.woken_bodies != wakes;
+            if woke {
                 // Waking an island can change admissibility beyond the two responding bodies.
-                excluded.clear();
-                dirty.fill(true);
+                excluded.pairs.clear();
             } else if closing {
                 // Exclusions are valid until an endpoint changes trajectory. An unrelated
                 // ball hitting the same static wall must not re-admit every other ball's
                 // just-hit wall pair and resweep their entire remaining trajectories.
-                excluded.retain(|&(a, b)| {
-                    !changed[..changed_len].contains(&a) && !changed[..changed_len].contains(&b)
-                });
+                for &index in changed {
+                    excluded.retire(index);
+                }
             }
             if closing {
-                push(&mut excluded, pair, &mut self.bookkeeping.work);
+                excluded.insert(pair);
             }
-            for (slot, &source) in queued.iter().enumerate() {
-                if frozen.iter().any(|(index, _)| *index == source)
-                    || !advances(&self.bodies[source])
-                {
-                    upcoming[slot] = None;
+            for &k in &affected {
+                marks[k] = 2;
+            }
+            let mut search_all = !sources_indexed;
+            if woke {
+                // Woken bodies changed trajectory without an impact: re-index from now.
+                (moving, unbounded) =
+                    self.ccd_moving_index(always, &frozen, TickTime { elapsed, h });
+                sources_indexed = queued.iter().all(|&i| moving.bounds(i).is_some());
+                marks.fill(2);
+                check_all = true;
+            } else {
+                // Refresh changed leaves from the impact time; a source that cached an event
+                // on the old trajectory or can reach the new one overlaps their union.
+                for &index in changed {
+                    let Some(old) = moving.bounds(index) else {
+                        search_all = true;
+                        continue;
+                    };
+                    match self.ccd_swept_leaf(index, &frozen, TickTime { elapsed, h }) {
+                        Some(new) => {
+                            moving.visit(old.union(new), |leaf| {
+                                if let Ok(k) = queued.binary_search(&(leaf.id as usize)) {
+                                    marks[k] = marks[k].max(1);
+                                    affected.push(k);
+                                }
+                            });
+                            moving.set(index, new);
+                        }
+                        None => {
+                            // An unsafe bound leaves the index for the conservative list.
+                            moving.remove(index);
+                            push(&mut unbounded, index, &mut self.bookkeeping.work);
+                            unbounded.sort_unstable();
+                            search_all = true;
+                        }
+                    }
+                }
+            }
+            if search_all {
+                for mark in &mut marks {
+                    *mark = (*mark).max(1);
+                }
+            }
+            let full = check_all || search_all;
+            check_all = false;
+            if full {
+                affected.clear();
+                affected.extend(0..n);
+            } else {
+                affected.sort_unstable();
+                affected.dedup();
+            }
+            for &slot in &affected {
+                let source = queued[slot];
+                let mark = std::mem::take(&mut marks[slot]);
+                if is_frozen[slot] || !advances(&self.bodies[source]) {
+                    if upcoming[slot].take().is_some() {
+                        versions[slot] += 1;
+                    }
                     continue;
                 }
-                if dirty[slot]
+                if mark == 0 {
+                    continue;
+                }
+                let options = SearchOptions {
+                    frozen: &frozen,
+                    always: &unbounded,
+                    targets: None,
+                    moving: Some(&moving),
+                };
+                let rescheduled = if mark == 2
                     || upcoming[slot]
                         .as_ref()
-                        .is_some_and(|candidate| changed[..changed_len].contains(&candidate.other))
+                        .is_some_and(|candidate| changed.contains(&candidate.other))
                 {
                     upcoming[slot] = self.next_scheduled_hit(
                         source,
                         TickTime { elapsed, h },
                         &excluded,
-                        SearchOptions {
-                            frozen: &frozen,
-                            always,
-                            targets: None,
-                        },
+                        options,
                         report,
                     )?;
-                } else if changed_len != 0 {
+                    true
+                } else if !changed.is_empty() {
                     // A changed partner may now be the earliest hit even if the source's
                     // previously predicted partner was unchanged.
                     let candidate = self.next_scheduled_hit(
@@ -419,22 +613,30 @@ impl World {
                         TickTime { elapsed, h },
                         &excluded,
                         SearchOptions {
-                            frozen: &frozen,
-                            always,
-                            targets: Some(&changed[..changed_len]),
+                            targets: Some(changed),
+                            ..options
                         },
                         report,
                     )?;
-                    if let Some(candidate) = candidate {
-                        let replace = upcoming[slot].as_ref().is_none_or(|old| {
+                    let replace = candidate.as_ref().is_some_and(|candidate| {
+                        upcoming[slot].as_ref().is_none_or(|old| {
                             candidate.absolute < old.absolute
                                 || (candidate.absolute == old.absolute
                                     && self.bodies[candidate.other].order
                                         < self.bodies[old.other].order)
-                        });
-                        if replace {
-                            upcoming[slot] = Some(candidate);
-                        }
+                        })
+                    });
+                    if replace {
+                        upcoming[slot] = candidate;
+                    }
+                    replace
+                } else {
+                    false
+                };
+                if rescheduled {
+                    versions[slot] += 1;
+                    if let Some(event) = &upcoming[slot] {
+                        heap.push(self.pending(source, event, slot, versions[slot]));
                     }
                 }
             }
@@ -448,24 +650,89 @@ impl World {
         Ok(())
     }
 
+    fn pending(&self, source: usize, event: &ScheduledHit, slot: usize, version: u32) -> Pending {
+        let a = self.bodies[source].order;
+        let b = self.bodies[event.other].order;
+        Pending {
+            absolute: event.absolute,
+            key: (a.min(b), a.max(b)),
+            slot,
+            version,
+        }
+    }
+
+    /// The conservative leaf of `j`'s remaining trajectory from `clock`: the same swept target
+    /// bound `next_ccd_hit` tests at any later clock time, padded for the rounding between
+    /// clock times. `None` for unbounded or non-finite bounds.
+    fn ccd_swept_leaf(
+        &self,
+        j: usize,
+        frozen: &[(usize, Vector)],
+        clock: TickTime,
+    ) -> Option<spatial_kernels::Aabb> {
+        let b = &self.bodies[j];
+        if matches!(b.shape, Shape::HalfSpace) {
+            return None;
+        }
+        let mut target = b.clone();
+        let motion = if let Some((_, position)) = frozen.iter().find(|(index, _)| *index == j) {
+            target.position = *position;
+            Vector::ZERO
+        } else {
+            target.position = self.position_at(j, clock.elapsed, clock.h);
+            target.velocity * clock.remaining()
+        };
+        let now = contact::bounds(&target);
+        let (lo, hi) = union(now, (now.0 + motion, now.1 + motion));
+        if !lo.finite() || !hi.finite() {
+            return None;
+        }
+        let magnitude = lo
+            .abs()
+            .max_component()
+            .max(hi.abs().max_component())
+            .max(motion.abs().max_component());
+        let pad = 128.0 * Real::EPSILON * (1.0 + magnitude) + self.scene.contact_slop;
+        let aabb = spatial_kernels::Aabb {
+            min: [lo.0 - pad, lo.1 - pad, lo.2 - pad],
+            max: [hi.0 + pad, hi.1 + pad, hi.2 + pad],
+        };
+        (aabb.min.iter().chain(&aabb.max).all(|v| v.is_finite())).then_some(aabb)
+    }
+
+    /// Index every bounded unpruned target's remaining swept trajectory; the rest stay in the
+    /// returned conservative list (ascending body index, like `always`).
+    fn ccd_moving_index(
+        &self,
+        always: &[usize],
+        frozen: &[(usize, Vector)],
+        clock: TickTime,
+    ) -> (MovingIndex, Vec<usize>) {
+        let mut index = MovingIndex {
+            tree: bvh_kernels::DynamicAabbTree::new(0.0),
+            leaves: vec![None; self.bodies.len()],
+        };
+        let mut unbounded = Vec::new();
+        for &j in always {
+            match self.ccd_swept_leaf(j, frozen, clock) {
+                Some(aabb) => index.set(j, aabb),
+                None => unbounded.push(j),
+            }
+        }
+        (index, unbounded)
+    }
+
     fn next_scheduled_hit(
         &mut self,
         i: usize,
         clock: TickTime,
-        excluded: &[(usize, usize)],
+        excluded: &Exclusions,
         search: SearchOptions<'_>,
         report: &mut Report,
     ) -> Result<Option<ScheduledHit>, Error> {
         let at = self.position_at(i, clock.elapsed, clock.h);
         Ok(self
-            .next_ccd_hit(
-                i,
-                at,
-                clock,
-                |j| excluded.contains(&(i.min(j), i.max(j))),
-                search,
-                report,
-            )?
+            .next_ccd_hit(i, at, clock, |j| excluded.contains(i, j), search, report)?
             .map(|(time, other, manifold, first)| ScheduledHit {
                 absolute: clock.elapsed + time * (1.0 - clock.elapsed),
                 other,
@@ -492,7 +759,7 @@ impl World {
         };
         let mut best: Option<(Real, usize, contact::Manifold, bool)> = None;
         let candidates = search.targets.map_or_else(
-            || self.ccd_candidates(swept_bounds, &probe, travel, search.always),
+            || self.ccd_candidates(swept_bounds, &probe, travel, search.always, search.moving),
             <[usize]>::to_vec,
         );
         for j in candidates {

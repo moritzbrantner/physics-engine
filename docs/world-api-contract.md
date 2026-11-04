@@ -240,30 +240,36 @@ an intentional geometry approximation ([#465](https://github.com/moritzbrantner/
 
 The independent-sphere 1/8/16/24/32-workload is also a deterministic complexity contract:
 all sources hit one wall once or bounce between two walls **twice** within one 60 Hz tick.
-With n active CCD spheres, k=1 or 2 impacts per sphere and b unrelated static boxes,
-`pair_tests` is O(k n²), independent of b, while exact shape sweeps are O(k n). Exclusions
-are invalidated only if a participant's velocity or wake state changes. The moving-body
-candidate list still makes one O(n+b) preparation traversal per CCD step; fixed-body lookup
-descends the existing query tree. There is no absolute wall-clock ratchet.
+With n mutually distant CCD spheres, k=1 or 2 impacts per sphere and b unrelated static boxes,
+`pair_tests` and exact shape sweeps are O(k n), independent of b ([#469](https://github.com/moritzbrantner/physics-engine/issues/469);
+O(k n²) before). Fixed bodies are pruned through the existing query tree. Moving, kinematic and
+sleeping targets go in a transient `bvh-kernels` tree holding each one's conservative padded swept
+bound from the last time its trajectory was set to the end of the substep. An impact refreshes
+only its participants' leaves, starting from the impact time and never from the pre-impact pose.
+It then re-searches only the sources whose leaves overlap a changed body's old or new sweep.
+Unbounded targets (half-spaces, non-finite bounds) stay in the unpruned list. A wake rebuilds
+the tree, and a changed body outside the tree re-examines every source. Cached events wait in a
+versioned min-heap ordered by absolute TOI (`total_cmp`), then by the stable body-order pair key,
+then by source. Pair exclusions expire through per-body trajectory epochs instead of a rescan.
+Results are bit-identical to the linear scheduler; only candidate counts drop. The moving-body
+list still takes one O(n+b) preparation traversal per CCD step, and building the tree costs
+O(n log n). There is no absolute wall-clock ratchet.
 An explicitly ignored first-tick benchmark repeats 101 constructed worlds per point (setup
-excluded) and verifies all admitted hits before reporting the median. On a shared Ubuntu
-x86_64 Xeon Platinum 8573C runner, Rust 1.99.1, release build, with 128 distant statics,
-one bounded run yielded:
+excluded) and verifies all admitted hits before reporting the median. With 128 distant statics,
+in release builds on Rust 1.99.1 x86_64:
 
-| Simultaneous spheres | Non-CCD, one wall | CCD, one impact | CCD, two impacts |
+| Simultaneous spheres | Non-CCD, one wall | CCD, one impact (#468 → #469) | CCD, two impacts (#468 → #469) |
 | ---: | ---: | ---: | ---: |
-| 32 | 55 µs | 337 µs | 468 µs |
-| 64 | 107 µs | 1,452 µs | 2,547 µs |
-| 128 | 303 µs | 6,094 µs | 11,251 µs |
+| 32 | 60 µs | 311 → 133 µs | 499 → 167 µs |
+| 64 | 168 µs | 1,116 → 292 µs | 2,016 → 376 µs |
+| 128 | 260 µs | 4,338 → 655 µs | 8,472 → 872 µs |
 
-The 128-projectile double-impact stress case alone consumes roughly 68% of a 60 Hz
-16.67 ms frame, without game logic, rendering or other physics. It is deliberately
-synthetic and not a legal MMORPG bomb rate, and these noisy wall-clock observations are
-**advisory**, not absolute CI thresholds. They expose the remaining active-source
-O(n²) event-queue/candidate problem: optimize moving-sweep admission and earliest-event
-selection before claiming high-density CCD scalability. Exact geometric fast paths
-already handle the common sphere/box pairs, so adding another sphere solver will not
-solve this scheduler cost.
+(Local 4-vCPU Intel Xeon @ 2.10 GHz. #468 measured 6,094/11,251 µs at 128 on a shared Xeon Platinum
+8573C.) These cases are deliberately synthetic, not a legal MMORPG bomb rate, and these noisy
+wall-clock observations are **advisory**, not CI thresholds. Exact geometric fast paths already
+handle the common sphere/box pairs, so adding another sphere solver will not speed up the
+scheduler. Dense clusters, where every source really overlaps every other's sweep, are still
+quadratic in the true candidate pairs.
 To measure full first-step cost without including world setup (advisory on shared hardware):
 
 ```sh
