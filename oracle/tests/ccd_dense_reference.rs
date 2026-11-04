@@ -351,3 +351,41 @@ fn print_radial_budget_sensitivity_against_rapier() {
         }
     }
 }
+
+/// #481 isolation search: find the smallest radial group exhibiting a deep
+/// final overlap at each budget. Not a correctness pass; an independent
+/// minimized regression must replace this diagnostic before an engine fix.
+#[test]
+#[ignore = "diagnostic failing-size search for #481; run explicitly with --ignored --nocapture"]
+fn print_first_deep_overlap_by_budget() {
+    for iterations in [4, 8, 12, 16, 24, 32] {
+        for count in 8..=64 {
+            let initial = radial_convergence(count);
+            let run = engine(&initial, iterations, BodyStorage::Ordered);
+            let mut worst = (0.0_f64, 0, 0);
+            for (i, a) in run.states.iter().enumerate() {
+                for (j, b) in run.states.iter().enumerate().skip(i + 1) {
+                    let distance = (0..3)
+                        .map(|axis| f64::from(a.position[axis] - b.position[axis]).powi(2))
+                        .sum::<f64>()
+                        .sqrt();
+                    let overlap = (2.0 * f64::from(RADIUS) - distance).max(0.0);
+                    if overlap > worst.0 {
+                        worst = (overlap, i, j);
+                    }
+                }
+            }
+            if worst.0 > 0.025 {
+                let (depth, i, j) = worst;
+                println!(
+                    "ccd-overlap-first iterations={iterations} count={count} depth={depth:.5} pair=({i},{j}) impacts={} fallbacks={} a={:?} b={:?}",
+                    run.impacts,
+                    run.fallbacks,
+                    run.states[i],
+                    run.states[j],
+                );
+                break;
+            }
+        }
+    }
+}
