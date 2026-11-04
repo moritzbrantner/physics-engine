@@ -41,8 +41,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             let index = (tick * COUNT + body) * 2;
             let expected_x = body as f32 * SPACING + SPEED * DT * (tick + 1) as f32;
             for (name, trace) in [("engine", engine), ("Rapier", rapier)] {
-                let (Obs::Position(p), Obs::Velocity(v)) =
-                    (&trace.0[index], &trace.0[index + 1])
+                let (Obs::Position(p), Obs::Velocity(v)) = (&trace.0[index], &trace.0[index + 1])
                 else {
                     return Err(format!("{name}: invalid observation {index}"));
                 };

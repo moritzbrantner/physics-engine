@@ -1768,6 +1768,8 @@ fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
 fn separated_ccd_translation(a: &Body, b: &Body, h: Real, slop: Real) -> bool {
     if a.shape.query_only()
         || b.shape.query_only()
+        || a.sleeping
+        || b.sleeping
         || a.angular_velocity != Vector::ZERO
         || b.angular_velocity != Vector::ZERO
     {
