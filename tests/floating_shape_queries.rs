@@ -153,9 +153,11 @@ fn failed_search_clears_partial_hits_and_reports_discarded_work() {
         .add_body(Body::keyed(1, Shape::Sphere(0.5), V(-4.0, 0.0, 0.0), 0.0))
         .unwrap();
     world
-        .add_body(Body::keyed(2, Shape::Sphere(0.5), V::ZERO, 0.0))
+        .add_body(Body::keyed(2, Shape::capsule(0.2, 0.5), V::ZERO, 0.0))
         .unwrap();
     let mut cast = ShapeCast::new(sphere(V(-4.0, 0.0, 0.0)), V(8.0, 0.0, 0.0));
+    // Sphere/sphere is now analytic in one unit; the capsule/sphere pair
+    // still exercises the checked iterative exhaustion and partial-hit contract.
     cast.max_iterations = 1;
     let mut hits = Vec::new();
     let failure = world
@@ -174,6 +176,27 @@ fn failed_search_clears_partial_hits_and_reports_discarded_work() {
     assert_eq!(failure.stats.sweep_iterations, 1);
     assert_eq!(failure.stats.hits_admitted, 1);
     assert!(failure.stats.current_queries >= 2);
+}
+
+
+#[test]
+fn analytic_sphere_cast_finishes_with_one_work_unit_and_keeps_hits() {
+    let mut world = world();
+    world
+        .add_body(Body::keyed(1, Shape::Sphere(0.5), V(-4.0, 0.0, 0.0), 0.0))
+        .unwrap();
+    world
+        .add_body(Body::keyed(2, Shape::Sphere(0.5), V::ZERO, 0.0))
+        .unwrap();
+    let mut cast = ShapeCast::new(sphere(V(-4.0, 0.0, 0.0)), V(8.0, 0.0, 0.0));
+    cast.max_iterations = 1;
+    let mut hits = Vec::new();
+    let stats = world
+        .cast_shape(cast, QueryFilter::default(), &mut hits)
+        .unwrap();
+    assert_eq!(stats.sweep_iterations, 1);
+    assert_eq!(stats.hits_admitted, 2);
+    assert_eq!(hits.len(), 2);
 }
 
 #[test]
