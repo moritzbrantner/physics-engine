@@ -38,3 +38,7 @@ required-features = ["work-counters"]
 [[test]]
 name = "platonic_proxy"
 required-features = ["engine", "rapier"]
+
+[[test]]
+name = "ccd_dense_reference"
+required-features = ["engine", "rapier"]
