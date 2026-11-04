@@ -360,8 +360,7 @@ impl World {
             position += self.bodies[i].velocity * (step * h);
             elapsed += step;
             if !self.respond_ccd_impact(
-                i,
-                j,
+                (i, j),
                 &m,
                 first,
                 [false, false],
@@ -485,8 +484,7 @@ impl World {
                 ]
             };
             let closing = self.respond_ccd_impact(
-                i,
-                j,
+                (i, j),
                 &event.manifold,
                 event.first,
                 frozen_at_impact,
@@ -518,8 +516,7 @@ impl World {
                 }
                 if !frozen.is_empty() {
                     self.stop_into_frozen_partner(
-                        i,
-                        j,
+                        (i, j),
                         &event.manifold,
                         event.first,
                         [
@@ -912,8 +909,7 @@ impl World {
     /// This is a budget fallback, not another restitution event (#483).
     fn stop_into_frozen_partner(
         &mut self,
-        i: usize,
-        j: usize,
+        (i, j): (usize, usize),
         m: &contact::Manifold,
         first: bool,
         frozen: [bool; 2],
@@ -959,8 +955,7 @@ impl World {
     /// as separating touches. Returns false for non-closing touches (which do not use a pass).
     fn respond_ccd_impact(
         &mut self,
-        i: usize,
-        j: usize,
+        (i, j): (usize, usize),
         m: &contact::Manifold,
         first: bool,
         frozen: [bool; 2],
