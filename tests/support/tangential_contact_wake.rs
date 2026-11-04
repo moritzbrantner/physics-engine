@@ -165,7 +165,8 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 20] {
     let bytes = w.checkpoint(CONTEXT).unwrap().to_bytes();
     let mut restored = Checkpoint::from_bytes(&bytes, CONTEXT, CheckpointLimits::default())
         .unwrap()
-        .restore();
+        .restore(&[])
+        .unwrap();
     let before = w.elapsed_seconds();
     let dt = H * Real::from(case.substeps());
     let mut first = None;

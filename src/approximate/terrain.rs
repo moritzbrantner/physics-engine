@@ -28,10 +28,73 @@ pub struct HeightfieldDesc {
     pub material: Material,
 }
 
-/// Immutable prepared terrain, shared by world clones.
+/// Immutable prepared terrain, shared by world clones. `None` only for a terrain whose body was
+/// removed before a checkpoint: restore keeps every [`TerrainId`] but rebuilds live ones only.
 #[derive(Clone, Debug)]
 pub(super) struct Terrain {
-    pub prepared: std::sync::Arc<PreparedHeightfield3>,
+    pub prepared: Option<std::sync::Arc<PreparedHeightfield3>>,
+    /// Identity of the description's geometry, recorded by checkpoints (#452).
+    #[cfg(feature = "checkpoints")]
+    pub fingerprint: [u8; 32],
+}
+
+/// A validated description's prepared terrain and the bounds of its body (centre, half extents).
+pub(super) fn prepare(desc: &HeightfieldDesc) -> Result<(Terrain, V, V), Error> {
+    let (dx, dz) = desc.cell_size;
+    if desc.columns < 2
+        || desc.rows < 2
+        || desc.heights.len() != desc.columns * desc.rows
+        || !(dx.is_finite() && dx > 0.0 && dz.is_finite() && dz > 0.0)
+        || !desc.origin.finite()
+        || desc.heights.iter().any(|h| !h.is_finite())
+        || desc
+            .removed_cells
+            .as_ref()
+            .is_some_and(|cells| cells.len() != (desc.columns - 1) * (desc.rows - 1))
+    {
+        return Err(Error::InvalidInput);
+    }
+    let o = desc.origin;
+    let columns = (0..desc.columns)
+        .map(|i| f64::from(o.0) + f64::from(dx) * i as f64)
+        .collect();
+    let rows = (0..desc.rows)
+        .map(|i| f64::from(o.2) + f64::from(dz) * i as f64)
+        .collect();
+    let heights = desc
+        .heights
+        .iter()
+        .map(|&h| f64::from(o.1) + f64::from(h))
+        .collect();
+    let prepared = PreparedHeightfield3::try_new(HeightfieldData3 {
+        columns,
+        rows,
+        heights,
+        active_cells: desc
+            .removed_cells
+            .as_ref()
+            .map(|cells| cells.iter().map(|&removed| !removed).collect()),
+        diagonal: HeightfieldDiagonal3::Fixed,
+    })
+    .map_err(|_| Error::InvalidInput)?;
+    let (low, high) = desc
+        .heights
+        .iter()
+        .fold((Real::INFINITY, Real::NEG_INFINITY), |(l, h), &v| {
+            (l.min(v), h.max(v))
+        });
+    let min = V(o.0, o.1 + low, o.2);
+    let max = V(
+        o.0 + dx * (desc.columns - 1) as Real,
+        o.1 + high,
+        o.2 + dz * (desc.rows - 1) as Real,
+    );
+    let terrain = Terrain {
+        prepared: Some(std::sync::Arc::new(prepared)),
+        #[cfg(feature = "checkpoints")]
+        fingerprint: super::checkpoint::heightfield_fingerprint(desc),
+    };
+    Ok((terrain, (min + max) * 0.5, (max - min) * 0.5))
 }
 
 impl World {
@@ -41,62 +104,10 @@ impl World {
         desc: HeightfieldDesc,
         key: Option<u64>,
     ) -> Result<BodyId, Error> {
-        let (dx, dz) = desc.cell_size;
-        if desc.columns < 2
-            || desc.rows < 2
-            || desc.heights.len() != desc.columns * desc.rows
-            || !(dx.is_finite() && dx > 0.0 && dz.is_finite() && dz > 0.0)
-            || !desc.origin.finite()
-            || desc.heights.iter().any(|h| !h.is_finite())
-            || desc
-                .removed_cells
-                .as_ref()
-                .is_some_and(|cells| cells.len() != (desc.columns - 1) * (desc.rows - 1))
-        {
-            return Err(Error::InvalidInput);
-        }
-        let o = desc.origin;
-        let columns = (0..desc.columns)
-            .map(|i| f64::from(o.0) + f64::from(dx) * i as f64)
-            .collect();
-        let rows = (0..desc.rows)
-            .map(|i| f64::from(o.2) + f64::from(dz) * i as f64)
-            .collect();
-        let heights = desc
-            .heights
-            .iter()
-            .map(|&h| f64::from(o.1) + f64::from(h))
-            .collect();
-        let prepared = PreparedHeightfield3::try_new(HeightfieldData3 {
-            columns,
-            rows,
-            heights,
-            active_cells: desc
-                .removed_cells
-                .as_ref()
-                .map(|cells| cells.iter().map(|&removed| !removed).collect()),
-            diagonal: HeightfieldDiagonal3::Fixed,
-        })
-        .map_err(|_| Error::InvalidInput)?;
-        let (low, high) = desc
-            .heights
-            .iter()
-            .fold((Real::INFINITY, Real::NEG_INFINITY), |(l, h), &v| {
-                (l.min(v), h.max(v))
-            });
-        let min = V(o.0, o.1 + low, o.2);
-        let max = V(
-            o.0 + dx * (desc.columns - 1) as Real,
-            o.1 + high,
-            o.2 + dz * (desc.rows - 1) as Real,
-        );
-        let centre = (min + max) * 0.5;
-        let half = (max - min) * 0.5;
+        let (prepared, centre, half) = prepare(&desc)?;
         let terrain =
             TerrainId(u32::try_from(self.terrains.len()).map_err(|_| Error::InvalidInput)?);
-        self.terrains.push(Terrain {
-            prepared: std::sync::Arc::new(prepared),
-        });
+        self.terrains.push(prepared);
         let mut body = Body::new(
             Shape::Heightfield {
                 terrain,
@@ -113,7 +124,10 @@ impl World {
     }
 
     pub(super) fn terrain(&self, id: TerrainId) -> &PreparedHeightfield3 {
-        &self.terrains[id.0 as usize].prepared
+        self.terrains[id.0 as usize]
+            .prepared
+            .as_deref()
+            .expect("a live heightfield body's terrain")
     }
 }
 

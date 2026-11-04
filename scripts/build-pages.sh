@@ -19,6 +19,8 @@ for (let i = 0; i < 120; i++) if (e.lab_step() !== 0) throw new Error(`impact st
 e.lab_refresh_snapshot();
 if (e.lab_snapshot_len() % 11 !== 0 || e.lab_snapshot_len() === 0) throw new Error("bad snapshot");
 NODE
+# Checkpoint continuation on WASM (#452); a separate example, not part of the shipped demo.
+bash scripts/checkpoint-wasm.sh
 node --input-type=module --check < site/lab.js
 node --input-type=module --check < site/webgl-renderer.js
 node --input-type=module --check < site/compare.js

@@ -33,7 +33,8 @@ fn bytes(world: &World) -> Vec<u8> {
 fn restore(bytes: &[u8]) -> World {
     Checkpoint::from_bytes(bytes, CONTEXT, CheckpointLimits::default())
         .unwrap()
-        .restore()
+        .restore(&[])
+        .unwrap()
 }
 fn same(actual: &World, expected: &World) {
     assert_eq!(
@@ -383,6 +384,7 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         );
     }
     for (offset, value, error) in [
+        (8, 6u32, CheckpointError::UnsupportedFormat(6)),
         (8, 5u32, CheckpointError::UnsupportedFormat(5)),
         (8, 4u32, CheckpointError::UnsupportedFormat(4)),
         (8, 3u32, CheckpointError::UnsupportedFormat(3)),
@@ -576,7 +578,7 @@ fn warm_start_endpoints_points_and_resource_budgets_are_validated() {
             CheckpointError::ResourceLimit
         );
     }
-    same(&checkpoint.restore(), &world);
+    same(&checkpoint.restore(&[]).unwrap(), &world);
 }
 
 #[test]
@@ -598,7 +600,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_six_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
+fn format_seven_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -613,7 +615,7 @@ fn format_six_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "3a5e52d4bcab16087720e461d8993d0f9fdbaa67155d24ca7ea28d1d3ae1b52b"
+        "fb15da7232569d5c645db02ed5f67f0ea4a42712cfd9a104bb14ee74caa74abc"
     );
 }
 

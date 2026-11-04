@@ -284,7 +284,8 @@ fn checkpoints_keep_the_storage_mode() {
         CheckpointLimits::default(),
     )
     .unwrap()
-    .restore();
+    .restore(&[])
+    .unwrap();
     assert_eq!(restored.config().body_storage, BodyStorage::Indexed);
     assert_eq!(snapshot(&restored), snapshot(&w));
 }

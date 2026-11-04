@@ -126,7 +126,8 @@ fn run_case(case: Case, ids: [u64; 2]) -> [Real; 18] {
     let bytes = w.checkpoint(CONTEXT).unwrap().to_bytes();
     let mut restored = Checkpoint::from_bytes(&bytes, CONTEXT, CheckpointLimits::default())
         .unwrap()
-        .restore();
+        .restore(&[])
+        .unwrap();
     let h = case.interval();
     let before = w.elapsed_seconds();
     let report = w.step(h as Scalar).unwrap();

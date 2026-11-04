@@ -9,18 +9,41 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
-Format 6 adds each body's linear and angular damping after its restitution. Format 5 adds the configuration's body storage mode (`Config::body_storage`); a checkpoint
+Format 7 (#452) checkpoints worlds with halfspaces, heightfield terrain and characters: see
+[terrain and character state](#terrain-and-character-state-452). Format 6 adds each body's linear and angular damping after its restitution. Format 5 adds the configuration's body storage mode (`Config::body_storage`); a checkpoint
 holds the live bodies in body order whatever the storage held between steps. Format 4 adds the
 configuration's length unit. Format 3 stores each body's handle, key (or creation serial), the slot generations and the
 next creation serial, so restored ids stay valid and stale ids stay rejected.
 
-Character registrations (`add_character` settings and grounded state) are not part of a
-checkpoint; register the characters again after `restore`.
-
 Joints (#453) are not part of the format: `checkpoint` of a world with any joint returns
 `CheckpointError::UnsupportedJoints` without capturing anything, so a checkpoint never drops a
-joint silently. Worlds without joints keep format 6 and algorithm 11 unchanged; their
-continuation is unaffected because a world without joints builds no joint rows.
+joint silently. A world without joints builds no joint rows, so its continuation is unaffected.
+
+## Terrain and character state (#452)
+
+A game recovering a zone owns its save. The split between what it reconstructs from its own
+state and what the physics checkpoint continues:
+
+| Data | Owner | In the checkpoint |
+| --- | --- | --- |
+| Heightfield heights, grid, cell size, origin, removed cells | Game content | A SHA-256 fingerprint per live heightfield (its terrain index and the exact bits of the description's geometry). `restore` takes the descriptions again and rejects any other with `TerrainMismatch { index }` |
+| Heightfield body (id, key, material, layers) and its contacts | Physics | Inline body record (shape tag 4: terrain index, half extents); restore also checks the description yields the recorded centre and half extents |
+| Halfspaces | Physics | Inline body records (shape tag 5) and the halfspace test order (their creation order, which orders plane contacts in the solver) |
+| Character settings (`CharacterSettings`) | Game configuration, but tiny | Inline, so a restored world needs no `add_character` |
+| Character's latest `exclude` | Physics continuation | Inline: a character pushed between its own moves still excludes that body. A game that registered its characters again after restore loses it, and the zone's push into an idler standing in the floor-excluded basin comes out differently (`re_registering_characters_after_restore_diverges`) |
+| Character known free of overlap | Physics continuation | One flag, restored at the new layout generation: the next move skips separation/depenetration exactly when the uninterrupted world would. No zone divergence was observed without it; it is kept so the next move's work path is the same |
+| Grounded, ground contact, support | Neither: recomputed by every move | Not stored. `World` keeps no grounded state; a game's choices from the last `CharacterMoveResult` (vertical speed, autostep after `ground_contact`) are game state it saves itself |
+| Per-batch push totals, batch scratch, query tree, geometry cache, prepared terrain | Rebuilt | Not stored; `restore` rebuilds prepared terrain from the given descriptions |
+
+`Checkpoint::heightfield_bodies()` lists the heightfield bodies in the order `restore` takes
+their descriptions (the order the world added them). A removed heightfield's terrain index stays
+reserved, so restored and later terrain ids match the uninterrupted world. The material of a
+description given to `restore` is ignored: the body's material is inline. Terrain fingerprints are
+computed once by `add_heightfield` in builds with the `checkpoints` feature, so capture stays
+proportional to bodies and contacts, not heights.
+
+Format 7 changes only the wire layout; continuation semantics of worlds without terrain or
+characters are unchanged, so the algorithm stays 11. Format 6 checkpoints are rejected.
 
 ## Interface and compatibility
 
@@ -58,7 +81,7 @@ Dynamics settings in metres scaled by `length_unit` (#318) advance the algorithm
 
 Per-body combine rules (#391) advance the algorithm to 11 while retaining format 6: body flag bits 7–8 hold `friction_combine` and bits 9–10 `restitution_combine` (Average=0, Min=1, Multiply=2, Max=3), and contacts now average coefficients by default where algorithm 10 took the larger friction and the smaller restitution, so algorithm 10 checkpoints are rejected. The default friction is 0.5. The empty-world digest changes for the algorithm header.
 
-All current shapes, materials and fixed geometry are inline. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
+All primitive shapes, halfspaces, materials and fixed geometry are inline; heightfield geometry is consumer content, identified by its fingerprint and supplied again to `restore`. No external geometry reference or platform pointer is serialized. Consumer-owned gameplay/assets/ID generators and save schemas remain outside physics. Physics has no internal ID generator to persist. When a consumer saves gameplay and physics together, it owns their shared safe boundary and content compatibility. Persistence I/O, transport, authentication and distributed recovery remain outside the engine.
 
 ## Continuation inventory
 
@@ -69,6 +92,8 @@ All current shapes, materials and fixed geometry are inline. No external geometr
 | Pending input | Force, torque, linear and angular impulse, including finite inputs that will cause a later returned step error |
 | Sleep/history | Sleeping flag, each body's exact quiet timer, canonical live contact-pair keys and ordered local anchors, normal, accumulated normal/tangent impulses |
 | Sequencing | Elapsed simulation seconds and prior substep duration used for warm-start scaling |
+| Terrain | Heightfield fingerprints and terrain ids, halfspace test order |
+| Characters | Registrations: settings, latest excluded body, known-clear flag |
 
 Reports/events and failed-work diagnostics are observations of completed/discarded attempts, not continuation authority. Restored `last_report` starts empty, so a caller cannot accidentally re-emit a prior retirement or contact event; contact transitions pending for the next step (removals, held impacts) are not checkpointed. Subsequent physical/semantic reports match; cold-cache bookkeeping, allocations and timing may differ. Renderer/JavaScript state, wall clocks, scratch capacities, prepared response, geometry/position indices, solver constraints and traversal stamps are excluded.
 
@@ -76,23 +101,40 @@ Capture validates before copying physical bodies/contact history. Restore consum
 
 ## Wire validation
 
-Version 2 uses `PEFLOAT` plus a zero byte (`PEFLT32` in the f32 build), little-endian format/algorithm u32 versions, build/content tags, length-prefixed architecture/OS, configuration, elapsed/prior-substep f64 values, u64 body count and canonical bodies, then u64 pair count and canonical contact history. Floating values preserve their exact IEEE-754 bits. Shape tags are box=0, sphere=1, capsule=2, wedge=3. Body flags encode rotation-lock, external, sensor, sleep-allowed, CCD, retire-on-impact and sleeping in bits 0 through 6, and the friction and restitution combine rules in bits 7–8 and 9–10; other bits are rejected. The configuration policy byte uses bit 0 for optional soft contact and bit 1 for admitted-contact position correction; other bits are rejected. Boolean/optional/scope tags are checked. The trailing SHA-256 covers every payload byte. Hashing uses the existing [RustCrypto SHA-2 implementation](https://github.com/RustCrypto/hashes/blob/sha2-v0.11.0/sha2/Cargo.toml), rather than introducing a physics-owned hash algorithm.
+Version 2 uses `PEFLOAT` plus a zero byte (`PEFLT32` in the f32 build), little-endian format/algorithm u32 versions, build/content tags, length-prefixed architecture/OS, configuration, elapsed/prior-substep f64 values, u64 body count and canonical bodies, then u64 pair count and canonical contact history, the next creation serial and slot generations, then (format 7) the u32 terrain count, u64 heightfield count with each live heightfield's u32 terrain index and 32-byte fingerprint in increasing index order, u64 halfspace count with their body ids in test order, and u64 character count with each character's body id, offset, max slope, optional snap, slide count, optional plane, optional push, embedded policy (0 push out, 1 stay), optional excluded body id and clear flag, in slot order. Floating values preserve their exact IEEE-754 bits. Shape tags are box=0, sphere=1, capsule=2, wedge=3, heightfield=4 (u32 terrain index, half extents), halfspace=5 (no dimensions). Body flags encode rotation-lock, external, sensor, sleep-allowed, CCD, retire-on-impact and sleeping in bits 0 through 6, and the friction and restitution combine rules in bits 7–8 and 9–10; other bits are rejected. The configuration policy byte uses bit 0 for optional soft contact and bit 1 for admitted-contact position correction; other bits are rejected. Boolean/optional/scope tags are checked. The trailing SHA-256 covers every payload byte. Hashing uses the existing [RustCrypto SHA-2 implementation](https://github.com/RustCrypto/hashes/blob/sha2-v0.11.0/sha2/Cargo.toml), rather than introducing a physics-owned hash algorithm.
 
-The decoder checks total-byte and body/pair/point budgets, minimum record lengths before vector allocation, exact payload completion, checksum, known versions/policies, compatible target/context, finite physical values, the existing body/config ranges, nonnegative quiet time/normal impulse, strictly increasing unique IDs/pair keys, and live distinct pair endpoints. Orientation component magnitudes are bounded by 2 and stored normal components by a conservative 64. These envelopes cover the existing normalization/rotated-normal results and protect derived arithmetic; they never clamp or change solver state. Extreme finite quaternion normalization can lose unit length or yield signed zero in the existing API. The checkpoint preserves those accepted values and their continuation/failure behavior; it does not silently normalize them again. Pending inputs retain the API's finite-value policy and are not clamped. Optional experimental soft-contact data is rejected by an ordinary build. Unknown, damaged, truncated, oversized or semantically invalid data cannot mutate a live world. Panics/allocation aborts remain outside returned-error guarantees; checksum integrity does not authenticate a save.
+The decoder checks total-byte and body/pair/point budgets, minimum record lengths before vector allocation, exact payload completion, checksum, known versions/policies, compatible target/context, finite physical values, the existing body/config ranges, nonnegative quiet time/normal impulse, strictly increasing unique IDs/pair keys, and live distinct pair endpoints; each live heightfield listed exactly once below the terrain count (itself at most the creation serial and the body budget), each halfspace body listed once, and each character a live external capsule with valid settings. Orientation component magnitudes are bounded by 2 and stored normal components by a conservative 64. These envelopes cover the existing normalization/rotated-normal results and protect derived arithmetic; they never clamp or change solver state. Extreme finite quaternion normalization can lose unit length or yield signed zero in the existing API. The checkpoint preserves those accepted values and their continuation/failure behavior; it does not silently normalize them again. Pending inputs retain the API's finite-value policy and are not clamped. Optional experimental soft-contact data is rejected by an ordinary build. Unknown, damaged, truncated, oversized or semantically invalid data cannot mutate a live world. Panics/allocation aborts remain outside returned-error guarantees; checksum integrity does not authenticate a save.
 
 Default decode budgets are 64 MiB, 100,000 bodies, 200,000 pairs and 800,000 points. Callers can choose stricter or larger explicit budgets. These are admission limits on a checkpoint, not simulation body limits or an RSS guarantee. The workspace lockfile resolves one SHA-2 0.11 dependency graph.
 
 ## Acceptance and reproduction
 
 ```sh
-cargo test --locked --features checkpoints --test floating_checkpoints
+cargo test --locked --features checkpoints --test floating_checkpoints --test checkpoint_zone
+cargo test --locked --features checkpoints,indexed-storage --test checkpoint_zone
+bash scripts/checkpoint-wasm.sh   # WASM; also run by scripts/build-pages.sh
 ```
+
+The MMORPG-style zone (`tests/support/checkpoint_zone.rs`, #452): a floor halfspace, a heightfield
+hill and basin with a removed cell, a static platform, a crate resting against it that the walking
+character touches and that takes an off-centre impulse, a crate on the hill removed and dropped
+again under the same key, a walker that climbs the hill and crosses the basin with the floor
+excluded, an idler standing in the basin that the walker pushes between its own moves, and a far
+body whose next two ticks fail before the game removes it. Before format 7, `checkpoint` of this
+world returned `InvalidData` (terrain and halfspaces refused), and character registrations were
+not captured at all. The uninterrupted run and one that saves the game state plus checkpoint bytes,
+drops the world and restores at 13 tick boundaries (including both failed ticks and between the
+idler's moves) produce identical per-tick character results, step reports and contact events,
+checkpoint bytes and body records with rebuilt bounds, on ordered and indexed storage. Every
+truncation and bit 0/7 flip of a mid-climb zone checkpoint is rejected, as are tampered character and
+halfspace records (rehashed), wrong/missing/extra terrain descriptions and a tight body budget.
+Native and WASM checkpoints are tested independently, not exchanged as a portability claim.
 
 Native tests destroy/restore worlds with current contacts, all four supported shapes, nontrivial orientations, material/layer/external/sensor/linear-support policies, pending force/off-center impulse, partial quiet timers, sleepers and support removal. Future timesteps include changed dt and zero-duration calls. Mutations include add/remove/same-ID reuse; failures include retirement before a later numerical error, repeated failed steps/repeated restores and huge finite queued force, subnormal-scale orientation and signed-zero orientation followed by its existing numerical failure. Tests compare subsequent exact checkpoint bytes, rebuilt body bounds and semantic contact/event ordering, rather than accepting serialization round-trip alone.
 
 Corruption tests cover every truncation and single-byte bit flip in a representative checkpoint, unknown format/algorithm, build/content/target mismatch, trailing data, unknown flags/shapes/booleans, duplicate IDs, nonfinite/out-of-range state, missing contact endpoints, invalid points and exhausted budgets. A fixed native x86_64/Linux empty-world wire digest guards version-2 layout. Legacy body construction can admit a nonfinite linear-support direction; checkpoint capture explicitly rejects that state without serializing it or modifying the world.
 
-The separate native/WASM example runs the same 100-tick fixture through exact same-build continuation, partial sleep, pending input, support removal, capsule same-ID reuse, swept impact retirement and repeated failed ticks. Pages validation executes three WASM replays. This driver is a separate example module and adds no test exports or checkpoint behavior to the shipped Pages demo. Native and WASM checkpoints are tested independently, not exchanged as a portability claim.
+The WASM acceptance is `examples/checkpoint_zone.rs`, the same zone and comparison built for `wasm32-unknown-unknown` and run in Node by `scripts/checkpoint-wasm.sh` (traps on any difference). It is a separate example and adds no exports or checkpoint behavior to the shipped Pages demo.
 
 ## Explicit product cost
 
@@ -114,6 +156,17 @@ All 27 runs reproduce exact subsequent physical state/history and semantic repor
 
 Fingerprint: Rust 1.98.0, release, x86_64-unknown-linux-gnu, empty RUSTFLAGS, Linux, AMD Ryzen 7 5700X. The completed executable was rerun alone after compilation/other checks. Ordinary solver correctness/work remains covered by the existing 31 ratchet controls; checkpoint timings are separate advisory evidence, not a portable throughput gate. Resolved convention sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.
 
+### Zone product cost (#452)
+
+`cargo test --release --features checkpoints --test checkpoint_zone zone_checkpoint_cost -- --ignored --nocapture`
+captures the zone mid-climb (7 bodies, 3 pairs, 15 points, 2 characters, one 9×9 heightfield):
+median capture 1.8 µs, encode 3.5 µs, decode 3.9 µs, restore 22.8 µs (World construction plus
+rebuilding and fingerprinting the terrain from its description), against 45 µs for one ordinary
+zone tick (character batch plus step); 2,433 encoded bytes, 3,236 physical vector bytes. Advisory
+only (Intel Xeon 2.1 GHz, 4 cores, Rust 1.99.1, release, x86_64 Linux). The WASM run is a
+correctness gate; its cost is not measured. Restore cost grows with terrain size (one pass over
+the heights to prepare and one to fingerprint); capture does not.
+
 ## Remaining consumer work
 
-This implements the selected floating world's engine checkpoint slice under #198. MMORPG still owns its gameplay/canonical save contract and uses the translational World adopted in PR #47. Its floating-solver migration remains gated by query/character support, CCD/contact quality and real native/browser canonical/recovery acceptance (#194, #3 and the linked consumer issue). This checkpoint product alone does not satisfy that adoption or close #198.
+#452 adds terrain, halfspace and character continuation for the engine-side zone fixture; no consumer has adopted it, and MMORPG's own recovery acceptance (its save format, content tags and browser recovery) remains open, as do joints in checkpoints. This implements the selected floating world's engine checkpoint slice under #198. MMORPG still owns its gameplay/canonical save contract and uses the translational World adopted in PR #47. Its floating-solver migration remains gated by query/character support, CCD/contact quality and real native/browser canonical/recovery acceptance (#194, #3 and the linked consumer issue). This checkpoint product alone does not satisfy that adoption or close #198.
