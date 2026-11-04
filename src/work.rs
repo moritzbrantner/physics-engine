@@ -33,9 +33,12 @@ pub enum Counter {
     /// Cached contact pairs visited by support lookup, static movement or explicit body removal.
     /// Removal visits each pair once to find neighbors and again to discard incident contacts.
     CachedPairVisits,
+    /// Joint records visited: one per joint per substep for its row and wake test, and by
+    /// `remove_body` while the world has joints (#453).
+    JointRows,
 }
 
-const COUNTERS: usize = 11;
+const COUNTERS: usize = 12;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

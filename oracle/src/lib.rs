@@ -31,6 +31,9 @@ pub enum Obs {
     Blocked(bool),
     /// The gap a downward support cast found to walkable static ground, if any.
     Support(Option<f32>),
+    /// A joint's force along its rope after a tick, in newtons (the last substep's impulse over
+    /// the substep length; zero while slack).
+    Tension(f32),
     /// First hit of a filtered ray or shape cast: the target's scenario label and the fraction
     /// of the displacement in `0..=1`.
     Hit(Option<(u32, f32)>),
@@ -136,6 +139,7 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
                 p.iter().all(|v| v.is_finite())
             }
             Obs::Rotation(q) => q.iter().all(|v| v.is_finite()),
+            Obs::Tension(t) => t.is_finite(),
             _ => true,
         };
         if !ok {
@@ -195,6 +199,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::ccd_synchronized::scenario(),
         scenarios::ccd_margin_start::scenario(),
         scenarios::platonic_proxy::scenario(),
+        scenarios::rope_joints::scenario(),
         scenarios::collision_filters::scenario(),
     ]
 }

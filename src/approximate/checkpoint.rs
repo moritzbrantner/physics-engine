@@ -72,6 +72,8 @@ pub enum CheckpointError {
     IncompatibleTarget,
     UnsupportedPolicy,
     ResourceLimit,
+    /// The world has joints, which checkpoints do not hold (#453); nothing is captured.
+    UnsupportedJoints,
     /// The bytes come from a build whose floating-solver scalar width differs
     /// from this build's `Real`. Rejected before the version fields.
     ScalarWidthMismatch {
@@ -115,8 +117,12 @@ pub struct Checkpoint {
 impl World {
     /// Capture exact floating state/history, including queued input. This explicit
     /// product copies all bodies and contact history; ordinary step never calls it.
-    /// Worlds with heightfield terrain or halfspaces are not checkpointed (`InvalidData`).
+    /// Worlds with heightfield terrain or halfspaces are not checkpointed (`InvalidData`), nor
+    /// worlds with joints (`UnsupportedJoints`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
+        if !self.joints.is_empty() {
+            return Err(CheckpointError::UnsupportedJoints);
+        }
         if !self.terrains.is_empty() || self.bodies().any(|b| b.shape.query_only()) {
             return Err(CheckpointError::InvalidData);
         }

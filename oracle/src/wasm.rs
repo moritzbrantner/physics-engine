@@ -105,8 +105,7 @@ pub extern "C" fn oracle_ticks(index: u32) -> u32 {
 /// Encode one authoritative oracle observation for browser display. `kind` has this stable
 /// display-only mapping: 1 ray, 2 penetration, 3 position, 4 rotation, 5 grounded,
 /// 6 depenetration, 7 contact, 8 blocked, 9 support, 10 contact transition,
-/// 11 linear velocity, 13 labelled first hit, 14 overlap label set
-/// (12 is reserved for rope tension, #474).
+/// 11 linear velocity, 12 joint tension, 13 labelled first hit, 14 overlap label set.
 fn display_values(obs: &Obs) -> (u8, [f64; 6]) {
     let mut data = [0.0; 6];
     let kind = match *obs {
@@ -133,6 +132,10 @@ fn display_values(obs: &Obs) -> (u8, [f64; 6]) {
         Obs::Velocity(v) => {
             data[..3].copy_from_slice(&v.map(f64::from));
             11
+        }
+        Obs::Tension(t) => {
+            data[0] = f64::from(t);
+            12
         }
         Obs::Rotation(q) => {
             data[..4].copy_from_slice(&q.map(f64::from));

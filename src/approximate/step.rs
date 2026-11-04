@@ -67,6 +67,9 @@ impl World {
         self.transaction.begin(self.bodies.len());
         let prior_h = self.last_h;
         let prior_activity = self.bookkeeping.activity.count;
+        if !self.joints.is_empty() {
+            self.joints.begin();
+        }
         let result = self.advance_substeps(dt);
         self.last_transaction = self.transaction.stats(result.is_err());
         if let Some(work) = &mut self.failed_work {
@@ -82,6 +85,9 @@ impl World {
             Err(error) => {
                 let mut journal = std::mem::take(&mut self.transaction);
                 journal.rollback(self);
+                if !self.joints.is_empty() {
+                    self.joints.rollback();
+                }
                 self.transaction = journal;
                 self.last_h = prior_h;
                 self.bookkeeping.activity.count = prior_activity;
@@ -212,12 +218,18 @@ impl World {
                 self.build_constraints(&mut pairs, &mut constraints, h, &mut report);
             }
             self.manifold_scratch = pairs;
-            self.solve_constraints(&mut constraints, &mut report);
-            self.cache_contacts(&constraints, &mut report);
+            // Joint rows follow the contact rows and are rebuilt every substep (#453).
+            let contact_rows = constraints.len();
+            self.joint_rows(&mut constraints, h, &mut report);
+            self.solve_constraints(&mut constraints, contact_rows, &mut report);
+            let (contact_part, joint_part) = constraints.split_at(contact_rows);
+            self.cache_contacts(contact_part, joint_part, &mut report);
             self.integrate(h, &mut report)?;
             if substep + 1 == self.scene.substeps && !self.bounces.is_empty() {
-                self.bounce_contacts(&constraints);
+                self.bounce_contacts(&constraints[..contact_rows]);
             }
+            // Reused rows and position correction hold the contact rows only.
+            constraints.truncate(contact_rows);
             self.constraints = constraints;
             if let Err(error) = self.correct_positions(h, &mut report.position) {
                 return Err(self.fail(&report, error));
@@ -420,6 +432,9 @@ impl World {
                 })
                 .flatten(),
         );
+        if !self.joints.is_empty() {
+            self.joint_roots(&mut roots);
+        }
         let mut woke = 0;
         for root in roots.drain(..) {
             woke += self.wake_contact_island(root, h, report);
@@ -717,8 +732,14 @@ impl World {
         }
     }
     /// Solve phase: warm-start impulses, then the velocity iterations.
-    fn solve_constraints(&mut self, constraints: &mut [Constraint], report: &mut Report) {
-        report.contact_points += constraints.len() as u64;
+    fn solve_constraints(
+        &mut self,
+        constraints: &mut [Constraint],
+        contact_rows: usize,
+        report: &mut Report,
+    ) {
+        report.contact_points += contact_rows as u64;
+        report.joint_rows += (constraints.len() - contact_rows) as u64;
         for c in constraints.iter() {
             self.transaction.body(c.a, &self.bodies[c.a]);
             self.transaction.body(c.b, &self.bodies[c.b]);
@@ -763,7 +784,12 @@ impl World {
     }
     /// Contact cache phase: the solved rows' impulses become the cache's warm-start history,
     /// and support propagates from kinematic and resting bodies.
-    fn cache_contacts(&mut self, constraints: &[Constraint], report: &mut Report) {
+    fn cache_contacts(
+        &mut self,
+        constraints: &[Constraint],
+        joint_rows: &[Constraint],
+        report: &mut Report,
+    ) {
         let scratch = &mut self.bookkeeping;
         scratch.retired.clear();
         scratch.support_edges.clear();
@@ -913,6 +939,11 @@ impl World {
             }
         });
         self.contact_changes.append(&mut impacts);
+        if !joint_rows.is_empty() {
+            let mut edges = std::mem::take(&mut self.bookkeeping.support_edges);
+            self.joint_writeback(joint_rows, &mut edges);
+            self.bookkeeping.support_edges = edges;
+        }
         let scratch = &mut self.bookkeeping;
         scratch.support.propagate(
             &mut scratch.supported,
@@ -1117,7 +1148,7 @@ impl World {
     fn sleep_quiet_islands(&mut self) {
         let s = &mut self.bookkeeping;
         s.activity.refresh(&self.bodies, &mut s.work);
-        s.ensure_graph(&self.bodies, &self.cache);
+        s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
         s.traversal.begin(self.bodies.len(), &mut s.work);
         let mut slept = 0;
         // Fully sleeping components need no rediscovery. An awake root still reaches every

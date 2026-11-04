@@ -1,4 +1,4 @@
-//! C21 (Q35/Q36, #451): generic collision layers applied the same way by solver contacts, CCD,
+//! C22 (Q35/Q36, #451): generic collision layers applied the same way by solver contacts, CCD,
 //! ray and shape casts and overlaps, through runtime filter changes, as Rapier's
 //! `InteractionGroups` (`InteractionTestMode::And`) and `QueryFilter`. Layers are generic bits
 //! (`WORLD`, `CHARACTER`, `PROP`, `MISSILE`, `TRIGGER`); which bodies share one is the game's
@@ -240,7 +240,7 @@ const FILTERS: [Filter; 5] = [
 pub fn scenario() -> Scenario {
     Scenario {
         name: "collision-filters",
-        capabilities: "C21",
+        capabilities: "C22",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: |storage| Box::new(engine::Sim::new(storage)),
