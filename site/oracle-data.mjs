@@ -3,6 +3,7 @@ export const STRIDE = 9;
 export const KINDS = Object.freeze({
   1: "Ray", 2: "Penetrates", 3: "Position", 4: "Rotation", 5: "Grounded",
   6: "Depenetration", 7: "Contact", 8: "Blocked", 9: "Support", 10: "Contact event",
+  11: "Velocity",
 });
 
 const decoder = new TextDecoder();
@@ -92,6 +93,7 @@ export function observationText(row) {
     case 8: return `Blocked · ${v[0] ? "yes" : "no"}`;
     case 9: return v[0] ? `Support · gap ${fmt(v[1])} m` : "Support · none";
     case 10: return `Contact ${v[0] ? "started" : "stopped"} · bodies ${v[1]} / ${v[2]}`;
+    case 11: return `Velocity · ${vector(v, 3)} m/s`;
     default: throw new Error(`Unknown observation kind ${row.kind}`);
   }
 }

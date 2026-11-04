@@ -17,6 +17,8 @@ pub enum Obs {
     Penetrates(bool),
     /// A body position after a tick.
     Position([f32; 3]),
+    /// A body's linear velocity after a tick, in metres per second.
+    Velocity([f32; 3]),
     /// A body rotation (unit quaternion `[x, y, z, w]`) after a tick.
     Rotation([f32; 4]),
     /// Whether a character stands on static support after a tick.
@@ -125,7 +127,9 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
             Obs::Ray(Some((t, n))) | Obs::Contact(Some((t, n))) => {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
-            Obs::Position(p) | Obs::Depenetration(p) => p.iter().all(|v| v.is_finite()),
+            Obs::Position(p) | Obs::Velocity(p) | Obs::Depenetration(p) => {
+                p.iter().all(|v| v.is_finite())
+            }
             Obs::Rotation(q) => q.iter().all(|v| v.is_finite()),
             _ => true,
         };
@@ -180,5 +184,9 @@ pub fn all() -> Vec<Scenario> {
         scenarios::basin::scenario(),
         scenarios::bounce::scenario(),
         scenarios::contact_events::scenario(),
+        scenarios::ccd_projectiles::ricochet(),
+        scenarios::ccd_projectiles::glancing(),
+        scenarios::ccd_projectiles::moving(),
+        scenarios::ccd_synchronized::scenario(),
     ]
 }
