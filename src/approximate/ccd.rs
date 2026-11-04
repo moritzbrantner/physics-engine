@@ -592,16 +592,16 @@ impl World {
                     targets: None,
                     moving: Some(&moving),
                 };
-                // A source near an equal-time cluster can retain a cached f32
-                // TOI that no longer rounds to the same event at this clock.
-                // Re-check its full local candidate set, not every CCD source.
+                // Rebase an imminent cached pair to the current shared clock:
+                // near-simultaneous f32 TOIs can change by a few ULPs. Check
+                // only its previous partner and the changed bodies first,
+                // preserving the sparse source/target work contract.
                 let near_time = elapsed + 8.0 * Real::EPSILON * (1.0 + elapsed);
                 let imminent = mark == 1
                     && upcoming[slot]
                         .as_ref()
                         .is_some_and(|candidate| candidate.absolute <= near_time);
                 let rescheduled = if mark == 2
-                    || imminent
                     || upcoming[slot]
                         .as_ref()
                         .is_some_and(|candidate| changed.contains(&candidate.other))
@@ -613,6 +613,42 @@ impl World {
                         options,
                         report,
                     )?;
+                    true
+                } else if let Some(old_other) = upcoming[slot]
+                    .as_ref()
+                    .filter(|_| imminent)
+                    .map(|event| event.other)
+                {
+                    let mut targets = [old_other; 3];
+                    let mut len = 1;
+                    for &j in changed {
+                        if !targets[..len].contains(&j) {
+                            targets[len] = j;
+                            len += 1;
+                        }
+                    }
+                    let candidate = self.next_scheduled_hit(
+                        source,
+                        TickTime { elapsed, h },
+                        &excluded,
+                        SearchOptions {
+                            targets: Some(&targets[..len]),
+                            ..options
+                        },
+                        report,
+                    )?;
+                    // If a cached pair vanished under the new clock, its next
+                    // earliest partner is unknown: refresh this source once.
+                    upcoming[slot] = match candidate {
+                        Some(candidate) => Some(candidate),
+                        None => self.next_scheduled_hit(
+                            source,
+                            TickTime { elapsed, h },
+                            &excluded,
+                            options,
+                            report,
+                        )?,
+                    };
                     true
                 } else if !changed.is_empty() {
                     // A changed partner may now be the earliest hit even if the source's
