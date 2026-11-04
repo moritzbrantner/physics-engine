@@ -178,7 +178,6 @@ fn failed_search_clears_partial_hits_and_reports_discarded_work() {
     assert!(failure.stats.current_queries >= 2);
 }
 
-
 #[test]
 fn analytic_sphere_cast_finishes_with_one_work_unit_and_keeps_hits() {
     let mut world = world();
