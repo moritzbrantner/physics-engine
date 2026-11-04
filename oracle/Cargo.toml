@@ -34,3 +34,7 @@ required-features = ["engine", "rapier"]
 [[test]]
 name = "full_scan"
 required-features = ["work-counters"]
+
+[[test]]
+name = "platonic_proxy"
+required-features = ["engine", "rapier"]
