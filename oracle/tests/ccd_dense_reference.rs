@@ -416,3 +416,23 @@ fn print_first_deep_overlap_by_budget() {
         }
     }
 }
+
+/// Temporary #481 causal check: run these *same* radial cases with
+/// PHYSICS_CCD_FULL_RESCAN_481=1 to distinguish stale cached events from a
+/// genuinely overconstrained set of simultaneous impacts. Never a speed gate.
+#[test]
+#[ignore = "advisory #481 all-source CCD rescan experiment"]
+fn print_overlap_after_all_source_rescan() {
+    for (count, iterations) in [(15, 4), (23, 8), (32, 8), (38, 16), (64, 16)] {
+        let input = radial_convergence(count);
+        let run = engine(&input, iterations, BodyStorage::Ordered);
+        let depth = metrics(&input, &run.states).max_overlap;
+        println!(
+            "ccd-full-rescan count={count} iterations={iterations} max_overlap={depth:.5} impacts={} fallbacks={} pairs={} sweeps={}",
+            run.impacts,
+            run.fallbacks,
+            run.pairs,
+            run.sweeps,
+        );
+    }
+}
