@@ -399,9 +399,6 @@ impl World {
             pairs: std::collections::BTreeMap::new(),
             epochs: vec![0; self.bodies.len()],
         };
-        // Temporary #481 diagnostic: compare selective event invalidation against a complete
-        // re-search on the same chronology. Remove this environment switch before merging.
-        let force_full_rescan = std::env::var_os("PHYSICS_CCD_FULL_RESCAN_481").is_some();
         let limit = self.scene.velocity_iterations.max(1);
         let mut elapsed = 0.0;
         let (mut moving, mut unbounded) =
@@ -568,10 +565,7 @@ impl World {
                     *mark = (*mark).max(1);
                 }
             }
-            if force_full_rescan {
-                marks.fill(2);
-            }
-            let full = check_all || search_all || force_full_rescan;
+            let full = check_all || search_all;
             check_all = false;
             if full {
                 affected.clear();

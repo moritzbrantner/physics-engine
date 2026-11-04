@@ -125,12 +125,6 @@ jobs:
       - name: Rapier oracle (invariants + native perf gate)
         run: cargo run --release --locked -p physics-oracle
 
-      # Temporary #481 causal experiment; remove immediately after reading logs.
-      - name: All-source CCD event rescan against dense frozen-body failures (#481)
-        env:
-          PHYSICS_CCD_FULL_RESCAN_481: "1"
-        run: cargo test --release --locked -p physics-oracle --test ccd_dense_reference print_overlap_after_all_source_rescan -- --ignored --nocapture
-
       - name: Check out coding-tooling for the size budget
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
