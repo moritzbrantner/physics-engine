@@ -236,7 +236,7 @@ and checkpoint replay. This proves the engine-side fixture, not adoption in the 
 The exact narrow-phase already specializes sphere–sphere quadratic TOI, rounded sphere–box
 face/edge/corner TOI and box–box swept separating axes. Capsule/wedge cases use the existing
 conservative geometry-kernel fallback. A circumsphere proxy for a visual polyhedron is instead
-an intentional geometry approximation ([#465](https://github.com/moritzbrantner/physics-engine/issues/465)); it is not equivalent to optimizing an exact shape solver.
+an intentional geometry approximation ([#465](https://github.com/moritzbrantner/physics-engine/issues/465)); it is not equivalent to optimizing an exact shape solver; the `ccd-platonic-proxy` scenario and its [experiment record](consumer-capabilities.md#experiment-circumsphere-proxies-for-dodecahedron-and-icosahedron-visuals-465) use the existing `Shape::Sphere` CCD unchanged.
 
 The independent-sphere 1/8/16/24/32-workload is also a deterministic complexity contract:
 all sources hit one wall once or bounce between two walls **twice** within one 60 Hz tick.

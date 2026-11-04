@@ -15,6 +15,7 @@ pub mod embedded_starts;
 pub mod materials;
 pub mod mmorpg_tick;
 pub mod platforms;
+pub mod platonic_proxy;
 pub mod props;
 pub mod push;
 pub mod ray_sight;
