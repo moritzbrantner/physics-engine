@@ -62,6 +62,10 @@ jobs:
           tier: fast
           install-mode: none
 
+      # One-time evidence for #481; remove after capturing the run log.
+      - name: Advisory dense CCD 60 Hz workload vs Rapier (#481)
+        run: cargo test --release --locked -p physics-oracle --test ccd_dense_reference print_radial_budget_sensitivity_against_rapier -- --ignored --nocapture
+
       - name: Clippy without optional features
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
