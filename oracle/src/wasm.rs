@@ -206,11 +206,9 @@ pub extern "C" fn oracle_trace(index: u32, which: u32) -> i32 {
                     sample * (count - 1) / (samples - 1)
                 };
                 let (kind, values) = display_values(&step.0[ordinal]);
-                display.rows.extend([
-                    f64::from(tick),
-                    ordinal as f64,
-                    f64::from(kind),
-                ]);
+                display
+                    .rows
+                    .extend([f64::from(tick), ordinal as f64, f64::from(kind)]);
                 display.rows.extend(values);
             }
         }

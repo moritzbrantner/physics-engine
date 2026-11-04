@@ -16,8 +16,8 @@ const capabilities = source.split(/\r?\n/).flatMap((line) => {
   }];
 });
 
-if (capabilities.length !== 19 || capabilities.some((item, i) => item.id !== `C${i + 1}`)) {
-  throw new Error("docs/consumer-capabilities.md must define C1–C19 once, in order");
+if (!capabilities.length || capabilities.some((item, i) => item.id !== `C${i + 1}`)) {
+  throw new Error("docs/consumer-capabilities.md must define consecutive capability ids once, in order");
 }
 
 const destination = process.argv[2];
