@@ -565,11 +565,6 @@ impl World {
                     *mark = (*mark).max(1);
                 }
             }
-            if check_all {
-                // The first wake/impact refreshes every cached source, including
-                // sources outside the changed participants' broadphase bounds.
-                marks.fill(2);
-            }
             let full = check_all || search_all;
             check_all = false;
             if full {
@@ -597,7 +592,16 @@ impl World {
                     targets: None,
                     moving: Some(&moving),
                 };
+                // A source near an equal-time cluster can retain a cached f32
+                // TOI that no longer rounds to the same event at this clock.
+                // Re-check its full local candidate set, not every CCD source.
+                let near_time = elapsed + 8.0 * Real::EPSILON * (1.0 + elapsed);
+                let imminent = mark == 1
+                    && upcoming[slot]
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.absolute <= near_time);
                 let rescheduled = if mark == 2
+                    || imminent
                     || upcoming[slot]
                         .as_ref()
                         .is_some_and(|candidate| changed.contains(&candidate.other))
