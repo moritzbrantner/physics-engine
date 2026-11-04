@@ -68,6 +68,25 @@ jobs:
       - name: Test every suite on BodyStorage::Indexed
         run: cargo test --locked --features checkpoints,indexed-storage
 
+      # Temporary on this measurement branch only; remove after collecting paired evidence.
+      - name: Advisory dense versus sparse CCD comparison (#477)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version
+          uname -a
+          lscpu
+          git rev-parse HEAD
+          printf '%s\n' '==== sparse pass 1 ===='
+          cargo test --release --locked --features work-counters --test ccd_scheduler_scaling -- --ignored --nocapture
+          printf '%s\n' '==== dense pass 1 ===='
+          cargo test --release --locked --features work-counters --test ccd_dense_scaling -- --ignored --nocapture
+          printf '%s\n' '==== dense pass 2 ===='
+          cargo test --release --locked --features work-counters --test ccd_dense_scaling -- --ignored --nocapture
+          printf '%s\n' '==== sparse pass 2 ===='
+          cargo test --release --locked --features work-counters --test ccd_scheduler_scaling -- --ignored --nocapture
+
   work-contracts:
     needs: docs-scope
     if: needs.docs-scope.outputs.docs-only != 'true'
