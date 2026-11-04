@@ -220,14 +220,58 @@ damage and other attack rules. `Report::swept_contacts` counts admitted remainin
 This is **translational** CCD: orientations are held fixed during each sweep, with rotation
 integrated between substeps. Sampled rotation is not exact rotational swept collision.
 
-`ccd-ricochet`, `ccd-glancing` and `ccd-moving-wall` (C20, MMORPG #290) exercise two elastic
-impacts in one 60 Hz tick, a moving kinematic obstacle and a glancing hit. When multiple CCD bodies
-have admitted sweeps, their impacts are processed in global time-of-impact order rather than one
-body's full trajectory before the next. Rapier 0.36.1's single 60 Hz CCD step stops at its first
+`ccd-ricochet`, `ccd-glancing`, `ccd-moving-wall` and `ccd-synchronized` (C20, MMORPG #290)
+exercise two elastic impacts in one 60 Hz tick, a moving kinematic obstacle, a glancing hit and
+eight independent simultaneous impacts. Multiple CCD bodies share a global time-of-impact clock;
+unchanged future contacts keep their originally computed TOIs and manifolds, avoiding both repeated
+whole-world scans and the loss of equal-time hits after f32 clock rounding. Only changed bodies,
+affected cached partners and newly eligible pairs must be re-swept. This does **not** introduce a
+general impact-event API: contact transitions remain pair-sorted, not chronological hit metadata.
+Rapier 0.36.1's single 60 Hz CCD step stops at its first
 impact; the behavioral reference advances the same interval in 64 smaller Rapier steps, while
 the ordinary single-step Rapier cost remains a separate blocking performance baseline. Analytic
 and independent tests cover full-time continuation, tie order, no tunnelling, budget exhaustion
 and checkpoint replay. This proves the engine-side fixture, not adoption in the MMORPG adapter.
+
+The exact narrow-phase already specializes sphere–sphere quadratic TOI, rounded sphere–box
+face/edge/corner TOI and box–box swept separating axes. Capsule/wedge cases use the existing
+conservative geometry-kernel fallback. A circumsphere proxy for a visual polyhedron is instead
+an intentional geometry approximation ([#465](https://github.com/moritzbrantner/physics-engine/issues/465)); it is not equivalent to optimizing an exact shape solver.
+
+The independent-sphere 1/8/16/24/32-workload is also a deterministic complexity contract:
+all sources hit one wall once or bounce between two walls **twice** within one 60 Hz tick.
+With n active CCD spheres, k=1 or 2 impacts per sphere and b unrelated static boxes,
+`pair_tests` is O(k n²), independent of b, while exact shape sweeps are O(k n). Exclusions
+are invalidated only if a participant's velocity or wake state changes. The moving-body
+candidate list still makes one O(n+b) preparation traversal per CCD step; fixed-body lookup
+descends the existing query tree. There is no absolute wall-clock ratchet.
+An explicitly ignored first-tick benchmark repeats 101 constructed worlds per point (setup
+excluded) and verifies all admitted hits before reporting the median. On a shared Ubuntu
+x86_64 Xeon Platinum 8573C runner, Rust 1.99.1, release build, with 128 distant statics,
+one bounded run yielded:
+
+| Simultaneous spheres | Non-CCD, one wall | CCD, one impact | CCD, two impacts |
+| ---: | ---: | ---: | ---: |
+| 32 | 55 µs | 337 µs | 468 µs |
+| 64 | 107 µs | 1,452 µs | 2,547 µs |
+| 128 | 303 µs | 6,094 µs | 11,251 µs |
+
+The 128-projectile double-impact stress case alone consumes roughly 68% of a 60 Hz
+16.67 ms frame, without game logic, rendering or other physics. It is deliberately
+synthetic and not a legal MMORPG bomb rate, and these noisy wall-clock observations are
+**advisory**, not absolute CI thresholds. They expose the remaining active-source
+O(n²) event-queue/candidate problem: optimize moving-sweep admission and earliest-event
+selection before claiming high-density CCD scalability. Exact geometric fast paths
+already handle the common sphere/box pairs, so adding another sphere solver will not
+solve this scheduler cost.
+To measure full first-step cost without including world setup (advisory on shared hardware):
+
+```sh
+cargo test --release --locked --test ccd_scheduler_scaling -- --nocapture
+cargo test --release --locked --test ccd_scheduler_scaling -- --ignored --nocapture
+cargo run --release --locked -p physics-oracle -- --only ccd-synchronized
+bash scripts/collect-work-evidence.sh > /tmp/ccd-work-evidence.json
+```
 
 ## Contact events
 
