@@ -20,6 +20,7 @@ pub mod platonic_proxy;
 pub mod props;
 pub mod push;
 pub mod ray_sight;
+pub mod rope_joints;
 pub mod slopes;
 pub mod stairs;
 pub mod stairs_pace;

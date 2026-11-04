@@ -62,10 +62,12 @@ mod islands;
 pub use convergence::{Convergence, ConvergenceStats};
 pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;
+mod joint;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, reserve};
 use geometry::GeometryCache;
 pub use geometry::GeometryStats;
+pub use joint::{DistanceJoint, JointId};
 mod ccd;
 mod character;
 mod terrain;
@@ -214,6 +216,8 @@ pub struct World {
     removed_contacts: usize,
     /// Reused buffer for the impacts `take_contact_events` holds for the next step.
     held_contacts: Vec<ContactChange>,
+    /// Joints in canonical row order (#453).
+    joints: joint::Joints,
 }
 /// One contact cache insertion or removal, with the pair's ids at that moment.
 #[derive(Clone, Copy, Debug)]
@@ -313,6 +317,7 @@ impl World {
             contact_changes: Vec::new(),
             removed_contacts: 0,
             held_contacts: Vec::new(),
+            joints: joint::Joints::default(),
         })
     }
     /// Work from the most recent step attempt, including a numerical failure.

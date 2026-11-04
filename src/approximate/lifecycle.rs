@@ -179,6 +179,8 @@ impl World {
         let order = self.bodies[self.index(id).ok()?].order;
         self.characters.remove(id);
         self.halfspaces.retain(|&h| h != id);
+        // Its joints go with it; the bodies they held wake (#453).
+        self.remove_body_joints(order);
         // Bodies in contact with the removed one wake (its contact pairs, in pair order).
         let neighbors = self
             .cache

@@ -12,6 +12,8 @@ pub struct Report {
     pub pair_tests: u64,
     pub narrow_tests: u64,
     pub contact_points: u64,
+    /// Joint rows over the step's substeps, one per joint with an awake dynamic side (#453).
+    pub joint_rows: u64,
     /// Equivalent solver rounds per substep (maximum over islands), not the sum over islands.
     /// Use `convergence.constraint_visits` for actual row work and `islands` for grouping costs.
     pub impulse_iterations: u64,

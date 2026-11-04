@@ -1822,6 +1822,94 @@
           }
         }
       ]
+    },
+    {
+      "id": "step-joints",
+      "description": "One warm World::step (1/60 s, default config) with `joints` loads swinging on DistanceJoint ropes from fixed anchors high above a static town of `statics` boxes (#453).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "statics": {
+          "description": "static boxes in the town (doubling sizes), never reached by a load"
+        },
+        "joints": {
+          "description": "ropes, each holding one awake swinging load"
+        }
+      },
+      "scalePoints": [
+        { "statics": 512, "joints": 8 },
+        { "statics": 1024, "joints": 8 },
+        { "statics": 2048, "joints": 8 },
+        { "statics": 4096, "joints": 8 },
+        { "statics": 8192, "joints": 8 },
+        { "statics": 4096, "joints": 1 },
+        { "statics": 4096, "joints": 2 },
+        { "statics": 4096, "joints": 4 },
+        { "statics": 4096, "joints": 16 },
+        { "statics": 4096, "joints": 32 },
+        { "statics": 4096, "joints": 64 }
+      ],
+      "metrics": [
+        {
+          "name": "joint-rows",
+          "unit": "rows",
+          "signal": "operation-count",
+          "notes": "Report::joint_rows: one solver row per joint with an awake dynamic side per substep, rebuilt from the current poses and solved in the contact rows' iterations (no separate solver). O(joints), independent of the town.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "joints",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "joint-record-visits",
+          "unit": "records",
+          "signal": "operation-count",
+          "notes": "work::Counter::JointRows: joint records visited by the step (each substep's row build plus the contact phase's kinematic-wake test). A new operation (#453): O(joints) per substep, including sleeping joints; a world without joints visits none.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "joints",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "work::Counter::BodyVisits: the step's per-body loops still follow the awake bodies only (#412); joints add none.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "joints",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Broad-phase candidate tests: the loads never reach the town or each other (0 measured).",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

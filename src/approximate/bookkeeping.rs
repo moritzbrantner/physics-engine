@@ -102,19 +102,22 @@ impl Adjacency {
         &mut self,
         bodies: &[Body],
         cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
+        joints: impl ExactSizeIterator<Item = (Order, Order)>,
         work: &mut BookkeepingStats,
     ) {
         if !self.dirty && self.offsets.len() == bodies.len() + 1 {
             return;
         }
         work.adjacency_rebuilds += 1;
-        work.adjacency_edges_indexed += cache.len() as u64;
+        let edges = cache.len() + joints.len();
+        work.adjacency_edges_indexed += edges as u64;
         reserve(&mut self.offsets, bodies.len() + 1, work);
         self.offsets.clear();
         self.offsets.resize(bodies.len() + 1, 0);
-        reserve(&mut self.edges, cache.len(), work);
+        reserve(&mut self.edges, edges, work);
         self.edges.clear();
-        for &(a, b) in cache.keys() {
+        // Contact pairs in pair order, then joined pairs in joint order (#453).
+        for (a, b) in cache.keys().copied().chain(joints) {
             let a = bodies
                 .binary_search_by_key(&a, |b| b.order)
                 .expect("live contact endpoint");
@@ -371,8 +374,9 @@ impl Scratch {
         &mut self,
         bodies: &[Body],
         cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
+        joints: impl ExactSizeIterator<Item = (Order, Order)>,
     ) {
-        self.graph.ensure(bodies, cache, &mut self.work);
+        self.graph.ensure(bodies, cache, joints, &mut self.work);
     }
     /// Excludes the broad-phase boxes, which persist with the query tree (its storage is not
     /// counted either).

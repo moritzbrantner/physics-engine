@@ -318,6 +318,59 @@ that body wakes. Rapier's sensor intersection events,
 contact forces and per-collider opt-in (`ActiveEvents`) are not provided. Pending transitions are
 not checkpointed: a restored world's events start from its restored cache.
 
+## Joints
+
+`add_joint(DistanceJoint { a, b, anchor_a, anchor_b, max_length })` ties an anchor on body `a`
+to one on body `b` (each in its body's local frame, scene units) by a rope: the anchors are at
+most `max_length` apart and may come closer freely, as Rapier 0.36.1's `RopeJoint`
+(`DistanceJoint::rope(a, b, max_length)` ties the centres). Rapier's coupled linear limit applies
+only its maximum (`FIXME: handle min limit too`), so there is no minimum length here either; a
+fixed attachment, hinges, motors and rope discretization are later slices (#453). Contacts
+between the joined bodies stay enabled, as Rapier's default.
+
+- **Ids.** `add_joint` returns a `JointId`, a creation serial never reused within the world
+  (`JointId::{to_bits, from_bits}` serve adapters). `joint(id)`, `joint_impulse(id)`,
+  `joints()` (canonical order), `joint_count()` and `remove_joint(id)` (`None` for an unknown or
+  removed id) read and remove them.
+- **Validation.** Both bodies must be live (`MissingBody`) and distinct, at least one dynamic and
+  neither `retire_on_impact`; anchors finite and below 1e12, `max_length` finite and positive
+  (`InvalidInput` otherwise). Body properties are fixed after `add_body`, so this holds for the
+  joint's life.
+- **Lifecycle.** `remove_body` removes the body's joints with it, as Rapier's
+  `RigidBodySet::remove` does; their ids stop resolving, and a new body in the same slot (a new
+  `BodyId` generation) is joined only by joints added for it. Adding or removing a joint, or a
+  joint going with its body, wakes the joined dynamic bodies.
+- **Order.** Rows run in canonical order: by the pair's body orders (lower first), then by id,
+  so keyed worlds solve identically whatever the insertion order, in both storage modes and
+  for any worker count.
+- **Solver.** Each joint with an awake dynamic side is one frictionless row of the existing
+  velocity solve, after the step's contact rows and in the same `velocity_iterations` (and
+  convergence or island partitioning): along the rope, with the slack `max_length − distance`
+  as its separation. It is rebuilt every substep from the current poses and warm-started from
+  its previous impulse like contact history. A slack rope admits closing up to its length
+  within the substep (Rapier's `rhs_wo_bias`); a stretched one corrects the excess within the
+  substep, at most 3 m/s (in `length_unit`), Rapier's rigid joint softness and
+  `max_corrective_velocity`. `joint_impulse` is the last substep's accumulated impulse along
+  the rope (tension × substep length); `Report::joint_rows` counts the rows.
+- **Islands.** Joined dynamic bodies are one island: they sleep together and a wake reaches
+  across the joint. A taut rope holding a body from above supports it for sleep, as a contact
+  under it does, so a still hanging load sleeps. A sleeping body joined to a moving external
+  (kinematic) body wakes in the next step's contact phase.
+- **Driven anchors.** An external body moved by `set_velocity` drags its rope with its
+  velocity, as Rapier's velocity-based kinematic body. A body moved by `set_kinematic_position`
+  or `move_characters` carries no velocity, so a rope follows it only through the 3 m/s
+  position correction; a consumer dragging with a character sets the anchor body's velocity.
+- **Cost.** O(joints) per substep (rows and the wake test visit every joint, asleep or not);
+  nothing without joints. Lookups and `remove_joint` are O(joints); `remove_body` adds
+  O(joints) while the world has joints. `work::Counter::JointRows` counts the visits
+  (`step-joints` complexity contract).
+- **Failure and checkpoints.** A failed step restores every joint impulse with the rest of the
+  transaction. Worlds with joints are not checkpointed: `checkpoint` returns
+  `CheckpointError::UnsupportedJoints`.
+
+The `rope-joints` oracle scenario (C21) checks dragged and hanging fixtures against Rapier; see
+[consumer capabilities](consumer-capabilities.md).
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the
@@ -330,7 +383,7 @@ Checkpoints are opt-in (Cargo feature `checkpoints`) for debugging and logging. 
 checkpoints restore only on their own build and target
 ([floating checkpoints](floating-checkpoints.md)). Moving between providers or targets
 reconstructs physics from consumer-owned game state; Rapier state is never deserialized into a
-Physics Engine checkpoint.
+Physics Engine checkpoint. Worlds with joints, terrain or halfspaces are not checkpointed.
 
 ## Example
 
