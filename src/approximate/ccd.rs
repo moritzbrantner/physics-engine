@@ -437,8 +437,6 @@ impl World {
         let mut affected: Vec<usize> = Vec::new();
         // The first event re-checks every source's admission, as the linear scheduler did.
         let mut check_all = true;
-        // Temporary #481 diagnostic: compare cached and complete event schedules.
-        let mut diagnostics_left = 20;
         while elapsed < 1.0 {
             let slot = loop {
                 match heap.pop() {
@@ -567,6 +565,11 @@ impl World {
                     *mark = (*mark).max(1);
                 }
             }
+            if check_all {
+                // The first wake/impact refreshes every cached source, including
+                // sources outside the changed participants' broadphase bounds.
+                marks.fill(2);
+            }
             let full = check_all || search_all;
             check_all = false;
             if full {
@@ -639,46 +642,6 @@ impl World {
                     versions[slot] += 1;
                     if let Some(event) = &upcoming[slot] {
                         heap.push(self.pending(source, event, slot, versions[slot]));
-                    }
-                }
-            }
-            // Temporary #481 instrumentation: find the first stale cached event.
-            if n == 15 && self.bodies.len() == 143 && diagnostics_left > 0 {
-                for (probe_slot, &source) in queued.iter().enumerate() {
-                    if is_frozen[probe_slot] || !advances(&self.bodies[source]) {
-                        continue;
-                    }
-                    let complete = self.next_scheduled_hit(
-                        source,
-                        TickTime { elapsed, h },
-                        &excluded,
-                        SearchOptions {
-                            frozen: &frozen,
-                            always: &unbounded,
-                            targets: None,
-                            moving: Some(&moving),
-                        },
-                        report,
-                    )?;
-                    let cached = upcoming[probe_slot].as_ref();
-                    let candidate = complete.as_ref();
-                    let difference = match (cached, candidate) {
-                        (Some(old), Some(new)) => {
-                            old.other != new.other || (old.absolute - new.absolute).abs() > 1e-5
-                        }
-                        (None, None) => false,
-                        _ => true,
-                    };
-                    if difference {
-                        eprintln!(
-                            "CCD481 cached discrepancy at={elapsed:.8} impact=({i},{j}) closing={closing} source={source} slot={probe_slot} changed={changed:?} marks={marks:?} cached={:?} full={:?}",
-                            cached.map(|e| (e.other, e.absolute)),
-                            candidate.map(|e| (e.other, e.absolute)),
-                        );
-                        diagnostics_left -= 1;
-                        if diagnostics_left == 0 {
-                            break;
-                        }
                     }
                 }
             }
