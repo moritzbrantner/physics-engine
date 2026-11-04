@@ -34,6 +34,11 @@ pub enum Obs {
     /// A joint's force along its rope after a tick, in newtons (the last substep's impulse over
     /// the substep length; zero while slack).
     Tension(f32),
+    /// First hit of a filtered ray or shape cast: the target's scenario label and the fraction
+    /// of the displacement in `0..=1`.
+    Hit(Option<(u32, f32)>),
+    /// The scenario labels (one bit each, labels below 64) a filtered overlap query reports.
+    Overlaps(u64),
     /// A contact transition reported by a tick: the pair as scenario labels.
     ContactEvent {
         tick: u32,
@@ -126,7 +131,7 @@ impl Scenario {
 pub fn finite(trace: &Trace) -> Result<(), String> {
     for (i, obs) in trace.0.iter().enumerate() {
         let ok = match obs {
-            Obs::Support(Some(t)) => t.is_finite(),
+            Obs::Support(Some(t)) | Obs::Hit(Some((_, t))) => t.is_finite(),
             Obs::Ray(Some((t, n))) | Obs::Contact(Some((t, n))) => {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
@@ -195,5 +200,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::ccd_margin_start::scenario(),
         scenarios::platonic_proxy::scenario(),
         scenarios::rope_joints::scenario(),
+        scenarios::collision_filters::scenario(),
     ]
 }
