@@ -283,3 +283,40 @@ fn sphere_and_box_fast_paths_have_deterministic_work_budgets() {
         }
     }
 }
+
+#[test]
+fn sphere_sphere_sweeps_use_shared_analytic_first_contact() {
+    let mut moving = Body::fixture(501, Shape::Sphere(1.0), V(-4.0, 0.0, 0.0), 1.0);
+    moving.velocity = V(8.0, 0.0, 0.0);
+    let target = Body::fixture(502, Shape::Sphere(1.0), V::ZERO, 0.0);
+
+    let mut work = GeometryStats::default();
+    let hit = swept(&moving, &target, 1.0, 0.0, &mut work)
+        .unwrap()
+        .expect("two spheres must cross within the step");
+    assert!((hit.time - 0.25).abs() < 1.0e-6, "{hit:?}");
+    assert!(hit.swept);
+    assert_eq!(work.primitive_sweep_iterations, 1);
+
+    // Physical impact time is unchanged by the speculative admission margin.
+    let margin = swept(&moving, &target, 1.0, 0.4, &mut GeometryStats::default())
+        .unwrap()
+        .expect("margin-admitted spheres must hit");
+    assert!((margin.time - 0.25).abs() < 1.0e-6, "{margin:?}");
+
+    // Initially overlapping pairs moving apart touch at t=0, not the exit time.
+    moving.position = V(-1.5, 0.0, 0.0);
+    moving.velocity = V(-8.0, 0.0, 0.0);
+    let overlap = swept(&moving, &target, 1.0, 0.0, &mut GeometryStats::default())
+        .unwrap()
+        .expect("initially overlapping spheres must contact at the start");
+    assert_eq!(overlap.time, 0.0);
+
+    moving.position = V(-5.0, 2.0, 0.0);
+    moving.velocity = V(10.0, 0.0, 0.0);
+    let tangent = swept(&moving, &target, 1.0, 0.0, &mut GeometryStats::default()).unwrap();
+    assert!(tangent.is_some());
+    moving.position.1 = 2.000_001;
+    let near_miss = swept(&moving, &target, 1.0, 0.0, &mut GeometryStats::default()).unwrap();
+    assert!(near_miss.is_none());
+}

@@ -39,9 +39,10 @@ remains the authority for selecting a solver.
   one for the other current pairs. This does not count all contacts across substeps
   or claim richer multi-point capsule/wedge manifolds.
 - `translationSearch` describes physical step admission; `shapeCastSearch`
-  describes snapshot casts. Sphere/box physical paths retain their conservative
-  analytic baseline, box polyhedra use fixed-axis swept SAT, and shared rounded
-  paths use bounded conservative advancement with explicit search failures.
+  describes snapshot casts. Sphere/sphere physical sweeps use the checked f64 analytic kernel through the
+  shared primitive adapter; sphere/box retains its local analytic baseline.
+  Box polyhedra use fixed-axis swept SAT, and other shared rounded paths use
+  bounded conservative advancement with explicit search failures.
   Snapshot casts use the shared kernel path even for sphere/box pairs.
 - `referenceAcceptance` is separate from dispatch. `capsule-row` links the completed
   sphere/capsule, box/capsule and capsule/capsule reference/work slice; `partial`

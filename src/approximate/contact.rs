@@ -1075,19 +1075,10 @@ pub(super) fn swept(
             sphere_box_time(left, right, radius, dt)
         }
         primitive::PrimitivePair::SphereSphere => {
-            let Shape::Sphere(ra) = left.shape else {
-                unreachable!()
-            };
-            let Shape::Sphere(rb) = right.shape else {
-                unreachable!()
-            };
-            let d = right.position - left.position;
-            let v = (right.velocity - left.velocity) * dt;
-            roots(v.dot(v), 2.0 * d.dot(v), d.dot(d) - (ra + rb) * (ra + rb))
-                .into_iter()
-                .flatten()
-                .filter(|t| (0.0..=1.0).contains(t))
-                .min_by(Real::total_cmp)
+            // Physical impact time is at surface contact. The caller's margin is
+            // admission-only (below), not an early restitution trigger.
+            // Shared f64 math handles initial overlaps and relative motion.
+            primitive::swept_time(left, right, dt, 0.0, work)?
         }
         primitive::PrimitivePair::BoxBox => box_sweep_time(
             left,
