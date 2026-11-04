@@ -301,7 +301,7 @@ fn metrics(input: &[Initial], states: &[State]) -> Metrics {
 #[test]
 fn budget_frozen_dense_contacts_do_not_deeply_interpenetrate() {
     const MAX_OVERLAP: f64 = 0.01;
-    for (count, iterations) in [(15, 4), (23, 8), (38, 16)] {
+    for (count, iterations) in [(15, 4), (23, 8), (38, 16), (64, 16)] {
         let input = radial_convergence(count);
         let ordered = engine(&input, iterations, BodyStorage::Ordered);
         let indexed = engine(&input, iterations, BodyStorage::Indexed);
@@ -383,8 +383,8 @@ fn print_radial_budget_sensitivity_against_rapier() {
 }
 
 /// #481 isolation search: find the smallest radial group exhibiting a deep
-/// final overlap at each budget. Not a correctness pass; an independent
-/// minimized regression must replace this diagnostic before an engine fix.
+/// final overlap at each budget. This advisory finder complements the blocking
+/// independent Rapier nonpenetration regression above; it is not a pass/fail gate.
 #[test]
 #[ignore = "diagnostic failing-size search for #481; run explicitly with --ignored --nocapture"]
 fn print_first_deep_overlap_by_budget() {
