@@ -1511,9 +1511,25 @@ impl World {
                 report.narrow_tests += 1;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
                 // complete pair results only when both orientation dependencies are stable.
-                let current =
-                    self.geometry
-                        .query_interval([i, j], [a, b], h, margin, &mut report.geometry);
+                let current = self
+                    .geometry
+                    .query_interval([i, j], [a, b], h, margin, &mut report.geometry)
+                    // A CCD body still separated by a gap it closes well within this
+                    // substep would stop at the surface on a speculative row and bounce
+                    // only after the substep, losing the rest of its travel. Its swept
+                    // time of impact and remaining-time response consume the substep
+                    // instead, as high-resolution Rapier does.
+                    .filter(|m| {
+                        !(ccd::deferred(a, b) && {
+                            let gap = (&m.points)
+                                .into_iter()
+                                .map(|p| p.separation)
+                                .fold(Real::INFINITY, Real::min);
+                            gap > 0.0
+                                && -(b.velocity - a.velocity).dot(m.normal) * h
+                                    > gap + self.scene.contact_slop
+                        })
+                    });
                 let m = if current.is_some() {
                     current
                 } else if fast {
