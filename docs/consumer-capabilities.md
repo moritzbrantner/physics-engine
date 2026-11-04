@@ -35,7 +35,7 @@ over the integer `World`; no consumer enables it).
 | C17 | Static heightfield terrain: capsule characters standing and walking on hills, ground rays | MMORPG (#159 step 2; caves later) | `SharedShape::heightfield` (flat cells `CELL_REMOVED`), KCC on terrain, `cast_ray` | **parity** (`terrain`, `terrain-holes`): `add_heightfield`, parry diagonal, removed cells (holes, MMORPG's flat cells over a floor plane), rays, sphere/capsule queries, box/wedge overlaps (door probes), characters, rigid contacts with dynamic boxes (`debris`); not checkpointed; caves later | #195, #342 |
 | C18 | Dynamic boxes: upright movable crates (slide, stop at walls and units, rest, wake on the next push) and tumbling debris | MMORPG (mmorpg#58, #288) | `RigidBodyBuilder::dynamic()` (crates `lock_rotations`), cuboid colliders with density 600, friction 0.8, restitution 0.15, linear damping 0.2 (debris also angular 0.8), fixed boxes, capsules, halfspace and heightfield around them, one `step` per tick | **parity** (`props`, `debris`): rotation-locked boxes with friction and linear damping on the floor plane, against fixed boxes and capsules (2 substeps × 1 pass, rests within 5% of each slide of Rapier's position); tumbling debris with restitution, linear and angular damping, debris–debris contacts and box/heightfield contacts, settled by the game's rule into fixed boxes (2 substeps × 4 passes, sleep off): sinks no deeper than Rapier, at least 90% of rest points within 0.5 m (or 25% of the throw) of Rapier's and all within 1.5 m; mixed materials (`materials`: crates 0.8 / 0.15 on geometry at Rapier's 0.5 / 0 defaults, crate on crate, `Multiply` and `Max` slabs; Rapier's `CoefficientCombineRule` per body, default `Average`): every slide within 5% of Rapier's (measured 1.2–2.0%); crates in a 1,200-box town on the floor plane (`debris-town`, kicked in turn, sleep on): every rest within 5 cm of Rapier's, step cost independent of the town (#412); free-rotating debris dropped onto the plane there rests at Rapier's height within the 5 mm slop and stops within 1 s of Rapier's (#424); 48 free-rotating pieces thrown from up to 1.2 m into the town's lanes (`debris-town-tumble`, 2 substeps × 1 pass, sleep on) land at speed, tumble and sleep within 1 s of Rapier's last, never sink into the plane, at least 90% rest within 0.5 m of Rapier's and all within 1.5 m (#426); restitution (`bounce`: spheres and rotation-locked boxes thrown at walls at 2–40 m/s and dropped 1–4 m onto the plane, restitution 0.15/0.5/0.8, frictionless): rebound speeds and bounce heights within 5% of Rapier's, never past the surface; a new contact bounces once the step is solved, speculative ones included (#458) | #366, #391, #412, #424, #426, #458 |
 | C19 | Contact enter/exit for physical traps and triggers: crates on pressure plates, a plate removed under a crate, spawned crates, a boulder hitting a player, a kinematic lift moved from under a crate; sensors and masked layers silent | MMORPG (mmorpg#300, Q33; planned) | `ActiveEvents::COLLISION_EVENTS`, `ChannelEventCollector`, `CollisionEvent::{Started, Stopped}` (`REMOVED` on `remove_collider`) | **parity** (`contact-events`): `Report::contact_events`, derived from the persistent contact cache, in pair order; every pair reports Rapier's sequence of transitions, each within 3 ticks of Rapier's (measured 0–1), ~0.7× Rapier native; sensor intersection events stay game-owned (D7); a kinematic plate teleported from under a sleeping crate (`set_kinematic_position`) wakes it, so it falls and its contact stops (#456). Character moves do not wake a sleeper they leave | #456 |
-| C20 | Persistent bounced projectiles: two impacts in one 60 Hz tick, a moving obstacle and a glancing hit | MMORPG (mmorpg#290, Q38; planned) | Dynamic bodies with `.ccd_enabled(true)` and restitution; Rapier's default single CCD step stops at its first impact, so the two-hit reference advances the same 60 Hz interval in 64 smaller Rapier steps | **scenario parity, not consumer adoption** (`ccd-ricochet`, `ccd-glancing`, `ccd-moving-wall`, `ccd-synchronized`): one `Body::ccd` projectile resolves its two impacts in increasing time of impact, consumes the full tick, keeps its tangential speed and stays within the walls on subsequent ticks; eight independent equal-time sphere–wall impacts also rebound without tunnelling (ordered/indexed storage and high-resolution Rapier reference). First-tick positions within 5 cm and velocities within 5% + 0.5 m/s of high-resolution Rapier, plus independent analytic two-hit checks, multi-CCD chronological ordering, keyed tie order, and budget fallback tests. CCD scheduling now caches unchanged future TOIs and is bounded by a deterministic work contract for noninteracting simultaneous spheres. Single-step Rapier remains the separate blocking performance baseline. Rotation is held fixed during sweeps; exact rotational CCD is not claimed | #450, #466 |
+| C20 | Persistent bounced projectiles: two impacts in one 60 Hz tick, a moving obstacle and a glancing hit | MMORPG (mmorpg#290, Q38; planned) | Dynamic bodies with `.ccd_enabled(true)` and restitution; Rapier's default single CCD step stops at its first impact, so the two-hit reference advances the same 60 Hz interval in 64 smaller Rapier steps | **scenario parity, not consumer adoption** (`ccd-ricochet`, `ccd-glancing`, `ccd-moving-wall`, `ccd-synchronized`; `ccd-platonic-proxy` for the [#465 experiment](#experiment-circumsphere-proxies-for-dodecahedron-and-icosahedron-visuals-465)): one `Body::ccd` projectile resolves its two impacts in increasing time of impact, consumes the full tick, keeps its tangential speed and stays within the walls on subsequent ticks; eight independent equal-time sphere–wall impacts also rebound without tunnelling (ordered/indexed storage and high-resolution Rapier reference). First-tick positions within 5 cm and velocities within 5% + 0.5 m/s of high-resolution Rapier, plus independent analytic two-hit checks, multi-CCD chronological ordering, keyed tie order, and budget fallback tests. CCD scheduling now caches unchanged future TOIs and is bounded by a deterministic work contract for noninteracting simultaneous spheres. Single-step Rapier remains the separate blocking performance baseline. Rotation is held fixed during sweeps; exact rotational CCD is not claimed | #450, #466 |
 
 Scenarios live in `oracle/src/scenarios/`; `cargo run --release -p physics-oracle`
 checks them natively (invariants + not more than 5% slower than Rapier) and
@@ -59,6 +59,72 @@ game-side adapters. Other work stays parked until a consumer uses it. Engine and
 (`ccd`, `sensor`, `retire_on_impact`, layers) is not consumer adoption. The engine/game boundary for melee sweeps, contact enter/exit, buoyancy,
 filtering, multi-hit queries and projectiles, with the consumer issues that would gate each, is
 [D7](technical-decisions.md#d7--physical-interactions-reuse-the-world-consumer-gated-q32q38).
+
+## Experiment: circumsphere proxies for dodecahedron and icosahedron visuals (#465)
+
+An owner-approved, bounded experiment, not consumer adoption and not exact convex parity.
+**Conclusion: keep experimental.** The proxy is correct and needs no engine change, but its
+whole-tick cost at hundreds of simultaneous CCD proxies is bounded by the CCD scheduler, not by
+the proxy (see below); adopt it opt-in only after that scales.
+
+**Consumer usage.** Render the regular dodecahedron or icosahedron mesh; collide a plain
+`Shape::Sphere(circumradius)` body (`ccd = true` for fast throws). Circumradius for edge `a`:
+icosahedron `R = a·sin(2π/5) = a/4·√(10 + 2√5)` (inradius `r = a·√3/12·(3 + √5)`), dodecahedron
+`R = a·√3/4·(1 + √5)` (`r = a/2·√(5/2 + 11/10·√5)`); both have `(R − r)/R ≈ 0.2053`. The mesh's
+rotation is the body's orientation; mass and inertia are the consumer's choice (the sphere's
+by default). There is no Platonic shape, collider enum or second CCD path, and the mesh stays in
+the consumer. Never use the insphere or an equal-volume sphere: only the circumsphere is a
+conservative outer bound. Tetrahedra, cubes and octahedra stay on accurate paths (`Shape::Box`
+for cubes; the others are not proxied).
+
+**Evidence.**
+
+- `tests/platonic_proxies.rs` builds both solids for edges 0.01–100 m, checks their radii against
+  the closed forms and compares the engine's swept sphere (`cast_shape` and one CCD
+  `World::step` on the identical trajectory) with the solid's exact first contact from the
+  complete separating-axis set (dense sampling plus bisection for a spinning visual). The proxy
+  never misses a solid contact and never touches later. Early-contact bias along the path,
+  in units of R: head-on face-first 0.2053 (`R − r`), edge-first 0.149 (icosahedron) / 0.066
+  (dodecahedron), vertex-first 0; 64 random orientations, spinning visuals up to 3,000 rad/s,
+  a wall 0.004 R thick crossed at 200 R per step and the `HalfSpace` floor all stay within
+  `R − r`. Grazing past a box edge the proxy can touch up to 0.96 R of travel earlier, and
+  11–31% of the grazing samples are phantom contacts the solid passes clear of; where both
+  touch, the proxy's radial normal differs from the solid's contact normal by 11–15° on average
+  (up to 36°). Head-on, both normals are the wall's. Not measured: rolling (a proxy rolls where a
+  solid settles on a face) and stacking (a proxy stack rises by `2R` per body where face-to-face solids rise by `2r`).
+- The oracle scenario `ccd-platonic-proxy` (C20) runs four proxies (45/45/60/30 m/s, two
+  oblique) into a thin wall: engine spheres follow the analytic reflection on every tick and
+  match Rapier balls (same masses, trajectories, 60 Hz; 64-step reference) on the impact tick;
+  about 1.6 µs/tick vs 4.9 µs bare Rapier natively and 2.6 vs 6.6 µs in WASM. Its check also replays the trajectories on
+  Rapier with a rotation-locked `convex_hull` of the real solid — an approximation report, not
+  parity: the hull follows the analytic reflection at its own support distance `h` within 1.6 cm,
+  and its distance from the proxy is the expected `2 (R − h)` (1.4–6.5 cm here), bounded by
+  `2 (R − r)`. `cargo test --release --locked -p physics-oracle --test platonic_proxy -- --nocapture`
+  prints the per-lane errors.
+- Whole tick, 60 ticks, all CCD, alternating proxies of R ≈ 0.19 m in six walls, sparse (2 m
+  lattice, 30 m/s) and dense (0.42 m lattice, 10 m/s); µs/tick, median of 5, shared 4-core
+  Xeon @ 2.10 GHz, Rust 1.99.1, release; advisory, not a CI gate
+  (`cargo test --release --locked -p physics-oracle --test platonic_proxy -- --ignored --nocapture`):
+
+  | Layout | Proxies | Engine sphere CCD | Engine, no CCD | Rapier ball | Rapier convex hull | Engine pair tests / sweeps / impacts per tick |
+  | --- | ---: | ---: | ---: | ---: | ---: | --- |
+  | sparse | 32 | 30 | 36 | 85 | 122 | 196 / 15 / 2 |
+  | sparse | 256 | 685 | 237 | 372 | 946 | 8,587 / 142 / 12 |
+  | sparse | 1,024 | 7,047 | 1,440 | 2,849 | 5,201 | 105,352 / 493 / 38 |
+  | dense | 32 | 128 | 52 | 69 | 180 | 893 / 132 / 6 (10 budget fallbacks in 60 ticks) |
+  | dense | 256 | 4,370 | 646 | 486 | 1,502 | 51,634 / 1,553 / 51 (83) |
+  | dense | 1,024 | 104,976 | 3,509 | 2,944 | 7,564 | 880,615 / 7,524 / 229 (544) |
+
+  Retained contact bytes grow linearly (4.9 / 33.5 / 131.8 KB). Without CCD the engine stays
+  within about 1.3× of Rapier balls; with CCD, pair tests grow with the square of the active
+  CCD bodies, the scheduler cost [world API contract](world-api-contract.md#persistent-projectile-ccd)
+  already records. A proxy is cheaper than Rapier's own convex hull up to a few dozen bodies.
+
+**Pages lab.** `ccd-platonic-proxy` appears under C20 as engine spheres beside Rapier spheres.
+The hull comparison is not shown: the adapter replays only the engine and Rapier sides and draws
+no meshes. The smallest follow-up is a read-only third "Rapier convex hull" display side in
+`oracle/src/wasm.rs` plus a mesh draw in `site/webgl-renderer.js`, with collision truth still
+coming from Rust.
 
 ## Consumer-integrated evidence (C15)
 

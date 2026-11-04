@@ -188,5 +188,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::ccd_projectiles::glancing(),
         scenarios::ccd_projectiles::moving(),
         scenarios::ccd_synchronized::scenario(),
+        scenarios::platonic_proxy::scenario(),
     ]
 }
