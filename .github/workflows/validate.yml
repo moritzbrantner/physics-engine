@@ -68,37 +68,6 @@ jobs:
       - name: Test every suite on BodyStorage::Indexed
         run: cargo test --locked --features checkpoints,indexed-storage
 
-      # One-time advisory comparison for #479; remove after collecting measurements.
-      - name: Advisory paired sparse/dense CCD before and after (#479)
-        shell: bash
-        run: |
-          set -euo pipefail
-          base_sha=b963be5d0b429e416c82a16a924f64e4d9007d07
-          fixture_sha=4de89b5bab30e66d81a5c62236d880ddd9409ea0
-          before_dir="$RUNNER_TEMP/ccd-gap-before"
-          git fetch --no-tags --depth=1 origin "$base_sha" "$fixture_sha"
-          git worktree add --detach "$before_dir" "$base_sha"
-          git show "$fixture_sha:tests/ccd_dense_scaling.rs" > tests/ccd_dense_scaling.rs
-          cp tests/ccd_dense_scaling.rs "$before_dir/tests/ccd_dense_scaling.rs"
-          rustc --version --verbose
-          uname -a
-          lscpu | grep -E 'Model name|CPU\(s\)|Architecture' || true
-          printf 'BEFORE_SHA=%s\nAFTER_SHA=%s\n' "$base_sha" "$(git rev-parse HEAD)"
-          run_pair() {
-            local label="$1" directory="$2"
-            echo "===== CCD $label ====="
-            (
-              cd "$directory"
-              export CARGO_TARGET_DIR="$RUNNER_TEMP/ccd-gap-target-$label"
-              cargo test --release --locked --features work-counters --test ccd_dense_scaling -- --ignored --nocapture
-              cargo test --release --locked --features work-counters --test ccd_scheduler_scaling -- --ignored --nocapture
-            )
-          }
-          run_pair before "$before_dir"
-          run_pair after "$GITHUB_WORKSPACE"
-          run_pair after "$GITHUB_WORKSPACE"
-          run_pair before "$before_dir"
-
   work-contracts:
     needs: docs-scope
     if: needs.docs-scope.outputs.docs-only != 'true'
