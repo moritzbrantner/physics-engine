@@ -108,7 +108,7 @@ fn door_toggle(tick: u32) -> Option<usize> {
 pub fn scenario() -> Scenario {
     Scenario {
         name: "static-queries",
-        capabilities: "C1 C11 C12",
+        capabilities: "C1 C11 C12 C14",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: |storage| Box::new(engine::Sim::new(storage)),

@@ -43,6 +43,14 @@ reports WASM sizes against `.performance/size.json` (with `SIZE_BASE_REF=<commit
 size increase over that commit, measured in the same run). The size budget is advisory
 (PRINCIPLE-015): going over it warns but never fails; the oracle gates stay blocking.
 
+The [Pages comparison lab](https://moritzbrantner.github.io/physics-engine/) indexes all C1–C19
+by the oracle scenarios' `capabilities` metadata. It replays both real Rust/WASM implementations
+and displays a bounded sample of their observations with synchronized ticks; each scenario's
+invariant check still uses its complete traces. Cross-cutting features such as stable IDs (C3),
+unit-relative defaults (C13) and stable query ordering/save continuation (C14) have related
+workloads in the lab, not a standalone browser proof of every sub-property. Native tests and
+the full oracle remain the correctness authority; browser timing is exploratory.
+
 Not used by any consumer today: joints, sensor intersection events, collision
 groups, CCD, triangle meshes; contact enter/exit (C19) is built ahead of mmorpg#300. Work on those stays parked until a consumer
 uses them. Engine and sandbox support (`ccd`, `sensor`, `retire_on_impact`, layers) is not

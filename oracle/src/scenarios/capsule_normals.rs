@@ -52,7 +52,7 @@ fn cast(tick: u32, k: usize) -> (Wall, [f32; 3], [f32; 3]) {
 pub fn scenario() -> Scenario {
     Scenario {
         name: "capsule-normals",
-        capabilities: "#289 #290",
+        capabilities: "C9 C10",
         ticks: TICKS,
         #[cfg(feature = "engine")]
         engine: |storage| Box::new(engine::Sim::new(storage)),
