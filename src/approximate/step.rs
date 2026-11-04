@@ -1542,6 +1542,20 @@ impl World {
                             - step_drift(a, self.scene.gravity, gain))
                         .length()
                 };
+                // Swept *world* bounds can overlap for every pair of co-moving CCD bodies,
+                // even though their relative trajectories cannot close the initial gap.
+                // Only omit the expensive current/swept query when a padded axis separates
+                // both shapes throughout this substep. Rotation and future force drift stay
+                // on the exact path; later substeps still regenerate their contact search.
+                if fast
+                    && (a.ccd || b.ccd)
+                    && step_drift(a, self.scene.gravity, gain) == Vector::ZERO
+                    && step_drift(b, self.scene.gravity, gain) == Vector::ZERO
+                    && separated_ccd_translation(a, b, h, self.scene.contact_slop)
+                {
+                    regenerate = true;
+                    continue;
+                }
                 report.narrow_tests += 1;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
                 // complete pair results only when both orientation dependencies are stable.
@@ -1747,6 +1761,53 @@ fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
     } else {
         Vector::ZERO
     }
+}
+/// Proves an axis gap stays open under the pair's relative *translation*. A conservative
+/// rounding/slop allowance also covers independently rounded world-space swept endpoints.
+/// Unknown/unbounded geometry, rotation and non-finite arithmetic retain the exact sweep.
+fn separated_ccd_translation(a: &Body, b: &Body, h: Real, slop: Real) -> bool {
+    if a.shape.query_only()
+        || b.shape.query_only()
+        || a.sleeping
+        || b.sleeping
+        || a.angular_velocity != Vector::ZERO
+        || b.angular_velocity != Vector::ZERO
+    {
+        return false;
+    }
+    let (al, ah) = a.cached_bounds;
+    let (bl, bh) = b.cached_bounds;
+    let travel_a = a.velocity * h;
+    let travel_b = b.velocity * h;
+    let relative = (a.velocity - b.velocity) * h;
+    if !al.finite()
+        || !ah.finite()
+        || !bl.finite()
+        || !bh.finite()
+        || !travel_a.finite()
+        || !travel_b.finite()
+        || !relative.finite()
+    {
+        return false;
+    }
+    let magnitude = al
+        .abs()
+        .max_component()
+        .max(ah.abs().max_component())
+        .max(bl.abs().max_component())
+        .max(bh.abs().max_component())
+        .max(travel_a.abs().max_component())
+        .max(travel_b.abs().max_component());
+    let pad = slop + 128.0 * Real::EPSILON * (1.0 + magnitude);
+    if !pad.is_finite() {
+        return false;
+    }
+    let separated_axis = |amin: Real, amax: Real, bmin: Real, bmax: Real, delta: Real| {
+        amax + delta.max(0.0) + pad < bmin || bmax + (-delta).max(0.0) + pad < amin
+    };
+    separated_axis(al.0, ah.0, bl.0, bh.0, relative.0)
+        || separated_axis(al.1, ah.1, bl.1, bh.1, relative.1)
+        || separated_axis(al.2, ah.2, bl.2, bh.2, relative.2)
 }
 #[inline]
 pub(super) fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
