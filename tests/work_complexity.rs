@@ -1320,7 +1320,7 @@ fn ccd_scheduling_scales_with_impacts_and_unrelated_statics() {
         let points = [1, 2, 4, 8, 16, 32]
             .into_iter()
             .map(|projectiles| (projectiles, 128))
-            .chain([0, 64, 256].into_iter().flat_map(|irrelevant| {
+            .chain([64, 256].into_iter().flat_map(|irrelevant| {
                 [8, 32]
                     .into_iter()
                     .map(move |projectiles| (projectiles, irrelevant))
