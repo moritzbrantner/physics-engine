@@ -68,6 +68,19 @@ struct ScheduledHit {
     first: bool,
 }
 
+/// A pair was already reswept at this exact shared-clock time. Exclusion epochs
+/// also advance on trajectory changes, so the same endpoints at the same time
+/// have identical sweep inputs until one of these versions changes. Do not
+/// reuse this witness across different clock times: near-imminent f32 TOI
+/// rounding is exactly why the original resweep is necessary (#481).
+#[derive(Clone, Copy)]
+struct ImminentWitness {
+    clock: Real,
+    other: usize,
+    source_epoch: u32,
+    other_epoch: u32,
+}
+
 /// Search constraints are passed together so single-body and event-queue paths keep the same
 /// candidate admission policy without growing a long positional-argument API.
 struct SearchOptions<'a> {
@@ -441,6 +454,7 @@ impl World {
             )?);
         }
         let mut versions = vec![0u32; n];
+        let mut imminent_witnesses: Vec<Option<ImminentWitness>> = vec![None; n];
         let mut heap = std::collections::BinaryHeap::with_capacity(n);
         for (slot, event) in upcoming.iter().enumerate() {
             if let Some(event) = event {
@@ -614,6 +628,7 @@ impl World {
                 let source = queued[slot];
                 let mark = std::mem::take(&mut marks[slot]);
                 if is_frozen[slot] || !advances(&self.bodies[source]) {
+                    imminent_witnesses[slot] = None;
                     if upcoming[slot].take().is_some() {
                         versions[slot] += 1;
                     }
@@ -621,6 +636,12 @@ impl World {
                 }
                 if mark == 0 {
                     continue;
+                }
+                if mark == 2 {
+                    // A full search can replace the cached event without an
+                    // intervening trajectory-version change (e.g. an excluded
+                    // touching pair). The old partner witness is then stale.
+                    imminent_witnesses[slot] = None;
                 }
                 let options = SearchOptions {
                     frozen: &frozen,
@@ -642,6 +663,7 @@ impl World {
                         .as_ref()
                         .is_some_and(|candidate| changed.contains(&candidate.other))
                 {
+                    imminent_witnesses[slot] = None;
                     upcoming[slot] = self.next_scheduled_hit(
                         source,
                         TickTime { elapsed, h },
@@ -655,24 +677,39 @@ impl World {
                     .filter(|_| imminent)
                     .map(|event| event.other)
                 {
+                    let epoch_source = excluded.epochs[source];
+                    let epoch_other = excluded.epochs[old_other];
+                    let unchanged_pair = imminent_witnesses[slot].is_some_and(|witness| {
+                        witness.clock == elapsed
+                            && witness.other == old_other
+                            && witness.source_epoch == epoch_source
+                            && witness.other_epoch == epoch_other
+                    });
                     let mut targets = [old_other; 3];
-                    let mut len = 1;
+                    // At the same clock, unchanged partners would reproduce
+                    // the same result. Still sweep every newly changed body:
+                    // it may introduce an earlier valid event.
+                    let mut len = usize::from(!unchanged_pair);
                     for &j in changed {
                         if !targets[..len].contains(&j) {
                             targets[len] = j;
                             len += 1;
                         }
                     }
-                    let candidate = self.next_scheduled_hit(
-                        source,
-                        TickTime { elapsed, h },
-                        &excluded,
-                        SearchOptions {
-                            targets: Some(&targets[..len]),
-                            ..options
-                        },
-                        report,
-                    )?;
+                    let candidate = if len == 0 {
+                        None
+                    } else {
+                        self.next_scheduled_hit(
+                            source,
+                            TickTime { elapsed, h },
+                            &excluded,
+                            SearchOptions {
+                                targets: Some(&targets[..len]),
+                                ..options
+                            },
+                            report,
+                        )?
+                    };
                     // Unchanged trajectories keep their previously certified
                     // contact. A later f32 clock may round a thin hit away, so
                     // never discard that event merely because the resweep
@@ -691,6 +728,15 @@ impl World {
                         (Some(old), _) => Some(old),
                         (None, candidate) => candidate,
                     };
+                    imminent_witnesses[slot] = upcoming[slot]
+                        .as_ref()
+                        .filter(|event| event.other == old_other)
+                        .map(|_| ImminentWitness {
+                            clock: elapsed,
+                            other: old_other,
+                            source_epoch: epoch_source,
+                            other_epoch: epoch_other,
+                        });
                     true
                 } else if !changed.is_empty() {
                     // A changed partner may now be the earliest hit even if the source's
