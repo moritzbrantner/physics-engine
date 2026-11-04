@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use physics_engine::{
-    BodyId,
+    BodyId, CollisionLayers3d,
     approximate::{
         Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config,
         DistanceJoint, Error, HeightfieldDesc, QueryFilter, QueryHit, QueryPose, RayCast, RayHit,
@@ -707,6 +707,15 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                 assert_eq!(move_visits, pairs, "static move must visit every live pair");
 
                 work::reset();
+                w.set_layers(movable, CollisionLayers3d::new(1, u32::MAX))
+                    .unwrap();
+                let layer_visits = work::get(Counter::CachedPairVisits);
+                assert_eq!(
+                    layer_visits, pairs,
+                    "a layer change must visit every live pair"
+                );
+
+                work::reset();
                 assert!(w.remove_body(removable).is_some());
                 assert!(w.body(removable).is_none());
                 let remove_visits = work::get(Counter::CachedPairVisits);
@@ -738,6 +747,7 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
                         vec![
                             ("support-cache-pair-visits", support_visits),
                             ("move-cache-pair-visits", move_visits),
+                            ("layers-cache-pair-visits", layer_visits),
                             ("remove-cache-pair-visits", remove_visits),
                         ],
                     ));
@@ -749,6 +759,7 @@ fn cached_pair_traversal_follows_contacts_not_inert_statics() {
     for metric in [
         "support-cache-pair-visits",
         "move-cache-pair-visits",
+        "layers-cache-pair-visits",
         "remove-cache-pair-visits",
     ] {
         bounds.push((metric, "pairs", "linear"));

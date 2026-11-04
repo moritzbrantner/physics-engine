@@ -144,6 +144,31 @@ after the body's current motion, so a tumbling corner about to swing in is kept)
 and lets the solver close speculative points exactly to the plane, so fast bodies do not pass
 through it. Checkpoints hold halfspaces inline.
 
+## Collision layers
+
+`Body::layers` (`CollisionLayers3d`: memberships and mask) is the one generic filter for solver
+contacts, CCD, contact events, position correction and queries: two bodies, or a query's
+`QueryFilter::layers` and a body, interact when each one's memberships intersect the other's mask.
+That is Rapier's `InteractionGroups::test` with `InteractionTestMode::And`, so a consumer maps its
+groups bit for bit. Which bodies share a layer is the game's choice (Q35/Q36); the engine has no
+owner, team or faction rule, no pair-exclusion list and no filter callback. Differences from
+Rapier, all deliberate: the default is every membership and mask (`CollisionLayers3d::ALL`; Rapier:
+membership `GROUP_1`), queries always test their layers (`ALL` by default; Rapier skips the test
+without `groups`) and exclude sensors unless `include_sensors` (Rapier includes them unless
+`exclude_sensors`), `QueryFilter::exclude` is Rapier's `exclude_rigid_body`, and there are no
+separate solver groups. Broad phases are spatial only; layers are read from the body at every
+narrow-phase, CCD and query test, so no cache holds a filter decision.
+
+`set_layers(id, layers)` changes them at runtime, as Rapier's `set_collision_groups`: the next
+step and query use the new layers. Cached contacts the new layers exclude stop in the next step
+(`ContactEvent::Stopped`; the pair's sleeping side wakes, so a crate on an opened trapdoor falls),
+sleeping bodies the body now touches under the new layers wake, and characters near it check for
+overlap again. Cost: one contact-cache scan (O(cached pairs)) and one query-tree descent. A thrown
+weapon that must not hit its thrower leaves on a mask without the characters' layer and gains it
+once clear of the thrower (`collision-filters` oracle scenario), without per-player bits; queries
+exclude one body with `QueryFilter::exclude`. Character moves filter with `QueryFilter::default()`
+and `CharacterMove::exclude`, as the consumers' `move_shape` filters do today.
+
 ## Characters
 
 `add_character(id, CharacterSettings)` makes an external (kinematic) upright capsule body a

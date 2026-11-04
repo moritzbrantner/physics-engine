@@ -7,6 +7,7 @@ pub mod ccd_margin_start;
 pub mod ccd_projectiles;
 pub mod ccd_synchronized;
 pub mod character_move;
+pub mod collision_filters;
 pub mod contact_events;
 pub mod crowd;
 pub mod crowd_fight;

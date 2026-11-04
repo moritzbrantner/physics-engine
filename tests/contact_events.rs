@@ -447,3 +447,57 @@ fn placing_a_kinematic_body_wakes_its_sleeping_partners() {
         .unwrap();
     assert!(w.body(id(&w, CRATE)).unwrap().is_sleeping());
 }
+
+#[test]
+fn changing_layers_stops_and_starts_contacts_and_wakes_only_partners() {
+    let mut w = plate_scene(0.0);
+    w.add_body(plate(PLATE + 1, 5.0)).unwrap();
+    let mut other = crate_at(CRATE + 1, 5.0, 0.35);
+    other.layers = CollisionLayers3d::new(0b01, u32::MAX);
+    w.add_body(other).unwrap();
+    let c = id(&w, CRATE);
+    w.set_layers(c, CollisionLayers3d::new(0b01, u32::MAX))
+        .unwrap();
+    run(&mut w, 120);
+    let (plate, floor, other) = (id(&w, PLATE), id(&w, FLOOR), id(&w, CRATE + 1));
+    assert!(w.body(c).unwrap().is_sleeping() && w.body(other).unwrap().is_sleeping());
+    // Unchanged layers change nothing.
+    w.set_layers(plate, CollisionLayers3d::ALL).unwrap();
+    assert!(w.body(c).unwrap().is_sleeping());
+    // The plate's layers stop admitting the crate: it wakes, the cached contact stops in the
+    // next step and the crate falls to the floor. The other lane's sleeper stays asleep.
+    w.set_layers(plate, CollisionLayers3d::new(0b10, 0b10))
+        .unwrap();
+    assert_eq!(
+        w.body(plate).unwrap().layers,
+        CollisionLayers3d::new(0b10, 0b10)
+    );
+    assert!(!w.body(c).unwrap().is_sleeping(), "the crate wakes");
+    assert!(w.body(other).unwrap().is_sleeping());
+    let log = run(&mut w, 120);
+    assert_eq!(
+        events(&log),
+        [
+            ContactEvent::Stopped(plate, c),
+            ContactEvent::Started(floor, c)
+        ],
+        "{log:?}"
+    );
+    assert_eq!(log[0].0, 0, "it stops in the next step: {log:?}");
+    assert!(w.body(other).unwrap().is_sleeping());
+    // Admitted again while the sleeping crate touches it, the plate wakes it.
+    assert!(w.body(c).unwrap().is_sleeping());
+    w.set_layers(plate, CollisionLayers3d::ALL).unwrap();
+    assert!(!w.body(c).unwrap().is_sleeping(), "the crate wakes");
+    let log = run(&mut w, 10);
+    assert!(
+        log.contains(&(0, ContactEvent::Started(plate, c))),
+        "{log:?}"
+    );
+    // A removed body has no layers to change.
+    w.remove_body(other).unwrap();
+    assert_eq!(
+        w.set_layers(other, CollisionLayers3d::ALL),
+        Err(Error::MissingBody(other))
+    );
+}
