@@ -761,6 +761,7 @@ impl World {
                     });
                     if replace {
                         upcoming[slot] = candidate;
+                        imminent_witnesses[slot] = None;
                     }
                     replace
                 } else {
