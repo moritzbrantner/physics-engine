@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Focused native acceptance for physics-engine#180 using Greyhaven's authored rock proxy.
-# Usage: bash scripts/greyhaven-rock-hulls.sh [--perf|--stats]
+# Usage: bash scripts/greyhaven-rock-hulls.sh [--perf|--stats|--wasm]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,8 +19,11 @@ case "${1:-}" in
   --stats)
     PHYSICS_ROCK_WORK=1 cargo run --release --locked -p physics-oracle -- --only greyhaven-rock-hulls --no-timing
     ;;
+  --wasm)
+    node scripts/oracle-wasm.mjs --only greyhaven-rock-hulls
+    ;;
   *)
-    echo "usage: $0 [--perf|--stats]" >&2
+    echo "usage: $0 [--perf|--stats|--wasm]" >&2
     exit 2
     ;;
 esac

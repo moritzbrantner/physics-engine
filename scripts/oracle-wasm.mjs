@@ -13,10 +13,20 @@ const build = (features) => {
     { stdio: "inherit" });
 };
 
-await mkdir("target/size", { recursive: true });
-for (const side of ["engine", "rapier"]) {
-  build(side);
-  await copyFile(target, `target/size/${side}.wasm`);
+const onlyIndex = process.argv.indexOf("--only");
+const only = onlyIndex < 0 ? null : process.argv[onlyIndex + 1];
+if (onlyIndex >= 0 && (!only || only.startsWith("--") || process.argv.includes("--size-only"))) {
+  throw new Error("usage: node scripts/oracle-wasm.mjs [--size-only | --only SCENARIO]");
+}
+
+// The focused mode is only a correctness/performance comparison; size budget
+// tooling needs both standalone WASM builds and always runs the full suite.
+if (only === null) {
+  await mkdir("target/size", { recursive: true });
+  for (const side of ["engine", "rapier"]) {
+    build(side);
+    await copyFile(target, `target/size/${side}.wasm`);
+  }
 }
 if (process.argv.includes("--size-only")) process.exit(0);
 build("engine,rapier");
@@ -29,8 +39,11 @@ const median = (v) => v.sort((a, b) => a - b)[v.length >> 1];
 // Fail when the engine's WASM median is more than 10% slower than either Rapier figure.
 const MARGIN = 1.1;
 let failed = false;
+let selected = 0;
 console.log("scenario             engine µs/tick indexed µs/tick rapier µs/tick   ratio  rapier raw  invariants");
 for (let i = 0; i < e.oracle_scenarios(); i++) {
+  if (only !== null && name(i) !== only) continue;
+  selected++;
   const ok = e.oracle_check(i) === 0;
   failed ||= !ok;
   const hasRaw = e.oracle_has_raw(i) === 1;
@@ -47,4 +60,5 @@ for (let i = 0; i < e.oracle_scenarios(); i++) {
   failed ||= slow;
   console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${px.toFixed(2).padStart(15)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)} ${(raw === null ? "-" : raw.toFixed(2)).padStart(11)}  ${ok ? "ok" : "FAILED"}${slow ? " SLOWER THAN RAPIER" : ""}`);
 }
+if (only !== null && selected === 0) throw new Error(`unknown WASM oracle scenario: ${only}`);
 process.exit(failed ? 1 : 0);
