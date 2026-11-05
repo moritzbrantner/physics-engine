@@ -3,10 +3,12 @@
 A physics engine for the owner's games, built to match and beat [Rapier](https://rapier.rs) on the
 capabilities those games actually use.
 
-The games (ARPG, MMORPG, game-server) run on Rapier today. This repository records which Rapier
-functions they rely on, provides them through its own performance-oriented API, and checks every
-capability against Rapier: same scenario, behaviour invariants, and a CI gate that fails when
-Physics Engine is slower than Rapier. See [technical decisions](docs/technical-decisions.md).
+The owner has selected Physics Engine as MMORPG's default for supported zones, while Rapier
+remains the fallback for missing capabilities and the behavioural oracle. ARPG continues to use
+Rapier until separately migrated. This repository implements physics capabilities on demand,
+using the games' actual requirements and comparisons against Rapier (scenario invariants and
+performance gates). See [technical decisions](docs/technical-decisions.md); the MMORPG switch is
+tracked in its own repository rather than inferred from this policy.
 
 ## Shape of the engine
 

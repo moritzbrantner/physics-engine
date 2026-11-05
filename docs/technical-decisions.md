@@ -1,16 +1,22 @@
 # Technical decisions
 
-Current direction, owner-approved 2026-10-18. This page replaces the former TECH-001…TECH-013
+Current direction, owner-approved 2026-10-18 and refined 2026-11-05. This page replaces the former TECH-001…TECH-013
 register; superseded entries are intentionally not kept. Source code and tests prove what is
 implemented; GitHub issues track remaining work.
 
-## D1 — Games use Rapier; Rapier is the oracle and the performance baseline
+## D1 — Physics Engine first for MMORPG; Rapier fallback and oracle
 
-The owner's games (ARPG, MMORPG, game-server) use [Rapier](https://rapier.rs) as their physics
-(ARPG: `arpg/docs/decisions/atlas.md` 2.3.1/2.3.2). Physics Engine's job is to learn which Rapier
-functions and capabilities those projects actually use and to provide them at least as fast as
-Rapier, natively and in WASM. Rapier is the behavioural reference and the speed to beat; there is
-no other reference build.
+The owner chose Physics Engine as the default backend for MMORPG wherever its authored collision
+and gameplay requirements are supported (2026-11-05). A zone with unsupported geometry or a
+missing physics capability stays on [Rapier](https://rapier.rs) until a consumer-driven parity
+implementation lands. Do not approximate away a cave surface, convex rock proxy or gameplay
+collision just to claim adoption. The ARPG retains its Rapier integration (ARPG Atlas 2.3.1/2.3.2);
+this decision alone does not migrate other consumers.
+
+Rapier remains the independent behavioural reference and speed baseline, natively and in WASM;
+there is no second reference build. Add missing Physics Engine functionality ad hoc in response
+to real game requirements, with an oracle scenario, rather than building a speculative full
+Rapier clone. Backend selection and game rules remain consumer-owned.
 
 ## D2 — Our own API, shaped by consumer usage
 
@@ -30,8 +36,8 @@ A consumer switching from Rapier needs a thin adapter; switching back must stay 
 
 `approximate::World` with `f32` physical state is the only world. The translational integer/Q32.32
 `World` and `RotatingWorld3d` are removed together with their docs, tests, examples, experiments and
-performance evidence; there are no shims or deprecation windows. Existing consumers stay on their
-current git pin until they move to Rapier. The former f64 reference build and its feature split are
+performance evidence; there are no shims or deprecation windows. Existing consumers keep their
+declared git pins until deliberately updated. The former f64 reference build and its feature split are
 dropped; Rapier is the independent reference (D1).
 
 ## D3a — Two body storage modes, identical results
@@ -73,8 +79,8 @@ declared `logarithmic` in bodies, not held by budgets. Changing a declared class
 
 ## D5 — Which work is eligible
 
-Only issues that reach Rapier parity for a capability one of the owner's projects actually uses are
-worked on. Consumer priority is MMORPG, then ARPG. The ARPG lessons #289–#297 are eligible; #297
+Implement gaps as they become necessary for actual consumer physics, using Rapier to define the
+expected behaviour before implementation. Consumer priority is MMORPG, then ARPG. The ARPG lessons #289–#297 are eligible; #297
 (ARPG's Rapier cost: about 18 µs native / 27 µs WASM per tick, 2.68 MB WASM) is the target. Other
 issues stay open but parked. The capability inventory lives in
 [consumer capabilities](consumer-capabilities.md).
