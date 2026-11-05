@@ -422,3 +422,42 @@ and is not stored (#452).
 
 `examples/floating_world.rs` is the minimal compiling example; `cargo build --examples --locked`
 builds it.
+
+
+## Authored static triangle meshes (#182)
+
+`World::add_triangle_mesh(TriangleMeshDesc { position, vertices, triangles, material }, key)`
+admits an immutable fixed chunk. Vertices are local to the authored position; the returned body
+is centred on its geometry bounds, as fixed primitives are. Finite, nondegenerate triangles and
+valid indices are required; invalid admission is atomic. Surfaces are two-sided, including
+arbitrary winding, and open boundaries remain open. A mesh is a set of surfaces, not a filled
+bounding box. Triangles retain their input indices across preparation and storage modes.
+
+Each chunk retains a local BVH prepared by `rust-kernels`. `triangle_mesh_stats(body)` reports
+prepared triangle/node counts and retained geometry bytes (excluding allocator overhead and the
+world body tree). Query stats report mesh nodes and triangles actually visited; immutable
+preparation is never repeated by a query. World clones share prepared geometry. Moving a fixed
+mesh with `set_static_position` changes only its body pose; geometry mutation uses remove and
+re-admit. Removing a chunk releases its geometry in that world, invalidates its body ID, and
+preserves other chunks' preparations. Cached supported rigid contacts wake their affected bodies.
+
+Supported query shapes are spheres/capsules for overlaps and fixed-orientation translation
+casts, plus box/wedge overlaps. Finite rays expose `RayFeature::TriangleMeshTriangle`; shape
+queries expose the same input triangle through `QueryHit::feature`. Query normals point toward
+the query side, including underside/ceiling contacts. Characters use these queries through the
+existing movement, grounding, slope and snapping rules; no mesh-specific character solver exists.
+
+Rigid sphere contacts and translational sphere CCD use the existing response/event scheduler,
+including the remaining interval after impact. Other dynamic rigid shapes meeting a mesh return
+`InvalidGeometryInput` atomically rather than passing through; external capsule characters remain
+supported through `move_characters`. Dynamic meshes, rotational mesh/shape CCD and mesh×mesh
+response are unsupported. Generic `add_body` cannot forge a mesh geometry slot.
+
+The shared `redbrand-cave` Rapier oracle uses the actual authored PR #640 fixture (centimetres
+converted to metres). It checks entrance/floor seams, a lower passage beneath the upper shelf,
+the ramp to the shelf, ceiling-limited jumping, grounding, rays and capsule casts on native/WASM.
+Character edge nudges accumulate differently between KCC implementations, so this follows the
+existing slopes/terrain oracle's physical-clearance and completed-route checks rather than
+requiring identical whole trajectories. Single-move mesh probes, static query fractions/normals
+and deterministic storage/replay checks remain precise. MMORPG backend selection and in-game
+acceptance belong to the consumer repository and are not changed here.

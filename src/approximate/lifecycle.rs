@@ -8,7 +8,10 @@ impl World {
     /// Adds a body and returns its new id. `body.key`, when set, must be unique among live
     /// bodies; `body.id` is ignored.
     pub fn add_body(&mut self, body: Body) -> Result<BodyId, Error> {
-        if matches!(body.shape, Shape::Heightfield { .. }) {
+        if matches!(
+            body.shape,
+            Shape::Heightfield { .. } | Shape::TriangleMesh { .. }
+        ) {
             return Err(Error::InvalidInput);
         }
         self.insert_body(body)
@@ -142,7 +145,19 @@ impl World {
                 && b.id != body.id
                 && b.sleeping
                 && b.layers.collides_with(body.layers)
-                && contact::current(b, body, margin).is_some()
+                && if let Shape::TriangleMesh { mesh, .. } = body.shape {
+                    super::triangle_mesh::manifold(
+                        self.triangle_mesh(mesh),
+                        body,
+                        b,
+                        margin,
+                        None,
+                        &mut super::GeometryStats::default(),
+                    )
+                    .map_or(true, |m| m.is_some())
+                } else {
+                    contact::current(b, body, margin).is_some()
+                }
         };
         let mut wake = Vec::new();
         if self.query_tree.current(self.bookkeeping.generation) {
@@ -221,6 +236,9 @@ impl World {
         let i = self.index(id).ok()?;
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies[i].clone();
+        if let Shape::TriangleMesh { mesh, .. } = removed.shape {
+            self.triangle_meshes[mesh.0 as usize] = None;
+        }
         self.bodies[i].id = BodyId::NONE;
         self.tombstones += 1;
         if self.scene.body_storage == BodyStorage::Indexed {
