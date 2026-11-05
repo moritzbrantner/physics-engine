@@ -49,10 +49,9 @@ run_timing() {
   (
     cd "$tree"
     # Keep each revision's compiled test binary distinct across Cargo worktrees.
-    export CARGO_TARGET_DIR="$repo_root/target/ccd-shape-dispatch-ab/build-$label"
-    cargo test --release --locked --test ccd_dense_scaling \
+    CARGO_TARGET_DIR="$repo_root/target/ccd-shape-dispatch-ab/build-$label" cargo test --release --locked --test ccd_dense_scaling \
       print_dense_first_tick_timings -- --ignored --nocapture
-    cargo test --release --locked --test ccd_scheduler_scaling \
+    CARGO_TARGET_DIR="$repo_root/target/ccd-shape-dispatch-ab/build-$label" cargo test --release --locked --test ccd_scheduler_scaling \
       -- --ignored --nocapture
   ) 2>&1 | tee "$log_dir/$round-$label.log"
 }
@@ -67,8 +66,7 @@ for label in baseline candidate; do
   if [[ "$label" == baseline ]]; then tree="$baseline_tree"; else tree="$candidate_tree"; fi
   (
     cd "$tree"
-    export CARGO_TARGET_DIR="$repo_root/target/ccd-shape-dispatch-ab/build-$label"
-    cargo test --release --locked --features work-counters --test ccd_dense_scaling \
+    CARGO_TARGET_DIR="$repo_root/target/ccd-shape-dispatch-ab/build-$label" cargo test --release --locked --features work-counters --test ccd_dense_scaling \
       print_dense_first_tick_timings -- --ignored --nocapture
   ) 2>&1 | tee "$log_dir/5-$label-work.log"
 done
