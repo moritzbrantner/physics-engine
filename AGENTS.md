@@ -2,7 +2,7 @@
 
 ## Authority
 
-The current direction is in [technical decisions](docs/technical-decisions.md): games use Rapier, Rapier is the behavioural oracle and performance baseline, and Physics Engine provides the Rapier capabilities its consumers actually use through its own performance-oriented API on one f32 `approximate::World`. Only Rapier-parity work for a capability listed in [consumer capabilities](docs/consumer-capabilities.md) is eligible; other issues stay open but parked.
+The current direction is in [technical decisions](docs/technical-decisions.md): MMORPG chooses Physics Engine as its default for supported content, with Rapier as its compatibility fallback; ARPG keeps its existing Rapier integration. Rapier remains the independent behavioural oracle and performance baseline. Implement missing capabilities ad hoc for actual consumer needs through one performance-oriented f32 `approximate::World`; park work not backed by a concrete consumer scenario. Keep the games' backend selection and gameplay outcomes in their own repositories.
 
 Domain-neutral geometry and algorithm kernels belong in `rust-kernels`; Physics Engine consumes them and owns body/world state, contact persistence, CCD admission, wake/sleep policy, response and character movement. Keep ECS, rendering, game-loop, scene, editor and UI concepts outside the engine.
 
