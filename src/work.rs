@@ -36,9 +36,13 @@ pub enum Counter {
     /// Joint records visited: one per joint per substep for its row and wake test, and by
     /// `remove_body` while the world has joints (#453).
     JointRows,
+    /// CCD events inserted into the shared-clock priority queue, including replacements.
+    CcdHeapPushes,
+    /// Superseded CCD queue entries discarded when popped.
+    CcdHeapStalePops,
 }
 
-const COUNTERS: usize = 12;
+const COUNTERS: usize = 14;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {
