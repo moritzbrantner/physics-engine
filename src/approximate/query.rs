@@ -131,6 +131,8 @@ pub struct QueryStats {
     pub hull_segment_plane_tests: u64,
     pub hull_segment_triangles_considered: u64,
     pub hull_segment_triangles_pruned: u64,
+    pub hull_segment_edges_considered: u64,
+    pub hull_segment_edges_pruned: u64,
     pub hull_distance_queries: u64,
     pub hull_gjk_iterations: u64,
     pub hull_gjk_intersection_iterations: u64,
@@ -545,6 +547,8 @@ impl World {
                 stats.hull_segment_plane_tests += hull_work.segment_plane_tests;
                 stats.hull_segment_triangles_considered += hull_work.segment_triangles_considered;
                 stats.hull_segment_triangles_pruned += hull_work.segment_triangles_pruned;
+                stats.hull_segment_edges_considered += hull_work.segment_edges_considered;
+                stats.hull_segment_edges_pruned += hull_work.segment_edges_pruned;
                 stats.hull_distance_queries += hull_work.distance_queries;
                 stats.hull_gjk_iterations += hull_work.gjk_iterations;
                 stats.hull_gjk_intersection_iterations += hull_work.gjk_intersection_iterations;

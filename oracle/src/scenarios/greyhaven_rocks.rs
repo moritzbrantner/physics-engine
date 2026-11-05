@@ -116,7 +116,7 @@ mod engine {
     pub struct Sim {
         world: World,
         diagnose: bool,
-        work: [u64; 12],
+        work: [u64; 14],
     }
     impl Sim {
         pub fn new(storage: BodyStorage) -> Self {
@@ -142,7 +142,7 @@ mod engine {
             Self {
                 world,
                 diagnose: std::env::var_os("PHYSICS_ROCK_WORK").is_some(),
-                work: [0; 12],
+                work: [0; 14],
             }
         }
     }
@@ -177,6 +177,8 @@ mod engine {
                         self.work[9] += stats.hull_segment_plane_tests;
                         self.work[10] += stats.hull_segment_triangles_considered;
                         self.work[11] += stats.hull_segment_triangles_pruned;
+                        self.work[12] += stats.hull_segment_edges_considered;
+                        self.work[13] += stats.hull_segment_edges_pruned;
                     }
                     trace
                         .0
@@ -193,13 +195,15 @@ mod engine {
             }
             if self.diagnose && tick + 1 == TICKS {
                 eprintln!(
-                    "greyhaven-rock-work casts={} face_hits={} segment_queries={} segment_planes={} triangles={} pruned={} gjk_calls={} gjk_iterations={} intersection_iterations={} gjk_limits={} epa_iterations={} face_planes={}",
+                    "greyhaven-rock-work casts={} face_hits={} segment_queries={} segment_planes={} triangles={} pruned={} edges={} edges_pruned={} gjk_calls={} gjk_iterations={} intersection_iterations={} gjk_limits={} epa_iterations={} face_planes={}",
                     self.work[0],
                     self.work[1],
                     self.work[8],
                     self.work[9],
                     self.work[10],
                     self.work[11],
+                    self.work[12],
+                    self.work[13],
                     self.work[2],
                     self.work[3],
                     self.work[6],

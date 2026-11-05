@@ -8,10 +8,7 @@ use physics_engine::approximate::{
 fn separated_rock_segment_distance_matches_independent_box_reference() {
     use geometry_kernels::{
         hull::{Hull3, QuickHullWork, quickhull3},
-        segment_hull::{
-            SegmentHullWork, separated_segment_hull_closest,
-            separated_segment_hull_closest_with_work,
-        },
+        segment_hull::{PreparedSegmentHull, SegmentHullWork},
     };
 
     let corners: Vec<[f64; 3]> = [-1.0, 1.0]
@@ -24,6 +21,7 @@ fn separated_rock_segment_distance_matches_independent_box_reference() {
         .collect();
     let mut hull = Hull3::default();
     quickhull3(&corners, &mut QuickHullWork::default(), &mut hull);
+    let hull = PreparedSegmentHull::new(hull).unwrap();
 
     // The minimum point-to-AABB squared distance along a segment is convex.
     // Ternary search here is an independent oracle for the triangle/edge kernel.
@@ -63,7 +61,7 @@ fn separated_rock_segment_distance_matches_independent_box_reference() {
         let p = [next(), next(), next()];
         let q = [next(), next(), next()];
         let expected = box_distance(p, q);
-        let actual = separated_segment_hull_closest(p, q, &hull);
+        let actual = hull.closest(p, q);
         if expected > 1e-6 {
             separated += 1;
             let actual = actual.expect("unambiguously separated segment");
@@ -82,19 +80,17 @@ fn separated_rock_segment_distance_matches_independent_box_reference() {
     assert!(separated > 150 && intersecting > 20);
 
     let mut work = SegmentHullWork::default();
-    let _ = separated_segment_hull_closest_with_work(
-        [2.0, 2.0, 0.0],
-        [2.0, 2.0, 0.8],
-        &hull,
-        &mut work,
-    )
-    .unwrap();
+    let _ = hull
+        .closest_with_work([2.0, 2.0, 0.0], [2.0, 2.0, 0.8], &mut work)
+        .unwrap();
     assert!(
         work.triangles_pruned > 0,
         "expected geometry pruning: {work:?}"
     );
+    assert!(work.edges_pruned > 0, "expected edge pruning: {work:?}");
 
-    let diagonal = separated_segment_hull_closest([2.2, 0.0, 0.0], [0.0, 2.2, 0.0], &hull)
+    let diagonal = hull
+        .closest([2.2, 0.0, 0.0], [0.0, 2.2, 0.0])
         .expect("diagonal segment misses the cube corner");
     assert!((diagonal.distance - 0.2 / 2.0_f64.sqrt()).abs() < 1e-12);
     assert_eq!(diagonal.point_hull, [1.0, 1.0, 0.0]);

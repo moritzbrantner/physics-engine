@@ -10,7 +10,7 @@ use geometry_kernels::{
     gjk_distance::{GjkDistanceConfig, GjkDistanceStatus, gjk_distance_with_config},
     hull::{Hull3, HullDimension, QuickHullWork, quickhull3},
     math3::{Vec3, cross, dot, length, scale, sub},
-    segment_hull::{SegmentHullWork, separated_segment_hull_closest_with_work},
+    segment_hull::{PreparedSegmentHull, SegmentHullWork},
     support::{ConvexHull3, SupportMap3},
 };
 
@@ -36,7 +36,7 @@ struct Plane {
 
 #[derive(Debug)]
 pub(super) struct PreparedHull {
-    hull: Hull3,
+    hull: PreparedSegmentHull,
     planes: Vec<Plane>,
 }
 
@@ -71,6 +71,8 @@ pub(super) struct HullWork {
     pub segment_plane_tests: u64,
     pub segment_triangles_considered: u64,
     pub segment_triangles_pruned: u64,
+    pub segment_edges_considered: u64,
+    pub segment_edges_pruned: u64,
     pub distance_queries: u64,
     pub gjk_iterations: u64,
     pub gjk_intersection_iterations: u64,
@@ -163,6 +165,7 @@ pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
             face: face as u32,
         });
     }
+    let hull = PreparedSegmentHull::new(hull).ok_or(Error::InvalidInput)?;
     Ok((PreparedHull { hull, planes }, half))
 }
 
@@ -251,7 +254,13 @@ impl PreparedHull {
 
     #[cfg(feature = "checkpoints")]
     pub(super) fn checkpoint_vertices(&self) -> Vec<V> {
-        self.hull.vertices.iter().copied().map(to_real).collect()
+        self.hull
+            .hull()
+            .vertices
+            .iter()
+            .copied()
+            .map(to_real)
+            .collect()
     }
 }
 
@@ -308,16 +317,15 @@ impl PreparedHull {
             radius: r,
         };
         let mut segment_work = SegmentHullWork::default();
-        let segment_closest = separated_segment_hull_closest_with_work(
-            query.p,
-            query.q,
-            &self.hull,
-            &mut segment_work,
-        );
+        let segment_closest = self
+            .hull
+            .closest_with_work(query.p, query.q, &mut segment_work);
         work.segment_queries += 1;
         work.segment_plane_tests += segment_work.separating_plane_tests;
         work.segment_triangles_considered += segment_work.triangles_considered;
         work.segment_triangles_pruned += segment_work.triangles_pruned;
+        work.segment_edges_considered += segment_work.edges_considered;
+        work.segment_edges_pruned += segment_work.edges_pruned;
         if let Some(closest) = segment_closest
             && closest.distance > 1e-9
         {
@@ -334,7 +342,7 @@ impl PreparedHull {
                 point_hull: to_real(std::array::from_fn(|i| closest.point_hull[i] + origin[i])),
             });
         }
-        let hull = ConvexHull3::new(&self.hull.vertices);
+        let hull = ConvexHull3::new(&self.hull.hull().vertices);
         // The public world/query coordinates are f32. The generic kernel defaults to
         // 1e-12 f64 tolerances and can spend dozens of no-progress iterations on an
         // f32-quantized capsule position. The oracle below keeps this query tolerance
