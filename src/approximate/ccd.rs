@@ -592,6 +592,15 @@ impl World {
                     targets: None,
                     moving: Some(&moving),
                 };
+                // Rebase an imminent cached pair to the current shared clock:
+                // near-simultaneous f32 TOIs can change by a few ULPs. Check
+                // only its previous partner and the changed bodies first,
+                // preserving the sparse source/target work contract.
+                let near_time = elapsed + 8.0 * Real::EPSILON * (1.0 + elapsed);
+                let imminent = mark == 1
+                    && upcoming[slot]
+                        .as_ref()
+                        .is_some_and(|candidate| candidate.absolute <= near_time);
                 let rescheduled = if mark == 2
                     || upcoming[slot]
                         .as_ref()
@@ -604,6 +613,48 @@ impl World {
                         options,
                         report,
                     )?;
+                    true
+                } else if let Some(old_other) = upcoming[slot]
+                    .as_ref()
+                    .filter(|_| imminent)
+                    .map(|event| event.other)
+                {
+                    let mut targets = [old_other; 3];
+                    let mut len = 1;
+                    for &j in changed {
+                        if !targets[..len].contains(&j) {
+                            targets[len] = j;
+                            len += 1;
+                        }
+                    }
+                    let candidate = self.next_scheduled_hit(
+                        source,
+                        TickTime { elapsed, h },
+                        &excluded,
+                        SearchOptions {
+                            targets: Some(&targets[..len]),
+                            ..options
+                        },
+                        report,
+                    )?;
+                    // Unchanged trajectories keep their previously certified
+                    // contact. A later f32 clock may round a thin hit away, so
+                    // never discard that event merely because the resweep
+                    // didn't find it again. Rebase only an observed partner.
+                    let previous = upcoming[slot].take();
+                    upcoming[slot] = match (previous, candidate) {
+                        (Some(old), Some(new))
+                            if new.other == old.other
+                                || new.absolute < old.absolute
+                                || (new.absolute == old.absolute
+                                    && self.bodies[new.other].order
+                                        < self.bodies[old.other].order) =>
+                        {
+                            Some(new)
+                        }
+                        (Some(old), _) => Some(old),
+                        (None, candidate) => candidate,
+                    };
                     true
                 } else if !changed.is_empty() {
                     // A changed partner may now be the earliest hit even if the source's
