@@ -301,7 +301,18 @@ fn metrics(input: &[Initial], states: &[State]) -> Metrics {
 #[test]
 fn budget_frozen_dense_contacts_do_not_deeply_interpenetrate() {
     const MAX_OVERLAP: f64 = 0.01;
-    for (count, iterations) in [(15, 4), (23, 8), (38, 16), (64, 16)] {
+    for (count, iterations) in [
+        (15, 4),
+        (16, 4),
+        (20, 4),
+        (22, 6),
+        (23, 7),
+        (22, 8),
+        (23, 8),
+        (32, 8),
+        (38, 16),
+        (64, 16),
+    ] {
         let input = radial_convergence(count);
         let ordered = engine(&input, iterations, BodyStorage::Ordered);
         let indexed = engine(&input, iterations, BodyStorage::Indexed);

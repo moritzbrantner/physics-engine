@@ -38,6 +38,14 @@ fn union((lo, hi): (Vector, Vector), (bl, bh): (Vector, Vector)) -> (Vector, Vec
     )
 }
 
+fn ccd_contact_velocity(body: &Body, arm: Vector, frozen: bool) -> Vector {
+    if frozen {
+        Vector::ZERO
+    } else {
+        contact_velocity(body, arm, true)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct TickTime {
     elapsed: Real,
@@ -351,7 +359,14 @@ impl World {
             let step = time * remaining;
             position += self.bodies[i].velocity * (step * h);
             elapsed += step;
-            if !self.respond_ccd_impact(i, j, &m, first, TickTime { elapsed, h }, report) {
+            if !self.respond_ccd_impact(
+                (i, j),
+                &m,
+                first,
+                [false, false],
+                TickTime { elapsed, h },
+                report,
+            ) {
                 // Touching while separating is not an impact and does not use the budget;
                 // do not re-test this partner.
                 push(&mut excluded, j, &mut self.bookkeeping.work);
@@ -460,11 +475,19 @@ impl World {
                 (self.bodies[j].velocity, self.bodies[j].angular_velocity),
             ];
             let wakes = report.woken_bodies;
+            let frozen_at_impact = if frozen.is_empty() {
+                [false, false]
+            } else {
+                [
+                    queued.binary_search(&i).is_ok_and(|k| is_frozen[k]),
+                    queued.binary_search(&j).is_ok_and(|k| is_frozen[k]),
+                ]
+            };
             let closing = self.respond_ccd_impact(
-                i,
-                j,
+                (i, j),
                 &event.manifold,
                 event.first,
+                frozen_at_impact,
                 TickTime { elapsed, h },
                 report,
             );
@@ -490,6 +513,19 @@ impl World {
                             report.geometry.ccd_budget_fallbacks += 1;
                         }
                     }
+                }
+                if !frozen.is_empty() {
+                    self.stop_into_frozen_partner(
+                        (i, j),
+                        &event.manifold,
+                        event.first,
+                        [
+                            queued.binary_search(&i).is_ok_and(|k| is_frozen[k]),
+                            queued.binary_search(&j).is_ok_and(|k| is_frozen[k]),
+                        ],
+                        TickTime { elapsed, h },
+                        report,
+                    );
                 }
             }
             // Detect both changed velocities and newly frozen bodies. Static walls do not
@@ -866,14 +902,63 @@ impl World {
         Ok(best)
     }
 
-    /// Apply exactly one admitted impact at its TOI, retaining piecewise linear trajectories
-    /// for both participants. Returns false for non-closing touches (which do not use a pass).
-    fn respond_ccd_impact(
+    /// A body reaching its CCD pass limit is fixed at this TOI for the remainder of the tick.
+    /// The two-body impulse that led to exhaustion can still leave its partner approaching the
+    /// now-fixed contact. Remove only that closing normal velocity. Without this correction the
+    /// just-handled pair is excluded from the scheduler and can interpenetrate by tick end.
+    /// This is a budget fallback, not another restitution event (#483).
+    fn stop_into_frozen_partner(
         &mut self,
-        i: usize,
-        j: usize,
+        (i, j): (usize, usize),
         m: &contact::Manifold,
         first: bool,
+        frozen: [bool; 2],
+        clock: TickTime,
+        report: &mut Report,
+    ) {
+        let (mobile, outward, first_arm) = match frozen {
+            [false, true] => (i, if first { -m.normal } else { m.normal }, true),
+            [true, false] => (j, if first { m.normal } else { -m.normal }, false),
+            _ => return,
+        };
+        let mut arm = Vector::ZERO;
+        for point in &m.points {
+            arm += match (first, first_arm) {
+                (true, true) | (false, false) => point.ra,
+                _ => point.rb,
+            };
+        }
+        arm = arm * (1.0 / m.points.len().max(1) as Real);
+        let approach = contact_velocity(&self.bodies[mobile], arm, true).dot(outward);
+        if approach >= 0.0 {
+            return;
+        }
+        let response = self.responses[mobile];
+        let angular = response.inertia(arm.cross(outward), report);
+        let k = response.inverse_mass + angular.cross(arm).dot(outward);
+        if k <= 1e-14 {
+            return;
+        }
+        let impulse = outward * (-approach / k);
+        self.transaction.body(mobile, &self.bodies[mobile]);
+        let body = &mut self.bodies[mobile];
+        let old_velocity = body.velocity;
+        body.velocity += impulse * response.inverse_mass;
+        body.angular_velocity += response.inertia(arm.cross(impulse), report);
+        self.bookkeeping.ccd_offsets[mobile] -=
+            (body.velocity - old_velocity) * (clock.elapsed * clock.h);
+    }
+
+    /// Apply exactly one admitted impact at its TOI, retaining piecewise linear trajectories
+    /// for both participants. A budget-frozen target is stationary, including in the impulse
+    /// calculation; retaining its pre-freeze velocity would misclassify genuine incoming hits
+    /// as separating touches. Returns false for non-closing touches (which do not use a pass).
+    fn respond_ccd_impact(
+        &mut self,
+        (i, j): (usize, usize),
+        m: &contact::Manifold,
+        first: bool,
+        frozen: [bool; 2],
         clock: TickTime,
         report: &mut Report,
     ) -> bool {
@@ -889,8 +974,8 @@ impl World {
         } else {
             (-m.normal, rb, ra)
         };
-        let closing = (contact_velocity(&self.bodies[j], r_other, true)
-            - contact_velocity(&self.bodies[i], r_self, true))
+        let closing = (ccd_contact_velocity(&self.bodies[j], r_other, frozen[1])
+            - ccd_contact_velocity(&self.bodies[i], r_self, frozen[0]))
         .dot(n);
         if closing >= 0.0 {
             return false;
@@ -904,14 +989,15 @@ impl World {
         }
         let body = &self.bodies[i];
         let partner = &self.bodies[j];
-        let relative =
-            contact_velocity(partner, r_other, true) - contact_velocity(body, r_self, true);
+        let relative = ccd_contact_velocity(partner, r_other, frozen[1])
+            - ccd_contact_velocity(body, r_self, frozen[0]);
         let approach = relative.dot(n).min(0.0);
         self.transaction.body(i, body);
         self.transaction.body(j, partner);
         let pair = [(body, &self.responses[i]), (partner, &self.responses[j])];
         let arms = [r_self, r_other];
-        let k = effective_mass(pair, arms, n, [true, true], true, report);
+        let response = [!frozen[0], !frozen[1]];
+        let k = effective_mass(pair, arms, n, response, true, report);
         if k > 1e-14 {
             let restitution = if approach < -self.restitution_speed {
                 super::pair_restitution(body, partner)
@@ -924,13 +1010,19 @@ impl World {
             let mu = super::pair_friction(body, partner);
             if mu > 0.0 && tangential.length() > 0.0 {
                 let t = tangential.unit();
-                let kt = effective_mass(pair, arms, t, [true, true], true, report);
+                let kt = effective_mass(pair, arms, t, response, true, report);
                 if kt > 1e-14 {
                     impulse -= t * (tangential.length() / kt).min(mu * normal);
                 }
             }
             let before = [self.bodies[i].velocity, self.bodies[j].velocity];
-            for (index, arm, impulse) in [(i, r_self, -impulse), (j, r_other, impulse)] {
+            for (index, arm, impulse, stopped) in [
+                (i, r_self, -impulse, frozen[0]),
+                (j, r_other, impulse, frozen[1]),
+            ] {
+                if stopped {
+                    continue;
+                }
                 let b = &mut self.bodies[index];
                 let prepared = self.responses[index];
                 b.velocity += impulse * prepared.inverse_mass;
