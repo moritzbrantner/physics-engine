@@ -173,6 +173,12 @@ fn converging_sweeps_produce_deterministic_real_impacts() {
         let ordered = sample(Case::Converging, count, BodyStorage::Ordered);
         let indexed = sample(Case::Converging, count, BodyStorage::Indexed);
         verify_converging(&ordered);
+        if count == 64 {
+            // A same-clock witness must not certify a partner merely because a
+            // multi-target search retained the prior event. The unguarded
+            // certificate admitted 270 impacts instead of #484's 268.
+            assert_eq!(ordered.impacts, 268, "imminent event order changed");
+        }
         assert_eq!(ordered, indexed, "storage divergence at n={count}");
     }
 }

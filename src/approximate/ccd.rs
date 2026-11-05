@@ -710,6 +710,12 @@ impl World {
                             report,
                         )?
                     };
+                    // A multi-target search reports only its earliest hit. A
+                    // retained old event does not prove its partner was still
+                    // the selected hit: another target may have won, or the
+                    // old pair may have been excluded or rounded past.
+                    let confirmed_partner =
+                        candidate.as_ref().is_some_and(|hit| hit.other == old_other);
                     // Unchanged trajectories keep their previously certified
                     // contact. A later f32 clock may round a thin hit away, so
                     // never discard that event merely because the resweep
@@ -730,7 +736,7 @@ impl World {
                     };
                     imminent_witnesses[slot] = upcoming[slot]
                         .as_ref()
-                        .filter(|event| event.other == old_other)
+                        .filter(|event| confirmed_partner && event.other == old_other)
                         .map(|_| ImminentWitness {
                             clock: elapsed,
                             other: old_other,
