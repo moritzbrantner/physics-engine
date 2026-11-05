@@ -135,10 +135,11 @@ coming from Rust.
 ## Consumer-integrated evidence (C15)
 
 The oracle scenarios above are engine-owned copies of the games' call patterns. #330 adds the
-games' **real** physics integrations on both backends: a non-default `physics-ab` feature in each
-game selects Rapier (production) or a thin physics-engine adapter behind the unchanged physics
-API, and a merge-blocking A/B test in each game's CI asserts shared invariants on both. Timing
-is a manual release example; production stays on Rapier.
+games' **real** physics integrations on both backends: an A/B diagnostic feature in each game
+compares Rapier and a thin physics-engine adapter behind its unchanged physics API, with shared
+invariants checked in CI. The measurements below predate the owner's 2026-11-05 decision to
+use Physics Engine first in MMORPG where content is supported. Actual backend rollout and
+fallback decisions belong to MMORPG; ARPG's production baseline remains Rapier.
 
 | Consumer | PR / engine rev | Workloads | Behaviour | Native per-tick physics, engine / Rapier (median) |
 | --- | --- | --- | --- | --- |
