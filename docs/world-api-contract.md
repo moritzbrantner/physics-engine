@@ -131,6 +131,34 @@ a fingerprint of each heightfield's description; `Checkpoint::restore` takes the
 again (#452). `add_body` rejects
 heightfield shapes.
 
+## Authored convex rocks (#180)
+
+`World::add_convex_hull(ConvexHullDesc { vertices, position, material }, key)` admits one
+immutable, nondegenerate **static** convex hull from its authored local vertices. The input can
+contain duplicates/interior vertices; the reusable `geometry-kernels::hull` QuickHull prepares a
+canonical outward-face representation once. The returned body has
+`Shape::ConvexHull { hull, half_extents }`: extents conservatively enclose every vertex even if
+the local proxy is asymmetric. The game owns the asset-to-scene fit and units (the Greyhaven rock
+proxies are fitted and quarter-turned by MMORPG). The engine owns contact queries, broad-phase
+admission and stable body/face identities. `add_body` cannot forge a hull id; remove and re-add
+releases/rebuilds the prepared geometry. No dynamic hull mass/inertia or hull×hull solver is added.
+
+In this first consumer slice, rays hit the **real convex faces** (with
+`RayFeature::ConvexHullFace`), and spheres/oriented capsules have overlap and translation-only
+shape casts. Sweeps first clip against a conservative capsule-expanded face envelope; exact
+face-interior impacts avoid iterative distance search, while edges, corners, and initial overlaps
+use the reusable f64 support-map distance/GJK/EPA kernels. Character movement, grounded
+state and line-of-sight queries use those paths. A swept or overlap query with an unsupported
+non-capsule/ball shape returns an explicit query error. Dynamic bodies do **not** yet receive
+rigid contact response against a static hull; the game must keep Rapier as fallback for zones
+that need that interaction. The oracle scenario `greyhaven-rock-hulls` uses the first real
+Greyhaven asset proxy, without box substitution; run `bash scripts/greyhaven-rock-hulls.sh`
+locally (`--perf` for the native release timing gate or `--stats` for exact work counters).
+
+The opt-in checkpoint format 8 stores canonical hull vertices in their original hull-slot order,
+including empty slots for removed hulls. Restore rebuilds the prepared hulls and verifies their
+body extents. Ordinary game saves continue to reconstruct collision from game content.
+
 ## Halfspaces
 
 `Shape::HalfSpace` is the solid side of the plane through the body position; the outward

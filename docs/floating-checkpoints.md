@@ -9,7 +9,9 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
-Format 7 (#452) checkpoints worlds with halfspaces, heightfield terrain and characters: see
+Format 8 (#180) also stores static convex hull geometry and its body references; the small
+prepared rock proxies are reconstructed on restore (unlike heightfield descriptions, these
+canonical vertices are embedded in the checkpoint). Format 7 (#452) checkpoints worlds with halfspaces, heightfield terrain and characters: see
 [terrain and character state](#terrain-and-character-state-452). Format 6 adds each body's linear and angular damping after its restitution. Format 5 adds the configuration's body storage mode (`Config::body_storage`); a checkpoint
 holds the live bodies in body order whatever the storage held between steps. Format 4 adds the
 configuration's length unit. Format 3 stores each body's handle, key (or creation serial), the slot generations and the
@@ -29,6 +31,7 @@ state and what the physics checkpoint continues:
 | Heightfield heights, grid, cell size, origin, removed cells | Game content | A SHA-256 fingerprint per live heightfield (its terrain index and the exact bits of the description's geometry). `restore` takes the descriptions again and rejects any other with `TerrainMismatch { index }` |
 | Heightfield body (id, key, material, layers) and its contacts | Physics | Inline body record (shape tag 4: terrain index, half extents); restore also checks the description yields the recorded centre and half extents |
 | Halfspaces | Physics | Inline body records (shape tag 5) and the halfspace test order (their creation order, which orders plane contacts in the solver) |
+| Convex rock hulls | Game content originally, physics continuation after admission | Canonical local hull vertices for each live slot; shape tag 6 stores slot id and conservative half extents. Removed hull slots have empty payloads so later ids remain stable. No dynamic hull solver state exists. |
 | Character settings (`CharacterSettings`) | Game configuration, but tiny | Inline, so a restored world needs no `add_character` |
 | Character's latest `exclude` | Physics continuation | Inline: a character pushed between its own moves still excludes that body. A game that registered its characters again after restore loses it, and the zone's push into an idler standing in the floor-excluded basin comes out differently (`re_registering_characters_after_restore_diverges`) |
 | Character known free of overlap | Physics continuation | One flag, restored at the new layout generation: the next move skips separation/depenetration exactly when the uninterrupted world would. No zone divergence was observed without it; it is kept so the next move's work path is the same |

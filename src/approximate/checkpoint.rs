@@ -5,9 +5,9 @@ use sha2::{Digest, Sha256};
 
 use super::{
     Body, BodyId, BodyStorage, CachedPoint, CharacterSettings, CombineRule, Config, Convergence,
-    ConvergenceScope, Embedded, HeightfieldDesc, Order, PositionCorrection, Quaternion, REAL_BITS,
-    Real, Scalar, Shape, TerrainId, Vector, World, character, contact, narrow_time, substep_length,
-    terrain, widen_time,
+    ConvergenceScope, ConvexHullId, Embedded, HeightfieldDesc, Order, PositionCorrection,
+    Quaternion, REAL_BITS, Real, Scalar, Shape, TerrainId, Vector, World, character, contact,
+    convex_hull, narrow_time, substep_length, terrain, widen_time,
 };
 use crate::CollisionLayers3d;
 
@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 7;
+const FORMAT: u32 = 8;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 11;
 const DIGEST_BYTES: usize = 32;
@@ -127,6 +127,9 @@ pub struct Checkpoint {
     /// Live heightfields in terrain order: terrain index and geometry fingerprint. Heights are
     /// consumer content: restore takes their descriptions and checks them against these.
     heightfields: Vec<(u32, [u8; 32])>,
+    /// Canonical hull vertices in original allocation-slot order. Unlike a heightfield, a
+    /// small authored rock proxy is inline in the opt-in checkpoint; zero vertices = removed.
+    hulls: Vec<Option<Vec<Vector>>>,
     /// Halfspace bodies in the order the step tests them (their creation order).
     halfspaces: Vec<BodyId>,
     /// Character registrations in slot order.
@@ -167,6 +170,11 @@ impl World {
             })
             .collect::<Vec<_>>();
         heightfields.sort_unstable_by_key(|h| h.0);
+        let hulls = self
+            .hulls
+            .iter()
+            .map(|slot| slot.as_ref().map(|prepared| prepared.checkpoint_vertices()))
+            .collect::<Vec<_>>();
         let characters = self
             .characters
             .entries(self.bookkeeping.generation)
@@ -182,6 +190,7 @@ impl World {
             &bodies,
             terrain_slots,
             &heightfields,
+            &hulls,
             &self.halfspaces,
             &characters,
         )?;
@@ -196,6 +205,7 @@ impl World {
             next_serial: self.next_serial,
             terrain_slots,
             heightfields,
+            hulls,
             halfspaces: self.halfspaces.clone(),
             characters,
         })
@@ -215,6 +225,11 @@ impl Checkpoint {
                     .map(|p| p.capacity() * size_of::<CachedPoint>())
                     .sum::<usize>()
                 + self.heightfields.capacity() * size_of::<(u32, [u8; 32])>()
+                + self
+                    .hulls
+                    .iter()
+                    .map(|h| h.as_ref().map_or(0, |v| v.capacity() * size_of::<Vector>()))
+                    .sum::<usize>()
                 + self.halfspaces.capacity() * size_of::<BodyId>()
                 + self.characters.capacity() * size_of::<SavedCharacter>(),
         }
@@ -273,8 +288,26 @@ impl Checkpoint {
             }
             terrains[slot as usize] = prepared;
         }
+        let mut hulls = Vec::with_capacity(self.hulls.len());
+        for (slot, vertices) in self.hulls.iter().enumerate() {
+            let prepared = if let Some(vertices) = vertices {
+                let (prepared, half) =
+                    convex_hull::prepare(vertices).map_err(|_| CheckpointError::InvalidData)?;
+                let body = self.bodies.iter().find(|b| {
+                    matches!(b.shape, Shape::ConvexHull { hull, .. } if hull.0 as usize == slot)
+                }).ok_or(CheckpointError::InvalidData)?;
+                if body.shape.half_extents() != half {
+                    return Err(CheckpointError::InvalidData);
+                }
+                Some(std::sync::Arc::new(prepared))
+            } else {
+                None
+            };
+            hulls.push(prepared);
+        }
         let mut world = World::new(self.config).expect("checkpoint configuration was validated");
         world.terrains = terrains;
+        world.hulls = hulls;
         world.halfspaces = self.halfspaces;
         world.elapsed = self.elapsed;
         world.last_h = self.last_h;
@@ -355,6 +388,14 @@ impl Checkpoint {
         for (index, fingerprint) in &self.heightfields {
             out.extend_from_slice(&index.to_le_bytes());
             out.extend_from_slice(fingerprint);
+        }
+        count(&mut out, self.hulls.len());
+        for hull in &self.hulls {
+            let vertices = hull.as_deref().unwrap_or_default();
+            count(&mut out, vertices.len());
+            for &v in vertices {
+                vector(&mut out, v);
+            }
         }
         count(&mut out, self.halfspaces.len());
         for id in &self.halfspaces {
@@ -478,6 +519,15 @@ impl Checkpoint {
         for _ in 0..heightfield_count {
             heightfields.push((reader.u32()?, reader.array()?));
         }
+        let hull_count = reader.count(limits.bodies, 4)?;
+        let mut hulls = Vec::with_capacity(hull_count);
+        for _ in 0..hull_count {
+            let count = reader.count(65_536, 3 * REAL_BYTES)?;
+            let vertices = (0..count)
+                .map(|_| reader.vector())
+                .collect::<Result<Vec<_>, _>>()?;
+            hulls.push((count != 0).then_some(vertices));
+        }
         let halfspace_count = reader.count(limits.bodies, 8)?;
         let mut halfspaces = Vec::with_capacity(halfspace_count);
         for _ in 0..halfspace_count {
@@ -496,6 +546,7 @@ impl Checkpoint {
             &bodies,
             terrain_slots,
             &heightfields,
+            &hulls,
             &halfspaces,
             &characters,
         )?;
@@ -518,6 +569,7 @@ impl Checkpoint {
             next_serial,
             terrain_slots,
             heightfields,
+            hulls,
             halfspaces,
             characters,
         })
@@ -559,6 +611,7 @@ fn validate_parts(
     bodies: &[Body],
     terrain_slots: u32,
     heightfields: &[(u32, [u8; 32])],
+    hulls: &[Option<Vec<Vector>>],
     halfspaces: &[BodyId],
     characters: &[SavedCharacter],
 ) -> Result<(), CheckpointError> {
@@ -581,6 +634,22 @@ fn validate_parts(
     if heightfields.windows(2).any(|w| w[0].0 >= w[1].0)
         || heightfields.last().is_some_and(|h| h.0 >= terrain_slots)
         || !terrain.iter().eq(heightfields.iter().map(|h| &h.0))
+    {
+        return invalid;
+    }
+    let mut live_hulls = bodies
+        .iter()
+        .filter_map(|b| match b.shape {
+            Shape::ConvexHull { hull, .. } => Some(hull.0 as usize),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    live_hulls.sort_unstable();
+    if live_hulls.windows(2).any(|w| w[0] == w[1])
+        || !live_hulls.into_iter().eq(hulls
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.as_ref().map(|_| i)))
     {
         return invalid;
     }
@@ -778,6 +847,11 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             vector(out, half_extents);
         }
         Shape::HalfSpace => out.push(5),
+        Shape::ConvexHull { hull, half_extents } => {
+            out.push(6);
+            out.extend_from_slice(&hull.0.to_le_bytes());
+            vector(out, half_extents);
+        }
     }
     for x in [
         b.mass,
@@ -1008,6 +1082,10 @@ impl<'a> Reader<'a> {
                 half_extents: self.vector()?,
             },
             5 => Shape::HalfSpace,
+            6 => Shape::ConvexHull {
+                hull: ConvexHullId(self.u32()?),
+                half_extents: self.vector()?,
+            },
             _ => return Err(CheckpointError::InvalidData),
         };
         let mut body = Body::new(shape, position, self.scalar()?);

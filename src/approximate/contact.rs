@@ -111,7 +111,9 @@ pub(super) struct Manifold {
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
     let e = match b.shape {
-        Shape::Heightfield { half_extents, .. } => half_extents,
+        Shape::Heightfield { half_extents, .. } | Shape::ConvexHull { half_extents, .. } => {
+            half_extents
+        }
         // Halfspaces are tested outside the bounds structures.
         Shape::HalfSpace => return (b.position, b.position),
         // A box's extents are |R| h, a few roundings off the exact value at most: well inside
@@ -143,7 +145,7 @@ fn radius(b: &Body, n: V) -> Real {
             n.dot(a[0]).abs() * h.0 + n.dot(a[1]).abs() * h.1 + n.dot(a[2]).abs() * h.2
         }
         // Terrain never enters rigid contact pairs.
-        Shape::Heightfield { .. } | Shape::HalfSpace => 0.0,
+        Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::HalfSpace => 0.0,
     }
 }
 fn axes(a: &Body, b: &Body) -> Vec<(V, usize)> {
@@ -697,7 +699,9 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real, horizon: Real) -> Opti
             }
             6
         }
-        Shape::Heightfield { .. } | Shape::HalfSpace => unreachable!("terrain is query-only"),
+        Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::HalfSpace => {
+            unreachable!("terrain is query-only")
+        }
     };
     let mut points = [(0.0, Point::default()); 8];
     let mut len = 0;

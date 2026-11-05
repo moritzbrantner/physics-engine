@@ -70,8 +70,10 @@ pub use geometry::GeometryStats;
 pub use joint::{DistanceJoint, JointId};
 mod ccd;
 mod character;
+mod convex_hull;
 mod terrain;
 pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};
+pub use convex_hull::{ConvexHullDesc, ConvexHullId};
 pub use terrain::{HeightfieldDesc, TerrainId};
 mod math;
 mod response;
@@ -186,6 +188,8 @@ pub struct World {
     last_transaction: TransactionStats,
     query_tree: query::QueryTree,
     terrains: Vec<terrain::Terrain>,
+    /// Static hull geometry, retained by live bodies and shared by cloned worlds.
+    hulls: Vec<Option<std::sync::Arc<convex_hull::PreparedHull>>>,
     /// Halfspace bodies, which every query tests (they have no finite bounds).
     halfspaces: Vec<BodyId>,
     slots: Vec<Slot>,
@@ -301,6 +305,7 @@ impl World {
             last_transaction: TransactionStats::default(),
             query_tree: query::QueryTree::default(),
             terrains: Vec::new(),
+            hulls: Vec::new(),
             halfspaces: Vec::new(),
             slots: Vec::new(),
             free: Vec::new(),

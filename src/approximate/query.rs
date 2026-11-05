@@ -126,6 +126,12 @@ pub struct QueryStats {
     pub ray_queries: u64,
     pub ray_planes_tested: u64,
     pub ray_quadratic_tests: u64,
+    /// Reusable QuickHull/GJK/EPA rock-kernel work; all counters are exact invocation counts.
+    pub hull_distance_queries: u64,
+    pub hull_gjk_iterations: u64,
+    pub hull_epa_iterations: u64,
+    pub hull_face_planes_tested: u64,
+    pub hull_face_hits: u64,
     /// Includes admitted hits subsequently discarded on error.
     pub hits_admitted: u64,
     pub output_capacity_growths: u64,
@@ -512,6 +518,44 @@ impl World {
                     separation,
                     starts_overlapping: fraction == 0.0
                         && initial.is_some_and(|c| c.separation < 0.0),
+                    support_velocity: V::ZERO,
+                    sensor: target.sensor,
+                });
+                stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
+                stats.hits_admitted += 1;
+                continue;
+            }
+            if let Shape::ConvexHull { hull, .. } = target.shape {
+                let prepared = self.convex_hull(hull);
+                let mut hull_work = super::convex_hull::HullWork::default();
+                let outcome = prepared.capsule_query(
+                    &query,
+                    target,
+                    displacement,
+                    cast.map(|c| c.max_iterations),
+                    &mut hull_work,
+                );
+                stats.hull_distance_queries += hull_work.distance_queries;
+                stats.hull_gjk_iterations += hull_work.gjk_iterations;
+                stats.hull_epa_iterations += hull_work.epa_iterations;
+                stats.hull_face_planes_tested += hull_work.face_planes_tested;
+                stats.hull_face_hits += hull_work.face_hits;
+                let outcome = outcome.map_err(failure)?;
+                let Some((fraction, contact, starts_overlapping, iterations)) = outcome else {
+                    continue;
+                };
+                stats.current_queries += u64::from(iterations) + 1;
+                stats.sweep_iterations += u64::from(iterations);
+                let capacity = hits.capacity();
+                hits.push(QueryHit {
+                    body: target.id,
+                    fraction,
+                    distance: distance * fraction,
+                    normal: -contact.normal,
+                    query_point: contact.point_query,
+                    target_point: contact.point_hull,
+                    separation: contact.separation,
+                    starts_overlapping,
                     support_velocity: V::ZERO,
                     sensor: target.sensor,
                 });

@@ -4,8 +4,8 @@ use super::{Body, Shape, V, bounds};
 fn surface_extrema(body: &Body) -> Vec<V> {
     let mut points = Vec::new();
     match body.shape {
-        Shape::Heightfield { .. } | Shape::HalfSpace => {
-            unreachable!("terrain and halfspaces are not finite primitives")
+        Shape::Heightfield { .. } | Shape::HalfSpace | Shape::ConvexHull { .. } => {
+            unreachable!("authored/static shapes are not primitive bounds fixtures")
         }
         Shape::Sphere(radius) => {
             for direction in [V::X, V::Y, V::Z] {

@@ -8,7 +8,10 @@ impl World {
     /// Adds a body and returns its new id. `body.key`, when set, must be unique among live
     /// bodies; `body.id` is ignored.
     pub fn add_body(&mut self, body: Body) -> Result<BodyId, Error> {
-        if matches!(body.shape, Shape::Heightfield { .. }) {
+        if matches!(
+            body.shape,
+            Shape::Heightfield { .. } | Shape::ConvexHull { .. }
+        ) {
             return Err(Error::InvalidInput);
         }
         self.insert_body(body)
@@ -221,6 +224,9 @@ impl World {
         let i = self.index(id).ok()?;
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies[i].clone();
+        if let Shape::ConvexHull { hull, .. } = removed.shape {
+            self.hulls[hull.0 as usize] = None;
+        }
         self.bodies[i].id = BodyId::NONE;
         self.tombstones += 1;
         if self.scene.body_storage == BodyStorage::Indexed {

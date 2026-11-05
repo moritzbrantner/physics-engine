@@ -189,7 +189,7 @@ fn shape(shape: Shape) -> PrimitiveShape3 {
             radius,
         } => PrimitiveShape3::capsule(widen(half_segment), widen(radius)),
         Shape::Wedge(half) => PrimitiveShape3::wedge(to_array(half)),
-        Shape::Heightfield { .. } | Shape::HalfSpace => {
+        Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::HalfSpace => {
             unreachable!("terrain and halfspaces are queried through their closed forms")
         }
     }
@@ -284,9 +284,11 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
             kernel_axes(body.orientation)[1],
             [0.0, 0.0, 1.0],
         ],
-        Shape::Box(_) | Shape::Wedge(_) | Shape::Heightfield { .. } | Shape::HalfSpace => {
-            kernel_axes(body.orientation)
-        }
+        Shape::Box(_)
+        | Shape::Wedge(_)
+        | Shape::ConvexHull { .. }
+        | Shape::Heightfield { .. }
+        | Shape::HalfSpace => kernel_axes(body.orientation),
     };
     // Force integration can produce a non-finite velocity before the final body check.
     // The checked sweep reports that failure; the constructor's debug assertion would panic.
