@@ -126,9 +126,15 @@ pub struct QueryStats {
     pub ray_queries: u64,
     pub ray_planes_tested: u64,
     pub ray_quadratic_tests: u64,
-    /// Reusable QuickHull/GJK/EPA rock-kernel work; all counters are exact invocation counts.
+    /// Deterministic rock geometry work, including segment-to-hull pruning.
+    pub hull_segment_queries: u64,
+    pub hull_segment_plane_tests: u64,
+    pub hull_segment_triangles_considered: u64,
+    pub hull_segment_triangles_pruned: u64,
     pub hull_distance_queries: u64,
     pub hull_gjk_iterations: u64,
+    pub hull_gjk_intersection_iterations: u64,
+    pub hull_gjk_limit_queries: u64,
     pub hull_epa_iterations: u64,
     pub hull_face_planes_tested: u64,
     pub hull_face_hits: u64,
@@ -535,8 +541,14 @@ impl World {
                     cast.map(|c| c.max_iterations),
                     &mut hull_work,
                 );
+                stats.hull_segment_queries += hull_work.segment_queries;
+                stats.hull_segment_plane_tests += hull_work.segment_plane_tests;
+                stats.hull_segment_triangles_considered += hull_work.segment_triangles_considered;
+                stats.hull_segment_triangles_pruned += hull_work.segment_triangles_pruned;
                 stats.hull_distance_queries += hull_work.distance_queries;
                 stats.hull_gjk_iterations += hull_work.gjk_iterations;
+                stats.hull_gjk_intersection_iterations += hull_work.gjk_intersection_iterations;
+                stats.hull_gjk_limit_queries += hull_work.gjk_limit_queries;
                 stats.hull_epa_iterations += hull_work.epa_iterations;
                 stats.hull_face_planes_tested += hull_work.face_planes_tested;
                 stats.hull_face_hits += hull_work.face_hits;

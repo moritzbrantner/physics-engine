@@ -10,6 +10,7 @@ use geometry_kernels::{
     gjk_distance::{GjkDistanceConfig, GjkDistanceStatus, gjk_distance_with_config},
     hull::{Hull3, HullDimension, QuickHullWork, quickhull3},
     math3::{Vec3, cross, dot, length, scale, sub},
+    segment_hull::{SegmentHullWork, separated_segment_hull_closest_with_work},
     support::{ConvexHull3, SupportMap3},
 };
 
@@ -66,8 +67,14 @@ enum CapsuleClip {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct HullWork {
+    pub segment_queries: u64,
+    pub segment_plane_tests: u64,
+    pub segment_triangles_considered: u64,
+    pub segment_triangles_pruned: u64,
     pub distance_queries: u64,
     pub gjk_iterations: u64,
+    pub gjk_intersection_iterations: u64,
+    pub gjk_limit_queries: u64,
     pub epa_iterations: u64,
     pub face_planes_tested: u64,
     pub face_hits: u64,
@@ -300,6 +307,33 @@ impl PreparedHull {
             q: sub(q, origin),
             radius: r,
         };
+        let mut segment_work = SegmentHullWork::default();
+        let segment_closest = separated_segment_hull_closest_with_work(
+            query.p,
+            query.q,
+            &self.hull,
+            &mut segment_work,
+        );
+        work.segment_queries += 1;
+        work.segment_plane_tests += segment_work.separating_plane_tests;
+        work.segment_triangles_considered += segment_work.triangles_considered;
+        work.segment_triangles_pruned += segment_work.triangles_pruned;
+        if let Some(closest) = segment_closest
+            && closest.distance > 1e-9
+        {
+            let normal = scale(
+                sub(closest.point_hull, closest.point_segment),
+                closest.distance.recip(),
+            );
+            return Ok(Contact {
+                separation: primitive::round_down(closest.distance - query.radius),
+                normal: to_real(normal),
+                point_query: to_real(std::array::from_fn(|i| {
+                    closest.point_segment[i] + query.radius * normal[i] + origin[i]
+                })),
+                point_hull: to_real(std::array::from_fn(|i| closest.point_hull[i] + origin[i])),
+            });
+        }
         let hull = ConvexHull3::new(&self.hull.vertices);
         // The public world/query coordinates are f32. The generic kernel defaults to
         // 1e-12 f64 tolerances and can spend dozens of no-progress iterations on an
@@ -316,6 +350,8 @@ impl PreparedHull {
         );
         work.distance_queries += 1;
         work.gjk_iterations += result.iterations as u64;
+        work.gjk_intersection_iterations += result.intersection.iterations as u64;
+        work.gjk_limit_queries += u64::from(result.status == GjkDistanceStatus::IterationLimit);
         let (separation, normal, query_point, target_point) = match result.status {
             GjkDistanceStatus::Converged
             | GjkDistanceStatus::NoProgress

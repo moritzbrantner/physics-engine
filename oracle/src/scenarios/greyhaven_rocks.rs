@@ -53,13 +53,15 @@ fn vertices() -> Vec<[f32; 3]> {
 
 fn queries(tick: u32) -> Vec<([f32; 3], [f32; 3], bool)> {
     let jitter = ((tick % 7) as f32 - 3.0) * 0.025;
-    let mut out = Vec::with_capacity(15);
+    let mut out = Vec::with_capacity(21);
     for x in [-1.5, -0.9, -0.4, 0.1, 0.6, 1.1] {
         out.push(([x + jitter, 3.4, 0.0], [0.0, -4.0, 0.0], false));
         out.push(([x + jitter, 3.4, 0.3], [0.0, -3.5, 0.0], true));
     }
     for y in [0.35, 1.1, 2.0] {
         out.push(([-2.3, y + jitter, -0.4], [4.6, 0.0, 0.0], false));
+        out.push(([-2.3, y + jitter, -0.4], [4.6, 0.0, 0.0], true));
+        out.push(([2.2, y + jitter, 2.2], [-2.6, 0.0, -2.6], true));
     }
     out
 }
@@ -114,7 +116,7 @@ mod engine {
     pub struct Sim {
         world: World,
         diagnose: bool,
-        work: [u64; 6],
+        work: [u64; 12],
     }
     impl Sim {
         pub fn new(storage: BodyStorage) -> Self {
@@ -140,7 +142,7 @@ mod engine {
             Self {
                 world,
                 diagnose: std::env::var_os("PHYSICS_ROCK_WORK").is_some(),
-                work: [0; 6],
+                work: [0; 12],
             }
         }
     }
@@ -169,6 +171,12 @@ mod engine {
                         self.work[3] += stats.hull_gjk_iterations;
                         self.work[4] += stats.hull_epa_iterations;
                         self.work[5] += stats.hull_face_planes_tested;
+                        self.work[6] += stats.hull_gjk_intersection_iterations;
+                        self.work[7] += stats.hull_gjk_limit_queries;
+                        self.work[8] += stats.hull_segment_queries;
+                        self.work[9] += stats.hull_segment_plane_tests;
+                        self.work[10] += stats.hull_segment_triangles_considered;
+                        self.work[11] += stats.hull_segment_triangles_pruned;
                     }
                     trace
                         .0
@@ -185,11 +193,17 @@ mod engine {
             }
             if self.diagnose && tick + 1 == TICKS {
                 eprintln!(
-                    "greyhaven-rock-work casts={} face_hits={} gjk_calls={} gjk_iterations={} epa_iterations={} planes={}",
+                    "greyhaven-rock-work casts={} face_hits={} segment_queries={} segment_planes={} triangles={} pruned={} gjk_calls={} gjk_iterations={} intersection_iterations={} gjk_limits={} epa_iterations={} face_planes={}",
                     self.work[0],
                     self.work[1],
+                    self.work[8],
+                    self.work[9],
+                    self.work[10],
+                    self.work[11],
                     self.work[2],
                     self.work[3],
+                    self.work[6],
+                    self.work[7],
                     self.work[4],
                     self.work[5]
                 );
