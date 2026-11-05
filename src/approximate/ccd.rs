@@ -445,6 +445,7 @@ impl World {
         for (slot, event) in upcoming.iter().enumerate() {
             if let Some(event) = event {
                 heap.push(self.pending(queued[slot], event, slot, 0));
+                crate::work::add(crate::work::Counter::CcdHeapPushes, 1);
             }
         }
         // Per-slot re-search mark: 0 none, 1 may newly hit a changed body, 2 full re-search.
@@ -457,7 +458,9 @@ impl World {
                 match heap.pop() {
                     None => break None,
                     Some(entry) if entry.version == versions[entry.slot] => break Some(entry.slot),
-                    Some(_) => {}
+                    Some(_) => {
+                        crate::work::add(crate::work::Counter::CcdHeapStalePops, 1);
+                    }
                 }
             };
             let Some(slot) = slot else {
@@ -622,6 +625,12 @@ impl World {
                 if mark == 0 {
                     continue;
                 }
+                // A refreshed manifold can change without changing the event's heap key.
+                // Keep its existing live heap entry if time and partner are bit-identical;
+                // the entry resolves its manifold through `upcoming[slot]` when popped.
+                let prior_key = upcoming[slot]
+                    .as_ref()
+                    .map(|event| (event.absolute.to_bits(), event.other));
                 let options = SearchOptions {
                     frozen: &frozen,
                     always: &unbounded,
@@ -720,10 +729,14 @@ impl World {
                 } else {
                     false
                 };
-                if rescheduled {
+                let next_key = upcoming[slot]
+                    .as_ref()
+                    .map(|event| (event.absolute.to_bits(), event.other));
+                if rescheduled && prior_key != next_key {
                     versions[slot] += 1;
                     if let Some(event) = &upcoming[slot] {
                         heap.push(self.pending(source, event, slot, versions[slot]));
+                        crate::work::add(crate::work::Counter::CcdHeapPushes, 1);
                     }
                 }
             }
