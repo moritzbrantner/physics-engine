@@ -557,3 +557,15 @@ impl PreparedHull {
         })
     }
 }
+
+impl PreparedHull {
+    pub(super) fn box_manifold(
+        &self,
+        a: &Body,
+        b: &Body,
+        margin: Real,
+        stats: &mut super::GeometryStats,
+    ) -> Result<Option<super::contact::Manifold>, SweepFailure> {
+        primitive::box_hull_manifold(&self.hull, a, b, margin, stats)
+    }
+}

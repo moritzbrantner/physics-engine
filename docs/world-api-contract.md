@@ -149,10 +149,14 @@ shape casts. Sweeps first clip against a conservative capsule-expanded face enve
 face-interior impacts avoid iterative distance search, while edges, corners, and initial overlaps
 use the reusable f64 support-map distance/GJK/EPA kernels. Character movement, grounded
 state and line-of-sight queries use those paths. A swept or overlap query with an unsupported
-non-capsule/ball shape returns an explicit query error. Dynamic bodies do **not** receive
-rigid contact response against a static hull: an admitted physical pair returns
-`CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back the entire step.
-The game must keep Rapier as fallback for zones that need that interaction. Actual MMORPG
+non-capsule/ball shape returns an explicit query error. Non-CCD dynamic boxes now receive
+rigid contacts against fixed hulls through the shared box/hull SAT and clipped manifolds.
+The existing solver admits speculative points using the substep's linear, gravity/force-drift
+and angular approach bounds, regenerating the geometry at each substep. Rigid spheres,
+capsules, hull/hull pairs and CCD-enabled boxes remain unsupported: an admitted physical
+pair returns `CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back
+the entire step. This does not expose a general box/hull shape sweep or rotational CCD.
+The game retains its Rapier fallback pending native performance parity and box/mesh support. Actual MMORPG
 projectiles sweep rays and reflect/stick at their first hit; those query paths use real hull
 faces. `QueryHit::feature` and ray hits expose deterministic `ConvexHullFace` identities;
 edge/corner witnesses choose the first canonical supporting face plane. Hull poses remain translation-only;
@@ -165,6 +169,8 @@ retained geometry payload bytes (including prepared faces/edges and engine plane
 inline/allocator/world-tree overhead). Immutable geometry is shared across cloned worlds and
 reused after moving its fixed body. The `authored-rock-query` complexity family checks local
 queries among 16–256 actual Greyhaven rocks, with no full scan or query-time preparation.
+The `authored-rock-rigid-contact` family separately checks constant exact SAT/projection work
+for one contacting box amid 16–256 distant hulls; it does not claim constant whole-step work.
 
 The opt-in checkpoint format 9 stores canonical hull vertices in their original hull-slot order,
 including empty slots for removed hulls. Restore rebuilds the prepared hulls and verifies their

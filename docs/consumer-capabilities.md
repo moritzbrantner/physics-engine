@@ -96,11 +96,19 @@ than the independent reference's maximum depth plus 5 mm (with a separate 5 cm c
 Collision checks run outside the timed simulation. This fixture uses retained worlds;
 it does not yet establish the game's rebuilt-world cost or consumer adoption.
 
-The differential reproducer is currently **red**:
+Non-CCD boxes now use shared SAT/clipped manifolds and the engine's existing speculative
+response rows. The behavior comparison passes on native and WASM in both storage modes:
 `cargo run --locked -p physics-oracle -- --only greyhaven-rigid-rocks --no-timing`.
-At tick 12 Engine rejects the rock/crate pair with `InvalidGeometryInput`. This is missing
-rigid-contact support, not permission to remove the guard or substitute a box proxy. The
-scenario is registered in the shared oracle so it must pass before this work can merge.
+Additional checks cover 6–600 m/s non-CCD boxes without crossing the hull (both body-ID
+orders), exact mid-contact checkpoint continuation, and unchanged atomic rejection of
+unsupported CCD pairs. The `authored-rock-rigid-contact` work family keeps local SAT and
+vertex projections independent of unrelated rocks, with no geometry re-preparation.
+
+**Not performance parity yet.** A local release run measured Ordered/Indexed 13.71/13.67 µs
+per tick versus Rapier 6.13 µs (2.24×), failing the native 1.05× gate. Focused WASM
+measured 14.29/14.05 versus Rapier 19.11 (0.75×/0.74×), passing its 1.10× gate.
+These are exploratory local measurements, not whole-zone acceptance. The game adapter,
+box/mesh response and native cost remain incomplete; keep the fallback and this PR draft.
 The standalone Rapier reference check is
 `cargo test --locked -p physics-oracle --lib rigid_rocks`.
 

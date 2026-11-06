@@ -187,3 +187,11 @@ the heights to prepare and one to fingerprint); capture does not.
 ## Remaining consumer work
 
 #452 adds terrain, halfspace and character continuation for the engine-side zone fixture; no consumer has adopted it, and MMORPG's own recovery acceptance (its save format, content tags and browser recovery) remains open, as do joints in checkpoints. This implements the selected floating world's engine checkpoint slice under #198. MMORPG still owns its gameplay/canonical save contract and uses the translational World adopted in PR #47. Its floating-solver migration remains gated by query/character support, CCD/contact quality and real native/browser canonical/recovery acceptance (#194, #3 and the linked consumer issue). This checkpoint product alone does not satisfy that adoption or close #198.
+
+## Box/hull contact continuation (algorithm 12)
+
+Non-CCD boxes now generate rigid manifolds against static convex hulls. This changes step
+continuation from an atomic unsupported-pair error to physical response, so algorithm 12
+rejects earlier algorithm 11 checkpoints while retaining format 9. The empty-world wire
+digest changes only with the algorithm header/checksum. The focused box/rock checkpoint
+test restores mid-contact and continues bit-identically.
