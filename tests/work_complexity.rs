@@ -1768,3 +1768,64 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
         ],
     );
 }
+
+#[test]
+fn rigid_rock_contact_narrow_phase_does_not_scan_distant_hulls() {
+    use physics_engine::approximate::ConvexHullDesc;
+    let mut samples = Vec::new();
+    for rocks in [16u64, 32, 64, 128, 256] {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            substeps: 2,
+            ..Config::default()
+        })
+        .unwrap();
+        for i in 0..rocks {
+            world
+                .add_convex_hull(
+                    ConvexHullDesc {
+                        vertices: greyhaven_rock::vertices()
+                            .into_iter()
+                            .map(|p| V(p[0], p[1], p[2]))
+                            .collect(),
+                        position: V((i % 16) as f32 * 6.0, 1.1, (i / 16) as f32 * 6.0),
+                        material: Default::default(),
+                    },
+                    Some(i),
+                )
+                .unwrap();
+        }
+        let mut body = Body::new(Shape::Box(V(0.35, 0.35, 0.35)), V(-1.96, 0.35, -0.1), 205.8);
+        body.velocity = V(5.91, 0.0, 0.0);
+        body.rotation_locked = true;
+        body.sleep_allowed = false;
+        let id = world.add_body(body).unwrap();
+        work::reset();
+        let report = world.step(1.0 / 60.0).unwrap();
+        assert!(report.geometry.sat_queries > 0);
+        assert!(world.body(id).unwrap().position.0 < -1.0);
+        let warm = world.step(1.0 / 60.0).unwrap();
+        assert_eq!(warm.geometry.frame_preparations, 0);
+        assert!(warm.geometry.frame_reuses > 0);
+        assert_eq!(warm.geometry.primitive_vertex_tests, 0);
+        samples.push((
+            vec![("rocks", rocks)],
+            vec![
+                ("sat-axes", report.geometry.sat_axes_tested),
+                ("vertex-tests", report.geometry.primitive_vertex_tests),
+                ("warm-vertex-tests", warm.geometry.primitive_vertex_tests),
+                ("preparations", work::get(Counter::HullPreparations)),
+            ],
+        ));
+    }
+    judge(
+        "authored-rock-rigid-contact",
+        &samples,
+        &[
+            ("sat-axes", "rocks", "constant"),
+            ("vertex-tests", "rocks", "constant"),
+            ("warm-vertex-tests", "", "zero"),
+            ("preparations", "", "zero"),
+        ],
+    );
+}

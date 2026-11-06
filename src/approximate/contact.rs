@@ -14,7 +14,7 @@ pub(super) struct Points {
     len: usize,
 }
 impl Points {
-    fn selected(input: &[Point]) -> Self {
+    pub(super) fn selected(input: &[Point]) -> Self {
         let mut out = Self {
             values: [Point::default(); 4],
             len: input.len().min(4),

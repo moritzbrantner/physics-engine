@@ -107,6 +107,40 @@ cover local support casts at 16–256 rocks, one-time preparation and retained g
 Native/WASM oracle gates remain required; game integration and browser acceptance are not
 established by the engine fixture.
 
+### Rigid box contacts against authored rocks (in progress)
+
+`greyhaven-rigid-rocks` exercises the actual Greyhaven proxy with a launched upright
+0.7 m crate and a falling/tumbling 0.58 × 0.58 × 0.06 m crate panel, at 60 Hz with the
+game's gravity, density, material and damping. Rapier's reference run passes the fixture:
+the crate advances and stops at the rock, both bodies settle, and neither penetrates more
+than the independent reference's maximum depth plus 5 mm (with a separate 5 cm cap).
+Collision checks run outside the timed simulation. This fixture uses retained worlds;
+it does not yet establish the game's rebuilt-world cost or consumer adoption.
+
+Non-CCD boxes now use shared SAT/clipped manifolds and the engine's existing speculative
+response rows. The behavior comparison passes on native and WASM in both storage modes:
+`cargo run --locked -p physics-oracle -- --only greyhaven-rigid-rocks --no-timing`.
+Additional checks cover 6–600 m/s non-CCD boxes without crossing the hull (both body-ID
+orders), exact mid-contact checkpoint continuation, and unchanged atomic rejection of
+unsupported CCD pairs. The `authored-rock-rigid-contact` work family keeps local SAT and
+vertex projections independent of unrelated rocks, with no geometry re-preparation.
+
+The engine now retains orientation/extent-keyed SAT plans and the two most recent exact
+pose/margin contact results. Translation refreshes points while reusing projections; changes
+to shape, orientation, body identity, position or margin invalidate the relevant retained data.
+Unused/removed pairs are pruned. Tests compare retained geometry with fresh preparation
+through those transitions, including signed zero, negative contacts and checkpoint recovery.
+
+**Focused local native and WASM gates pass.** Deferring box/edge-axis preparation until
+hull-face certificates are insufficient brings the standalone native release comparison to
+5.38/5.33 µs per tick (Ordered/Indexed), versus Rapier 6.17 µs (0.87×), from the initial
+13.71/13.67 µs. Focused WASM measured 7.21/7.31 µs versus Rapier 19.97 µs (0.36×).
+Some local native runs were noisy and mixed; CI must confirm the committed revision.
+These are local measurements for this scenario, not whole-zone acceptance. Game adoption,
+box/mesh response and full CI remain incomplete; the fallback remains in the game.
+The standalone Rapier reference check is
+`cargo test --locked -p physics-oracle --lib rigid_rocks`.
+
 ## Experiment: circumsphere proxies for dodecahedron and icosahedron visuals (#465)
 
 An owner-approved, bounded experiment, not consumer adoption and not exact convex parity.

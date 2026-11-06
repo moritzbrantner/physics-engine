@@ -2459,6 +2459,75 @@
           }
         }
       ]
+    },
+    {
+      "id": "authored-rock-rigid-contact",
+      "description": "One moving box at the actual Greyhaven hull, amid increasing distant fixed rocks. Bounds cover exact contact geometry, not whole-step scheduling or timing.",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "rocks": {
+          "description": "fixed authored rock hulls at constant spatial density"
+        }
+      },
+      "scalePoints": [
+        {
+          "rocks": 16
+        },
+        {
+          "rocks": 32
+        },
+        {
+          "rocks": 64
+        },
+        {
+          "rocks": 128
+        },
+        {
+          "rocks": 256
+        }
+      ],
+      "metrics": [
+        {
+          "name": "sat-axes",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Only the local hull reaches box/hull SAT.",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "vertex-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Only the local retained hull is projected; unrelated hull vertices are not scanned.",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "warm-vertex-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "A retained orientation/extent plan performs no new hull-vertex projections on the next contacting tick; shape/orientation changes rebuild it.",
+          "budget": { "max": 0 }
+        },
+        {
+          "name": "preparations",
+          "unit": "vertices",
+          "signal": "operation-count",
+          "notes": "Contact queries reuse prepared hull geometry.",
+          "budget": {
+            "max": 0
+          }
+        }
+      ]
     }
   ]
 }

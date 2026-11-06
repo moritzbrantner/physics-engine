@@ -11,7 +11,8 @@ consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
 Algorithm 12 corrects tangential heightfield sweep admission for character moves. A nearly
 tangential earliest hit no longer hides a later blocking triangle. This changes continuation
-at terrain seams; format 9 is unchanged. Older algorithm checkpoints are rejected.
+at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruction; current algorithm 14 adds box/hull response
+(see below). Older algorithm checkpoints are rejected.
 
 Format 9 (#180) adds static convex hull shape tag 7 and embedded canonical hull vertices
 after the format-8 mesh slots. A u64 hull-slot count precedes one u64 vertex count per
@@ -201,3 +202,11 @@ terrain pose, so the algorithm becomes 13 while the wire format stays 9. Version
 The known-clear field remains in the wire layout as a character-separation hint, not authority
 for static overlap. The empty-world digest changes with the algorithm header/checksum.
 The game still owns canonical pose/settings reconstruction and its integration acceptance.
+
+## Box/hull contact continuation (algorithm 14)
+
+Non-CCD boxes now generate rigid manifolds against static convex hulls. This changes step
+continuation from an atomic unsupported-pair error to physical response, so algorithm 14
+rejects earlier checkpoints, including algorithm 13 character reconstruction while retaining format 9. The empty-world wire
+digest changes only with the algorithm header/checksum. The focused box/rock checkpoint
+test restores mid-contact and continues bit-identically.

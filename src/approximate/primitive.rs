@@ -54,6 +54,92 @@ pub(super) fn bounds_extents(body: &Body) -> V {
     V(round_up(x), round_up(y), round_up(z))
 }
 
+pub(super) fn prepare_box_hull_frame(
+    hull: std::sync::Arc<geometry_kernels::segment_hull::PreparedSegmentHull>,
+    moving: &Body,
+    stats: &mut GeometryStats,
+) -> Result<geometry_kernels::segment_hull::PreparedBoxHull, SweepFailure> {
+    let Shape::Box(half) = moving.shape else {
+        return Err(SweepFailure::InvalidGeometryInput);
+    };
+    let mut work = geometry_kernels::segment_hull::BoxHullWork::default();
+    let result = geometry_kernels::segment_hull::PreparedBoxHull::new(
+        hull,
+        to_array(half),
+        kernel_axes(moving.orientation),
+        &mut work,
+    )
+    .map_err(|error| match error {
+        geometry_kernels::segment_hull::BoxHullError::InvalidInput => {
+            SweepFailure::InvalidGeometryInput
+        }
+        geometry_kernels::segment_hull::BoxHullError::NonFiniteComputation => {
+            SweepFailure::NonFiniteComputation
+        }
+    });
+    stats.primitive_vertex_tests += work.vertex_tests;
+    stats.projection_preparations += 1;
+    result
+}
+
+pub(super) fn box_hull_manifold(
+    hull: &geometry_kernels::segment_hull::PreparedBoxHull,
+    a: &Body,
+    b: &Body,
+    margin: Real,
+    stats: &mut super::GeometryStats,
+) -> Result<Option<super::contact::Manifold>, SweepFailure> {
+    let hull_first = matches!(a.shape, Shape::ConvexHull { .. });
+    let (target, moving) = if hull_first { (a, b) } else { (b, a) };
+    let mut work = geometry_kernels::segment_hull::BoxHullWork::default();
+    let result = hull
+        .contact(
+            geometry_kernels::math3::sub(to_array(moving.position), to_array(target.position)),
+            f64::from(margin),
+            &mut work,
+        )
+        .map_err(|error| match error {
+            geometry_kernels::segment_hull::BoxHullError::InvalidInput => {
+                SweepFailure::InvalidGeometryInput
+            }
+            geometry_kernels::segment_hull::BoxHullError::NonFiniteComputation => {
+                SweepFailure::NonFiniteComputation
+            }
+        })?;
+    stats.sat_queries += 1;
+    stats.sat_axes_tested += work.axes_tested;
+    stats.primitive_vertex_tests += work.vertex_tests;
+    stats.clip_passes += work.clipping_planes;
+    Ok(result.map(|contact| {
+        let normal = if hull_first {
+            from_array(contact.normal)
+        } else {
+            -from_array(contact.normal)
+        };
+        let origin = to_array(target.position);
+        let mut points = [super::contact::Point::default(); 4];
+        for (out, p) in points.iter_mut().zip(&contact.points[..contact.len]) {
+            let world = |v| from_array(geometry_kernels::math3::add(v, origin));
+            let (pa, pb) = if hull_first {
+                (world(p.point_hull), world(p.point_box))
+            } else {
+                (world(p.point_box), world(p.point_hull))
+            };
+            *out = super::contact::Point {
+                ra: pa - a.position,
+                rb: pb - b.position,
+                separation: round_down(p.separation),
+            };
+        }
+        super::contact::Manifold {
+            normal,
+            points: super::contact::Points::selected(&points[..contact.len]),
+            swept: false,
+            time: 0.0,
+        }
+    }))
+}
+
 #[cfg(test)]
 pub(super) fn query(a: &Body, b: &Body, work: &mut GeometryStats) -> Option<PrimitiveContact> {
     let (pair, reversed) = canonical_pair(a.shape, b.shape);

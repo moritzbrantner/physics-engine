@@ -45,7 +45,7 @@ struct Plane {
 
 #[derive(Debug)]
 pub(super) struct PreparedHull {
-    hull: PreparedSegmentHull,
+    pub(super) hull: std::sync::Arc<PreparedSegmentHull>,
     planes: Vec<Plane>,
 }
 
@@ -193,7 +193,13 @@ pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
         });
     }
     let hull = PreparedSegmentHull::new(hull).ok_or(Error::InvalidInput)?;
-    Ok((PreparedHull { hull, planes }, half))
+    Ok((
+        PreparedHull {
+            hull: std::sync::Arc::new(hull),
+            planes,
+        },
+        half,
+    ))
 }
 
 impl PreparedHull {

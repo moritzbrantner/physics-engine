@@ -1457,8 +1457,8 @@ impl World {
                         && a.external
                         && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
-                // Authored hulls currently serve kinematic/query consumers. An unsupported
-                // physical pair must fail the whole step rather than silently tunnel through it.
+                // Box/hull rigid contacts use the shared SAT/clipping kernel and the existing
+                // speculative response rows. Unsupported pairs/CCD still fail atomically.
                 if matches!(a.shape, Shape::ConvexHull { .. })
                     || matches!(b.shape, Shape::ConvexHull { .. })
                 {
@@ -1473,10 +1473,45 @@ impl World {
                         && !moving.sleeping
                         && a.layers.collides_with(b.layers)
                     {
-                        return Err(Error::CollisionSearchFailed {
-                            bodies: [a.id, b.id],
-                            reason: super::SweepFailure::InvalidGeometryInput,
-                        });
+                        if !matches!(moving.shape, Shape::Box(_)) || moving.ccd {
+                            return Err(Error::CollisionSearchFailed {
+                                bodies: [a.id, b.id],
+                                reason: super::SweepFailure::InvalidGeometryInput,
+                            });
+                        }
+                        let Shape::ConvexHull { hull, .. } =
+                            (if matches!(a.shape, Shape::ConvexHull { .. }) {
+                                a.shape
+                            } else {
+                                b.shape
+                            })
+                        else {
+                            unreachable!()
+                        };
+                        let approach = moving.velocity.length() * interval
+                            + step_drift(moving, self.scene.gravity, gain).length()
+                            + moving.angular_velocity.length() * moving.shape.radius() * interval;
+                        report.narrow_tests += 1;
+                        regenerate = true;
+                        if let Some(manifold) = self
+                            .geometry
+                            .hull_box(
+                                &self.hulls[hull.0 as usize]
+                                    .as_deref()
+                                    .expect("live convex hull")
+                                    .hull,
+                                a,
+                                b,
+                                self.scene.contact_slop + approach,
+                                &mut report.geometry,
+                            )
+                            .map_err(|reason| Error::CollisionSearchFailed {
+                                bodies: [a.id, b.id],
+                                reason,
+                            })?
+                        {
+                            push(out, (i, j, manifold), &mut s.work);
+                        }
                     }
                     continue;
                 }

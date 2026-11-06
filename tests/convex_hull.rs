@@ -629,3 +629,86 @@ fn checkpoint_preserves_hulls_and_meshes_with_distinct_tags_and_removed_slots() 
         ));
     }
 }
+
+#[test]
+fn non_ccd_boxes_stop_at_the_hull_across_the_entire_step_interval() {
+    for storage in [
+        physics_engine::approximate::BodyStorage::Ordered,
+        physics_engine::approximate::BodyStorage::Indexed,
+    ] {
+        for speed in [6.0, 60.0, 600.0] {
+            // A separate world admits the hull before or after the box: pair-normal
+            // orientation must not depend on which shape owns the lower body ID.
+            for hull_first in [true, false] {
+                let mut world = World::new(Config {
+                    gravity: V::ZERO,
+                    body_storage: storage,
+                    ..Config::default()
+                })
+                .unwrap();
+                let add_hull = |world: &mut World| {
+                    world
+                        .add_convex_hull(
+                            ConvexHullDesc {
+                                vertices: [-1.0, 1.0]
+                                    .into_iter()
+                                    .flat_map(|x| {
+                                        [-1.0, 1.0].into_iter().flat_map(move |y| {
+                                            [-1.0, 1.0].into_iter().map(move |z| V(x, y, z))
+                                        })
+                                    })
+                                    .collect(),
+                                position: V::ZERO,
+                                material: Default::default(),
+                            },
+                            Some(10),
+                        )
+                        .unwrap()
+                };
+                if hull_first {
+                    add_hull(&mut world);
+                }
+                let mut body =
+                    Body::keyed(42, Shape::Box(V(0.2, 0.2, 0.2)), V(-3.0, 0.0, 0.0), 1.0);
+                body.velocity = V(speed, 0.0, 0.0);
+                body.rotation_locked = true;
+                body.friction = 0.0;
+                let id = world.add_body(body).unwrap();
+                if !hull_first {
+                    add_hull(&mut world);
+                }
+                for _ in 0..60 {
+                    world.step(1.0 / 60.0).unwrap();
+                    let b = world.body(id).unwrap();
+                    assert!(b.position.0 <= -1.2 + 0.005, "speed {speed}: {b:?}");
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "checkpoints")]
+#[test]
+fn box_rock_contact_continues_exactly_after_checkpoint_restore() {
+    let mut world = cube_rock();
+    let mut body = Body::new(Shape::Box(V(0.2, 0.2, 0.2)), V(-1.5, 0.0, 0.0), 1.0);
+    body.velocity = V(5.0, 0.0, 0.0);
+    body.rotation_locked = true;
+    let id = world.add_body(body).unwrap();
+    for _ in 0..8 {
+        world.step(1.0 / 60.0).unwrap();
+    }
+    let mut restored = world
+        .checkpoint(physics_engine::approximate::CheckpointContext {
+            build: [1; 32],
+            content: [2; 32],
+        })
+        .unwrap()
+        .restore(&[])
+        .unwrap();
+    for _ in 0..30 {
+        world.step(1.0 / 60.0).unwrap();
+        restored.step(1.0 / 60.0).unwrap();
+        assert_eq!(world.body(id), restored.body(id));
+    }
+}
