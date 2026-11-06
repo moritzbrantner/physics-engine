@@ -599,7 +599,11 @@ fn mesh_box_cache_reuses_only_exact_geometry_dependencies_and_prunes_removed_pai
             .unwrap();
         let mut expected = Vec::new();
         primitive::box_mesh_manifolds(&mesh, a, b, margin, &mut GeometryStats::default(), |m| {
-            expected.push(m)
+            contact::merge_mesh_contact(
+                &mut expected,
+                m,
+                matches!(a.shape, Shape::TriangleMesh { .. }),
+            )
         })
         .unwrap();
         assert_eq!(result, expected);

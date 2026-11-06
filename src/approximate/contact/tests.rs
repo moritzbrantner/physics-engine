@@ -320,3 +320,83 @@ fn sphere_sphere_sweeps_use_shared_analytic_first_contact() {
     let near_miss = swept(&moving, &target, 1.0, 0.0, &mut GeometryStats::default()).unwrap();
     assert!(near_miss.is_none());
 }
+
+fn mesh_patch(normal: V, plane: Real, corners: &[(Real, Real, Real)]) -> Manifold {
+    let points: Vec<_> = corners
+        .iter()
+        .map(|&(x, z, separation)| Point {
+            ra: V(x, plane, z),
+            rb: V(x, plane + separation, z),
+            separation,
+        })
+        .collect();
+    Manifold {
+        normal,
+        points: Points::selected(&points),
+        swept: false,
+        time: 0.0,
+    }
+}
+#[test]
+fn coplanar_mesh_reduction_keeps_the_deepest_point_and_full_square_extent() {
+    let mut out = Vec::new();
+    merge_mesh_contact(
+        &mut out,
+        mesh_patch(
+            V::Y,
+            0.0,
+            &[
+                (-1.0, -1.0, -0.01),
+                (1.0, 1.0, -0.01),
+                (-1.0, 1.0, -0.02),
+                (0.0, 0.0, -0.01),
+            ],
+        ),
+        true,
+    );
+    merge_mesh_contact(
+        &mut out,
+        mesh_patch(
+            V::Y,
+            0.0,
+            &[
+                (-1.0, -1.0, -0.01),
+                (1.0, -1.0, -0.01),
+                (1.0, 1.0, -0.01),
+                (0.5, 0.5, -0.01),
+            ],
+        ),
+        true,
+    );
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].points.len(), 4);
+    for p in [
+        V(-1.0, 0.0, -1.0),
+        V(-1.0, 0.0, 1.0),
+        V(1.0, 0.0, -1.0),
+        V(1.0, 0.0, 1.0),
+    ] {
+        assert!((&out[0].points).into_iter().any(|point| point.ra == p));
+    }
+    assert!(
+        (&out[0].points)
+            .into_iter()
+            .any(|point| point.separation == -0.02)
+    );
+}
+#[test]
+fn mesh_reduction_preserves_distinct_parallel_planes_and_different_normals() {
+    let mut out = Vec::new();
+    for (n, plane) in [(V::Y, 0.0), (V::Y, 1.0), (-V::Y, 0.0)] {
+        merge_mesh_contact(
+            &mut out,
+            mesh_patch(n, plane, &[(-1.0, 0.0, -0.01), (1.0, 0.0, -0.02)]),
+            true,
+        );
+    }
+    assert_eq!(out.len(), 3);
+    let mut m = out.remove(0);
+    reduce_linear_mesh_contact(&mut m);
+    assert_eq!(m.points.len(), 1);
+    assert_eq!((&m.points).into_iter().next().unwrap().separation, -0.02);
+}

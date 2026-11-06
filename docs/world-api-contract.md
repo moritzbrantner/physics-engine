@@ -517,7 +517,11 @@ triangle SAT/clipped manifolds and the existing speculative response with linear
 and angular approach bounds over the full interval. Geometry is regenerated per substep.
 Exact pose/margin contact results may be reused, keyed by immutable mesh/body identity, shape
 and orientation; new positions/margins recompute witnesses. Removed/unused pairs are pruned.
-A failed geometry query discards partial emissions. CCD boxes and other unsupported rigid shapes return
+Exactly coplanar triangle contacts share a bounded four-point response patch, preserving
+the deepest witness and broad support. Rotation-locked boxes with zero angular velocity use
+the deepest witness alone for a shared normal: their points have identical contact velocity
+and effective mass. Other motion retains rotational contact rows. These are response-policy
+reductions; cached geometry remains complete. A failed geometry query discards partial emissions. CCD boxes and other unsupported rigid shapes return
 `InvalidGeometryInput` atomically rather than passing through; external capsule characters remain
 supported through `move_characters`. Dynamic meshes, rotational mesh/shape CCD and mesh×mesh
 response are unsupported. Generic `add_body` cannot forge a mesh geometry slot.

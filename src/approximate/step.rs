@@ -1589,7 +1589,14 @@ impl World {
                                 b,
                                 self.scene.contact_slop + approach,
                                 &mut report.geometry,
-                                |m| push(out, (i, j, m), &mut s.work),
+                                |mut m| {
+                                    if moving.rotation_locked
+                                        && moving.angular_velocity == Vector::ZERO
+                                    {
+                                        contact::reduce_linear_mesh_contact(&mut m);
+                                    }
+                                    push(out, (i, j, m), &mut s.work);
+                                },
                             )
                             .map_err(failure)?;
                         continue;

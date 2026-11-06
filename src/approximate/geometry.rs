@@ -503,7 +503,11 @@ impl GeometryCache {
         current.manifolds.clear();
         if let Err(error) =
             primitive::box_mesh_manifolds(mesh, a, b, Real::from_bits(margin), work, |m| {
-                current.manifolds.push(m)
+                contact::merge_mesh_contact(
+                    &mut current.manifolds,
+                    m,
+                    matches!(a.shape, Shape::TriangleMesh { .. }),
+                )
             })
         {
             cached.current[0] = None;

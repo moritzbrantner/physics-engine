@@ -109,6 +109,95 @@ pub(super) struct Manifold {
     pub time: Real,
 }
 
+/// With no angular motion/response, points sharing a normal have the same velocity and
+/// effective mass. The deepest witness alone supplies the limiting translation/friction row.
+pub(super) fn reduce_linear_mesh_contact(manifold: &mut Manifold) {
+    if let Some(point) = (&manifold.points)
+        .into_iter()
+        .min_by(|a, b| a.separation.total_cmp(&b.separation))
+        .copied()
+    {
+        manifold.points = Points::one(point);
+    }
+}
+
+/// Merge only exactly coplanar mesh contacts, retaining a spread-out four-point patch.
+/// Distinct planes/normals remain distinct solver manifolds.
+pub(super) fn merge_mesh_contact(out: &mut Vec<Manifold>, incoming: Manifold, mesh_first: bool) {
+    let surface = |p: &Point| if mesh_first { p.ra } else { p.rb };
+    let plane = |m: &Manifold| {
+        let first = (&m.points).into_iter().next()?;
+        let offset = m.normal.dot(surface(first));
+        (&m.points)
+            .into_iter()
+            .all(|p| m.normal.dot(surface(p)) == offset)
+            .then_some(offset)
+    };
+    let Some(offset) = plane(&incoming) else {
+        out.push(incoming);
+        return;
+    };
+    let Some(prior) = out
+        .iter_mut()
+        .find(|m| m.normal == incoming.normal && plane(m) == Some(offset))
+    else {
+        out.push(incoming);
+        return;
+    };
+    let mut candidates = [Point::default(); 8];
+    let mut len = 0;
+    for point in (&prior.points).into_iter().chain(&incoming.points) {
+        if let Some(existing) = candidates[..len]
+            .iter_mut()
+            .find(|p| surface(p) == surface(point))
+        {
+            if point.separation < existing.separation {
+                *existing = *point;
+            }
+        } else {
+            candidates[len] = *point;
+            len += 1;
+        }
+    }
+    if len <= 4 {
+        prior.points = Points::selected(&candidates[..len]);
+        return;
+    }
+    let mut selected = [0usize; 4];
+    for i in 1..len {
+        if candidates[i].separation < candidates[selected[0]].separation {
+            selected[0] = i;
+        }
+    }
+    for slot in 1..4 {
+        let origin = surface(&candidates[selected[0]]);
+        let score = |index: usize| {
+            let p = surface(&candidates[index]);
+            if slot == 1 {
+                return (p - origin).dot(p - origin);
+            }
+            let a = surface(&candidates[selected[1]]);
+            if slot == 2 {
+                return prior.normal.dot((a - origin).cross(p - origin)).abs();
+            }
+            let b = surface(&candidates[selected[2]]);
+            prior.normal.dot((a - origin).cross(p - origin)).abs()
+                + prior.normal.dot((b - a).cross(p - a)).abs()
+                + prior.normal.dot((origin - b).cross(p - b)).abs()
+        };
+        let mut best = None;
+        for index in 0..len {
+            if !selected[..slot].contains(&index)
+                && best.is_none_or(|prior_index| score(index) > score(prior_index))
+            {
+                best = Some(index);
+            }
+        }
+        selected[slot] = best.unwrap_or(selected[0]);
+    }
+    prior.points = Points::selected(&selected.map(|index| candidates[index]));
+}
+
 pub(super) fn bounds(b: &Body) -> (V, V) {
     let e = match b.shape {
         Shape::Heightfield { half_extents, .. }

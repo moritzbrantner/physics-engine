@@ -260,9 +260,13 @@ The focused interval, cache invalidation and checkpoint tests pass. The determin
 `authored-mesh-rigid-contact` family checks logarithmic node visits and constant exact
 triangle work as distant patches are added, without rebuilding geometry.
 
-**Not native performance parity yet:** the first local run measured 13.45/13.43 µs per
-tick versus Rapier 3.94 µs (3.41×). Subsequent cache/face-certificate work still fails the
-native gate. Focused WASM measured 12.72/12.65 µs versus Rapier 10.54 µs (1.21×),
-also above its 1.10× limit. These are exploratory local results, not consumer adoption or
-completed parity.
+Coplanar triangles now share a bounded response patch. Repeated boundary witnesses are
+removed before selection, preserving genuine supporting corners. A rotation-locked box with
+zero angular velocity needs only its deepest witness for a shared normal; rotational contacts
+retain a spread-out four-point patch. Geometry caches retain the full contact information.
+
+**Not native performance parity yet:** the local native fixture improved from 13.45/13.43 µs
+per tick versus Rapier 3.94 µs (3.41×) to 5.94/5.94 versus 3.98 µs (1.49×), still over 1.05×.
+Focused WASM now passes at 9.98/8.97 µs versus Rapier 12.08 µs (0.83×), improved from 1.21×.
+These are exploratory local results; full CI and consumer adoption remain separate.
 The game's Rapier dynamic fallback is unchanged.
