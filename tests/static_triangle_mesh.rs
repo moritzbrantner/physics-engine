@@ -446,3 +446,28 @@ fn box_mesh_contact_continues_exactly_after_checkpoint_restore() {
         assert_eq!(world.body(id), restored.body(id));
     }
 }
+
+#[test]
+fn unfiltered_box_occupancy_queries_authored_cave_surfaces() {
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let world = cave(storage);
+        let mut hits = Vec::new();
+        for (position, expected) in [
+            (V(62.0, 11.0, -138.0), true),
+            (V(62.0, 12.0, -138.0), false),
+        ] {
+            world
+                .overlap_shape(
+                    QueryPose::new(Shape::Box(V(0.29, 0.29, 0.03)), position),
+                    QueryFilter::default(),
+                    &mut hits,
+                )
+                .unwrap();
+            assert_eq!(!hits.is_empty(), expected, "{storage:?} {position:?}");
+            assert!(
+                hits.windows(2)
+                    .all(|pair| pair[0].body.to_bits() < pair[1].body.to_bits())
+            );
+        }
+    }
+}

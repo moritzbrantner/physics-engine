@@ -263,10 +263,18 @@ triangle work as distant patches are added, without rebuilding geometry.
 Coplanar triangles now share a bounded response patch. Repeated boundary witnesses are
 removed before selection, preserving genuine supporting corners. A rotation-locked box with
 zero angular velocity needs only its deepest witness for a shared normal; rotational contacts
-retain a spread-out four-point patch. Geometry caches retain the full contact information.
+retain a spread-out four-point patch. Cached patches retain rotational witnesses; the single-point reduction happens only at
+response entry.
 
 **Not native performance parity yet:** the local native fixture improved from 13.45/13.43 µs
 per tick versus Rapier 3.94 µs (3.41×) to 5.94/5.94 versus 3.98 µs (1.49×), still over 1.05×.
 Focused WASM now passes at 9.98/8.97 µs versus Rapier 12.08 µs (0.83×), improved from 1.21×.
 These are exploratory local results; full CI and consumer adoption remain separate.
 The game's Rapier dynamic fallback is unchanged.
+
+MMORPG door occupancy, prop respawn and structure regrowth use unfiltered box overlaps.
+These now query fixed authored hulls through the same shared SAT kernel as rigid boxes;
+fixed triangle meshes already support box overlaps through their polytope kernel. The
+`greyhaven-rock-hulls` Rapier scenario includes thin panel occupancy probes. Box casts
+remain unsupported for authored hulls/meshes; the game casts capsules. This read-only
+query change does not change checkpoint layout or solver continuation semantics.

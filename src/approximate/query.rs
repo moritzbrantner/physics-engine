@@ -545,13 +545,18 @@ impl World {
             if let Shape::ConvexHull { hull, .. } = target.shape {
                 let prepared = self.convex_hull(hull);
                 let mut hull_work = super::convex_hull::HullWork::default();
-                let outcome = prepared.capsule_query(
-                    &query,
-                    target,
-                    displacement,
-                    cast.map(|c| c.max_iterations),
-                    &mut hull_work,
-                );
+                let outcome = if matches!(query.shape, Shape::Box(_)) && cast.is_none() {
+                    primitive::box_hull_overlap(prepared, &query, target, stats)
+                        .map(|contact| contact.map(|c| (0.0, c, c.separation < 0.0, 0)))
+                } else {
+                    prepared.capsule_query(
+                        &query,
+                        target,
+                        displacement,
+                        cast.map(|c| c.max_iterations),
+                        &mut hull_work,
+                    )
+                };
                 stats.hull_segment_queries += hull_work.segment_queries;
                 stats.hull_segment_plane_tests += hull_work.segment_plane_tests;
                 stats.hull_segment_triangles_considered += hull_work.segment_triangles_considered;

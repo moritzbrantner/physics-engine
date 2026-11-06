@@ -26,6 +26,16 @@ fn queries(tick: u32) -> Vec<([f32; 3], [f32; 3], bool)> {
     out
 }
 
+// Door, respawn and regrowth occupancy probes use unfiltered boxes beside authored rocks.
+fn box_queries(tick: u32) -> impl Iterator<Item = [f32; 3]> {
+    let jitter = (tick % 7) as f32 * 0.015;
+    [-1.6, -0.8, 0.0, 0.8, 1.6].into_iter().flat_map(move |x| {
+        [0.2, 1.1, 2.0, 2.8]
+            .into_iter()
+            .map(move |y| [x + jitter, y, 0.4])
+    })
+}
+
 pub fn scenario() -> Scenario {
     Scenario {
         name: "greyhaven-rock-hulls",
@@ -160,6 +170,16 @@ mod engine {
                     ));
                 }
             }
+            for p in box_queries(tick) {
+                self.world
+                    .overlap_shape(
+                        QueryPose::new(Shape::Box(V(0.29, 0.29, 0.03)), V(p[0], p[1], p[2])),
+                        QueryFilter::default(),
+                        &mut hits,
+                    )
+                    .unwrap();
+                trace.0.push(Obs::Hit(hits.first().map(|_| (1, 0.0))));
+            }
             if self.diagnose && tick + 1 == TICKS {
                 eprintln!(
                     "greyhaven-rock-work casts={} face_hits={} segment_queries={} segment_planes={} triangles={} pruned={} edges={} edges_pruned={} gjk_calls={} gjk_iterations={} intersection_iterations={} gjk_limits={} epa_iterations={} face_planes={}",
@@ -248,6 +268,16 @@ mod rapier {
                         (h.time_of_impact, [h.normal.x, h.normal.y, h.normal.z])
                     })));
                 }
+            }
+            for p in box_queries(tick) {
+                let found = pipeline
+                    .intersect_shape(
+                        Pose::from_translation(Vector::new(p[0], p[1], p[2])),
+                        &Cuboid::new(Vector::new(0.29, 0.29, 0.03)),
+                    )
+                    .next()
+                    .is_some();
+                trace.0.push(Obs::Hit(found.then_some((1, 0.0))));
             }
         }
     }

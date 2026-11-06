@@ -2347,6 +2347,39 @@
             }
           ],
           "notes": "32 authored input points prepared exactly once per admitted rock; zero preparation during query phase."
+        },
+        {
+          "name": "box-axes",
+          "unit": "axes",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Unfiltered occupancy queries test only the nearby hull; distant rocks do not add SAT axes."
+        },
+        {
+          "name": "box-vertices",
+          "unit": "vertices",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ],
+          "notes": "A warmed box overlap frame reuses hull projections rather than repeating work per nearby query."
+        },
+        {
+          "name": "box-preparations",
+          "unit": "preparations",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "One last-used extent/orientation frame per immutable hull; repeated translated occupancy queries perform no frame preparation after warmup."
         }
       ]
     },

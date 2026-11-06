@@ -160,7 +160,14 @@ shape casts. Sweeps first clip against a conservative capsule-expanded face enve
 face-interior impacts avoid iterative distance search, while edges, corners, and initial overlaps
 use the reusable f64 support-map distance/GJK/EPA kernels. Character movement, grounded
 state and line-of-sight queries use those paths. A swept or overlap query with an unsupported
-non-capsule/ball shape returns an explicit query error. Non-CCD dynamic boxes now receive
+shape returns an explicit query error. Oriented boxes support read-only overlap against
+fixed hulls through the shared SAT/clipped-manifold kernel, including exact touching,
+containment and empty hull-AABB corners; box translation casts remain unsupported.
+Each immutable hull retains one last-used box query frame, keyed by extents and orientation.
+Translation reuses its projections; a new frame replaces the old one. A mutex serializes only
+this derived query cache, which cloned worlds share with immutable geometry. Witnesses are
+recomputed from the current query and target positions. The cache is not checkpoint state;
+restore rebuilds it lazily, and `convex_hull_stats` includes its retained allocation. Non-CCD dynamic boxes now receive
 rigid contacts against fixed hulls through the shared box/hull SAT and clipped manifolds.
 The existing solver admits speculative points using the substep's linear, gravity/force-drift
 and angular approach bounds, regenerating the geometry at each substep. Rigid spheres,
@@ -521,7 +528,7 @@ Exactly coplanar triangle contacts share a bounded four-point response patch, pr
 the deepest witness and broad support. Rotation-locked boxes with zero angular velocity use
 the deepest witness alone for a shared normal: their points have identical contact velocity
 and effective mass. Other motion retains rotational contact rows. These are response-policy
-reductions; cached geometry remains complete. A failed geometry query discards partial emissions. CCD boxes and other unsupported rigid shapes return
+reductions; cached patches retain up to four witnesses before the linear-only reduction. A failed geometry query discards partial emissions. CCD boxes and other unsupported rigid shapes return
 `InvalidGeometryInput` atomically rather than passing through; external capsule characters remain
 supported through `move_characters`. Dynamic meshes, rotational mesh/shape CCD and mesh×mesh
 response are unsupported. Generic `add_body` cannot forge a mesh geometry slot.

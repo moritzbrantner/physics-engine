@@ -137,6 +137,55 @@ pub(super) fn box_mesh_manifolds(
     result.map_err(super::triangle_mesh::failure)
 }
 
+/// One bounded last-used query frame per immutable hull. Translation is deliberately absent.
+#[derive(Debug)]
+pub(super) struct BoxOverlapFrame {
+    shape: Shape,
+    orientation: Quaternion,
+    pub(super) plan: geometry_kernels::segment_hull::PreparedBoxHull,
+}
+
+/// Read-only box occupancy uses the same exact SAT frame as rigid contacts.
+pub(super) fn box_hull_overlap(
+    hull: &super::convex_hull::PreparedHull,
+    query: &Body,
+    target: &Body,
+    stats: &mut super::QueryStats,
+) -> Result<Option<super::convex_hull::Contact>, SweepFailure> {
+    let mut geometry = GeometryStats::default();
+    let mut cached = hull.box_query.lock().unwrap_or_else(|e| e.into_inner());
+    if cached
+        .as_ref()
+        .is_none_or(|frame| frame.shape != query.shape || frame.orientation != query.orientation)
+    {
+        *cached = Some(BoxOverlapFrame {
+            shape: query.shape,
+            orientation: query.orientation,
+            plan: prepare_box_hull_frame(hull.hull.clone(), query, &mut geometry)?,
+        });
+    }
+    let frame = cached.as_ref().expect("query frame was prepared above");
+    let contact = box_hull_manifold(&frame.plan, query, target, 0.0, &mut geometry);
+    stats.geometry_preparations += geometry.projection_preparations;
+    stats.axes_tested += geometry.sat_axes_tested;
+    stats.vertex_tests += geometry.primitive_vertex_tests;
+    Ok(contact?.map(|manifold| {
+        let point = manifold
+            .points
+            .into_iter()
+            .min_by(|a, b| a.separation.total_cmp(&b.separation))
+            .expect("a contact manifold has at least one witness");
+        let point_hull = target.position + point.rb;
+        super::convex_hull::Contact {
+            normal: manifold.normal,
+            separation: point.separation,
+            point_query: query.position + point.ra,
+            point_hull,
+            face: hull.face_at(to_array(point_hull - target.position)),
+        }
+    }))
+}
+
 pub(super) fn box_hull_manifold(
     hull: &geometry_kernels::segment_hull::PreparedBoxHull,
     a: &Body,

@@ -47,6 +47,7 @@ struct Plane {
 pub(super) struct PreparedHull {
     pub(super) hull: std::sync::Arc<PreparedSegmentHull>,
     planes: Vec<Plane>,
+    pub(super) box_query: std::sync::Mutex<Option<super::primitive::BoxOverlapFrame>>,
 }
 
 /// Contact from the moving shape toward the static hull. The query API reverses this normal
@@ -132,7 +133,14 @@ impl World {
             vertices: stats.vertices_prepared,
             triangles: stats.triangles_prepared,
             edges: stats.edges_prepared,
-            retained_bytes: stats.retained_bytes + prepared.planes.capacity() * size_of::<Plane>(),
+            retained_bytes: stats.retained_bytes
+                + prepared.planes.capacity() * size_of::<Plane>()
+                + prepared
+                    .box_query
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_ref()
+                    .map_or(0, |frame| frame.plan.retained_bytes()),
         })
     }
 
@@ -197,13 +205,14 @@ pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
         PreparedHull {
             hull: std::sync::Arc::new(hull),
             planes,
+            box_query: std::sync::Mutex::new(None),
         },
         half,
     ))
 }
 
 impl PreparedHull {
-    fn face_at(&self, point: Vec3) -> Option<u32> {
+    pub(super) fn face_at(&self, point: Vec3) -> Option<u32> {
         let tolerance = 1e-8 * (1.0 + point.into_iter().map(f64::abs).fold(0.0, f64::max));
         self.planes
             .iter()
