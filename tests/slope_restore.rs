@@ -140,3 +140,65 @@ fn a_rebuilt_world_moves_a_slope_character_as_the_running_one() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// The uneven Hollow approach from MMORPG: the slide can touch the adjacent triangle
+/// near a cell diagonal even though its starting pose was clear.
+fn hollow_world(at: V) -> (World, BodyId) {
+    let mut w = World::new(Config {
+        gravity: V::ZERO,
+        length_unit: UNIT,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_heightfield(
+        HeightfieldDesc {
+            origin: V(800.0, 0.0, -8000.0),
+            cell_size: (CELL, CELL),
+            columns: 5,
+            rows: 5,
+            heights: vec![
+                1100., 1100., 1100., 1100., 1100., 1100., 1100., 1100., 1100., 1100., 1287., 1150.,
+                1100., 1100., 1100., 1027., 1242., 1198., 1100., 1100., 324., 560., 560., 560.,
+                560.,
+            ],
+            removed_cells: None,
+            material: Default::default(),
+        },
+        None,
+    )
+    .unwrap();
+    let mut body = Body::keyed(401, Shape::capsule(60., 30.), at, 1.);
+    body.external = true;
+    let c = w.add_body(body).unwrap();
+    w.add_character(
+        c,
+        CharacterSettings {
+            offset: 0.25,
+            ..w.character_settings()
+        },
+    )
+    .unwrap();
+    (w, c)
+}
+
+#[test]
+fn hollow_triangle_seams_preserve_reconstruction_after_walking_and_stopping() {
+    let (mut w, c) = hollow_world(V(1204.7852, 1190.25, -7605.4375));
+    let (p, _) = step(&mut w, c, V(-1.5664063, 0., 3.6953125));
+    let mut hits = Vec::new();
+    w.overlap_shape(
+        QueryPose::new(Shape::capsule(60., 30.), p),
+        QueryFilter {
+            exclude: Some(c),
+            ..QueryFilter::default()
+        },
+        &mut hits,
+    )
+    .unwrap();
+    assert!(
+        hits.iter().all(|hit| hit.separation >= 0.),
+        "end {p:?}: {hits:?}"
+    );
+    let (mut restored, rc) = hollow_world(p);
+    assert_eq!(step(&mut w, c, V::ZERO), step(&mut restored, rc, V::ZERO));
+}
