@@ -4,9 +4,7 @@
 use crate::{Obs, Scenario, Trace};
 
 const TICKS: u32 = 64;
-#[path = "../../../tests/support/greyhaven_rock.rs"]
-mod authored;
-use authored::vertices;
+use crate::greyhaven_fixture::vertices;
 
 fn queries(tick: u32) -> Vec<([f32; 3], [f32; 3], bool)> {
     let jitter = ((tick % 7) as f32 - 3.0) * 0.025;
@@ -88,7 +86,7 @@ mod engine {
                 ..Config::default()
             })
             .unwrap();
-            world
+            let rock = world
                 .add_convex_hull(
                     ConvexHullDesc {
                         position: V(0.0, 1.1, 0.0),
@@ -101,6 +99,13 @@ mod engine {
                     Some(1),
                 )
                 .unwrap();
+            if std::env::var_os("PHYSICS_ROCK_WORK").is_some() {
+                let stats = world.convex_hull_stats(rock).unwrap();
+                eprintln!(
+                    "greyhaven-rock-prepared vertices={} triangles={} unique_edges={} retained_bytes={}",
+                    stats.vertices, stats.triangles, stats.edges, stats.retained_bytes
+                );
+            }
             Self {
                 world,
                 diagnose: std::env::var_os("PHYSICS_ROCK_WORK").is_some(),

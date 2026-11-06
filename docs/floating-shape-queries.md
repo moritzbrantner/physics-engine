@@ -133,7 +133,8 @@ no gameplay, world-step or large-N dynamic-contact benefit is asserted.
 
 Finite rays with local geometric feature identity are supplied by
 [floating ray queries](floating-ray-queries.md). Heightfield and static-mesh shape hits expose their input triangle through
-`QueryHit::feature`; primitive shape hits return `None`. Richer response manifolds, collide-and-slide/corner/crease
+`QueryHit::feature`; authored static hull hits expose `ConvexHullFace` identities for the
+first canonical supporting face plane containing the witness. Primitive shape hits return `None`. Richer response manifolds, collide-and-slide/corner/crease
 handling, slope/step policy, moving supports and a real game adoption remain open
 in #194. The existing translational/rotating query contracts are unchanged.
 Convention sourceRevision: `e6acb5310afaf15c0cba24f87108f5f4ad1bedc3`.

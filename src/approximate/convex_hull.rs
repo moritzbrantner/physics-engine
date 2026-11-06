@@ -27,6 +27,15 @@ pub struct ConvexHullDesc {
     pub material: Material,
 }
 
+/// Retained immutable geometry, excluding the world tree, inline structs and allocator overhead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConvexHullStats {
+    pub vertices: u64,
+    pub triangles: u64,
+    pub edges: u64,
+    pub retained_bytes: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Plane {
     normal: Vec3,
@@ -108,6 +117,22 @@ impl World {
         body.set_material(desc.material);
         self.insert_body(body).inspect_err(|_| {
             self.hulls.pop();
+        })
+    }
+
+    /// Preparation is shared by cloned worlds and reused by every ray, overlap and sweep.
+    pub fn convex_hull_stats(&self, body: BodyId) -> Result<ConvexHullStats, Error> {
+        let body = &self.bodies[self.index(body)?];
+        let Shape::ConvexHull { hull, .. } = body.shape else {
+            return Err(Error::InvalidInput);
+        };
+        let prepared = self.convex_hull(hull);
+        let stats = prepared.hull.preparation();
+        Ok(ConvexHullStats {
+            vertices: stats.vertices_prepared,
+            triangles: stats.triangles_prepared,
+            edges: stats.edges_prepared,
+            retained_bytes: stats.retained_bytes + prepared.planes.capacity() * size_of::<Plane>(),
         })
     }
 

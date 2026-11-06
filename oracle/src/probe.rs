@@ -13,6 +13,7 @@ pub struct Geometry {
     /// An infinite floor at y = 0.
     pub floor: bool,
     pub meshes: Vec<TriangleMesh>,
+    pub hulls: Vec<ConvexHull>,
     /// Boxes: centre and half extents.
     pub boxes: Vec<([f32; 3], [f32; 3])>,
     /// Wedges: centre and half extents of their box, rising toward -X (the engine's
@@ -26,6 +27,13 @@ pub struct TriangleMesh {
     pub position: [f32; 3],
     pub vertices: Vec<[f32; 3]>,
     pub triangles: Vec<[u32; 3]>,
+}
+
+/// Immutable authored static hull used by the same-pose single-move probe.
+#[derive(Clone, Debug)]
+pub struct ConvexHull {
+    pub position: [f32; 3],
+    pub vertices: Vec<[f32; 3]>,
 }
 
 /// The character and its controller settings.
@@ -102,6 +110,13 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
             .translation(v(mesh.position)),
         );
     }
+    for hull in &geometry.hulls {
+        let points: Vec<_> = hull.vertices.iter().copied().map(v).collect();
+        statics.push(
+            ColliderBuilder::new(SharedShape::convex_hull(&points).expect("valid probe hull"))
+                .translation(v(hull.position)),
+        );
+    }
     let controller = KinematicCharacterController {
         max_slope_climb_angle: c.max_slope,
         min_slope_slide_angle: c.max_slope,
@@ -138,7 +153,9 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
         .enumerate()
         .map(|(i, (shape, at))| fixed(1 + i as u64, shape, at))
         .collect::<Vec<_>>();
-    let key = 1 + statics.len() as u64 + geometry.meshes.len() as u64;
+    let first_mesh_key = 1 + statics.len() as u64;
+    let first_hull_key = first_mesh_key + geometry.meshes.len() as u64;
+    let key = first_hull_key + geometry.hulls.len() as u64;
     let settings = CharacterSettings {
         offset: c.offset,
         max_slope: c.max_slope,
@@ -161,7 +178,19 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
                     triangles: mesh.triangles.clone(),
                     material: Default::default(),
                 },
-                Some(key - geometry.meshes.len() as u64 + i as u64),
+                Some(first_mesh_key + i as u64),
+            )
+            .unwrap();
+    }
+    for (i, hull) in geometry.hulls.iter().enumerate() {
+        probe_world
+            .add_convex_hull(
+                physics_engine::approximate::ConvexHullDesc {
+                    position: v(hull.position),
+                    vertices: hull.vertices.iter().copied().map(v).collect(),
+                    material: Default::default(),
+                },
+                Some(first_hull_key + i as u64),
             )
             .unwrap();
     }
@@ -245,5 +274,44 @@ mod tests {
             engine(&geometry, c, at, desired),
         );
         assert!(close(r, e, 1e-5), "rapier {r:?}, engine {e:?}");
+    }
+}
+
+#[cfg(all(test, feature = "engine", feature = "rapier"))]
+#[test]
+fn actual_greyhaven_rock_grounding_and_seam_moves_match_same_pose_rapier() {
+    let geometry = Geometry {
+        hulls: vec![
+            ConvexHull {
+                position: [0.0, 1.1, 0.0],
+                vertices: crate::greyhaven_fixture::vertices(),
+            },
+            ConvexHull {
+                position: [2.4, 1.1, 0.0],
+                vertices: crate::greyhaven_fixture::vertices(),
+            },
+        ],
+        ..Geometry::default()
+    };
+    let controller = Controller {
+        half_segment: 0.6,
+        radius: 0.3,
+        ..Controller::default()
+    };
+    for at in [[0.0, 3.4, 0.0], [0.5, 3.4, 0.0], [1.2, 3.4, 0.0]] {
+        for desired in [[0.0, -0.8, 0.0], [0.15, -0.8, 0.05]] {
+            let reference = rapier(&geometry, controller, at, desired);
+            let actual = engine(&geometry, controller, at, desired);
+            for axis in 0..3 {
+                assert!(
+                    (actual.translation[axis] - reference.translation[axis]).abs() < 0.015,
+                    "at={at:?} desired={desired:?}: engine={actual:?}, Rapier={reference:?}"
+                );
+            }
+            assert_eq!(
+                actual.grounded, reference.grounded,
+                "at={at:?} desired={desired:?}: {actual:?}/{reference:?}"
+            );
+        }
     }
 }

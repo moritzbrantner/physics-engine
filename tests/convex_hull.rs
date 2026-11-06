@@ -482,3 +482,150 @@ fn unsupported_rigid_hull_pairs_fail_atomically_instead_of_tunneling() {
         assert_eq!(world.body(id).unwrap(), &before);
     }
 }
+
+#[path = "support/greyhaven_rock.rs"]
+mod authored;
+
+#[test]
+fn actual_rock_projectile_segments_and_contact_features_are_repeatable() {
+    use physics_engine::approximate::BodyStorage;
+    let mut prior = None;
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let mut world = World::new(Config {
+            body_storage: storage,
+            gravity: V::ZERO,
+            ..Config::default()
+        })
+        .unwrap();
+        for key in [200, 100] {
+            world
+                .add_convex_hull(
+                    ConvexHullDesc {
+                        vertices: authored::vertices()
+                            .into_iter()
+                            .map(|p| V(p[0], p[1], p[2]))
+                            .collect(),
+                        position: V(0.0, 1.1, 0.0),
+                        material: Default::default(),
+                    },
+                    Some(key),
+                )
+                .unwrap();
+        }
+        let cast = RayCast::new(V(-4.0, 1.1, 0.0), V(10.0, 0.0, 0.0));
+        let hit = world
+            .cast_ray_first(cast, QueryFilter::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(world.body(hit.body).unwrap().key, Some(100));
+        assert!(matches!(hit.feature, RayFeature::ConvexHullFace(_)));
+        assert!(hit.fraction > 0.0 && hit.fraction < 0.5);
+        assert!(hit.normal.dot(cast.displacement) < 0.0);
+        // The game's bouncing projectile reflects the remaining complete segment about this normal.
+        let reflected = cast.displacement - hit.normal * (2.0 * hit.normal.dot(cast.displacement));
+        let reflected = RayCast::new(
+            hit.point + hit.normal * 0.001,
+            reflected * (1.0 - hit.fraction),
+        );
+        assert!(
+            world
+                .cast_ray_first(reflected, QueryFilter::default())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            world
+                .cast_ray_first(
+                    RayCast::new(V(-1.5, 3.4, 1.4), V(0.0, -4.0, 0.0)),
+                    QueryFilter::default()
+                )
+                .unwrap()
+                .is_none(),
+            "empty authored-rock AABB corner blocked projectile"
+        );
+        let mut hits = Vec::new();
+        world
+            .cast_shape(
+                ShapeCast::new(
+                    QueryPose::new(Shape::capsule(0.3, 0.2), V(0.0, 3.4, 0.3)),
+                    V(0.0, -3.5, 0.0),
+                ),
+                QueryFilter::default(),
+                &mut hits,
+            )
+            .unwrap();
+        assert_eq!(world.body(hits[0].body).unwrap().key, Some(100));
+        assert!(matches!(
+            hits[0].feature,
+            Some(RayFeature::ConvexHullFace(_))
+        ));
+        let result = (hit, hits);
+        if let Some(expected) = &prior {
+            assert_eq!(&result, expected);
+        } else {
+            prior = Some(result);
+        }
+    }
+}
+
+#[cfg(feature = "checkpoints")]
+#[test]
+fn checkpoint_preserves_hulls_and_meshes_with_distinct_tags_and_removed_slots() {
+    use physics_engine::approximate::{
+        Checkpoint, CheckpointContext, CheckpointLimits, TriangleMeshDesc,
+    };
+    let mut world = cube_rock();
+    let removed = world.body_id(500).unwrap();
+    world.remove_body(removed).unwrap();
+    world
+        .add_convex_hull(
+            ConvexHullDesc {
+                vertices: authored::vertices()
+                    .into_iter()
+                    .map(|p| V(p[0], p[1], p[2]))
+                    .collect(),
+                position: V(0.0, 1.1, 0.0),
+                material: Default::default(),
+            },
+            Some(501),
+        )
+        .unwrap();
+    world
+        .add_triangle_mesh(
+            TriangleMeshDesc {
+                position: V(10.0, 0.0, 0.0),
+                vertices: vec![V(-1.0, 0.0, -1.0), V(1.0, 0.0, -1.0), V(0.0, 0.0, 1.0)],
+                triangles: vec![[0, 1, 2]],
+                material: Default::default(),
+            },
+            Some(502),
+        )
+        .unwrap();
+    let context = CheckpointContext {
+        build: [3; 32],
+        content: [7; 32],
+    };
+    let saved = world.checkpoint(context).unwrap().to_bytes();
+    assert_eq!(u32::from_le_bytes(saved[8..12].try_into().unwrap()), 9);
+    let restored = Checkpoint::from_bytes(&saved, context, CheckpointLimits::default())
+        .unwrap()
+        .restore(&[])
+        .unwrap();
+    assert_eq!(saved, restored.checkpoint(context).unwrap().to_bytes());
+    for x in [0.0, 10.0] {
+        let cast = RayCast::new(V(x, 3.4, 0.0), V(0.0, -4.0, 0.0));
+        let before = world
+            .cast_ray_first(cast, QueryFilter::default())
+            .unwrap()
+            .unwrap();
+        let after = restored
+            .cast_ray_first(cast, QueryFilter::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(before, after);
+        assert!(matches!(
+            before.feature,
+            RayFeature::ConvexHullFace(_) | RayFeature::TriangleMeshTriangle(_)
+        ));
+    }
+}

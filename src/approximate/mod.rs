@@ -74,7 +74,7 @@ mod convex_hull;
 mod terrain;
 mod triangle_mesh;
 pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};
-pub use convex_hull::{ConvexHullDesc, ConvexHullId};
+pub use convex_hull::{ConvexHullDesc, ConvexHullId, ConvexHullStats};
 pub use terrain::{HeightfieldDesc, TerrainId};
 pub use triangle_mesh::{TriangleMeshDesc, TriangleMeshId, TriangleMeshStats};
 mod math;

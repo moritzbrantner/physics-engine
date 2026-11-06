@@ -74,11 +74,17 @@ Rapier oracle. `World::add_convex_hull` admits fixed hulls and the engine querie
 for rays, sphere/capsule overlaps and sweeps used by kinematic characters. A box no longer has
 to replace the authored shape in this engine-side fixture. This is **partial** until the game
 updates its rock adapter and the native/WASM cost and behavior gates demonstrate acceptable
-parity. It does not include dynamic-body/hull response or generic hull×hull pairs, and the game
+parity. Actual game projectiles use complete ray segments, including first-hit reflection;
+the fixture covers those segments without a frame-end overlap substitute. Unsupported
+dynamic-body/hull pairs return an atomic step error rather than silently separating. Generic
+hull×hull response remains unsupported, and the game
 must retain Rapier as its compatibility fallback for unsupported interactions. Run
 `bash scripts/greyhaven-rock-hulls.sh` (optional `--perf` timing gate or `--stats` work
-diagnostics) for the local reproducer. The current native oracle still exceeds the 1.05×
-parity gate: do not switch this collision slice on in MMORPG yet.
+diagnostics) for the local reproducer (`--wasm` selects the WASM gate). The same-pose probe
+compares six actual two-rock grounding/seam moves with Rapier. Deterministic work contracts
+cover local support casts at 16–256 rocks, one-time preparation and retained geometry bytes.
+Native/WASM oracle gates remain required; game integration and browser acceptance are not
+established by the engine fixture.
 
 ## Experiment: circumsphere proxies for dodecahedron and icosahedron visuals (#465)
 

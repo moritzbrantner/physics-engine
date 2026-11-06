@@ -2245,7 +2245,7 @@
     },
     {
       "id": "authored-rock-query",
-      "description": "Capsule support cast against actual Greyhaven authored rock proxies at fixed spatial density; one local hit amid unrelated static hulls. Prepared immutable geometry is never rebuilt by queries.",
+      "description": "Capsule edge cast against actual Greyhaven authored rock proxies at fixed spatial density; one local hit amid unrelated static hulls. Prepared immutable geometry is never rebuilt by queries.",
       "publicContract": "physics_engine::approximate::World::cast_shape",
       "dimensions": {
         "rocks": {
@@ -2280,7 +2280,7 @@
               "bound": "logarithmic"
             }
           ],
-          "notes": "One query-tree descent for fixed-radius local support discovery."
+          "notes": "One query-tree descent for a fixed-range local capsule cast."
         },
         {
           "name": "exact-tests",
@@ -2323,6 +2323,30 @@
             "max": 0
           },
           "notes": "The public admission API retains a current query tree."
+        },
+        {
+          "name": "retained-bytes",
+          "unit": "bytes",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "linear"
+            }
+          ],
+          "notes": "Actual capacity payload of retained canonical hull geometry, prepared faces/edges and engine plane identities, excluding allocator/world tree overhead."
+        },
+        {
+          "name": "prepared-vertices",
+          "unit": "vertices",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "linear"
+            }
+          ],
+          "notes": "32 authored input points prepared exactly once per admitted rock; zero preparation during query phase."
         }
       ]
     }

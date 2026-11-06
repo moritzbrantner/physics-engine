@@ -2,6 +2,8 @@
 //! and on physics-engine, records comparable observations, and checks behaviour invariants. The
 //! native binary also times both sides and fails when physics-engine is slower than Rapier.
 
+#[path = "../../tests/support/greyhaven_rock.rs"]
+mod greyhaven_fixture;
 pub mod kcc;
 pub mod probe;
 pub mod scenarios;

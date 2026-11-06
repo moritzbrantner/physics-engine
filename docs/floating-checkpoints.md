@@ -10,8 +10,11 @@ build- and target-specific; moving between targets or providers reconstructs phy
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
 Format 9 (#180) adds static convex hull shape tag 7 and embedded canonical hull vertices
-after the format-8 mesh slots. Removed hull slots remain absent; restore rebuilds their
-prepared geometry. The algorithm version remains 11.
+after the format-8 mesh slots. A u64 hull-slot count precedes one u64 vertex count per
+slot, then three physical scalars per vertex; zero vertices marks a removed slot. Restore
+rebuilds prepared geometry and validates one live hull body per populated slot. The algorithm
+version remains 11. The format-9 empty-world fixture changes intentionally; mesh tag 6 and
+its slot layout remain intact.
 
 Format 8 (#182) adds immutable static triangle meshes: shape tag 6 contains the geometry slot
 and conservative half extents. After the heightfield entries, a u64 mesh-slot count is followed

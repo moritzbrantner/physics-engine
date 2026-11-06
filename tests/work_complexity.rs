@@ -1654,8 +1654,9 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
         })
         .unwrap();
         work::reset();
+        let mut retained_bytes = 0;
         for i in 0..rocks {
-            world
+            let id = world
                 .add_convex_hull(
                     ConvexHullDesc {
                         vertices: greyhaven_rock::vertices()
@@ -1668,6 +1669,7 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
                     Some(i),
                 )
                 .unwrap();
+            retained_bytes += world.convex_hull_stats(id).unwrap().retained_bytes as u64;
         }
         assert_eq!(work::get(Counter::HullPreparations), rocks * 32);
         let mut hits = Vec::with_capacity(1);
@@ -1678,8 +1680,8 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
             let stats = world
                 .cast_shape(
                     ShapeCast::new(
-                        QueryPose::new(Shape::capsule(0.3, 0.2), V(0.0, 3.4, 0.3)),
-                        V(0.0, -3.5, 0.0),
+                        QueryPose::new(Shape::capsule(0.3, 0.2), V(-2.3, 0.35, -0.4)),
+                        V(4.6, 0.0, 0.0),
                     ),
                     QueryFilter::default(),
                     &mut hits,
@@ -1693,12 +1695,18 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
             full_scans += work::get(Counter::FullScanBodies);
             preparations += work::get(Counter::HullPreparations);
         }
+        assert!(
+            triangles > 0,
+            "fixture must exercise exact edge/corner kernel work"
+        );
         samples.push((
             vec![("rocks", rocks)],
             vec![
                 ("tree-nodes", nodes / QUERIES),
                 ("exact-tests", exact / QUERIES),
                 ("hull-triangles", triangles / QUERIES),
+                ("retained-bytes", retained_bytes),
+                ("prepared-vertices", rocks * 32),
                 ("preparations", preparations),
                 ("full-scan-bodies", full_scans),
             ],
@@ -1711,6 +1719,8 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
             ("tree-nodes", "rocks", "logarithmic"),
             ("exact-tests", "rocks", "constant"),
             ("hull-triangles", "rocks", "constant"),
+            ("retained-bytes", "rocks", "linear"),
+            ("prepared-vertices", "rocks", "linear"),
             ("preparations", "", "zero"),
             NO_FULL_SCAN,
         ],
