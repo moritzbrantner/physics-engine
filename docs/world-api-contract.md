@@ -117,7 +117,7 @@ When to pick which:
 adds static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`;
 `removed_cells`, row-major per cell, cuts holes that rays, queries and characters pass through,
 like parry's `CELL_REMOVED`) and returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same
-diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and casts, and
+diagonal as parry/Rapier heightfields. Character sweeps recast nearly tangential terrain hits with a small normal nudge so an earlier flat triangle cannot hide the next blocking face. Rays, sphere and capsule overlaps and casts, and
 character moves work against it. Box and wedge overlaps (door probes) are tested against the
 triangles by the separating-axis test: whether they overlap is exact, and the reported depth and
 normal come from the deepest triangle alone. The terrain is a surface, so a box wholly beneath

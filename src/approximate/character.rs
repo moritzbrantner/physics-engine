@@ -583,6 +583,21 @@ impl World {
         // Sliding along a surface at the offset approaches it only by rounding; motion that
         // closes the gap by under a thousandth of the offset does not count as approaching.
         let tolerance = offset * 1e-3;
+        // A tangential terrain contact can win the body's earliest-hit tie by rounding,
+        // hiding the next triangle. Recast leaning off that contact just as a later slide
+        // does, while still judging approach against the requested displacement.
+        if let Some(normal) = hits.iter().find_map(|hit| {
+            (matches!(hit.feature, Some(super::RayFeature::HeightfieldTriangle(_)))
+                && hit.normal.dot(displacement).abs() <= tolerance)
+                .then_some(hit.normal)
+        }) {
+            self.cast_hits(
+                id,
+                pose,
+                displacement + normal * (offset * NORMAL_NUDGE),
+                hits,
+            )?;
+        }
         Ok(hits
             .iter()
             .copied()
