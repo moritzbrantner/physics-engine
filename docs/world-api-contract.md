@@ -131,6 +131,17 @@ a fingerprint of each heightfield's description; `Checkpoint::restore` takes the
 again (#452). `add_body` rejects
 heightfield shapes.
 
+## Character reconstruction
+
+`move_characters` derives static penetration from the current physical pose. Only an exact
+pose proved clear by an overlap query can skip that query before the next physics step;
+placement and exclusion changes invalidate the proof. The older clear hint alone cannot
+suppress the check: reconstructing a character from its pose/settings applies the same push-out as uninterrupted movement (#500). The hint may
+still skip redundant character/character separation; it is not static collision authority.
+`Embedded::Stay` continues to leave static penetration in place, while `PushOut` continues
+to report the repair separately in `depenetration`. The `character-rebuild` Rapier oracle
+checks exact same-backend reconstruction at each tick on the reported terrain patch.
+
 ## Authored convex rocks (#180)
 
 `World::add_convex_hull(ConvexHullDesc { vertices, position, material }, key)` admits one

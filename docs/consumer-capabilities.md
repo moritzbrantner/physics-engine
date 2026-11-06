@@ -67,6 +67,27 @@ mmorpg#300, mmorpg#290 and a narrow MMORPG dragging adapter, but not game-side a
 filtering, multi-hit queries and projectiles, with the consumer issues that would gate each, is
 [D7](technical-decisions.md#d7--physical-interactions-reuse-the-world-consumer-gated-q32q38).
 
+### Character continuation from physical poses (#500)
+
+Static penetration decisions no longer depend on a character's previous known-clear hint.
+On the reported 400 cm terrain cell, a warm character skipped push-out while a rebuilt
+character received an extra correction from the same pose. Static penetration now follows
+physical pose/settings. Only a pose actually proved clear can reuse that result before
+the next step, with placement and exclusion invalidation; the older clear hint alone
+remains an optimization for character/character separation. `Embedded::PushOut` and `Embedded::Stay` retain their
+existing distinct policies rather than changing MMORPG to Rapier's embedded-start policy.
+
+The captured-hint regression runs in centimetres. `character-rebuild` in the shared oracle
+walks the equivalent cell in metres, reconstructing a fresh world before every tick and
+requiring each backend's positions, ground contact and depenetration to match exactly.
+Native and WASM comparisons pass in both storage modes; local timings were about 0.55×
+and 0.53× Rapier. The existing `terrain` and `embedded-starts` native gates also pass.
+This is upstream evidence; the MMORPG recovery/E2E rerun remains deferred until integration.
+
+The same-pose probe now accepts a real heightfield cell:
+`cargo run --release --locked -p physics-oracle --bin probe -- --terrain-cell 8,0,-76,4,4,11,11,12.87,11.5 --capsule 0.6,0.3 --at 11.162186,12.470002,-73.88426 --desired 0,-0.002725,0.03 --stay`.
+Rapier and Engine produce the same one-move translation with that matching embedded policy.
+
 ### Greyhaven authored rock hulls (#180; consumer-gated partial C4/C11/C12)
 
 The first actual Greyhaven convex rock proxy is now exercised by `greyhaven-rock-hulls` in the

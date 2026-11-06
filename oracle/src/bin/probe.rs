@@ -7,7 +7,7 @@
 //! ```
 //!
 //! Geometry: `--floor` (y = 0), `--box cx,cy,cz,hx,hy,hz`, `--wedge cx,cy,cz,hx,hy,hz` (rises
-//! toward -X), each repeatable. Character: `--capsule half,radius` (0.5,0.3), `--offset`
+//! toward -X), and `--terrain-cell ox,oy,oz,dx,dz,h00,h10,h01,h11` (row-major), each repeatable. Character: `--capsule half,radius` (0.5,0.3), `--offset`
 //! (0.0025), `--slope degrees` (45), `--snap metres|none` (0.05), `--autostep height,width`,
 //! `--stay` (the engine leaves an embedded start in place, as Rapier does).
 //! `--repeat N` continues each side from its own result with the same desired motion.
@@ -47,6 +47,17 @@ fn parse() -> Result<Probe, String> {
                 } else {
                     geometry.wedges.push(shape);
                 }
+            }
+            "--terrain-cell" => {
+                let [x, y, z, dx, dz, h00, h10, h01, h11] =
+                    numbers::<9>(&value(&mut args, &flag)?)?;
+                geometry
+                    .terrain_cells
+                    .push(physics_oracle::probe::TerrainCell {
+                        origin: [x, y, z],
+                        cell_size: [dx, dz],
+                        heights: [h00, h10, h01, h11],
+                    });
             }
             "--capsule" => {
                 [c.half_segment, c.radius] = numbers::<2>(&value(&mut args, &flag)?)?;

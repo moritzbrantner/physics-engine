@@ -191,3 +191,13 @@ the heights to prepare and one to fingerprint); capture does not.
 ## Remaining consumer work
 
 #452 adds terrain, halfspace and character continuation for the engine-side zone fixture; no consumer has adopted it, and MMORPG's own recovery acceptance (its save format, content tags and browser recovery) remains open, as do joints in checkpoints. This implements the selected floating world's engine checkpoint slice under #198. MMORPG still owns its gameplay/canonical save contract and uses the translational World adopted in PR #47. Its floating-solver migration remains gated by query/character support, CCD/contact quality and real native/browser canonical/recovery acceptance (#194, #3 and the linked consumer issue). This checkpoint product alone does not satisfy that adoption or close #198.
+
+## Character reconstruction (algorithm 13, #500)
+
+Static push-out now derives clearance from the authoritative physical pose instead
+of trusting an earlier move's clear hint. An overlap-verified exact pose can reuse clearance
+until stepping, placement or an exclusion change; this cache is disposable. This changes continuation on a shallow embedded
+terrain pose, so the algorithm becomes 13 while the wire format stays 9. Version 12 contains the merged terrain-seam correction (#501); versions 11 and 12 are rejected.
+The known-clear field remains in the wire layout as a character-separation hint, not authority
+for static overlap. The empty-world digest changes with the algorithm header/checksum.
+The game still owns canonical pose/settings reconstruction and its integration acceptance.
