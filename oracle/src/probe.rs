@@ -12,11 +12,20 @@
 pub struct Geometry {
     /// An infinite floor at y = 0.
     pub floor: bool,
+    pub meshes: Vec<TriangleMesh>,
     /// Boxes: centre and half extents.
     pub boxes: Vec<([f32; 3], [f32; 3])>,
     /// Wedges: centre and half extents of their box, rising toward -X (the engine's
     /// `Shape::Wedge`; on Rapier the convex hull MMORPG builds).
     pub wedges: Vec<([f32; 3], [f32; 3])>,
+}
+
+/// Immutable authored mesh used by the same-pose single-move probe.
+#[derive(Clone, Debug)]
+pub struct TriangleMesh {
+    pub position: [f32; 3],
+    pub vertices: Vec<[f32; 3]>,
+    pub triangles: Vec<[u32; 3]>,
 }
 
 /// The character and its controller settings.
@@ -81,6 +90,18 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
         let hull = SharedShape::convex_hull(&points).expect("solid wedge");
         statics.push(ColliderBuilder::new(hull).translation(v(centre)));
     }
+    for mesh in &geometry.meshes {
+        statics.push(
+            ColliderBuilder::new(
+                SharedShape::trimesh(
+                    mesh.vertices.iter().copied().map(v).collect(),
+                    mesh.triangles.clone(),
+                )
+                .expect("valid probe mesh"),
+            )
+            .translation(v(mesh.position)),
+        );
+    }
     let controller = KinematicCharacterController {
         max_slope_climb_angle: c.max_slope,
         min_slope_slide_angle: c.max_slope,
@@ -117,7 +138,7 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
         .enumerate()
         .map(|(i, (shape, at))| fixed(1 + i as u64, shape, at))
         .collect::<Vec<_>>();
-    let key = 1 + statics.len() as u64;
+    let key = 1 + statics.len() as u64 + geometry.meshes.len() as u64;
     let settings = CharacterSettings {
         offset: c.offset,
         max_slope: c.max_slope,
@@ -130,11 +151,21 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
         ..CharacterSettings::default()
     };
     let shape = Shape::capsule(c.half_segment, c.radius);
-    let mut characters = Characters::new(
-        world(BodyStorage::Ordered, statics),
-        capsules(key, shape, [at]),
-        settings,
-    );
+    let mut probe_world = world(BodyStorage::Ordered, statics);
+    for (i, mesh) in geometry.meshes.iter().enumerate() {
+        probe_world
+            .add_triangle_mesh(
+                physics_engine::approximate::TriangleMeshDesc {
+                    position: v(mesh.position),
+                    vertices: mesh.vertices.iter().copied().map(v).collect(),
+                    triangles: mesh.triangles.clone(),
+                    material: Default::default(),
+                },
+                Some(key - geometry.meshes.len() as u64 + i as u64),
+            )
+            .unwrap();
+    }
+    let mut characters = Characters::new(probe_world, capsules(key, shape, [at]), settings);
     characters.move_each(|_, body| CharacterMove {
         body,
         desired: v(desired),

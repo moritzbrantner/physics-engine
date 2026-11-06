@@ -40,9 +40,15 @@ pub enum Counter {
     CcdHeapPushes,
     /// Superseded CCD queue entries discarded when popped.
     CcdHeapStalePops,
+    /// Mesh-local acceleration nodes visited.
+    MeshNodes,
+    /// Mesh triangles tested after pruning.
+    MeshTriangles,
+    /// Immutable mesh triangles prepared at admission (never during a query).
+    MeshPreparations,
 }
 
-const COUNTERS: usize = 14;
+const COUNTERS: usize = 17;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

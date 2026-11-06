@@ -893,13 +893,24 @@ impl World {
             } else {
                 (&target, &probe)
             };
-            let swept = contact::swept(
-                a,
-                b,
-                clock.remaining(),
-                self.scene.contact_slop,
-                &mut report.geometry,
-            )
+            let swept = if let Shape::TriangleMesh { mesh, .. } = target.shape {
+                super::triangle_mesh::manifold(
+                    self.triangle_mesh(mesh),
+                    a,
+                    b,
+                    self.scene.contact_slop,
+                    Some(clock.remaining()),
+                    &mut report.geometry,
+                )
+            } else {
+                contact::swept(
+                    a,
+                    b,
+                    clock.remaining(),
+                    self.scene.contact_slop,
+                    &mut report.geometry,
+                )
+            }
             .map_err(|reason| Error::CollisionSearchFailed {
                 bodies: [a.id, b.id],
                 reason,

@@ -37,6 +37,7 @@ fn kind(shape: Shape) -> &'static str {
         Shape::Wedge(_) => "wedge",
         Shape::Heightfield { .. } => "heightfield",
         Shape::HalfSpace => "halfspace",
+        Shape::TriangleMesh { .. } => "triangle-mesh",
     }
 }
 
@@ -232,7 +233,7 @@ pub fn restrictions_and_validation_remain_explicit() {
                 Shape::Box(_) => Shape::Box(V(dimension, minimum, minimum)),
                 Shape::Capsule { .. } => Shape::capsule(0.0, dimension),
                 Shape::Wedge(_) => Shape::wedge(V(dimension, minimum, minimum)),
-                Shape::Heightfield { .. } | Shape::HalfSpace => {
+                Shape::Heightfield { .. } | Shape::TriangleMesh { .. } | Shape::HalfSpace => {
                     unreachable!("the ledger lists primitives only")
                 }
             };

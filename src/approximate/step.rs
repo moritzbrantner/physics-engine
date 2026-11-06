@@ -1492,6 +1492,62 @@ impl World {
                     );
                     continue;
                 }
+                if let (Shape::TriangleMesh { mesh, .. }, _)
+                | (_, Shape::TriangleMesh { mesh, .. }) = (a.shape, b.shape)
+                {
+                    let moving = if matches!(a.shape, Shape::TriangleMesh { .. }) {
+                        b
+                    } else {
+                        a
+                    };
+                    if moving.inverse_mass() == 0.0
+                        || moving.sensor
+                        || moving.sleeping
+                        || !a.layers.collides_with(b.layers)
+                    {
+                        continue;
+                    }
+                    let prepared = &self.triangle_meshes[mesh.0 as usize]
+                        .as_ref()
+                        .expect("live mesh")
+                        .prepared;
+                    report.narrow_tests += 1;
+                    let failure = |reason| Error::CollisionSearchFailed {
+                        bodies: [a.id, b.id],
+                        reason,
+                    };
+                    let current = super::triangle_mesh::manifold(
+                        prepared,
+                        a,
+                        b,
+                        self.scene.contact_slop,
+                        None,
+                        &mut report.geometry,
+                    )
+                    .map_err(failure)?;
+                    let deferred = ccd::deferred(a, b);
+                    let current = current.filter(|m| {
+                        !deferred || (&m.points).into_iter().all(|p| p.separation <= 0.0)
+                    });
+                    let m = if current.is_some() {
+                        current
+                    } else {
+                        regenerate = true;
+                        super::triangle_mesh::manifold(
+                            prepared,
+                            a,
+                            b,
+                            self.scene.contact_slop,
+                            Some(h),
+                            &mut report.geometry,
+                        )
+                        .map_err(failure)?
+                    };
+                    if let Some(m) = m {
+                        push(out, (i, j, m), &mut s.work);
+                    }
+                    continue;
+                }
                 if a.sensor
                     || b.sensor
                     // Terrain answers queries and character moves; halfspace contacts with
