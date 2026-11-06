@@ -1983,14 +1983,45 @@ pub(super) fn apply(
     c: &Constraint,
     impulse: [Real; 3],
 ) {
-    let j = c.n * impulse[0] + c.t1 * impulse[1] + c.t2 * impulse[2];
+    apply_components::<true>(bodies, responses, c, impulse);
+}
+
+/// The normal solve has no tangential impulse. Keep its response update with the general
+/// response owner, without multiplying the two unused axes or adding their zero vectors.
+#[inline]
+pub(super) fn apply_normal(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    c: &Constraint,
+    impulse: Real,
+) {
+    apply_components::<false>(bodies, responses, c, [impulse, 0.0, 0.0]);
+}
+
+#[inline]
+fn apply_components<const TANGENTS: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    c: &Constraint,
+    impulse: [Real; 3],
+) {
+    let j = if TANGENTS {
+        c.n * impulse[0] + c.t1 * impulse[1] + c.t2 * impulse[2]
+    } else {
+        c.n * impulse[0]
+    };
     for (side, i, sign) in [(0, c.a, -1.0), (1, c.b, 1.0)] {
         if c.response[side] {
             let b = &mut bodies[i];
             b.velocity += j * (sign * responses[i].inverse_mass);
             if c.spin {
                 let [n, t1, t2] = c.angular[side];
-                b.angular_velocity += (n * impulse[0] + t1 * impulse[1] + t2 * impulse[2]) * sign;
+                let angular = if TANGENTS {
+                    n * impulse[0] + t1 * impulse[1] + t2 * impulse[2]
+                } else {
+                    n * impulse[0]
+                };
+                b.angular_velocity += angular * sign;
             }
         }
     }

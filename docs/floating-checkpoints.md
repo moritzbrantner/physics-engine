@@ -214,3 +214,8 @@ test restores mid-contact and continues bit-identically.
 Algorithm 15 admits non-CCD rigid boxes against immutable static triangle meshes using
 BVH-pruned, two-sided contact manifolds and the existing speculative solver. Format 9 is
 unchanged; older algorithm checkpoints are rejected because contact continuation changes.
+
+Algorithm 15 also specializes the solver's normal-only impulse application, omitting
+unused tangential zero-vector terms. Finite arithmetic keeps the same response; exact
+zero signs may differ from algorithm 14. The general friction update and numerical
+failure checks remain in place.

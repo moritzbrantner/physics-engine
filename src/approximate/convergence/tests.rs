@@ -400,3 +400,35 @@ fn large_sideways_velocity_cannot_relax_the_normal_error_limit() {
         .is_none()
     );
 }
+
+#[test]
+fn normal_impulse_specialization_matches_the_general_finite_response() {
+    for response in [[false, false], [true, false], [false, true], [true, true]] {
+        for spin in [false, true] {
+            for impulse in [0.0, -0.0, 1e-20, -0.4, 1e10] {
+                let mut expected = vec![sphere(1, 0.0, 1.0), sphere(2, 1.0, 2.0)];
+                for body in &mut expected {
+                    body.velocity = V(-0.2, 1.0, 4.0);
+                    body.angular_velocity = V(0.3, -0.4, 0.2);
+                }
+                let mut actual = expected.clone();
+                let mut report = Report::default();
+                let prepared: Vec<_> = expected
+                    .iter()
+                    .map(|b| PreparedResponse::new(b, &mut report))
+                    .collect();
+                let mut c = row(0, 1);
+                c.n = V(0.3, 0.5, 0.2).unit();
+                c.response = response;
+                c.spin = spin;
+                c.angular = [[V(0.2, -0.3, 0.4), V(0.7, 0.1, -0.3), V(-0.1, 0.4, 0.2)]; 2];
+                apply(&mut expected, &prepared, &c, [impulse, 0.0, 0.0]);
+                apply_normal(&mut actual, &prepared, &c, impulse);
+                assert_eq!(
+                    actual, expected,
+                    "response={response:?}, spin={spin}, impulse={impulse}"
+                );
+            }
+        }
+    }
+}

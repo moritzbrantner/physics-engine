@@ -1,5 +1,5 @@
 //! Bounded velocity solving with a projected fixed-point residual, never a wall-clock budget.
-use super::step::{apply, contact_velocity};
+use super::step::{apply, apply_normal, contact_velocity};
 use super::{Body, Constraint, PreparedResponse, Real, Report};
 
 /// Absolute scene-unit tolerances plus a relative per-contact scale. Zero selects exact checks.
@@ -422,7 +422,7 @@ fn solve_row<const READ_CHANGE: bool>(
     let next = next_normal(c, vn);
     let dj = next - c.normal_impulse;
     c.normal_impulse = next;
-    apply(bodies, responses, c, [dj, 0.0, 0.0]);
+    apply_normal(bodies, responses, c, dj);
     let rel =
         contact_velocity(&bodies[c.b], c.rb, c.spin) - contact_velocity(&bodies[c.a], c.ra, c.spin);
     let vt = [rel.dot(c.t1), rel.dot(c.t2)];
