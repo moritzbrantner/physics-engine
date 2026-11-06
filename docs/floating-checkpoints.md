@@ -194,8 +194,9 @@ the heights to prepare and one to fingerprint); capture does not.
 
 ## Character reconstruction (algorithm 13, #500)
 
-Static push-out now checks the authoritative physical pose on every character move instead
-of trusting an earlier move's clear hint. This changes continuation on a shallow embedded
+Static push-out now derives clearance from the authoritative physical pose instead
+of trusting an earlier move's clear hint. An overlap-verified exact pose can reuse clearance
+until stepping, placement or an exclusion change; this cache is disposable. This changes continuation on a shallow embedded
 terrain pose, so the algorithm becomes 13 while the wire format stays 9. Version 12 contains the merged terrain-seam correction (#501); versions 11 and 12 are rejected.
 The known-clear field remains in the wire layout as a character-separation hint, not authority
 for static overlap. The empty-world digest changes with the algorithm header/checksum.

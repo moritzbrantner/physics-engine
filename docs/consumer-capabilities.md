@@ -71,9 +71,10 @@ filtering, multi-hit queries and projectiles, with the consumer issues that woul
 
 Static penetration decisions no longer depend on a character's previous known-clear hint.
 On the reported 400 cm terrain cell, a warm character skipped push-out while a rebuilt
-character received an extra correction from the same pose. Every move now checks static
-penetration from physical pose/settings; the clear hint remains an optimization for
-character/character separation. `Embedded::PushOut` and `Embedded::Stay` retain their
+character received an extra correction from the same pose. Static penetration now follows
+physical pose/settings. Only a pose actually proved clear can reuse that result before
+the next step, with placement and exclusion invalidation; the older clear hint alone
+remains an optimization for character/character separation. `Embedded::PushOut` and `Embedded::Stay` retain their
 existing distinct policies rather than changing MMORPG to Rapier's embedded-start policy.
 
 The captured-hint regression runs in centimetres. `character-rebuild` in the shared oracle
