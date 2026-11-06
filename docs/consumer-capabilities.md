@@ -266,10 +266,12 @@ zero angular velocity needs only its deepest witness for a shared normal; rotati
 retain a spread-out four-point patch. Cached patches retain rotational witnesses; the single-point reduction happens only at
 response entry.
 
-**Not native performance parity yet:** the local native fixture improved from 13.45/13.43 µs
-per tick versus Rapier 3.94 µs (3.41×) to 5.94/5.94 versus 3.98 µs (1.49×), still over 1.05×.
-Focused WASM now passes at 9.98/8.97 µs versus Rapier 12.08 µs (0.83×), improved from 1.21×.
-These are exploratory local results; full CI and consumer adoption remain separate.
+**Focused local native and WASM gates pass.** The mesh response now uses the existing
+substep row advancement, with full-interval prediction; sweeps, wakes, sleep and retirement
+retain their existing regeneration rules. Native measured 3.33/3.31 µs per tick versus Rapier
+3.87 µs (0.86×), from the initial 3.41×. WASM measured 4.95/4.78 µs versus Rapier 10.51 µs
+(0.47×). These are local results for the real cave fixture; full CI and consumer adoption
+remain separate.
 The game's Rapier dynamic fallback is unchanged.
 
 MMORPG door occupancy, prop respawn and structure regrowth use unfiltered box overlaps.

@@ -521,7 +521,9 @@ existing movement, grounding, slope and snapping rules; no mesh-specific charact
 Rigid sphere contacts and translational sphere CCD use the existing response/event scheduler,
 including the remaining interval after impact. Non-CCD dynamic boxes now use shared finite
 triangle SAT/clipped manifolds and the existing speculative response with linear, gravity/drift
-and angular approach bounds over the full interval. Geometry is regenerated per substep.
+and angular approach bounds over the full interval. Ordinary contacts use the existing
+substep row advancement; sweeps, wakes, sleep and retirement retain their existing
+regeneration rules.
 Exact pose/margin contact results may be reused, keyed by immutable mesh/body identity, shape
 and orientation; new positions/margins recompute witnesses. Removed/unused pairs are pruned.
 Exactly coplanar triangle contacts share a bounded four-point response patch, preserving
@@ -547,7 +549,7 @@ acceptance belong to the consumer repository and are not changed here.
 `redbrand-rigid-mesh` drops two 0.7 m crates and a tumbling 0.58 m panel onto the actual
 cave floor and upper shelf with the game's gravity, density, damping and material. Both
 backends must settle and satisfy independent Parry mesh penetration checks. Ordered and
-Indexed Engine traces remain exact. Native performance does not yet match Rapier, so the
-game's authored-geometry rigid fallback remains required. This does not claim general
+Indexed Engine traces remain exact. Focused native/WASM performance now passes the Rapier gates; full CI and game
+adoption remain separate, so the game's authored-geometry rigid fallback is unchanged. This does not claim general
 rotational CCD. `static_triangle_mesh` additionally covers full-interval fast-box response
 in both body orders/storage modes and exact mid-contact checkpoint continuation.

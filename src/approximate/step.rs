@@ -1581,7 +1581,9 @@ impl World {
                         let approach = moving.velocity.length() * interval
                             + step_drift(moving, self.scene.gravity, gain).length()
                             + moving.angular_velocity.length() * moving.shape.radius() * interval;
-                        regenerate = true;
+                        // The prediction margin covers this step's full remaining interval,
+                        // so ordinary mesh rows use the same substep advancement as primitives.
+                        // Sweeps, wakes, sleep and retirement invalidate reuse separately.
                         self.geometry
                             .mesh_box(
                                 prepared,
