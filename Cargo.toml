@@ -18,9 +18,9 @@ rust-version = "1.98"
 description = "Physics engine for the owner's games, measured against Rapier"
 
 [dependencies]
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "140de73282c78ae3aeb2339d71aece7919ae2ae9" }
-bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "140de73282c78ae3aeb2339d71aece7919ae2ae9" }
-spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "140de73282c78ae3aeb2339d71aece7919ae2ae9" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "922b7fd8c392074d438e8798a55c6e2e5e3c2763" }
+bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "922b7fd8c392074d438e8798a55c6e2e5e3c2763" }
+spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "922b7fd8c392074d438e8798a55c6e2e5e3c2763" }
 sha2 = { version = "0.11.0", default-features = false, optional = true }
 
 [dev-dependencies]
