@@ -21,6 +21,8 @@ use physics_engine::{
 
 #[path = "support/ccd_scaling.rs"]
 mod ccd_fixture;
+#[path = "support/ccd_dense.rs"]
+mod dense_fixture;
 
 // ---- counting allocator (this test binary only) ----
 struct Counting;
@@ -1401,6 +1403,46 @@ fn ccd_scheduling_scales_with_impacts_and_unrelated_statics() {
             ("impacts", "irrelevant", "constant"),
             ("budget-fallbacks", "", "zero"),
         ],
+    );
+}
+
+/// Coupled contacts have a separate cubic conservative search bound; sparse lanes remain linear.
+#[test]
+fn dense_ccd_search_work_is_bounded() {
+    let mut samples = Vec::new();
+    for (storage_id, storage) in [(1, BodyStorage::Ordered), (2, BodyStorage::Indexed)] {
+        for n in [8usize, 16, 32, 64, 128] {
+            let mut w = dense_fixture::world(dense_fixture::Case::Converging, n, storage);
+            work::reset();
+            let r = w.step(dense_fixture::H).unwrap();
+            let n = n as u64;
+            assert!(r.swept_contacts > 0);
+            assert!(r.swept_contacts <= 8 * n);
+            assert!(r.geometry.ccd_budget_fallbacks <= n);
+            // Initial n² search; <=8n closing events can each search n² targets.
+            // <=n(n-1)/2 + 16n(n-1) false events each fully search <=2n targets
+            // and partially/imminently search <=3n targets. Include ordinary n² broadphase.
+            let false_events = n * (n - 1) / 2 + 16 * n * (n - 1);
+            let cap = 2 * n * n + 8 * n * n * n + 5 * n * false_events;
+            assert!(r.pair_tests <= cap);
+            assert!(r.geometry.sweep_queries <= r.pair_tests);
+            assert_eq!(work::get(Counter::FullScanBodies), 0);
+            samples.push((
+                vec![("spheres", n), ("storage", storage_id)],
+                vec![
+                    ("pair-tests", r.pair_tests),
+                    ("sweep-queries", r.geometry.sweep_queries),
+                    ("impacts", r.swept_contacts),
+                    ("budget-fallbacks", r.geometry.ccd_budget_fallbacks),
+                    ("full-scan-bodies", work::get(Counter::FullScanBodies)),
+                ],
+            ));
+        }
+    }
+    judge(
+        "ccd-dense-step",
+        &samples,
+        &[("full-scan-bodies", "", "zero")],
     );
 }
 

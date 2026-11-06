@@ -2349,6 +2349,116 @@
           "notes": "32 authored input points prepared exactly once per admitted rock; zero preparation during query phase."
         }
       ]
+    },
+    {
+      "id": "ccd-dense-step",
+      "description": "Adversarial coupled-contact stress complementing the sparse CCD consumer lanes: one first 60 Hz tick of n radial converging CCD spheres, restitution 1, radius 0.1, ring radius 0.75+0.04n, speed (ring radius+0.5)*60, 8 velocity passes, no sleeping, 128 unreachable static boxes. Shared exact fixture with ccd_dense_scaling; setup excluded. This is not a measured production crowd distribution or a portable frame-time budget.",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "spheres": {
+          "description": "mutually interacting initially separated CCD spheres"
+        },
+        "storage": {
+          "description": "1 Ordered, 2 Indexed; categorical control, not a growth dimension"
+        }
+      },
+      "scalePoints": [
+        {
+          "spheres": 8,
+          "storage": 1
+        },
+        {
+          "spheres": 16,
+          "storage": 1
+        },
+        {
+          "spheres": 32,
+          "storage": 1
+        },
+        {
+          "spheres": 64,
+          "storage": 1
+        },
+        {
+          "spheres": 128,
+          "storage": 1
+        },
+        {
+          "spheres": 8,
+          "storage": 2
+        },
+        {
+          "spheres": 16,
+          "storage": 2
+        },
+        {
+          "spheres": 32,
+          "storage": 2
+        },
+        {
+          "spheres": 64,
+          "storage": 2
+        },
+        {
+          "spheres": 128,
+          "storage": 2
+        }
+      ],
+      "metrics": [
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Conservative O(L n\u00b3) bound for this all-awake sphere-only coupled fixture, L=8 fixed, not an inferred fit or a claim of quadratic work. Closing events consume at least one unfrozen endpoint budget: C <= Ln. Each nonclosing event excludes its unordered pair until an endpoint trajectory epoch changes; no sleeping bodies wake. Thus F <= n(n-1)/2 + 2Ln(n-1). Initial searches cost <=n\u00b2 candidates. A closing event can fully re-search n sources with <=n candidates each; a false event fully re-searches only its two endpoints (<=2n). Other marked sources check <=3 imminent targets or <=2 changed targets, so false-event work <=5n and closing-event work <=n\u00b2 (n>=8). Including ordinary broadphase, pair tests <=2n\u00b2+Ln\u00b3+5nF. Exact sphere sweeps are a subset of candidate pair tests. This counts geometry operations only: BVH visits, sorting, BTreeMap exclusions, heap entries and CPU cost are not bounded by this metric. Observed pair/sweep counts at n=8/16/32/64/128: 389/310, 3300/2734, 16077/13818, 73583/65540, 291277/264976, identical across storage modes; phase growth is retained. No search optimization is claimed (#485).",
+          "growth": [
+            {
+              "dimension": "spheres",
+              "bound": "polynomial",
+              "degree": 3
+            }
+          ]
+        },
+        {
+          "name": "sweep-queries",
+          "unit": "queries",
+          "signal": "operation-count",
+          "notes": "Conservative O(L n\u00b3) bound for this all-awake sphere-only coupled fixture, L=8 fixed, not an inferred fit or a claim of quadratic work. Closing events consume at least one unfrozen endpoint budget: C <= Ln. Each nonclosing event excludes its unordered pair until an endpoint trajectory epoch changes; no sleeping bodies wake. Thus F <= n(n-1)/2 + 2Ln(n-1). Initial searches cost <=n\u00b2 candidates. A closing event can fully re-search n sources with <=n candidates each; a false event fully re-searches only its two endpoints (<=2n). Other marked sources check <=3 imminent targets or <=2 changed targets, so false-event work <=5n and closing-event work <=n\u00b2 (n>=8). Including ordinary broadphase, pair tests <=2n\u00b2+Ln\u00b3+5nF. Exact sphere sweeps are a subset of candidate pair tests. This counts geometry operations only: BVH visits, sorting, BTreeMap exclusions, heap entries and CPU cost are not bounded by this metric. Observed pair/sweep counts at n=8/16/32/64/128: 389/310, 3300/2734, 16077/13818, 73583/65540, 291277/264976, identical across storage modes; phase growth is retained. No search optimization is claimed (#485).",
+          "growth": [
+            {
+              "dimension": "spheres",
+              "bound": "polynomial",
+              "degree": 3
+            }
+          ]
+        },
+        {
+          "name": "impacts",
+          "unit": "contacts",
+          "signal": "operation-count",
+          "notes": "Admitted closing impacts <=8n, asserted per sample by the test; measured 12/62/136/268/533. Fixed ceiling 8*128 covers declared n<=128 points only. Coupled trajectories change the output with size (12\u219262 exceeds doubling), so no fitted linear growth claim.",
+          "budget": {
+            "max": 1024
+          }
+        },
+        {
+          "name": "budget-fallbacks",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "Each body freezes at most once; <=n, measured 0/11/32/64/128. Zero at n=8 prevents a meaningful fitted growth assertion. Fixed ceiling covers the declared n<=128 scale points; the test separately asserts <=n.",
+          "budget": {
+            "max": 128
+          }
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "Existing current-tree guarantee remains zero.",
+          "budget": {
+            "max": 0
+          }
+        }
+      ]
     }
   ]
 }
