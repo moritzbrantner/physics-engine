@@ -13,7 +13,8 @@ Algorithm 12 corrects tangential heightfield sweep admission for character moves
 tangential earliest hit no longer hides a later blocking triangle. This changes continuation
 at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruction;
 algorithm 14 adds box/hull response; algorithm 15 adds non-CCD box/mesh response
-(see below). Current algorithm 16 preserves character height while crossing a grazing
+(see below). Algorithm 16 skips finite zero solver corrections. Current algorithm 17
+preserves character height while crossing a grazing
 triangle support edge before snapping; format 9 is unchanged. Older algorithm checkpoints
 are rejected.
 
