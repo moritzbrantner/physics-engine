@@ -546,3 +546,21 @@ fn support_frontier_scaling_benchmark() {
         );
     }
 }
+
+#[test]
+fn immovable_wake_roots_clear_previous_results_without_building_adjacency() {
+    let mut world = graph_fixture();
+    world.settle_storage();
+    assert_eq!(world.wake_island(ord(1)), 0);
+    assert!(world.bookkeeping.traversal.island.is_empty());
+    assert_eq!(world.bookkeeping.work.adjacency_rebuilds, 0);
+    assert!(world.body(world.body_id(10).unwrap()).unwrap().sleeping);
+    assert_eq!(world.wake_island(ord(10)), 2);
+    assert!(!world.bookkeeping.traversal.island.is_empty());
+    let rebuilds = world.bookkeeping.work.adjacency_rebuilds;
+    world.bookkeeping.graph.dirty = true;
+    assert_eq!(world.wake_island(ord(1)), 0);
+    assert!(world.bookkeeping.traversal.island.is_empty());
+    assert_eq!(world.bookkeeping.work.adjacency_rebuilds, rebuilds);
+    assert!(world.body(world.body_id(20).unwrap()).unwrap().sleeping);
+}
