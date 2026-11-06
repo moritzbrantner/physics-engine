@@ -14,11 +14,20 @@ pub struct Geometry {
     pub floor: bool,
     pub meshes: Vec<TriangleMesh>,
     pub hulls: Vec<ConvexHull>,
+    pub terrain_cells: Vec<TerrainCell>,
     /// Boxes: centre and half extents.
     pub boxes: Vec<([f32; 3], [f32; 3])>,
     /// Wedges: centre and half extents of their box, rising toward -X (the engine's
     /// `Shape::Wedge`; on Rapier the convex hull MMORPG builds).
     pub wedges: Vec<([f32; 3], [f32; 3])>,
+}
+
+/// One heightfield cell; heights are row-major (Z rows, X columns).
+#[derive(Clone, Debug)]
+pub struct TerrainCell {
+    pub origin: [f32; 3],
+    pub cell_size: [f32; 2],
+    pub heights: [f32; 4],
 }
 
 /// Immutable authored mesh used by the same-pose single-move probe.
@@ -74,9 +83,13 @@ pub struct Outcome {
     pub grounded: bool,
 }
 
-/// Rapier's move from `at` by `desired`.
+/// Retained Rapier driver shared by the same-pose and reconstruction probes.
 #[cfg(feature = "rapier")]
-pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
+pub(crate) fn rapier_characters(
+    geometry: &Geometry,
+    c: Controller,
+    at: [f32; 3],
+) -> crate::kcc::rapier::Characters {
     use crate::kcc::rapier::{Characters, cuboid, halfspace, mirror_controller, v};
     use rapier3d::control::KinematicCharacterController;
     use rapier3d::prelude::*;
@@ -117,14 +130,35 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
                 .translation(v(hull.position)),
         );
     }
+    for cell in &geometry.terrain_cells {
+        let [h00, h10, h01, h11] = cell.heights;
+        let [dx, dz] = cell.cell_size;
+        let field = HeightField::new(
+            Array2::new(2, 2, vec![h00, h01, h10, h11]),
+            Vector::new(dx, 1.0, dz),
+        );
+        statics.push(
+            ColliderBuilder::new(SharedShape::new(field)).translation(v([
+                cell.origin[0] + dx / 2.0,
+                cell.origin[1],
+                cell.origin[2] + dz / 2.0,
+            ])),
+        );
+    }
     let controller = KinematicCharacterController {
         max_slope_climb_angle: c.max_slope,
         min_slope_slide_angle: c.max_slope,
         ..mirror_controller(c.offset, c.snap, c.autostep)
     };
     let shape = Capsule::new_y(c.half_segment, c.radius);
-    let characters = Characters::new(statics, [at], shape, controller, false);
-    let movement = characters.move_shape(0, v(desired));
+    Characters::new(statics, [at], shape, controller, false)
+}
+
+/// Rapier's move from `at` by `desired`.
+#[cfg(feature = "rapier")]
+pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
+    let characters = rapier_characters(geometry, c, at);
+    let movement = characters.move_shape(0, crate::kcc::rapier::v(desired));
     let t = movement.translation;
     Outcome {
         translation: [t.x, t.y, t.z],
@@ -132,13 +166,16 @@ pub fn rapier(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
     }
 }
 
-/// physics-engine's move from `at` by `desired`.
+/// Retained Engine driver shared by the same-pose and reconstruction probes.
 #[cfg(feature = "engine")]
-pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
+pub(crate) fn engine_characters(
+    geometry: &Geometry,
+    c: Controller,
+    at: [f32; 3],
+    storage: physics_engine::approximate::BodyStorage,
+) -> crate::kcc::engine::Characters {
     use crate::kcc::engine::{Characters, capsules, fixed, v, world};
-    use physics_engine::approximate::{
-        Autostep, BodyStorage, CharacterMove, CharacterSettings, Embedded, Shape,
-    };
+    use physics_engine::approximate::{CharacterSettings, Embedded, Shape};
     let statics = geometry
         .floor
         .then_some((Shape::HalfSpace, [0.0; 3]))
@@ -155,7 +192,8 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
         .collect::<Vec<_>>();
     let first_mesh_key = 1 + statics.len() as u64;
     let first_hull_key = first_mesh_key + geometry.meshes.len() as u64;
-    let key = first_hull_key + geometry.hulls.len() as u64;
+    let first_terrain_key = first_hull_key + geometry.hulls.len() as u64;
+    let key = first_terrain_key + geometry.terrain_cells.len() as u64;
     let settings = CharacterSettings {
         offset: c.offset,
         max_slope: c.max_slope,
@@ -168,7 +206,7 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
         ..CharacterSettings::default()
     };
     let shape = Shape::capsule(c.half_segment, c.radius);
-    let mut probe_world = world(BodyStorage::Ordered, statics);
+    let mut probe_world = world(storage, statics);
     for (i, mesh) in geometry.meshes.iter().enumerate() {
         probe_world
             .add_triangle_mesh(
@@ -194,10 +232,33 @@ pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3
             )
             .unwrap();
     }
-    let mut characters = Characters::new(probe_world, capsules(key, shape, [at]), settings);
+    for (i, cell) in geometry.terrain_cells.iter().enumerate() {
+        probe_world
+            .add_heightfield(
+                physics_engine::approximate::HeightfieldDesc {
+                    origin: v(cell.origin),
+                    cell_size: (cell.cell_size[0], cell.cell_size[1]),
+                    columns: 2,
+                    rows: 2,
+                    heights: cell.heights.to_vec(),
+                    removed_cells: None,
+                    material: Default::default(),
+                },
+                Some(first_terrain_key + i as u64),
+            )
+            .unwrap();
+    }
+    Characters::new(probe_world, capsules(key, shape, [at]), settings)
+}
+
+/// Physics Engine's move from `at` by `desired`.
+#[cfg(feature = "engine")]
+pub fn engine(geometry: &Geometry, c: Controller, at: [f32; 3], desired: [f32; 3]) -> Outcome {
+    use physics_engine::approximate::{Autostep, BodyStorage, CharacterMove};
+    let mut characters = engine_characters(geometry, c, at, BodyStorage::Ordered);
     characters.move_each(|_, body| CharacterMove {
         body,
-        desired: v(desired),
+        desired: crate::kcc::engine::v(desired),
         exclude: None,
         autostep: c.autostep.map(|(max_height, min_width)| Autostep {
             max_height,

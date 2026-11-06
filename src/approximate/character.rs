@@ -132,9 +132,9 @@ pub(super) struct Characters {
     settings: Vec<CharacterSettings>,
     /// Translation received from pushes in the current batch.
     pushed: Vec<V>,
-    /// Layout generation at which the character was last known free of overlap
-    /// ([`DIRTY`] when unknown). Moves keep a gap to everything, so a character stays free
-    /// until bodies are added or removed, or it is placed by the game.
+    /// Layout/placement hint for avoiding redundant character/character separation.
+    /// [`DIRTY`] means unknown. This is never an authoritative decision about static
+    /// penetration: every move checks static geometry from the current physical pose.
     clear: Vec<(u64, u64)>,
     /// The body the latest move excluded ([`CharacterMove::exclude`]).
     exclude: Vec<Option<BodyId>>,
@@ -799,8 +799,11 @@ impl World {
         // Leave penetration first; reported apart from the requested motion. A few passes
         // resolve overlap with several bodies at once (a pillar against a wall).
         let generation = self.bookkeeping.generation;
-        let mut resolved = self.characters.is_clear(id, generation);
-        if !resolved && s.embedded == Embedded::Stay {
+        // Clearance cached by a previous move is not an authoritative penetration
+        // decision. Terrain motion can leave a small overlap; a reconstructed world
+        // must resolve exactly the same physical pose as an uninterrupted one (#500).
+        let mut resolved = false;
+        if s.embedded == Embedded::Stay {
             // Left in geometry: clear once no other character overlaps it (the batch
             // separates those).
             self.character_overlap(id, pose, hits)?;
@@ -808,11 +811,7 @@ impl World {
                 .iter()
                 .any(|h| h.separation < 0.0 && self.characters.contains(h.body));
         }
-        let passes = if resolved || s.embedded == Embedded::Stay {
-            0
-        } else {
-            4
-        };
+        let passes = if s.embedded == Embedded::Stay { 0 } else { 4 };
         for _ in 0..passes {
             self.character_overlap(id, pose, hits)?;
             let mut push = V::ZERO;
@@ -1032,9 +1031,93 @@ impl World {
         }
         // Walkable support is a contact facing up; only off it does the contact test run.
         result.ground_contact = result.grounded || self.ground_contact_at(id, pose, s, hits)?;
-        // The slide kept its gap: free of overlap until the layout changes or it is placed.
+        // Keep the inter-character separation hint. Static penetration is checked
+        // independently from the physical pose on the next move.
         self.characters
             .set_clear(id, resolved.then_some(generation));
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::approximate::{Config, HeightfieldDesc, Material};
+    fn sample() -> (World, BodyId) {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            length_unit: 100.0,
+            ..Config::default()
+        })
+        .unwrap();
+        world
+            .add_heightfield(
+                HeightfieldDesc {
+                    origin: V(800.0, 0.0, -7600.0),
+                    cell_size: (400.0, 400.0),
+                    columns: 2,
+                    rows: 2,
+                    heights: vec![1100.0, 1100.0, 1287.0, 1150.0],
+                    removed_cells: None,
+                    material: Material::default(),
+                },
+                Some(1),
+            )
+            .unwrap();
+        let mut body = Body::keyed(
+            2,
+            Shape::capsule(60.0, 30.0),
+            V(1116.2186, 1247.0002, -7388.426),
+            1.0,
+        );
+        body.external = true;
+        let id = world.add_body(body).unwrap();
+        world
+            .add_character(
+                id,
+                CharacterSettings {
+                    offset: 0.25,
+                    ..world.character_settings()
+                },
+            )
+            .unwrap();
+        (world, id)
+    }
+    #[test]
+    fn prior_clearance_hint_cannot_change_continuation_from_the_same_terrain_pose() {
+        let (mut warm, id) = sample();
+        warm.characters
+            .set_clear(id, Some(warm.bookkeeping.generation));
+        let (mut fresh, other) = sample();
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        let desired = V(0.0, -0.2725, 3.0);
+        warm.move_characters(
+            &[CharacterMove {
+                body: id,
+                desired,
+                exclude: None,
+                autostep: None,
+            }],
+            &mut left,
+        )
+        .unwrap();
+        fresh
+            .move_characters(
+                &[CharacterMove {
+                    body: other,
+                    desired,
+                    exclude: None,
+                    autostep: None,
+                }],
+                &mut right,
+            )
+            .unwrap();
+        assert_eq!(left, right);
+        assert_eq!(
+            warm.body(id).unwrap().position,
+            fresh.body(other).unwrap().position,
+            "warm {left:?}, fresh {right:?}"
+        );
     }
 }
