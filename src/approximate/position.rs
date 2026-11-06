@@ -147,6 +147,26 @@ impl World {
                             &mut report.geometry,
                             &mut s.position.clipping,
                         )
+                    } else if let (Shape::TriangleMesh { mesh, .. }, _)
+                    | (_, Shape::TriangleMesh { mesh, .. }) = (a.shape, b.shape)
+                    {
+                        super::triangle_mesh::manifold(
+                            &self.triangle_meshes[mesh.0 as usize]
+                                .as_ref()
+                                .expect("live mesh")
+                                .prepared,
+                            a,
+                            b,
+                            0.0,
+                            None,
+                            &mut report.geometry,
+                        )
+                        .map_err(|reason| {
+                            Error::CollisionSearchFailed {
+                                bodies: [a.id, b.id],
+                                reason,
+                            }
+                        })?
                     } else {
                         contact::current_counted(a, b, 0.0, &mut report.geometry)
                     };
@@ -241,6 +261,24 @@ impl World {
                             &mut GeometryStats::default(),
                             &mut s.position.clipping,
                         )
+                    } else if let Shape::TriangleMesh { mesh, .. } = a.shape {
+                        super::triangle_mesh::manifold(
+                            &self.triangle_meshes[mesh.0 as usize]
+                                .as_ref()
+                                .expect("live mesh")
+                                .prepared,
+                            a,
+                            b,
+                            0.0,
+                            None,
+                            &mut report.geometry,
+                        )
+                        .map_err(|reason| {
+                            Error::CollisionSearchFailed {
+                                bodies: [a.id, b.id],
+                                reason,
+                            }
+                        })?
                     } else {
                         contact::current(a, b, 0.0)
                     };

@@ -1565,3 +1565,77 @@ fn joint_rows_follow_the_joints_not_the_town() {
         ],
     );
 }
+
+#[test]
+fn static_mesh_queries_prune_distant_triangles_and_reuse_preparation() {
+    let mut samples = Vec::new();
+    let mut hits = Vec::new();
+    for count in [256usize, 512, 1024, 2048, 4096] {
+        let mut w = World::new(Config {
+            gravity: V::ZERO,
+            ..Config::default()
+        })
+        .unwrap();
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for i in 0..count {
+            let x = i as f32 * 4.0;
+            let first = vertices.len() as u32;
+            vertices.extend([V(x, 0.0, 0.0), V(x + 1.0, 0.0, 0.0), V(x, 0.0, 1.0)]);
+            triangles.push([first, first + 1, first + 2]);
+        }
+        let id = w
+            .add_triangle_mesh(
+                physics_engine::approximate::TriangleMeshDesc {
+                    position: V::ZERO,
+                    vertices,
+                    triangles,
+                    material: Default::default(),
+                },
+                Some(1),
+            )
+            .unwrap();
+        let prepared = w.triangle_mesh_stats(id).unwrap();
+        work::reset();
+        for _ in 0..16 {
+            let hit = w
+                .cast_ray_first(
+                    RayCast::new(V(0.25, 2.0, 0.25), V(0.0, -4.0, 0.0)),
+                    QueryFilter::default(),
+                )
+                .unwrap()
+                .unwrap();
+            assert_eq!(hit.fraction, 0.5);
+            w.cast_shape(
+                ShapeCast::new(
+                    QueryPose::new(Shape::capsule(0.3, 0.2), V(0.25, 2.0, 0.25)),
+                    V(0.0, -4.0, 0.0),
+                ),
+                QueryFilter::default(),
+                &mut hits,
+            )
+            .unwrap();
+            assert_eq!(hits.len(), 1);
+            assert!((hits[0].fraction - 0.375).abs() < 1e-5);
+        }
+        samples.push((
+            vec![("triangles", count as u64)],
+            vec![
+                ("mesh-nodes", work::get(Counter::MeshNodes) / 16),
+                ("triangle-tests", work::get(Counter::MeshTriangles) / 16),
+                ("preparations", work::get(Counter::MeshPreparations)),
+                ("retained-bytes", prepared.retained_bytes as u64),
+            ],
+        ));
+    }
+    judge(
+        "static-mesh-query",
+        &samples,
+        &[
+            ("mesh-nodes", "triangles", "logarithmic"),
+            ("triangle-tests", "triangles", "constant"),
+            ("preparations", "triangles", "zero"),
+            ("retained-bytes", "triangles", "linear"),
+        ],
+    );
+}

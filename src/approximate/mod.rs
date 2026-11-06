@@ -71,8 +71,10 @@ pub use joint::{DistanceJoint, JointId};
 mod ccd;
 mod character;
 mod terrain;
+mod triangle_mesh;
 pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};
 pub use terrain::{HeightfieldDesc, TerrainId};
+pub use triangle_mesh::{TriangleMeshDesc, TriangleMeshId, TriangleMeshStats};
 mod math;
 mod response;
 mod step;
@@ -186,6 +188,7 @@ pub struct World {
     last_transaction: TransactionStats,
     query_tree: query::QueryTree,
     terrains: Vec<terrain::Terrain>,
+    triangle_meshes: Vec<Option<triangle_mesh::TriangleMesh>>,
     /// Halfspace bodies, which every query tests (they have no finite bounds).
     halfspaces: Vec<BodyId>,
     slots: Vec<Slot>,
@@ -301,6 +304,7 @@ impl World {
             last_transaction: TransactionStats::default(),
             query_tree: query::QueryTree::default(),
             terrains: Vec::new(),
+            triangle_meshes: Vec::new(),
             halfspaces: Vec::new(),
             slots: Vec::new(),
             free: Vec::new(),
