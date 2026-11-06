@@ -1,5 +1,5 @@
 //! Bounded velocity solving with a projected fixed-point residual, never a wall-clock budget.
-use super::step::{apply, apply_normal, contact_velocity};
+use super::step::{apply, apply_normal, apply_tangent, contact_velocity};
 use super::{Body, Constraint, PreparedResponse, Real, Report};
 
 /// Absolute scene-unit tolerances plus a relative per-contact scale. Zero selects exact checks.
@@ -416,15 +416,18 @@ fn solve_row<const READ_CHANGE: bool>(
     responses: &[PreparedResponse],
     c: &mut Constraint,
 ) -> Change {
-    let vn = (contact_velocity(&bodies[c.b], c.rb, c.spin)
-        - contact_velocity(&bodies[c.a], c.ra, c.spin))
-    .dot(c.n);
+    let before =
+        contact_velocity(&bodies[c.b], c.rb, c.spin) - contact_velocity(&bodies[c.a], c.ra, c.spin);
+    let vn = before.dot(c.n);
     let next = next_normal(c, vn);
     let dj = next - c.normal_impulse;
     c.normal_impulse = next;
-    apply_normal(bodies, responses, c, dj);
-    let rel =
-        contact_velocity(&bodies[c.b], c.rb, c.spin) - contact_velocity(&bodies[c.a], c.ra, c.spin);
+    let rel = if dj == 0.0 && c.finite_response {
+        before
+    } else {
+        apply_normal(bodies, responses, c, dj);
+        contact_velocity(&bodies[c.b], c.rb, c.spin) - contact_velocity(&bodies[c.a], c.ra, c.spin)
+    };
     let vt = [rel.dot(c.t1), rel.dot(c.t2)];
     let mut tangent = [
         c.tangent_impulse[0] - vt[0] * c.tangent_mass[0],
@@ -444,7 +447,13 @@ fn solve_row<const READ_CHANGE: bool>(
         tangent[1] - c.tangent_impulse[1],
     ];
     c.tangent_impulse = tangent;
-    apply(bodies, responses, c, [0.0, dt[0], dt[1]]);
+    if c.finite_response {
+        if dt != [0.0; 2] {
+            apply_tangent(bodies, responses, c, dt);
+        }
+    } else {
+        apply(bodies, responses, c, [0.0, dt[0], dt[1]]);
+    }
     if READ_CHANGE {
         Change {
             impulse: [dj, dt[0], dt[1]],
