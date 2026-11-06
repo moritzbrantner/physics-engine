@@ -9,7 +9,9 @@
 //! cargo test --release --locked -p physics-oracle --test ccd_dense_reference -- --ignored --nocapture
 //! ```
 
-use physics_engine::approximate::{Body, BodyStorage, Config, Shape, Vector as V, World};
+use physics_engine::approximate::{
+    Body, BodyStorage, Config, ContactEvent, Shape, Vector as V, World,
+};
 use rapier3d::prelude::{
     ColliderBuilder, PhysicsWorld, RigidBodyBuilder, RigidBodyHandle, Vector as RV,
 };
@@ -40,6 +42,7 @@ struct EngineResult {
     narrows: u64,
     sweeps: u64,
     single_tick_us: f64,
+    events: Vec<ContactEvent>,
 }
 
 fn paired_lanes(pairs: usize) -> Vec<Initial> {
@@ -80,6 +83,15 @@ fn radial_convergence(count: usize) -> Vec<Initial> {
 }
 
 fn engine(input: &[Initial], iterations: u8, storage: BodyStorage) -> EngineResult {
+    engine_ticks(input, iterations, storage, 1).pop().unwrap()
+}
+
+fn engine_ticks(
+    input: &[Initial],
+    iterations: u8,
+    storage: BodyStorage,
+    ticks: usize,
+) -> Vec<EngineResult> {
     let mut world = World::new(Config {
         gravity: V::ZERO,
         substeps: 1,
@@ -115,32 +127,41 @@ fn engine(input: &[Initial], iterations: u8, storage: BodyStorage) -> EngineResu
         body.sleep_allowed = false;
         world.add_body(body).unwrap();
     }
-    let start = std::time::Instant::now();
-    let r = world.step(f64::from(DT)).unwrap();
-    let single_tick_us = start.elapsed().as_secs_f64() * 1e6;
-    let states = (0..input.len())
-        .map(|i| {
-            let body = world
-                .body(world.body_id(10_000 + i as u64).unwrap())
-                .unwrap();
-            State {
-                position: [body.position.0, body.position.1, body.position.2],
-                velocity: [body.velocity.0, body.velocity.1, body.velocity.2],
+    (0..ticks)
+        .map(|_| {
+            let start = std::time::Instant::now();
+            let r = world.step(f64::from(DT)).unwrap();
+            let single_tick_us = start.elapsed().as_secs_f64() * 1e6;
+            let states = (0..input.len())
+                .map(|i| {
+                    let body = world
+                        .body(world.body_id(10_000 + i as u64).unwrap())
+                        .unwrap();
+                    State {
+                        position: [body.position.0, body.position.1, body.position.2],
+                        velocity: [body.velocity.0, body.velocity.1, body.velocity.2],
+                    }
+                })
+                .collect();
+            EngineResult {
+                states,
+                impacts: r.swept_contacts,
+                fallbacks: r.geometry.ccd_budget_fallbacks,
+                pairs: r.pair_tests,
+                narrows: r.narrow_tests,
+                sweeps: r.geometry.sweep_queries,
+                single_tick_us,
+                events: r.contact_events,
             }
         })
-        .collect();
-    EngineResult {
-        states,
-        impacts: r.swept_contacts,
-        fallbacks: r.geometry.ccd_budget_fallbacks,
-        pairs: r.pair_tests,
-        narrows: r.narrow_tests,
-        sweeps: r.geometry.sweep_queries,
-        single_tick_us,
-    }
+        .collect()
 }
 
 fn rapier(input: &[Initial], steps: usize) -> Vec<State> {
+    rapier_ticks(input, steps, 1).pop().unwrap()
+}
+
+fn rapier_ticks(input: &[Initial], steps: usize, ticks: usize) -> Vec<Vec<State>> {
     let mut world = PhysicsWorld::new();
     world.gravity = RV::ZERO;
     world.integration_parameters.dt = DT / steps as f32;
@@ -174,19 +195,23 @@ fn rapier(input: &[Initial], steps: usize) -> Vec<State> {
         );
         handles.push(handle);
     }
-    for _ in 0..steps {
-        world.step();
-    }
-    handles
-        .into_iter()
-        .map(|handle| {
-            let body = &world.bodies[handle];
-            let p = body.translation();
-            let v = body.linvel();
-            State {
-                position: [p.x, p.y, p.z],
-                velocity: [v.x, v.y, v.z],
+    (0..ticks)
+        .map(|_| {
+            for _ in 0..steps {
+                world.step();
             }
+            handles
+                .iter()
+                .map(|&handle| {
+                    let body = &world.bodies[handle];
+                    let p = body.translation();
+                    let v = body.linvel();
+                    State {
+                        position: [p.x, p.y, p.z],
+                        velocity: [v.x, v.y, v.z],
+                    }
+                })
+                .collect()
         })
         .collect()
 }
@@ -333,6 +358,127 @@ fn budget_frozen_dense_contacts_do_not_deeply_interpenetrate() {
             ordered.fallbacks,
         );
     }
+}
+
+/// The dense oracle cannot prescribe a unique many-body trajectory. This
+/// isolated pair supplies the analytic continuation control: one pass freezes
+/// both balls at contact, but their retained outward velocities resume next tick.
+#[test]
+fn budget_frozen_pair_resumes_its_retained_velocity_next_tick() {
+    let input = paired_lanes(1);
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let ticks = engine_ticks(&input, 1, storage, 2);
+        assert_eq!(ticks[0].fallbacks, 2);
+        assert_eq!(ticks[1].fallbacks, 0);
+        assert_eq!(ticks[1].impacts, 0);
+        for (i, (first, second)) in ticks[0].states.iter().zip(&ticks[1].states).enumerate() {
+            let side = if i == 0 { -1.0 } else { 1.0 };
+            assert_near(
+                first.position[0],
+                side * RADIUS,
+                0.00001,
+                "frozen contact pose",
+            );
+            assert_near(
+                first.velocity[0],
+                side * 45.0,
+                0.00001,
+                "retained rebound velocity",
+            );
+            assert_near(
+                second.position[0],
+                side * (RADIUS + 45.0 * DT),
+                0.00001,
+                "next-tick resumed integration",
+            );
+            assert_near(
+                second.velocity[0],
+                first.velocity[0],
+                0.00001,
+                "continued velocity",
+            );
+        }
+    }
+}
+
+/// #481 explicitly requires continuing after budget exhaustion. Reusing each
+/// world preserves next-tick velocities and cached contact/CCD state; rebuilding
+/// it from the first tick's poses would miss continuation bugs. Rapier remains
+/// an independent nonpenetration oracle, not an exact many-body trajectory oracle.
+#[test]
+fn dense_budget_fallback_continues_safely_into_the_next_tick() {
+    const MAX_OVERLAP: f64 = 0.01; // Same slop-informed bound as the first-tick regression.
+    let mut observed_fallback = false;
+    for count in [15, 23, 32, 38, 64] {
+        let input = radial_convergence(count);
+        let reference = rapier_ticks(&input, 128, 2);
+        for iterations in [4, 8, 16, 32] {
+            let ordered = engine_ticks(&input, iterations, BodyStorage::Ordered, 2);
+            let indexed = engine_ticks(&input, iterations, BodyStorage::Indexed, 2);
+            observed_fallback |= ordered[0].fallbacks > 0;
+            for (tick, ((ordered, indexed), reference)) in
+                ordered.iter().zip(&indexed).zip(&reference).enumerate()
+            {
+                let bits = |states: &[State]| {
+                    states
+                        .iter()
+                        .map(|state| {
+                            (
+                                state.position.map(f32::to_bits),
+                                state.velocity.map(f32::to_bits),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    bits(&ordered.states),
+                    bits(&indexed.states),
+                    "storage state divergence at n={count}, iterations={iterations}, tick={tick}"
+                );
+                assert_eq!(
+                    ordered.events, indexed.events,
+                    "event ordering divergence at n={count}, iterations={iterations}, tick={tick}"
+                );
+                assert_eq!(
+                    (
+                        ordered.impacts,
+                        ordered.fallbacks,
+                        ordered.pairs,
+                        ordered.narrows,
+                        ordered.sweeps
+                    ),
+                    (
+                        indexed.impacts,
+                        indexed.fallbacks,
+                        indexed.pairs,
+                        indexed.narrows,
+                        indexed.sweeps
+                    ),
+                    "work divergence at n={count}, iterations={iterations}, tick={tick}"
+                );
+                assert!(ordered.states.iter().all(|state| {
+                    state
+                        .position
+                        .iter()
+                        .chain(&state.velocity)
+                        .all(|value| value.is_finite())
+                }));
+                let depth = metrics(&input, &ordered.states).max_overlap;
+                let reference_depth = metrics(&input, reference).max_overlap;
+                assert!(
+                    reference_depth <= MAX_OVERLAP,
+                    "invalid Rapier reference at n={count}, tick={tick}: overlap={reference_depth:.5}m"
+                );
+                assert!(
+                    depth <= MAX_OVERLAP,
+                    "CCD continuation overlap at n={count}, iterations={iterations}, tick={tick}: depth={depth:.5}m, impacts={}, fallbacks={}",
+                    ordered.impacts,
+                    ordered.fallbacks
+                );
+            }
+        }
+    }
+    assert!(observed_fallback, "fixture must exercise budget exhaustion");
 }
 
 /// Non-blocking sensitivity and high-resolution reference. `velocity_iterations`
