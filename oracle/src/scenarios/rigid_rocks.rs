@@ -36,7 +36,9 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let reference_depths: [f32; LANES] = std::array::from_fn(|lane| {
         rapier
             .0
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .skip(lane)
             .step_by(LANES)
             .map(|state| match (state[0], state[2]) {
@@ -47,7 +49,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     });
     for (name, trace) in [("engine", engine), ("Rapier", rapier)] {
         #[cfg(feature = "rapier")]
-        for (i, observation) in trace.0.chunks_exact(3).enumerate() {
+        for (i, observation) in trace.0.as_chunks::<3>().0.iter().enumerate() {
             let (Obs::Position(p), Obs::Rotation(q)) = (observation[0], observation[2]) else {
                 return Err("malformed rigid-rock observation".into());
             };
