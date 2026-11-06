@@ -1715,6 +1715,11 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
         }
         assert_eq!(work::get(Counter::HullPreparations), rocks * 32);
         let mut hits = Vec::with_capacity(1);
+        let box_pose = QueryPose::new(Shape::Box(V(0.29, 0.29, 0.03)), V(0.0, 1.1, 0.0));
+        world
+            .overlap_shape(box_pose, QueryFilter::default(), &mut hits)
+            .unwrap();
+        let (mut box_axes, mut box_vertices, mut box_preparations) = (0, 0, 0);
         let (mut nodes, mut exact, mut triangles, mut full_scans, mut preparations) =
             (0, 0, 0, 0, 0);
         for _ in 0..QUERIES {
@@ -1736,6 +1741,13 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
             triangles += stats.hull_segment_triangles_considered;
             full_scans += work::get(Counter::FullScanBodies);
             preparations += work::get(Counter::HullPreparations);
+            let occupancy = world
+                .overlap_shape(box_pose, QueryFilter::default(), &mut hits)
+                .unwrap();
+            assert_eq!(hits.len(), 1);
+            box_axes += occupancy.axes_tested;
+            box_vertices += occupancy.vertex_tests;
+            box_preparations += occupancy.geometry_preparations;
         }
         assert!(
             triangles > 0,
@@ -1747,6 +1759,9 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
                 ("tree-nodes", nodes / QUERIES),
                 ("exact-tests", exact / QUERIES),
                 ("hull-triangles", triangles / QUERIES),
+                ("box-axes", box_axes / QUERIES),
+                ("box-vertices", box_vertices / QUERIES),
+                ("box-preparations", box_preparations),
                 ("retained-bytes", retained_bytes),
                 ("prepared-vertices", rocks * 32),
                 ("preparations", preparations),
@@ -1761,6 +1776,9 @@ fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
             ("tree-nodes", "rocks", "logarithmic"),
             ("exact-tests", "rocks", "constant"),
             ("hull-triangles", "rocks", "constant"),
+            ("box-axes", "rocks", "constant"),
+            ("box-vertices", "rocks", "constant"),
+            ("box-preparations", "", "zero"),
             ("retained-bytes", "rocks", "linear"),
             ("prepared-vertices", "rocks", "linear"),
             ("preparations", "", "zero"),

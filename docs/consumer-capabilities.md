@@ -248,3 +248,10 @@ The `terrain-seam` oracle covers MMORPG's flat-to-rising Hollow approach: the ch
 climbs the next triangle instead of accepting a tangential hit as the terrain's only
 contact. The native `slope_restore` regression also requires no endpoint penetration
 and exact continuation after reconstructing the character from its position.
+
+MMORPG door occupancy, prop respawn and structure regrowth use unfiltered box overlaps.
+These now query fixed authored hulls through the same shared SAT kernel as rigid boxes;
+fixed triangle meshes already support box overlaps through their polytope kernel. The
+`greyhaven-rock-hulls` Rapier scenario includes thin panel occupancy probes. Box casts
+remain unsupported for authored hulls/meshes; the game casts capsules. This read-only
+query change does not change checkpoint layout or solver continuation semantics.
