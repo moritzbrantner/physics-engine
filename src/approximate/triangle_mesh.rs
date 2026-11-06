@@ -60,7 +60,8 @@ pub(super) fn local(p: [f64; 3], position: V) -> [f64; 3] {
     ]
 }
 
-/// Adapt one spherical rigid contact into the existing canonical response manifold. Capsule
+/// Adapt a spherical contact or deepest box patch for positional correction. Box response
+/// emits every triangle manifold through the primitive adapter. Capsule
 /// movement uses the shape-query surface; rotating rigid capsule/mesh response is unsupported.
 pub(super) fn manifold(
     prepared: &PreparedTriangleMesh3,
@@ -72,6 +73,24 @@ pub(super) fn manifold(
 ) -> Result<Option<super::contact::Manifold>, SweepFailure> {
     let mesh_first = matches!(a.shape, Shape::TriangleMesh { .. });
     let (target, query) = if mesh_first { (a, b) } else { (b, a) };
+    if matches!(query.shape, Shape::Box(_)) {
+        if sweep.is_some() {
+            return Err(SweepFailure::InvalidGeometryInput);
+        }
+        let mut deepest = None;
+        let mut depth = Real::INFINITY;
+        primitive::box_mesh_manifolds(prepared, a, b, margin, stats, |m| {
+            let separation = (&m.points)
+                .into_iter()
+                .map(|p| p.separation)
+                .fold(Real::INFINITY, Real::min);
+            if separation < depth {
+                depth = separation;
+                deepest = Some(m);
+            }
+        })?;
+        return Ok(deepest);
+    }
     let Shape::Sphere(radius) = query.shape else {
         return Err(SweepFailure::InvalidGeometryInput);
     };

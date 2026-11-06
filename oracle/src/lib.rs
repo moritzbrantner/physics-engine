@@ -181,6 +181,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::slopes::scenario(),
         scenarios::greyhaven_rocks::scenario(),
         scenarios::rigid_rocks::scenario(),
+        scenarios::rigid_mesh::scenario(),
         scenarios::stairs::scenario(),
         scenarios::stairs_pace::scenario(),
         scenarios::platforms::scenario(),

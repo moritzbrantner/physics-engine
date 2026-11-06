@@ -387,3 +387,206 @@ fn unfiltered_box_occupancy_queries_authored_cave_surfaces() {
         }
     }
 }
+
+#[test]
+fn rigid_boxes_use_two_sided_cave_surfaces_and_storage_order_is_deterministic() {
+    fn run(storage: BodyStorage) -> Vec<Vec<Body>> {
+        let mut world = cave(storage);
+        let mut ids = Vec::new();
+        for (key, position, velocity, locked) in [
+            (1, V(50.0, 11.35, -138.0), V(-5.91, 0.0, 0.0), true),
+            (2, V(62.0, 15.1, -138.0), V(0.0, 4.0, 0.0), false),
+        ] {
+            let mut body = Body::keyed(key, Shape::Box(V(0.35, 0.35, 0.35)), position, 1.0);
+            body.velocity = velocity;
+            body.rotation_locked = locked;
+            body.sleep_allowed = false;
+            if !locked {
+                body.angular_velocity = V(0.3, 0.2, -0.1);
+            }
+            ids.push(world.add_body(body).unwrap());
+        }
+        let mut states = Vec::new();
+        for _ in 0..120 {
+            world.step(1.0 / 60.0).unwrap();
+            let boxes: Vec<_> = ids
+                .iter()
+                .map(|&id| world.body(id).unwrap().clone())
+                .collect();
+            assert!(boxes[0].position.0 >= 48.34, "crate crossed the cave wall");
+            let axes = boxes[1].orientation.axes();
+            let extent = axes.iter().map(|axis| axis.1.abs() * 0.35).sum::<f32>();
+            assert!(
+                boxes[1].position.1 + extent <= 15.505,
+                "rotating box crossed the roof underside"
+            );
+            states.push(boxes);
+        }
+        states
+    }
+    assert_eq!(run(BodyStorage::Ordered), run(BodyStorage::Indexed));
+}
+
+#[test]
+fn rigid_box_mesh_ccd_remains_an_atomic_unsupported_error() {
+    let mut world = cave(BodyStorage::Ordered);
+    let mut body = Body::keyed(
+        1,
+        Shape::Box(V(0.35, 0.35, 0.35)),
+        V(62.0, 11.35, -138.0),
+        1.0,
+    );
+    body.ccd = true;
+    let id = world.add_body(body).unwrap();
+    let before = world.body(id).unwrap().clone();
+    assert!(matches!(
+        world.step(1.0 / 60.0),
+        Err(physics_engine::approximate::Error::CollisionSearchFailed {
+            reason: physics_engine::approximate::SweepFailure::InvalidGeometryInput,
+            ..
+        })
+    ));
+    assert_eq!(world.body(id).unwrap(), &before);
+}
+
+#[cfg(feature = "checkpoints")]
+#[test]
+fn rigid_box_mesh_checkpoint_preserves_contact_continuation() {
+    use physics_engine::approximate::{Checkpoint, CheckpointContext, CheckpointLimits};
+    let mut world = cave(BodyStorage::Ordered);
+    let mut body = Body::keyed(
+        1,
+        Shape::Box(V(0.35, 0.35, 0.35)),
+        V(62.0, 11.35, -138.0),
+        1.0,
+    );
+    body.angular_velocity = V(0.2, 0.1, -0.1);
+    world.add_body(body).unwrap();
+    for _ in 0..10 {
+        world.step(1.0 / 60.0).unwrap();
+    }
+    let context = CheckpointContext {
+        build: [15; 32],
+        content: [182; 32],
+    };
+    let bytes = world.checkpoint(context).unwrap().to_bytes();
+    let mut restored = Checkpoint::from_bytes(&bytes, context, CheckpointLimits::default())
+        .unwrap()
+        .restore(&[])
+        .unwrap();
+    for _ in 0..120 {
+        let original = world.step(1.0 / 60.0).unwrap();
+        let replay = restored.step(1.0 / 60.0).unwrap();
+        assert_eq!(original.contact_points, replay.contact_points);
+        assert_eq!(original.contact_events, replay.contact_events);
+        assert_eq!(
+            world.bodies().collect::<Vec<_>>(),
+            restored.bodies().collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn small_rigid_motion_leaves_an_authored_edge_and_falls_through_the_open_gap() {
+    use physics_engine::approximate::TriangleMeshDesc;
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        let mut world = World::new(Config {
+            body_storage: storage,
+            gravity: V(0.0, -9.0, 0.0),
+            substeps: 2,
+            velocity_iterations: 1,
+            ..Config::default()
+        })
+        .unwrap();
+        for (low, high) in [(-2.0, 0.0), (0.5, 2.0)] {
+            world
+                .add_triangle_mesh(
+                    TriangleMeshDesc {
+                        position: V::ZERO,
+                        vertices: vec![
+                            V(low, 0.0, -2.0),
+                            V(high, 0.0, -2.0),
+                            V(high, 0.0, 2.0),
+                            V(low, 0.0, 2.0),
+                        ],
+                        triangles: vec![[0, 1, 2], [0, 2, 3]],
+                        material: physics_engine::approximate::Material {
+                            friction: 0.0,
+                            ..Default::default()
+                        },
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        let mut body = Body::new(Shape::Box(V(0.1, 0.1, 0.1)), V(-0.1, 0.1, 0.0), 1.0);
+        body.velocity = V(0.15, 0.0, 0.0);
+        body.friction = 0.0;
+        body.rotation_locked = true;
+        body.sleep_allowed = false;
+        let id = world.add_body(body).unwrap();
+        for _ in 0..180 {
+            world.step(1.0 / 60.0).unwrap();
+        }
+        let body = world.body(id).unwrap();
+        assert!(
+            body.position.0 > 0.3 && body.position.0 < 0.4,
+            "{:?}",
+            body.position
+        );
+        assert!(
+            body.position.1 < -1.0,
+            "an open gap must not retain contact: {:?}",
+            body.position
+        );
+    }
+}
+
+#[cfg(feature = "checkpoints")]
+#[test]
+fn transient_rigid_mesh_calls_restore_physics_with_the_known_pending_event_limitation() {
+    use physics_engine::approximate::{Checkpoint, CheckpointContext, CheckpointLimits};
+    let mut world = cave(BodyStorage::Ordered);
+    let static_count = world.body_count();
+    let mut state = Body::new(Shape::Box(V(0.35, 0.35, 0.35)), V(62.0, 11.35, -138.0), 1.0);
+    state.rotation_locked = true;
+    state.sleep_allowed = false;
+    let id = world.add_body(state).unwrap();
+    world.step(1.0 / 60.0).unwrap();
+    let mut state = world.remove_body(id).unwrap();
+    let context = CheckpointContext {
+        build: [15; 32],
+        content: [182; 32],
+    };
+    let bytes = world.checkpoint(context).unwrap().to_bytes();
+    let mut restored = Checkpoint::from_bytes(&bytes, context, CheckpointLimits::default())
+        .unwrap()
+        .restore(&[])
+        .unwrap();
+    for tick in 0..120 {
+        let a = world.add_body(state.clone()).unwrap();
+        let b = restored.add_body(state.clone()).unwrap();
+        let original = world.step(1.0 / 60.0).unwrap();
+        let replay = restored.step(1.0 / 60.0).unwrap();
+        if tick == 0 {
+            // Existing #505: capture after cleanup loses exactly the old body's pending
+            // Stopped event. Keep the actual cleanup boundary and verify physical state.
+            let old =
+                physics_engine::approximate::ContactEvent::Stopped(world.body_id(640).unwrap(), id);
+            assert!(original.contact_events.contains(&old));
+            let retained: Vec<_> = original
+                .contact_events
+                .into_iter()
+                .filter(|event| *event != old)
+                .collect();
+            assert_eq!(retained, replay.contact_events);
+        } else {
+            assert_eq!(original.contact_events, replay.contact_events);
+        }
+        assert_eq!(world.body(a).unwrap(), restored.body(b).unwrap());
+        state = world.remove_body(a).unwrap();
+        assert_eq!(Some(state.clone()), restored.remove_body(b));
+        assert_eq!(world.body_count(), static_count);
+        assert_eq!(restored.body_count(), static_count);
+    }
+}

@@ -1574,6 +1574,29 @@ impl World {
                         bodies: [a.id, b.id],
                         reason,
                     };
+                    if matches!(moving.shape, Shape::Box(_)) {
+                        if moving.ccd {
+                            return Err(failure(super::SweepFailure::InvalidGeometryInput));
+                        }
+                        let approach = moving.velocity.length() * interval
+                            + step_drift(moving, self.scene.gravity, gain).length()
+                            + moving.angular_velocity.length() * moving.shape.radius() * interval;
+                        // A full-interval bound below the accepted contact tolerance cannot
+                        // introduce a feature farther than that tolerance. Reuse these rows
+                        // for the remaining substeps, as for the shared solver's small spins;
+                        // meaningful translation, force drift or rotation regenerates them.
+                        regenerate |= approach > self.scene.contact_slop;
+                        super::primitive::box_mesh_manifolds(
+                            prepared,
+                            a,
+                            b,
+                            self.scene.contact_slop + approach,
+                            &mut report.geometry,
+                            |m| push(out, (i, j, m), &mut s.work),
+                        )
+                        .map_err(failure)?;
+                        continue;
+                    }
                     let current = super::triangle_mesh::manifold(
                         prepared,
                         a,
