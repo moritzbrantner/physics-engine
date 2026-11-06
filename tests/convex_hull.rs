@@ -403,11 +403,24 @@ fn checkpoint_restores_the_exact_rock_queries() {
         build: [1; 32],
         content: [2; 32],
     };
+    let pose = QueryPose::new(Shape::Box(V(0.29, 0.29, 0.03)), V::ZERO);
+    let mut occupancy = Vec::new();
+    let before = world.checkpoint(context).unwrap().to_bytes();
+    world
+        .overlap_shape(pose, QueryFilter::default(), &mut occupancy)
+        .unwrap();
+    assert_eq!(before, world.checkpoint(context).unwrap().to_bytes());
     let bytes = world.checkpoint(context).unwrap().to_bytes();
     let restored = Checkpoint::from_bytes(&bytes, context, CheckpointLimits::default())
         .unwrap()
         .restore(&[])
         .unwrap();
+    let mut recovered = Vec::new();
+    let stats = restored
+        .overlap_shape(pose, QueryFilter::default(), &mut recovered)
+        .unwrap();
+    assert_eq!(occupancy, recovered);
+    assert_eq!(stats.geometry_preparations, 1);
     let cast = RayCast::new(V(0.0, 2.0, 0.0), V(0.0, -4.0, 0.0));
     assert_eq!(
         world.cast_ray_first(cast, QueryFilter::default()).unwrap(),
@@ -710,5 +723,86 @@ fn box_rock_contact_continues_exactly_after_checkpoint_restore() {
         world.step(1.0 / 60.0).unwrap();
         restored.step(1.0 / 60.0).unwrap();
         assert_eq!(world.body(id), restored.body(id));
+    }
+}
+
+#[test]
+fn box_occupancy_uses_the_hull_surface_and_keeps_sweeps_unsupported() {
+    let (world, id) = wedge_rock();
+    let mut hits = Vec::new();
+    let filter = QueryFilter::default();
+    let half = V(0.125, 0.125, 0.125);
+    // The upper-right AABB corner is empty; the sloped face is x + y = 0.
+    for (position, count) in [
+        (V(0.6, 0.6, 0.0), 0),
+        (V(0.125, 0.125, 0.0), 1),
+        (V::ZERO, 1),
+    ] {
+        world
+            .overlap_shape(
+                QueryPose::new(Shape::Box(half), position),
+                filter,
+                &mut hits,
+            )
+            .unwrap();
+        assert_eq!(hits.len(), count, "{position:?}");
+        if let Some(hit) = hits.first() {
+            assert_eq!(hit.body, id);
+            assert_eq!(hit.fraction, 0.0);
+            assert!(hit.separation <= 0.0);
+            assert!((hit.normal.length() - 1.0).abs() < 1e-5);
+            assert!(
+                (hit.query_point - hit.target_point - hit.normal * hit.separation).length() < 1e-5
+            );
+        }
+        let previous = hits.clone();
+        world
+            .overlap_shape(
+                QueryPose::new(Shape::Box(half), position),
+                filter,
+                &mut hits,
+            )
+            .unwrap();
+        assert_eq!(hits, previous);
+    }
+    assert!(
+        world
+            .cast_shape(
+                ShapeCast::new(QueryPose::new(Shape::Box(half), V::ZERO), V(0.1, 0.0, 0.0)),
+                filter,
+                &mut hits
+            )
+            .is_err()
+    );
+    assert!(hits.is_empty());
+}
+
+#[test]
+fn box_overlap_frame_reuses_translation_and_refreshes_shape_and_orientation() {
+    use physics_engine::approximate::Quaternion;
+    let (world, _) = wedge_rock();
+    let mut hits = Vec::new();
+    let filter = QueryFilter::default();
+    let mut pose = QueryPose::new(Shape::Box(V(0.29, 0.29, 0.03)), V::ZERO);
+    let stats = world.overlap_shape(pose, filter, &mut hits).unwrap();
+    assert_eq!(stats.geometry_preparations, 1);
+    let stats = world.overlap_shape(pose, filter, &mut hits).unwrap();
+    assert_eq!(stats.geometry_preparations, 0);
+    pose.position = V(0.6, 0.6, 0.0);
+    let stats = world.overlap_shape(pose, filter, &mut hits).unwrap();
+    assert_eq!(stats.geometry_preparations, 0);
+    assert!(hits.is_empty());
+    for (shape, angle) in [
+        (Shape::Box(V(0.2, 0.5, 0.1)), 0.0_f32),
+        (Shape::Box(V(0.2, 0.5, 0.1)), 0.4),
+    ] {
+        pose.shape = shape;
+        pose.orientation = Quaternion(0.0, (angle / 2.0).sin(), 0.0, (angle / 2.0).cos());
+        let stats = world.overlap_shape(pose, filter, &mut hits).unwrap();
+        assert_eq!(stats.geometry_preparations, 1);
+        let (fresh, _) = wedge_rock();
+        let mut expected = Vec::new();
+        fresh.overlap_shape(pose, filter, &mut expected).unwrap();
+        assert_eq!(hits, expected);
     }
 }
