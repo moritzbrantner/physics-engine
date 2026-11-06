@@ -174,6 +174,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::ray_sight::scenario(),
         scenarios::character_move::scenario(),
         scenarios::character_rebuild::scenario(),
+        scenarios::brook_edge::scenario(),
         scenarios::arpg_planar::scenario(),
         scenarios::crowd::scenario(),
         scenarios::crowd_fight::scenario(),

@@ -38,3 +38,5 @@ mod upright_queries;
 pub mod terrain_seam;
 
 pub mod rigid_mesh;
+
+pub mod brook_edge;

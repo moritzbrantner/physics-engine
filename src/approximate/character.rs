@@ -882,6 +882,7 @@ impl World {
         let mut support = None;
         // The surface the slide last met: the next cast leans off it by the nudge.
         let mut leaving = V::ZERO;
+        let mut crossed_support = false;
         for _ in 0..s.max_slides {
             let length = remaining.length();
             if length <= s.offset * 1e-3 {
@@ -896,6 +897,22 @@ impl World {
             // the character moves by `remaining`.
             let cast = remaining + leaving * (s.offset * NORMAL_NUDGE);
             let Some(hit) = self.offset_hit(id, pose, cast, s.offset, hits)? else {
+                // A positive-time grazing triangle contact crosses a support edge.
+                // Preserve height through that move, like Rapier's edge slide,
+                // instead of turning a rounded tangent into an immediate snap.
+                // This does not retain support after the character leaves the edge.
+                crossed_support |= hits.iter().any(|hit| {
+                    matches!(
+                        hit.feature,
+                        Some(
+                            super::RayFeature::TriangleMeshTriangle(_)
+                                | super::RayFeature::HeightfieldTriangle(_)
+                        )
+                    ) && hit.fraction > 0.0
+                        && hit.fraction < 1.0
+                        && hit.normal.dot(up) >= min_up
+                        && hit.normal.dot(remaining).abs() <= s.offset * 1e-3
+                });
                 pose.position += remaining;
                 translation += remaining;
                 break;
@@ -1040,7 +1057,8 @@ impl World {
             // As Rapier: a move that started in ground contact (Rapier's grounded, a step's
             // rounded edge included) and has not risen (a step or a slide up an edge keeps its
             // height) snaps down to the offset from any gap beyond it.
-            if snap > s.offset * 1e-2
+            if !crossed_support
+                && snap > s.offset * 1e-2
                 && translation.dot(up) <= 0.0
                 && s.snap_to_ground.is_some_and(|reach| snap <= reach)
                 && self.ground_contact_at(id, start_pose, s, hits)?
