@@ -174,7 +174,7 @@ and angular approach bounds, regenerating the geometry at each substep. Rigid sp
 capsules, hull/hull pairs and CCD-enabled boxes remain unsupported: an admitted physical
 pair returns `CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back
 the entire step. This does not expose a general box/hull shape sweep or rotational CCD.
-The game retains its Rapier fallback pending native performance parity and box/mesh support. Actual MMORPG
+The game retains its Rapier fallback pending whole-consumer acceptance. Actual MMORPG
 projectiles sweep rays and reflect/stick at their first hit; those query paths use real hull
 faces. `QueryHit::feature` and ray hits expose deterministic `ConvexHullFace` identities;
 edge/corner witnesses choose the first canonical supporting face plane. Hull poses remain translation-only;
@@ -519,7 +519,10 @@ the query side, including underside/ceiling contacts. Characters use these queri
 existing movement, grounding, slope and snapping rules; no mesh-specific character solver exists.
 
 Rigid sphere contacts and translational sphere CCD use the existing response/event scheduler,
-including the remaining interval after impact. Other dynamic rigid shapes meeting a mesh return
+including the remaining interval after impact. Non-CCD boxes, including freely rotating debris
+and rotation-locked movable props, use two-sided BVH-pruned triangle manifolds with at most
+four contact points per triangle and the existing speculative solver. Box CCD and other dynamic
+rigid shapes meeting a mesh return
 `InvalidGeometryInput` atomically rather than passing through; external capsule characters remain
 supported through `move_characters`. Dynamic meshes, rotational mesh/shape CCD and mesh×mesh
 response are unsupported. Generic `add_body` cannot forge a mesh geometry slot.

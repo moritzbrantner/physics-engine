@@ -228,6 +228,12 @@ impl World {
         let Some(root) = self.index_of_order(root) else {
             return 0;
         };
+        // Fixed and external roots are traversal boundaries. Removing a transient
+        // body commonly reaches its static mesh; there is no island to index or wake.
+        if !self.bodies[root].movable() {
+            self.bookkeeping.traversal.island.clear();
+            return 0;
+        }
         let s = &mut self.bookkeeping;
         s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
         s.traversal.begin(self.bodies.len(), &mut s.work);

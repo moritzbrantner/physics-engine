@@ -189,6 +189,73 @@ pub(super) fn box_hull_manifold(
     }))
 }
 
+/// Retained mesh BVH query and the conservative numerical boundary for rigid box contacts.
+/// Mesh geometry is local to the fixed body's position; solver lever arms remain world-space.
+pub(super) fn box_mesh_manifolds(
+    mesh: &geometry_kernels::triangle_mesh::PreparedTriangleMesh3,
+    a: &Body,
+    b: &Body,
+    margin: Real,
+    stats: &mut GeometryStats,
+    mut emit: impl FnMut(super::contact::Manifold),
+) -> Result<(), SweepFailure> {
+    let mesh_first = matches!(a.shape, Shape::TriangleMesh { .. });
+    let (target, moving) = if mesh_first { (a, b) } else { (b, a) };
+    let Shape::Box(half) = moving.shape else {
+        return Err(SweepFailure::InvalidGeometryInput);
+    };
+    if moving.ccd {
+        return Err(SweepFailure::InvalidGeometryInput);
+    }
+    let origin = to_array(target.position);
+    let center = geometry_kernels::math3::sub(to_array(moving.position), origin);
+    let mut work = geometry_kernels::triangle_mesh::TriangleMeshWork3::default();
+    stats.current_queries += 1;
+    let result = mesh.box_contacts_counted(
+        center,
+        kernel_axes(moving.orientation),
+        to_array(half),
+        f64::from(margin),
+        &mut work,
+        |contact| {
+            let normal = if mesh_first {
+                from_array(contact.normal)
+            } else {
+                -from_array(contact.normal)
+            };
+            let mut points = [super::contact::Point::default(); 4];
+            for (out, p) in points.iter_mut().zip(&contact.points[..contact.len]) {
+                // Form lever arms in the exactly widened mesh frame before narrowing.
+                // Adding the world origin only to subtract it again loses precision at
+                // large coordinates and repeats work for every witness.
+                let mesh_arm = from_array(p.point_on_triangle);
+                let box_arm = from_array(geometry_kernels::math3::sub(p.point_on_box, center));
+                let (ra, rb) = if mesh_first {
+                    (mesh_arm, box_arm)
+                } else {
+                    (box_arm, mesh_arm)
+                };
+                *out = super::contact::Point {
+                    ra,
+                    rb,
+                    separation: round_down(p.separation),
+                };
+            }
+            emit(super::contact::Manifold {
+                normal,
+                points: super::contact::Points::selected(&points[..contact.len]),
+                swept: false,
+                time: 0.0,
+            });
+        },
+    );
+    stats.mesh_nodes_visited += work.nodes_visited;
+    stats.mesh_triangles_tested += work.triangles_tested;
+    crate::work::add(crate::work::Counter::MeshNodes, work.nodes_visited);
+    crate::work::add(crate::work::Counter::MeshTriangles, work.triangles_tested);
+    result.map_err(super::triangle_mesh::failure)
+}
+
 #[cfg(test)]
 pub(super) fn query(a: &Body, b: &Body, work: &mut GeometryStats) -> Option<PrimitiveContact> {
     let (pair, reversed) = canonical_pair(a.shape, b.shape);
@@ -610,6 +677,53 @@ mod tests {
 
     fn body(id: u64, shape: Shape, position: V) -> Body {
         Body::fixture(id, shape, position, 0.0)
+    }
+
+    #[test]
+    fn mesh_box_lever_arms_preserve_sub_ulp_offsets_at_large_world_origins() {
+        use geometry_kernels::triangle_mesh::{PreparedTriangleMesh3, TriangleMeshData3};
+        let prepared = PreparedTriangleMesh3::try_new(TriangleMeshData3 {
+            vertices: vec![[-4.0, 0.0, -4.0], [4.0, 0.0, -4.0], [0.0, 0.0, 4.0]],
+            triangles: vec![[0, 1, 2]],
+        })
+        .unwrap();
+        for origin in [V::ZERO, V(100_000.0, 100_000.0, 100_000.0)] {
+            let mesh = body(
+                1,
+                Shape::TriangleMesh {
+                    mesh: crate::approximate::TriangleMeshId(0),
+                    half_extents: V(4.0, 0.0, 4.0),
+                },
+                origin,
+            );
+            let moving = body(
+                2,
+                Shape::Box(V(0.3, 0.3, 0.3)),
+                origin + V(0.0, 0.3125, 0.0),
+            );
+            for reversed in [false, true] {
+                let (a, b) = if reversed {
+                    (&moving, &mesh)
+                } else {
+                    (&mesh, &moving)
+                };
+                let mut contacts = 0;
+                box_mesh_manifolds(&prepared, a, b, 0.02, &mut GeometryStats::default(), |m| {
+                    for point in &m.points {
+                        let (mesh_arm, box_arm) = if reversed {
+                            (point.rb, point.ra)
+                        } else {
+                            (point.ra, point.rb)
+                        };
+                        assert_eq!(mesh_arm.1, 0.0);
+                        assert_eq!(box_arm.1, -0.3);
+                        contacts += 1;
+                    }
+                })
+                .unwrap();
+                assert!(contacts > 0);
+            }
+        }
     }
 
     #[test]

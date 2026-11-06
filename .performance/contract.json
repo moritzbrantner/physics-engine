@@ -2561,6 +2561,80 @@
           }
         }
       ]
+    },
+    {
+      "id": "static-mesh-rigid-contact",
+      "description": "Non-CCD rigid box touching one nearby triangle in a retained mesh while distant triangles double; 16 warm ticks per size.",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "triangles": {
+          "description": "immutable mesh triangles at constant local density"
+        }
+      },
+      "scalePoints": [
+        {
+          "triangles": 256
+        },
+        {
+          "triangles": 512
+        },
+        {
+          "triangles": 1024
+        },
+        {
+          "triangles": 2048
+        },
+        {
+          "triangles": 4096
+        }
+      ],
+      "metrics": [
+        {
+          "name": "mesh-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "New box/mesh response retains logarithmic local BVH descent; no all-triangles response scan.",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "logarithmic"
+            }
+          ]
+        },
+        {
+          "name": "triangle-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Multi-point rigid contacts visit only the constant nearby triangle set.",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "preparations",
+          "unit": "triangles",
+          "signal": "operation-count",
+          "notes": "Immutable geometry is prepared once at admission and reused by every query.",
+          "budget": {
+            "max": 0
+          }
+        },
+        {
+          "name": "retained-bytes",
+          "unit": "bytes",
+          "signal": "operation-count",
+          "notes": "Prepared vertices, triangles and retained local BVH scale linearly in admitted geometry. Allocator overhead and the world body tree are excluded.",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

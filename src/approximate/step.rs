@@ -1574,6 +1574,29 @@ impl World {
                         bodies: [a.id, b.id],
                         reason,
                     };
+                    if matches!(moving.shape, Shape::Box(_)) {
+                        if moving.ccd {
+                            return Err(failure(super::SweepFailure::InvalidGeometryInput));
+                        }
+                        let approach = moving.velocity.length() * interval
+                            + step_drift(moving, self.scene.gravity, gain).length()
+                            + moving.angular_velocity.length() * moving.shape.radius() * interval;
+                        // A full-interval bound below the accepted contact tolerance cannot
+                        // introduce a feature farther than that tolerance. Reuse these rows
+                        // for the remaining substeps, as for the shared solver's small spins;
+                        // meaningful translation, force drift or rotation regenerates them.
+                        regenerate |= approach > self.scene.contact_slop;
+                        super::primitive::box_mesh_manifolds(
+                            prepared,
+                            a,
+                            b,
+                            self.scene.contact_slop + approach,
+                            &mut report.geometry,
+                            |m| push(out, (i, j, m), &mut s.work),
+                        )
+                        .map_err(failure)?;
+                        continue;
+                    }
                     let current = super::triangle_mesh::manifold(
                         prepared,
                         a,
@@ -1925,6 +1948,11 @@ fn separated_ccd_translation(a: &Body, b: &Body, h: Real, slop: Real) -> bool {
 }
 #[inline]
 pub(super) fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
+    // Admission requires zero linear and angular motion for mass-zero geometry.
+    // Moving external bodies have positive mass and still contribute their full motion.
+    if b.mass == 0.0 {
+        return Vector::ZERO;
+    }
     b.velocity
         + if spin {
             b.angular_velocity.cross(r)
@@ -1960,14 +1988,45 @@ pub(super) fn apply(
     c: &Constraint,
     impulse: [Real; 3],
 ) {
-    let j = c.n * impulse[0] + c.t1 * impulse[1] + c.t2 * impulse[2];
+    apply_components::<true>(bodies, responses, c, impulse);
+}
+
+/// The normal solve has no tangential impulse. Keep its response update with the general
+/// response owner, without multiplying the two unused axes or adding their zero vectors.
+#[inline]
+pub(super) fn apply_normal(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    c: &Constraint,
+    impulse: Real,
+) {
+    apply_components::<false>(bodies, responses, c, [impulse, 0.0, 0.0]);
+}
+
+#[inline]
+fn apply_components<const TANGENTS: bool>(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    c: &Constraint,
+    impulse: [Real; 3],
+) {
+    let j = if TANGENTS {
+        c.n * impulse[0] + c.t1 * impulse[1] + c.t2 * impulse[2]
+    } else {
+        c.n * impulse[0]
+    };
     for (side, i, sign) in [(0, c.a, -1.0), (1, c.b, 1.0)] {
         if c.response[side] {
             let b = &mut bodies[i];
             b.velocity += j * (sign * responses[i].inverse_mass);
             if c.spin {
                 let [n, t1, t2] = c.angular[side];
-                b.angular_velocity += (n * impulse[0] + t1 * impulse[1] + t2 * impulse[2]) * sign;
+                let angular = if TANGENTS {
+                    n * impulse[0] + t1 * impulse[1] + t2 * impulse[2]
+                } else {
+                    n * impulse[0]
+                };
+                b.angular_velocity += angular * sign;
             }
         }
     }

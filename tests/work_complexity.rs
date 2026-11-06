@@ -1611,6 +1611,7 @@ fn joint_rows_follow_the_joints_not_the_town() {
 #[test]
 fn static_mesh_queries_prune_distant_triangles_and_reuse_preparation() {
     let mut samples = Vec::new();
+    let mut rigid_samples = Vec::new();
     let mut hits = Vec::new();
     for count in [256usize, 512, 1024, 2048, 4096] {
         let mut w = World::new(Config {
@@ -1669,10 +1670,42 @@ fn static_mesh_queries_prune_distant_triangles_and_reuse_preparation() {
                 ("retained-bytes", prepared.retained_bytes as u64),
             ],
         ));
+        let mut body = Body::new(Shape::Box(V(0.1, 0.1, 0.1)), V(0.25, 0.1, 0.25), 1.0);
+        body.rotation_locked = true;
+        body.sleep_allowed = false;
+        w.add_body(body).unwrap();
+        w.step(1.0 / 60.0).unwrap();
+        work::reset();
+        for _ in 0..16 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        assert!(
+            work::get(Counter::MeshTriangles) > 0,
+            "rigid contact must exercise the mesh narrow phase"
+        );
+        rigid_samples.push((
+            vec![("triangles", count as u64)],
+            vec![
+                ("mesh-nodes", work::get(Counter::MeshNodes) / 16),
+                ("triangle-tests", work::get(Counter::MeshTriangles) / 16),
+                ("preparations", work::get(Counter::MeshPreparations)),
+                ("retained-bytes", prepared.retained_bytes as u64),
+            ],
+        ));
     }
     judge(
         "static-mesh-query",
         &samples,
+        &[
+            ("mesh-nodes", "triangles", "logarithmic"),
+            ("triangle-tests", "triangles", "constant"),
+            ("preparations", "triangles", "zero"),
+            ("retained-bytes", "triangles", "linear"),
+        ],
+    );
+    judge(
+        "static-mesh-rigid-contact",
+        &rigid_samples,
         &[
             ("mesh-nodes", "triangles", "logarithmic"),
             ("triangle-tests", "triangles", "constant"),

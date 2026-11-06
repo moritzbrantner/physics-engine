@@ -389,7 +389,8 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         (8, 4u32, CheckpointError::UnsupportedFormat(4)),
         (8, 3u32, CheckpointError::UnsupportedFormat(3)),
         (8, 2u32, CheckpointError::UnsupportedFormat(2)),
-        (12, 15u32, CheckpointError::UnsupportedAlgorithm(15)),
+        (12, 16u32, CheckpointError::UnsupportedAlgorithm(16)),
+        (12, 14u32, CheckpointError::UnsupportedAlgorithm(14)),
         (12, 13u32, CheckpointError::UnsupportedAlgorithm(13)),
         (12, 12u32, CheckpointError::UnsupportedAlgorithm(12)),
         (12, 11u32, CheckpointError::UnsupportedAlgorithm(11)),
@@ -603,7 +604,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_nine_algorithm_fourteen_f32_empty_world_wire_fixture_is_stable() {
+fn format_nine_algorithm_fifteen_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -619,7 +620,7 @@ fn format_nine_algorithm_fourteen_f32_empty_world_wire_fixture_is_stable() {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "1c5be5f14528fd25e71a67cac120fb0d51817d5c7cb9cc7f482030dda4eb4955"
+        "32a56696e90325d1e67e0b45ccf899e6b7d49d7d4d9e603160a8d5333fc4e411"
     );
 }
 
