@@ -114,6 +114,42 @@ pub(super) fn swept_time(
         work.primitive_sweep_failures += 1;
         return Err(SweepFailure::NonFiniteComputation);
     }
+    // Avoid generic shape/frame materialization for the checked analytic moving-sphere path.
+    // Other inputs retain the primitive kernel's validation and failure behavior.
+    if let (Shape::Sphere(radius_a), Shape::Sphere(radius_b)) = (a.shape, b.shape)
+        && radius_a.is_finite()
+        && radius_a > 0.0
+        && radius_b.is_finite()
+        && radius_b > 0.0
+        && a.position.finite()
+        && b.position.finite()
+        && a.velocity.finite()
+        && b.velocity.finite()
+        && dt.is_finite()
+        && dt >= 0.0
+        && margin.is_finite()
+        && margin >= 0.0
+    {
+        let velocity_a = to_array(a.velocity);
+        let velocity_b = to_array(b.velocity);
+        let displacement = std::array::from_fn(|i| (velocity_b[i] - velocity_a[i]) * widen(dt));
+        // Stationary pairs retain the generic contact-query validation and work accounting.
+        if displacement != [0.0; 3] {
+            let position_a = to_array(a.position);
+            let position_b = to_array(b.position);
+            let delta = std::array::from_fn(|i| position_b[i] - position_a[i]);
+            work.primitive_sweep_iterations += 1;
+            let result = geometry_kernels::try_sphere_sphere_fraction_f64(
+                delta,
+                displacement,
+                widen(radius_a) + widen(radius_b) + widen(margin),
+            );
+            work.primitive_sweep_failures += u64::from(result.is_err());
+            return result
+                .map(|time| time.map(toward_zero))
+                .map_err(|_| SweepFailure::NonFiniteComputation);
+        }
+    }
     let mut kernel_work = PrimitiveWork3::default();
     let result = kernel_swept_time(
         kernel_body(a),
@@ -439,6 +475,71 @@ mod tests {
 
     fn body(id: u64, shape: Shape, position: V) -> Body {
         Body::fixture(id, shape, position, 0.0)
+    }
+
+    #[test]
+    fn sphere_sweep_adapter_matches_generic_results_and_work() {
+        let compare = |a: &Body, b: &Body, dt: Real, margin: Real| {
+            let mut actual_work = GeometryStats::default();
+            let actual = swept_time(a, b, dt, margin, &mut actual_work);
+            let mut kernel_work = PrimitiveWork3::default();
+            let expected = kernel_swept_time(
+                kernel_body(a),
+                kernel_body(b),
+                widen(dt),
+                widen(margin),
+                128,
+                &mut kernel_work,
+            )
+            .map(|time| time.map(toward_zero))
+            .map_err(sweep_failure);
+            let mut expected_work = GeometryStats::default();
+            accumulate_work(&mut expected_work, kernel_work);
+            expected_work.primitive_sweep_failures += u64::from(expected.is_err());
+            assert_eq!(actual, expected, "a={a:?} b={b:?} dt={dt} margin={margin}");
+            assert_eq!(actual_work, expected_work);
+        };
+        let mut a = body(1, Shape::Sphere(1.0), V::ZERO);
+        let mut b = body(2, Shape::Sphere(1.0), V(4.0, 0.0, 0.0));
+        for position in [
+            V::ZERO,
+            V(2.0, 0.0, 0.0),
+            V(4.0, 2.0, 0.0),
+            V(4.0, 0.0, 0.0),
+        ] {
+            b.position = position;
+            for velocity in [V::ZERO, V(-4.0, 0.0, 0.0), V(4.0, 0.0, 0.0)] {
+                b.velocity = velocity;
+                for dt in [0.0, 0.25, 1.0, -1.0, Real::NAN, Real::INFINITY] {
+                    for margin in [0.0, 0.1, -0.1, Real::NAN, Real::INFINITY] {
+                        compare(&a, &b, dt, margin);
+                    }
+                }
+            }
+        }
+        // Deterministic varied magnitudes and trajectories exercise moving/initial-overlap
+        // decisions without depending on the optimized adapter for the reference result.
+        let mut seed = 0x5eed_u64;
+        let mut value = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((seed >> 32) as u32 as Real / u32::MAX as Real - 0.5) * 100.0
+        };
+        for _ in 0..2048 {
+            a.position = V(value(), value(), value());
+            b.position = V(value(), value(), value());
+            a.velocity = V(value(), value(), value());
+            b.velocity = V(value(), value(), value());
+            a.shape = Shape::Sphere(value().abs() + 0.001);
+            b.shape = Shape::Sphere(value().abs() + 0.001);
+            compare(&a, &b, value().abs(), value().abs());
+        }
+        for invalid in [Real::NAN, Real::INFINITY, Real::NEG_INFINITY] {
+            a.velocity = V(invalid, 0.0, 0.0);
+            compare(&a, &b, 1.0, 0.0);
+            a.velocity = V::ZERO;
+            b.position = V(0.0, invalid, 0.0);
+            compare(&a, &b, 1.0, 0.0);
+        }
     }
 
     #[test]

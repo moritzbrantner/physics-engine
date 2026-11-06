@@ -7,13 +7,15 @@ What stays `f64`:
 
 - `numeric::Scalar`: the `step(dt)` argument, accumulated elapsed seconds and the checkpointed
   prior-substep duration. Each substep narrows its `dt` to `Real` once;
-- the `geometry-kernels::primitive3` kernels.
+- the `geometry-kernels` primitive and checked continuous-collision kernels.
 
 **Kernel boundary.** `src/approximate/primitive.rs` widens `Real` inputs exactly to f64 (`widen`)
 and narrows results conservatively: time of impact and sweep fractions toward zero, so an impact
 never moves later (`toward_zero`); bounds/extents outward (`round_up`); separation toward smaller
 (`round_down`); directions and witnesses to nearest (`nearest`). Quaternions are renormalized in
-f64 before building the kernel frame. A swept impact is re-checked after narrowing with an
+f64 before building the kernel frame. Moving sphere pairs call the checked analytic fraction
+kernel directly with the same widened arithmetic; stationary pairs retain the primitive contact
+query and its validation. A swept impact is re-checked after narrowing with an
 allowance of `NARROWING_ULPS` (16) `Real::EPSILON`, scaled by the pose magnitude.
 
 **Precision envelope** (documented, not enforced by extra rejections):
