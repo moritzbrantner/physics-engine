@@ -9,6 +9,11 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
+Algorithm 12 corrects tangential heightfield sweep admission for character moves. A nearly
+tangential earliest hit no longer hides a later blocking triangle. This changes continuation
+at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruction; current algorithm 14 adds box/hull response
+(see below). Older algorithm checkpoints are rejected.
+
 Format 9 (#180) adds static convex hull shape tag 7 and embedded canonical hull vertices
 after the format-8 mesh slots. A u64 hull-slot count precedes one u64 vertex count per
 slot, then three physical scalars per vertex; zero vertices marks a removed slot. Restore
@@ -188,10 +193,20 @@ the heights to prepare and one to fingerprint); capture does not.
 
 #452 adds terrain, halfspace and character continuation for the engine-side zone fixture; no consumer has adopted it, and MMORPG's own recovery acceptance (its save format, content tags and browser recovery) remains open, as do joints in checkpoints. This implements the selected floating world's engine checkpoint slice under #198. MMORPG still owns its gameplay/canonical save contract and uses the translational World adopted in PR #47. Its floating-solver migration remains gated by query/character support, CCD/contact quality and real native/browser canonical/recovery acceptance (#194, #3 and the linked consumer issue). This checkpoint product alone does not satisfy that adoption or close #198.
 
-## Box/hull contact continuation (algorithm 12)
+## Character reconstruction (algorithm 13, #500)
+
+Static push-out now derives clearance from the authoritative physical pose instead
+of trusting an earlier move's clear hint. An overlap-verified exact pose can reuse clearance
+until stepping, placement or an exclusion change; this cache is disposable. This changes continuation on a shallow embedded
+terrain pose, so the algorithm becomes 13 while the wire format stays 9. Version 12 contains the merged terrain-seam correction (#501); versions 11 and 12 are rejected.
+The known-clear field remains in the wire layout as a character-separation hint, not authority
+for static overlap. The empty-world digest changes with the algorithm header/checksum.
+The game still owns canonical pose/settings reconstruction and its integration acceptance.
+
+## Box/hull contact continuation (algorithm 14)
 
 Non-CCD boxes now generate rigid manifolds against static convex hulls. This changes step
-continuation from an atomic unsupported-pair error to physical response, so algorithm 12
-rejects earlier algorithm 11 checkpoints while retaining format 9. The empty-world wire
+continuation from an atomic unsupported-pair error to physical response, so algorithm 14
+rejects earlier checkpoints, including algorithm 13 character reconstruction while retaining format 9. The empty-world wire
 digest changes only with the algorithm header/checksum. The focused box/rock checkpoint
 test restores mid-contact and continues bit-identically.

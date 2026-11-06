@@ -132,10 +132,12 @@ pub(super) struct Characters {
     settings: Vec<CharacterSettings>,
     /// Translation received from pushes in the current batch.
     pushed: Vec<V>,
-    /// Layout generation at which the character was last known free of overlap
-    /// ([`DIRTY`] when unknown). Moves keep a gap to everything, so a character stays free
-    /// until bodies are added or removed, or it is placed by the game.
+    /// Layout/placement hint for avoiding redundant character/character separation.
+    /// [`DIRTY`] means unknown. This is never an authoritative decision about static
+    /// penetration: only an exact pose verified by an overlap query can skip that query.
     clear: Vec<(u64, u64)>,
+    /// An exact pose actually observed free of overlap, valid until placement or stepping.
+    verified_clear: Vec<Option<(QueryPose, f64)>>,
     /// The body the latest move excluded ([`CharacterMove::exclude`]).
     exclude: Vec<Option<BodyId>>,
     /// Incremented whenever a character is placed rather than moved: a placed character can
@@ -170,11 +172,13 @@ impl Characters {
             self.settings.resize(slot + 1, CharacterSettings::default());
             self.pushed.resize(slot + 1, V::ZERO);
             self.clear.resize(slot + 1, DIRTY);
+            self.verified_clear.resize(slot + 1, None);
             self.exclude.resize(slot + 1, None);
         }
         self.ids[slot] = id;
         self.settings[slot] = settings;
         self.clear[slot] = DIRTY;
+        self.verified_clear[slot] = None;
         self.exclude[slot] = None;
     }
     /// Whether the character is known free of overlap at layout `generation`.
@@ -186,6 +190,9 @@ impl Characters {
         let state = generation.map_or(DIRTY, |g| (g, self.placements));
         if let Some(slot) = self.slot(id) {
             self.clear[slot] = state;
+            if generation.is_none() {
+                self.verified_clear[slot] = None;
+            }
         }
     }
     /// Overlap is unknown again for every character.
@@ -246,6 +253,7 @@ impl Characters {
         {
             self.exclude[slot] = exclude;
             self.clear[slot] = DIRTY;
+            self.verified_clear[slot] = None;
         }
     }
 }
@@ -583,6 +591,21 @@ impl World {
         // Sliding along a surface at the offset approaches it only by rounding; motion that
         // closes the gap by under a thousandth of the offset does not count as approaching.
         let tolerance = offset * 1e-3;
+        // A tangential terrain contact can win the body's earliest-hit tie by rounding,
+        // hiding the next triangle. Recast leaning off that contact just as a later slide
+        // does, while still judging approach against the requested displacement.
+        if let Some(normal) = hits.iter().find_map(|hit| {
+            (matches!(hit.feature, Some(super::RayFeature::HeightfieldTriangle(_)))
+                && hit.normal.dot(displacement).abs() <= tolerance)
+                .then_some(hit.normal)
+        }) {
+            self.cast_hits(
+                id,
+                pose,
+                displacement + normal * (offset * NORMAL_NUDGE),
+                hits,
+            )?;
+        }
         Ok(hits
             .iter()
             .copied()
@@ -799,8 +822,14 @@ impl World {
         // Leave penetration first; reported apart from the requested motion. A few passes
         // resolve overlap with several bodies at once (a pillar against a wall).
         let generation = self.bookkeeping.generation;
-        let mut resolved = self.characters.is_clear(id, generation);
-        if !resolved && s.embedded == Embedded::Stay {
+        // Clearance cached by a previous move is not an authoritative penetration
+        // decision. Terrain motion can leave a small overlap; a reconstructed world
+        // must resolve exactly the same physical pose as an uninterrupted one (#500).
+        let slot = self.characters.slot(id).ok_or(Error::MissingBody(id))?;
+        let verified = self.characters.is_clear(id, generation)
+            && self.characters.verified_clear[slot] == Some((pose, self.elapsed));
+        let mut resolved = verified;
+        if !verified && s.embedded == Embedded::Stay {
             // Left in geometry: clear once no other character overlaps it (the batch
             // separates those).
             self.character_overlap(id, pose, hits)?;
@@ -808,7 +837,7 @@ impl World {
                 .iter()
                 .any(|h| h.separation < 0.0 && self.characters.contains(h.body));
         }
-        let passes = if resolved || s.embedded == Embedded::Stay {
+        let passes = if verified || s.embedded == Embedded::Stay {
             0
         } else {
             4
@@ -838,6 +867,9 @@ impl World {
                 resolved = !hits
                     .iter()
                     .any(|h| h.separation < 0.0 && self.characters.contains(h.body));
+                if resolved {
+                    self.characters.verified_clear[slot] = Some((pose, self.elapsed));
+                }
                 break;
             }
             pose.position += push;
@@ -1032,9 +1064,139 @@ impl World {
         }
         // Walkable support is a contact facing up; only off it does the contact test run.
         result.ground_contact = result.grounded || self.ground_contact_at(id, pose, s, hits)?;
-        // The slide kept its gap: free of overlap until the layout changes or it is placed.
+        // Keep the inter-character separation hint. Static penetration is checked
+        // independently from the physical pose on the next move.
         self.characters
             .set_clear(id, resolved.then_some(generation));
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use crate::approximate::{Config, HeightfieldDesc, Material};
+    fn sample() -> (World, BodyId) {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            length_unit: 100.0,
+            ..Config::default()
+        })
+        .unwrap();
+        world
+            .add_heightfield(
+                HeightfieldDesc {
+                    origin: V(800.0, 0.0, -7600.0),
+                    cell_size: (400.0, 400.0),
+                    columns: 2,
+                    rows: 2,
+                    heights: vec![1100.0, 1100.0, 1287.0, 1150.0],
+                    removed_cells: None,
+                    material: Material::default(),
+                },
+                Some(1),
+            )
+            .unwrap();
+        let mut body = Body::keyed(
+            2,
+            Shape::capsule(60.0, 30.0),
+            V(1116.2186, 1247.0002, -7388.426),
+            1.0,
+        );
+        body.external = true;
+        let id = world.add_body(body).unwrap();
+        world
+            .add_character(
+                id,
+                CharacterSettings {
+                    offset: 0.25,
+                    ..world.character_settings()
+                },
+            )
+            .unwrap();
+        (world, id)
+    }
+    #[test]
+    fn verified_clear_pose_matches_cold_queries_after_placement_exclusion_and_step() {
+        let (mut world, id) = sample();
+        world
+            .set_kinematic_position(id, V(1100.0, 1400.0, -7400.0))
+            .unwrap();
+        let obstacle = world
+            .add_body(Body::keyed(
+                3,
+                Shape::Box(V(10.0, 10.0, 10.0)),
+                V::ZERO,
+                0.0,
+            ))
+            .unwrap();
+        let mut out = Vec::new();
+        let mut movement = CharacterMove {
+            body: id,
+            desired: V::ZERO,
+            exclude: None,
+            autostep: None,
+        };
+        world.move_characters(&[movement], &mut out).unwrap();
+        assert!(world.characters.verified_clear[id.slot() as usize].is_some());
+        for change in 0..4 {
+            match change {
+                0 => world
+                    .set_static_position(obstacle, V(1100.0, 1400.0, -7400.0))
+                    .unwrap(),
+                1 => movement.exclude = Some(obstacle),
+                2 => movement.exclude = None,
+                _ => {
+                    world.step(1.0 / 60.0).unwrap();
+                }
+            }
+            let mut cold = world.clone();
+            cold.characters.verified_clear.fill(None);
+            let mut expected = Vec::new();
+            world.move_characters(&[movement], &mut out).unwrap();
+            cold.move_characters(&[movement], &mut expected).unwrap();
+            assert_eq!(out, expected, "change {change}");
+            assert_eq!(
+                world.body(id).unwrap().position,
+                cold.body(id).unwrap().position
+            );
+        }
+    }
+    #[test]
+    fn prior_clearance_hint_cannot_change_continuation_from_the_same_terrain_pose() {
+        let (mut warm, id) = sample();
+        warm.characters
+            .set_clear(id, Some(warm.bookkeeping.generation));
+        let (mut fresh, other) = sample();
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        let desired = V(0.0, -0.2725, 3.0);
+        warm.move_characters(
+            &[CharacterMove {
+                body: id,
+                desired,
+                exclude: None,
+                autostep: None,
+            }],
+            &mut left,
+        )
+        .unwrap();
+        fresh
+            .move_characters(
+                &[CharacterMove {
+                    body: other,
+                    desired,
+                    exclude: None,
+                    autostep: None,
+                }],
+                &mut right,
+            )
+            .unwrap();
+        assert_eq!(left, right);
+        assert_eq!(
+            warm.body(id).unwrap().position,
+            fresh.body(other).unwrap().position,
+            "warm {left:?}, fresh {right:?}"
+        );
     }
 }

@@ -8,6 +8,7 @@ pub mod ccd_parallel;
 pub mod ccd_projectiles;
 pub mod ccd_synchronized;
 pub mod character_move;
+pub mod character_rebuild;
 pub mod collision_filters;
 pub mod contact_events;
 pub mod crowd;
@@ -33,3 +34,5 @@ pub mod static_queries;
 pub mod terrain;
 #[cfg(feature = "rapier")]
 mod upright_queries;
+
+pub mod terrain_seam;

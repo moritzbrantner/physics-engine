@@ -117,7 +117,7 @@ When to pick which:
 adds static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`;
 `removed_cells`, row-major per cell, cuts holes that rays, queries and characters pass through,
 like parry's `CELL_REMOVED`) and returns its body, whose shape is `Shape::Heightfield`. Each cell is split along the same
-diagonal as parry/Rapier heightfields. Rays, sphere and capsule overlaps and casts, and
+diagonal as parry/Rapier heightfields. Character sweeps recast nearly tangential terrain hits with a small normal nudge so an earlier flat triangle cannot hide the next blocking face. Rays, sphere and capsule overlaps and casts, and
 character moves work against it. Box and wedge overlaps (door probes) are tested against the
 triangles by the separating-axis test: whether they overlap is exact, and the reported depth and
 normal come from the deepest triangle alone. The terrain is a surface, so a box wholly beneath
@@ -130,6 +130,17 @@ after the body's current motion. Other dynamic shapes take no terrain contacts. 
 a fingerprint of each heightfield's description; `Checkpoint::restore` takes the descriptions
 again (#452). `add_body` rejects
 heightfield shapes.
+
+## Character reconstruction
+
+`move_characters` derives static penetration from the current physical pose. Only an exact
+pose proved clear by an overlap query can skip that query before the next physics step;
+placement and exclusion changes invalidate the proof. The older clear hint alone cannot
+suppress the check: reconstructing a character from its pose/settings applies the same push-out as uninterrupted movement (#500). The hint may
+still skip redundant character/character separation; it is not static collision authority.
+`Embedded::Stay` continues to leave static penetration in place, while `PushOut` continues
+to report the repair separately in `depenetration`. The `character-rebuild` Rapier oracle
+checks exact same-backend reconstruction at each tick on the reported terrain patch.
 
 ## Authored convex rocks (#180)
 
