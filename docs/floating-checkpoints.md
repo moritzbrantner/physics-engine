@@ -219,3 +219,7 @@ Algorithm 15 also specializes the solver's normal-only impulse application, omit
 unused tangential zero-vector terms. Finite arithmetic keeps the same response; exact
 zero signs may differ from algorithm 14. The general friction update and numerical
 failure checks remain in place.
+
+The same algorithm version also skips contact-point velocity arithmetic for admitted
+mass-zero geometry, whose validated linear and angular motion is zero. Positive-mass
+external platforms retain their full prescribed contact-point velocity.

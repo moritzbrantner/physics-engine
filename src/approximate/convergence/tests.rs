@@ -432,3 +432,38 @@ fn normal_impulse_specialization_matches_the_general_finite_response() {
         }
     }
 }
+
+#[test]
+fn contact_velocity_skips_static_zero_motion_and_preserves_moving_external_bodies() {
+    for spin in [false, true] {
+        let mut fixed = sphere(1, 0.0, 0.0);
+        fixed.velocity = V(-0.0, 0.0, -0.0);
+        fixed.angular_velocity = V(0.0, -0.0, 0.0);
+        assert_eq!(
+            contact_velocity(&fixed, V(1e12, -1e12, 1e12), spin),
+            V::ZERO
+        );
+        for bad in [V(1.0, 0.0, 0.0), V(Real::NAN, 0.0, 0.0)] {
+            let mut invalid = fixed.clone();
+            invalid.velocity = bad;
+            assert!(
+                World::new(Config::default())
+                    .unwrap()
+                    .add_body(invalid)
+                    .is_err()
+            );
+        }
+        let mut moving = sphere(2, 0.0, 1.0);
+        moving.external = true;
+        moving.velocity = V(0.5, -0.3, 0.2);
+        moving.angular_velocity = V(0.1, 0.4, -0.2);
+        let arm = V(-0.7, 0.2, 0.5);
+        let expected = moving.velocity
+            + if spin {
+                moving.angular_velocity.cross(arm)
+            } else {
+                V::ZERO
+            };
+        assert_eq!(contact_velocity(&moving, arm, spin), expected);
+    }
+}

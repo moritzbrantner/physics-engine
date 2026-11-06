@@ -1948,6 +1948,11 @@ fn separated_ccd_translation(a: &Body, b: &Body, h: Real, slop: Real) -> bool {
 }
 #[inline]
 pub(super) fn contact_velocity(b: &Body, r: Vector, spin: bool) -> Vector {
+    // Admission requires zero linear and angular motion for mass-zero geometry.
+    // Moving external bodies have positive mass and still contribute their full motion.
+    if b.mass == 0.0 {
+        return Vector::ZERO;
+    }
     b.velocity
         + if spin {
             b.angular_velocity.cross(r)
