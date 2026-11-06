@@ -458,3 +458,27 @@ fn local_ray_vs_capsule_cost() {
     let sweep = start.elapsed();
     eprintln!("rock hull 10000 each: ray={ray:?} capsule={sweep:?} last_stats={stats:?}");
 }
+
+#[test]
+fn unsupported_rigid_hull_pairs_fail_atomically_instead_of_tunneling() {
+    for shape in [
+        Shape::Sphere(0.2),
+        Shape::capsule(0.3, 0.2),
+        Shape::Box(V(0.2, 0.2, 0.2)),
+    ] {
+        let mut world = cube_rock();
+        let mut body = Body::keyed(42, shape, V(-3.0, 0.0, 0.0), 1.0);
+        body.velocity = V(600.0, 0.0, 0.0);
+        body.ccd = true;
+        let id = world.add_body(body).unwrap();
+        let before = world.body(id).unwrap().clone();
+        assert!(matches!(
+            world.step(1.0 / 60.0),
+            Err(physics_engine::approximate::Error::CollisionSearchFailed {
+                reason: physics_engine::approximate::SweepFailure::InvalidGeometryInput,
+                ..
+            })
+        ));
+        assert_eq!(world.body(id).unwrap(), &before);
+    }
+}

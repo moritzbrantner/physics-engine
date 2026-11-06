@@ -23,6 +23,7 @@ pub mod platonic_proxy;
 pub mod props;
 pub mod push;
 pub mod ray_sight;
+pub mod redbrand_cave;
 pub mod rope_joints;
 pub mod slopes;
 pub mod stairs;

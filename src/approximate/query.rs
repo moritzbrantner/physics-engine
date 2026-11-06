@@ -27,7 +27,10 @@ impl QueryPose {
         }
     }
     fn body(self) -> Option<Body> {
-        if !self.shape.valid_dimensions()
+        if matches!(
+            self.shape,
+            Shape::TriangleMesh { .. } | Shape::ConvexHull { .. }
+        ) || !self.shape.valid_dimensions()
             || !self.position.finite()
             || self.position.abs().max_component() >= 1e12
             || !unit_orientation(self.orientation)
@@ -83,10 +86,12 @@ impl QueryFilter {
 }
 
 /// Contact witnesses use the upstream primitive kernel's separation/normal contract.
-/// Stable feature IDs and a clipped manifold are not supplied by this query surface.
+/// Triangle surfaces expose their stable input triangle; primitive clipped manifolds are not supplied.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QueryHit {
     pub body: BodyId,
+    /// Stable surface identity for triangle terrain; primitives currently return `None`.
+    pub feature: Option<RayFeature>,
     /// Fraction of the requested displacement, in [0, 1]; overlaps/touching start at zero.
     pub fraction: Real,
     pub distance: Real,
@@ -123,6 +128,8 @@ pub struct QueryStats {
     pub segment_distance_evaluations: u64,
     /// Segment endpoint regions, box slabs/breakpoints and distance candidates visited.
     pub segment_feature_tests: u64,
+    pub mesh_nodes_visited: u64,
+    pub mesh_triangles_tested: u64,
     pub ray_queries: u64,
     pub ray_planes_tested: u64,
     pub ray_quadratic_tests: u64,
@@ -436,6 +443,7 @@ impl World {
                 let capacity = hits.capacity();
                 hits.push(QueryHit {
                     body: target.id,
+                    feature: None,
                     fraction,
                     distance: distance * fraction,
                     normal: n,
@@ -518,6 +526,7 @@ impl World {
                 let capacity = hits.capacity();
                 hits.push(QueryHit {
                     body: target.id,
+                    feature: Some(RayFeature::HeightfieldTriangle(contact.triangle)),
                     fraction,
                     distance: distance * fraction,
                     normal,
@@ -565,6 +574,7 @@ impl World {
                 let capacity = hits.capacity();
                 hits.push(QueryHit {
                     body: target.id,
+                    feature: contact.face.map(RayFeature::ConvexHullFace),
                     fraction,
                     distance: distance * fraction,
                     normal: -contact.normal,
@@ -577,6 +587,18 @@ impl World {
                 });
                 stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
                 stats.hits_admitted += 1;
+                continue;
+            }
+            if matches!(target.shape, Shape::TriangleMesh { .. }) {
+                if let Some(hit) = self
+                    .mesh_shape_hit(target, &query, cast, stats)
+                    .map_err(failure)?
+                {
+                    let capacity = hits.capacity();
+                    hits.push(hit);
+                    stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
+                    stats.hits_admitted += 1;
+                }
                 continue;
             }
             let initial = current(&query, target, stats).map_err(failure)?;
@@ -619,6 +641,7 @@ impl World {
             let capacity = hits.capacity();
             hits.push(QueryHit {
                 body: target.id,
+                feature: None,
                 fraction,
                 distance: distance * fraction,
                 normal: -contact.normal,

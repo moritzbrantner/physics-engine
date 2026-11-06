@@ -795,22 +795,86 @@
         }
       },
       "scalePoints": [
-        { "pairs": 16, "inertCase": 1, "storage": 1 },
-        { "pairs": 64, "inertCase": 1, "storage": 1 },
-        { "pairs": 256, "inertCase": 1, "storage": 1 },
-        { "pairs": 1024, "inertCase": 1, "storage": 1 },
-        { "pairs": 16, "inertCase": 2, "storage": 1 },
-        { "pairs": 64, "inertCase": 2, "storage": 1 },
-        { "pairs": 256, "inertCase": 2, "storage": 1 },
-        { "pairs": 1024, "inertCase": 2, "storage": 1 },
-        { "pairs": 16, "inertCase": 1, "storage": 2 },
-        { "pairs": 64, "inertCase": 1, "storage": 2 },
-        { "pairs": 256, "inertCase": 1, "storage": 2 },
-        { "pairs": 1024, "inertCase": 1, "storage": 2 },
-        { "pairs": 16, "inertCase": 2, "storage": 2 },
-        { "pairs": 64, "inertCase": 2, "storage": 2 },
-        { "pairs": 256, "inertCase": 2, "storage": 2 },
-        { "pairs": 1024, "inertCase": 2, "storage": 2 }
+        {
+          "pairs": 16,
+          "inertCase": 1,
+          "storage": 1
+        },
+        {
+          "pairs": 64,
+          "inertCase": 1,
+          "storage": 1
+        },
+        {
+          "pairs": 256,
+          "inertCase": 1,
+          "storage": 1
+        },
+        {
+          "pairs": 1024,
+          "inertCase": 1,
+          "storage": 1
+        },
+        {
+          "pairs": 16,
+          "inertCase": 2,
+          "storage": 1
+        },
+        {
+          "pairs": 64,
+          "inertCase": 2,
+          "storage": 1
+        },
+        {
+          "pairs": 256,
+          "inertCase": 2,
+          "storage": 1
+        },
+        {
+          "pairs": 1024,
+          "inertCase": 2,
+          "storage": 1
+        },
+        {
+          "pairs": 16,
+          "inertCase": 1,
+          "storage": 2
+        },
+        {
+          "pairs": 64,
+          "inertCase": 1,
+          "storage": 2
+        },
+        {
+          "pairs": 256,
+          "inertCase": 1,
+          "storage": 2
+        },
+        {
+          "pairs": 1024,
+          "inertCase": 1,
+          "storage": 2
+        },
+        {
+          "pairs": 16,
+          "inertCase": 2,
+          "storage": 2
+        },
+        {
+          "pairs": 64,
+          "inertCase": 2,
+          "storage": 2
+        },
+        {
+          "pairs": 256,
+          "inertCase": 2,
+          "storage": 2
+        },
+        {
+          "pairs": 1024,
+          "inertCase": 2,
+          "storage": 2
+        }
       ],
       "metrics": [
         {
@@ -818,8 +882,14 @@
           "unit": "pairs",
           "signal": "operation-count",
           "growth": [
-            { "dimension": "pairs", "bound": "linear" },
-            { "dimension": "inertCase", "bound": "constant" }
+            {
+              "dimension": "pairs",
+              "bound": "linear"
+            },
+            {
+              "dimension": "inertCase",
+              "bound": "constant"
+            }
           ],
           "notes": "A valid unsupported body forces the full has_support scan: exactly P cached pair visits. A supporting body is also checked to preserve the positive outcome."
         },
@@ -828,8 +898,14 @@
           "unit": "pairs",
           "signal": "operation-count",
           "growth": [
-            { "dimension": "pairs", "bound": "linear" },
-            { "dimension": "inertCase", "bound": "constant" }
+            {
+              "dimension": "pairs",
+              "bound": "linear"
+            },
+            {
+              "dimension": "inertCase",
+              "bound": "constant"
+            }
           ],
           "notes": "Moving an unrelated fixed body scans exactly P cached keys, while the same move leaves supported bodies undisturbed."
         },
@@ -838,8 +914,14 @@
           "unit": "pairs",
           "signal": "operation-count",
           "growth": [
-            { "dimension": "pairs", "bound": "linear" },
-            { "dimension": "inertCase", "bound": "constant" }
+            {
+              "dimension": "pairs",
+              "bound": "linear"
+            },
+            {
+              "dimension": "inertCase",
+              "bound": "constant"
+            }
           ],
           "notes": "New with World::set_layers (#451): changing an unrelated body's layers scans exactly P cached keys for pairs the new layers exclude (their sleeping side wakes), plus one query-tree descent for sleepers the new layers admit; supported bodies stay undisturbed."
         },
@@ -848,8 +930,14 @@
           "unit": "pairs",
           "signal": "operation-count",
           "growth": [
-            { "dimension": "pairs", "bound": "linear" },
-            { "dimension": "inertCase", "bound": "constant" }
+            {
+              "dimension": "pairs",
+              "bound": "linear"
+            },
+            {
+              "dimension": "inertCase",
+              "bound": "constant"
+            }
           ],
           "notes": "Explicit removal scans P keys to collect neighbors and P entries during retain: exactly 2P visits. Removing a contacted support separately confirms its pair is discarded; wake and support behavior are checked in both storage modes."
         }
@@ -1079,7 +1167,7 @@
           "name": "exact-tests",
           "unit": "tests",
           "signal": "operation-count",
-          "notes": "O(m · k): each move's casts test the movers its swept bounds reach, about once per neighbour plus once per mover (32, 64, 128, 308, 518 at density 1, 2, 4, 8, 16; 3582 for MMORPG's 139 movers in fights of 64), never all pairs. Slides re-test the same neighbours, which adds under a fifth at density 8 and does not grow beyond it. Rapier's controller also casts once per slide; on the oracle's crowd-fight scenario (139 movers, 64 in one press) the engine runs at 0.24x Rapier.",
+          "notes": "O(m \u00b7 k): each move's casts test the movers its swept bounds reach, about once per neighbour plus once per mover (32, 64, 128, 308, 518 at density 1, 2, 4, 8, 16; 3582 for MMORPG's 139 movers in fights of 64), never all pairs. Slides re-test the same neighbours, which adds under a fifth at density 8 and does not grow beyond it. Rapier's controller also casts once per slide; on the oracle's crowd-fight scenario (139 movers, 64 in one press) the engine runs at 0.24x Rapier.",
           "budget": {
             "max": 4096
           },
@@ -1106,7 +1194,7 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Each slide's cast descends the tree, so node visits per mover grow with the slides a crowd forces (83 to 217 per mover from density 1 to 16, 345 in fights of 64): sub-linear in density, held under O(m · k) and a budget.",
+          "notes": "Each slide's cast descends the tree, so node visits per mover grow with the slides a crowd forces (83 to 217 per mover from density 1 to 16, 345 in fights of 64): sub-linear in density, held under O(m \u00b7 k) and a budget.",
           "budget": {
             "max": 65536
           },
@@ -1592,7 +1680,7 @@
           "name": "pair-tests",
           "unit": "tests",
           "signal": "operation-count",
-          "notes": "Broad-phase candidate tests in a warm step (Report::pair_tests). Awake bodies keep the query-tree leaves their broad-phase box found (#412), so a static is tested only when an awake body reaches it: O(awake · log statics); awake-awake pairs O(awake log awake). Before #412 the sweep tested static-static pairs, about statics^1.5 (3,968 at 512 statics to 1,041,408 at 16,384).",
+          "notes": "Broad-phase candidate tests in a warm step (Report::pair_tests). Awake bodies keep the query-tree leaves their broad-phase box found (#412), so a static is tested only when an awake body reaches it: O(awake \u00b7 log statics); awake-awake pairs O(awake log awake). Before #412 the sweep tested static-static pairs, about statics^1.5 (3,968 at 512 statics to 1,041,408 at 16,384).",
           "growth": [
             {
               "dimension": "statics",
@@ -1695,48 +1783,146 @@
         }
       },
       "scalePoints": [
-        { "projectiles": 1, "irrelevant": 128, "impactsPerBody": 1 },
-        { "projectiles": 2, "irrelevant": 128, "impactsPerBody": 1 },
-        { "projectiles": 4, "irrelevant": 128, "impactsPerBody": 1 },
-        { "projectiles": 8, "irrelevant": 128, "impactsPerBody": 1 },
-        { "projectiles": 16, "irrelevant": 128, "impactsPerBody": 1 },
-        { "projectiles": 32, "irrelevant": 128, "impactsPerBody": 1 },
-        { "projectiles": 8, "irrelevant": 64, "impactsPerBody": 1 },
-        { "projectiles": 32, "irrelevant": 64, "impactsPerBody": 1 },
-        { "projectiles": 8, "irrelevant": 256, "impactsPerBody": 1 },
-        { "projectiles": 32, "irrelevant": 256, "impactsPerBody": 1 },
-        { "projectiles": 1, "irrelevant": 128, "impactsPerBody": 2 },
-        { "projectiles": 2, "irrelevant": 128, "impactsPerBody": 2 },
-        { "projectiles": 4, "irrelevant": 128, "impactsPerBody": 2 },
-        { "projectiles": 8, "irrelevant": 128, "impactsPerBody": 2 },
-        { "projectiles": 16, "irrelevant": 128, "impactsPerBody": 2 },
-        { "projectiles": 32, "irrelevant": 128, "impactsPerBody": 2 },
-        { "projectiles": 8, "irrelevant": 64, "impactsPerBody": 2 },
-        { "projectiles": 32, "irrelevant": 64, "impactsPerBody": 2 },
-        { "projectiles": 8, "irrelevant": 256, "impactsPerBody": 2 },
-        { "projectiles": 32, "irrelevant": 256, "impactsPerBody": 2 }
+        {
+          "projectiles": 1,
+          "irrelevant": 128,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 2,
+          "irrelevant": 128,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 4,
+          "irrelevant": 128,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 8,
+          "irrelevant": 128,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 16,
+          "irrelevant": 128,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 32,
+          "irrelevant": 128,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 8,
+          "irrelevant": 64,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 32,
+          "irrelevant": 64,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 8,
+          "irrelevant": 256,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 32,
+          "irrelevant": 256,
+          "impactsPerBody": 1
+        },
+        {
+          "projectiles": 1,
+          "irrelevant": 128,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 2,
+          "irrelevant": 128,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 4,
+          "irrelevant": 128,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 8,
+          "irrelevant": 128,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 16,
+          "irrelevant": 128,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 32,
+          "irrelevant": 128,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 8,
+          "irrelevant": 64,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 32,
+          "irrelevant": 64,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 8,
+          "irrelevant": 256,
+          "impactsPerBody": 2
+        },
+        {
+          "projectiles": 32,
+          "irrelevant": 256,
+          "impactsPerBody": 2
+        }
       ],
       "metrics": [
         {
           "name": "pair-tests",
           "unit": "tests",
           "signal": "operation-count",
-          "notes": "O(k·n) tests in these fixtures with n mutually distant projectiles and k=1 or 2 wall impacts each (#469, was O(k·n²)): fixed bodies are pruned through the existing query tree and moving targets through a transient tree of their conservative remaining swept bounds, refreshed from the impact time when an impact changes a trajectory; an impact re-searches only sources overlapping a changed body's old or new sweep. The test enforces <= 4n for k=1, <= 6n for k=2, independent of b. Building the unpruned moving-body list visits all bodies once per CCD step; tree traversal is accounted separately.",
+          "notes": "O(k\u00b7n) tests in these fixtures with n mutually distant projectiles and k=1 or 2 wall impacts each (#469, was O(k\u00b7n\u00b2)): fixed bodies are pruned through the existing query tree and moving targets through a transient tree of their conservative remaining swept bounds, refreshed from the impact time when an impact changes a trajectory; an impact re-searches only sources overlapping a changed body's old or new sweep. The test enforces <= 4n for k=1, <= 6n for k=2, independent of b. Building the unpruned moving-body list visits all bodies once per CCD step; tree traversal is accounted separately.",
           "growth": [
-            { "dimension": "projectiles", "bound": "linear" },
-            { "dimension": "irrelevant", "bound": "constant" },
-            { "dimension": "impactsPerBody", "bound": "linear" }
+            {
+              "dimension": "projectiles",
+              "bound": "linear"
+            },
+            {
+              "dimension": "irrelevant",
+              "bound": "constant"
+            },
+            {
+              "dimension": "impactsPerBody",
+              "bound": "linear"
+            }
           ]
         },
         {
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "Conservative fixed-body tree candidate visits, the transient moving-sweep tree's candidate and invalidation queries (#469, O(log n) per search for distant sources, was O(n²) linear candidate checks) plus the ordinary step broad phase; no worse than linearly in unrelated statics.",
+          "notes": "Conservative fixed-body tree candidate visits, the transient moving-sweep tree's candidate and invalidation queries (#469, O(log n) per search for distant sources, was O(n\u00b2) linear candidate checks) plus the ordinary step broad phase; no worse than linearly in unrelated statics.",
           "growth": [
-            { "dimension": "projectiles", "bound": "linearithmic" },
-            { "dimension": "irrelevant", "bound": "linear" },
-            { "dimension": "impactsPerBody", "bound": "linear" }
+            {
+              "dimension": "projectiles",
+              "bound": "linearithmic"
+            },
+            {
+              "dimension": "irrelevant",
+              "bound": "linear"
+            },
+            {
+              "dimension": "impactsPerBody",
+              "bound": "linear"
+            }
           ]
         },
         {
@@ -1745,9 +1931,18 @@
           "signal": "operation-count",
           "notes": "True overlapping candidate geometry, independent of distant statics.",
           "growth": [
-            { "dimension": "projectiles", "bound": "linear" },
-            { "dimension": "irrelevant", "bound": "constant" },
-            { "dimension": "impactsPerBody", "bound": "linear" }
+            {
+              "dimension": "projectiles",
+              "bound": "linear"
+            },
+            {
+              "dimension": "irrelevant",
+              "bound": "constant"
+            },
+            {
+              "dimension": "impactsPerBody",
+              "bound": "linear"
+            }
           ]
         },
         {
@@ -1756,9 +1951,18 @@
           "signal": "operation-count",
           "notes": "Exact shape sweeps, one initial contact and revalidation per independent projectile, with no extra sweeps from irrelevant statics.",
           "growth": [
-            { "dimension": "projectiles", "bound": "linear" },
-            { "dimension": "irrelevant", "bound": "constant" },
-            { "dimension": "impactsPerBody", "bound": "linear" }
+            {
+              "dimension": "projectiles",
+              "bound": "linear"
+            },
+            {
+              "dimension": "irrelevant",
+              "bound": "constant"
+            },
+            {
+              "dimension": "impactsPerBody",
+              "bound": "linear"
+            }
           ]
         },
         {
@@ -1767,16 +1971,27 @@
           "signal": "operation-count",
           "notes": "One admitted CCD impact per projectile, with complete remaining-time rebound.",
           "growth": [
-            { "dimension": "projectiles", "bound": "linear" },
-            { "dimension": "irrelevant", "bound": "constant" },
-            { "dimension": "impactsPerBody", "bound": "linear" }
+            {
+              "dimension": "projectiles",
+              "bound": "linear"
+            },
+            {
+              "dimension": "irrelevant",
+              "bound": "constant"
+            },
+            {
+              "dimension": "impactsPerBody",
+              "bound": "linear"
+            }
           ]
         },
         {
           "name": "budget-fallbacks",
           "unit": "bodies",
           "signal": "operation-count",
-          "budget": { "max": 0 },
+          "budget": {
+            "max": 0
+          },
           "notes": "Independent one-impact trajectories must never exhaust the velocity iteration budget."
         }
       ]
@@ -1846,17 +2061,50 @@
         }
       },
       "scalePoints": [
-        { "statics": 512, "joints": 8 },
-        { "statics": 1024, "joints": 8 },
-        { "statics": 2048, "joints": 8 },
-        { "statics": 4096, "joints": 8 },
-        { "statics": 8192, "joints": 8 },
-        { "statics": 4096, "joints": 1 },
-        { "statics": 4096, "joints": 2 },
-        { "statics": 4096, "joints": 4 },
-        { "statics": 4096, "joints": 16 },
-        { "statics": 4096, "joints": 32 },
-        { "statics": 4096, "joints": 64 }
+        {
+          "statics": 512,
+          "joints": 8
+        },
+        {
+          "statics": 1024,
+          "joints": 8
+        },
+        {
+          "statics": 2048,
+          "joints": 8
+        },
+        {
+          "statics": 4096,
+          "joints": 8
+        },
+        {
+          "statics": 8192,
+          "joints": 8
+        },
+        {
+          "statics": 4096,
+          "joints": 1
+        },
+        {
+          "statics": 4096,
+          "joints": 2
+        },
+        {
+          "statics": 4096,
+          "joints": 4
+        },
+        {
+          "statics": 4096,
+          "joints": 16
+        },
+        {
+          "statics": 4096,
+          "joints": 32
+        },
+        {
+          "statics": 4096,
+          "joints": 64
+        }
       ],
       "metrics": [
         {
@@ -1918,6 +2166,163 @@
               "bound": "constant"
             }
           ]
+        }
+      ]
+    },
+    {
+      "id": "static-mesh-query",
+      "description": "One short ray plus one fixed-orientation capsule cast in a retained mesh of distant disjoint triangles. Local geometry remains constant while irrelevant triangles double; 16 samples per size.",
+      "publicContract": "physics_engine::approximate::World::{cast_ray_first,cast_shape,add_triangle_mesh}",
+      "dimensions": {
+        "triangles": {
+          "description": "immutable mesh triangles at constant local density"
+        }
+      },
+      "scalePoints": [
+        {
+          "triangles": 256
+        },
+        {
+          "triangles": 512
+        },
+        {
+          "triangles": 1024
+        },
+        {
+          "triangles": 2048
+        },
+        {
+          "triangles": 4096
+        }
+      ],
+      "metrics": [
+        {
+          "name": "mesh-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "O(log n) local BVH descent; mesh preparation belongs to admission, not queries.",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "logarithmic"
+            }
+          ]
+        },
+        {
+          "name": "triangle-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Constant nearby triangle set; far-away mesh content cannot amplify exact contact work.",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "preparations",
+          "unit": "triangles",
+          "signal": "operation-count",
+          "notes": "Immutable geometry is prepared once at admission and reused by every query.",
+          "budget": {
+            "max": 0
+          }
+        },
+        {
+          "name": "retained-bytes",
+          "unit": "bytes",
+          "signal": "operation-count",
+          "notes": "Prepared vertices, triangles and retained local BVH scale linearly in admitted geometry. Allocator overhead and the world body tree are excluded.",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "authored-rock-query",
+      "description": "Capsule support cast against actual Greyhaven authored rock proxies at fixed spatial density; one local hit amid unrelated static hulls. Prepared immutable geometry is never rebuilt by queries.",
+      "publicContract": "physics_engine::approximate::World::cast_shape",
+      "dimensions": {
+        "rocks": {
+          "description": "authored static rock hulls in the world"
+        }
+      },
+      "scalePoints": [
+        {
+          "rocks": 16
+        },
+        {
+          "rocks": 32
+        },
+        {
+          "rocks": 64
+        },
+        {
+          "rocks": 128
+        },
+        {
+          "rocks": 256
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "logarithmic"
+            }
+          ],
+          "notes": "One query-tree descent for fixed-radius local support discovery."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Unrelated hulls do not reach the exact query."
+        },
+        {
+          "name": "hull-triangles",
+          "unit": "triangles",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ],
+          "notes": "One fixed authored hull per local query; query work does not scan total rock geometry."
+        },
+        {
+          "name": "preparations",
+          "unit": "vertices",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "QuickHull input vertices processed after admission: exactly zero during repeated queries."
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "The public admission API retains a current query tree."
         }
       ]
     }

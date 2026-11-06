@@ -48,6 +48,7 @@ pub(super) struct Contact {
     pub normal: V,
     pub point_query: V,
     pub point_hull: V,
+    pub face: Option<u32>,
 }
 
 pub(super) struct RayContact {
@@ -130,6 +131,7 @@ pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
     let points: Vec<Vec3> = vertices.iter().copied().map(to64).collect();
     let mut hull = Hull3::default();
     quickhull3(&points, &mut QuickHullWork::default(), &mut hull);
+    crate::work::add(crate::work::Counter::HullPreparations, points.len() as u64);
     if hull.dimension != HullDimension::Polytope || hull.triangles.is_empty() {
         return Err(Error::InvalidInput);
     }
@@ -170,6 +172,14 @@ pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
 }
 
 impl PreparedHull {
+    fn face_at(&self, point: Vec3) -> Option<u32> {
+        let tolerance = 1e-8 * (1.0 + point.into_iter().map(f64::abs).fold(0.0, f64::max));
+        self.planes
+            .iter()
+            .find(|plane| (dot(plane.normal, point) - plane.offset).abs() <= tolerance)
+            .map(|plane| plane.face)
+    }
+
     /// A capsule–hull Minkowski sum lies *inside* the intersection of the hull
     /// planes offset by the capsule support radius. The clip therefore safely
     /// rejects misses and finds an earliest possible TOI. If the capsule's
@@ -248,6 +258,7 @@ impl PreparedHull {
                 normal: -to_real(plane.normal),
                 point_query: world,
                 point_hull: world,
+                face: Some(plane.face),
             },
         ))
     }
@@ -340,6 +351,7 @@ impl PreparedHull {
                     closest.point_segment[i] + query.radius * normal[i] + origin[i]
                 })),
                 point_hull: to_real(std::array::from_fn(|i| closest.point_hull[i] + origin[i])),
+                face: self.face_at(closest.point_hull),
             });
         }
         let hull = ConvexHull3::new(&self.hull.hull().vertices);
@@ -361,9 +373,7 @@ impl PreparedHull {
         work.gjk_intersection_iterations += result.intersection.iterations as u64;
         work.gjk_limit_queries += u64::from(result.status == GjkDistanceStatus::IterationLimit);
         let (separation, normal, query_point, target_point) = match result.status {
-            GjkDistanceStatus::Converged
-            | GjkDistanceStatus::NoProgress
-            | GjkDistanceStatus::IterationLimit
+            GjkDistanceStatus::Converged | GjkDistanceStatus::NoProgress
                 if result.closest.is_some() =>
             {
                 let closest = result.closest.expect("checked above");
@@ -394,6 +404,7 @@ impl PreparedHull {
             normal: to_real(normal),
             point_query: to_real(std::array::from_fn(|i| query_point[i] + local[i])),
             point_hull: to_real(std::array::from_fn(|i| target_point[i] + local[i])),
+            face: self.face_at(target_point),
         })
     }
 

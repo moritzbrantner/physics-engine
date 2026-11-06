@@ -17,7 +17,6 @@ use geometry_kernels::primitive3::{
     try_swept_time as kernel_swept_time,
 };
 
-#[cfg(test)]
 pub(super) use geometry_kernels::primitive3::PrimitiveKind3 as PrimitiveKind;
 pub(super) use geometry_kernels::primitive3::PrimitivePair3 as PrimitivePair;
 use geometry_kernels::primitive3::query as kernel_query;
@@ -31,7 +30,23 @@ pub(super) struct PrimitiveContact {
 }
 
 pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool) {
-    PrimitivePair::canonical(shape(left).kind(), shape(right).kind())
+    // Pair dispatch needs only the shape tags. Constructing validated f64 shapes
+    // here repeats dimension conversion and validation before the actual query.
+    fn kind(shape: Shape) -> PrimitiveKind {
+        match shape {
+            Shape::Sphere(_) => PrimitiveKind::Sphere,
+            Shape::Box(_) => PrimitiveKind::Box,
+            Shape::Capsule { .. } => PrimitiveKind::Capsule,
+            Shape::Wedge(_) => PrimitiveKind::Wedge,
+            Shape::Heightfield { .. }
+            | Shape::ConvexHull { .. }
+            | Shape::TriangleMesh { .. }
+            | Shape::HalfSpace => {
+                unreachable!("terrain and halfspaces are queried through their closed forms")
+            }
+        }
+    }
+    PrimitivePair::canonical(kind(left), kind(right))
 }
 
 pub(super) fn bounds_extents(body: &Body) -> V {
@@ -189,7 +204,10 @@ fn shape(shape: Shape) -> PrimitiveShape3 {
             radius,
         } => PrimitiveShape3::capsule(widen(half_segment), widen(radius)),
         Shape::Wedge(half) => PrimitiveShape3::wedge(to_array(half)),
-        Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::HalfSpace => {
+        Shape::Heightfield { .. }
+        | Shape::ConvexHull { .. }
+        | Shape::TriangleMesh { .. }
+        | Shape::HalfSpace => {
             unreachable!("terrain and halfspaces are queried through their closed forms")
         }
     }
@@ -288,6 +306,7 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
         | Shape::Wedge(_)
         | Shape::ConvexHull { .. }
         | Shape::Heightfield { .. }
+        | Shape::TriangleMesh { .. }
         | Shape::HalfSpace => kernel_axes(body.orientation),
     };
     // Force integration can produce a non-finite velocity before the final body check.

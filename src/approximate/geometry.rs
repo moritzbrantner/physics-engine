@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GeometryStats {
+    pub mesh_nodes_visited: u64,
+    pub mesh_triangles_tested: u64,
     pub current_queries: u64,
     pub manifold_hits: u64,
     /// Includes cached negative current-contact results; swept queries are never cached.
@@ -86,6 +88,15 @@ impl ShapeKey {
                 radius,
             } => [2, bits(half_segment), bits(radius), 0],
             Shape::Wedge(h) => [3, bits(h.0), bits(h.1), bits(h.2)],
+            Shape::TriangleMesh {
+                mesh,
+                half_extents: h,
+            } => [
+                u64::MAX - 1 - u64::from(mesh.0),
+                bits(h.0),
+                bits(h.1),
+                bits(h.2),
+            ],
             Shape::ConvexHull {
                 hull,
                 half_extents: h,

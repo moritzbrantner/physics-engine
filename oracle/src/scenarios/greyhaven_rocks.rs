@@ -4,52 +4,9 @@
 use crate::{Obs, Scenario, Trace};
 
 const TICKS: u32 = 64;
-const ROCK: [[i32; 3]; 32] = [
-    [-160, 5, 45],
-    [-157, 1, 47],
-    [-160, 72, 16],
-    [-125, 109, 58],
-    [-149, 79, 46],
-    [-150, 1, -37],
-    [-77, 214, -22],
-    [-78, 216, -8],
-    [-79, 193, 28],
-    [-43, 220, 11],
-    [-151, 5, -37],
-    [-134, 84, -88],
-    [-84, 1, -107],
-    [-28, 80, -133],
-    [-97, 197, -33],
-    [-68, 161, -98],
-    [-20, 199, -85],
-    [21, 95, 122],
-    [64, 2, 150],
-    [66, 5, 147],
-    [16, 126, 106],
-    [18, 215, -10],
-    [72, 183, -6],
-    [54, 1, -150],
-    [158, 90, -69],
-    [152, 1, -89],
-    [155, 0, -110],
-    [160, 1, -107],
-    [7, 200, -77],
-    [45, 195, -66],
-    [105, 174, -58],
-    [154, 122, -53],
-];
-
-fn vertices() -> Vec<[f32; 3]> {
-    ROCK.iter()
-        .map(|p| {
-            [
-                p[0] as f32 * 0.01,
-                (p[1] - 110) as f32 * 0.01,
-                p[2] as f32 * 0.01,
-            ]
-        })
-        .collect()
-}
+#[path = "../../../tests/support/greyhaven_rock.rs"]
+mod authored;
+use authored::vertices;
 
 fn queries(tick: u32) -> Vec<([f32; 3], [f32; 3], bool)> {
     let jitter = ((tick % 7) as f32 - 3.0) * 0.025;
@@ -63,6 +20,11 @@ fn queries(tick: u32) -> Vec<([f32; 3], [f32; 3], bool)> {
         out.push(([-2.3, y + jitter, -0.4], [4.6, 0.0, 0.0], true));
         out.push(([2.2, y + jitter, 2.2], [-2.6, 0.0, -2.6], true));
     }
+    // The game advances arrows, bolts and bouncing projectiles by a complete ray segment.
+    // These fast paths cross the entire authored proxy in one tick, not just its end pose.
+    out.push(([-4.0, 1.1 + jitter, 0.0], [10.0, 0.0, 0.0], false));
+    out.push(([4.0, 1.3 + jitter, 0.2], [-10.0, 0.0, 0.0], false));
+    out.push(([-4.0, 3.0, 2.2 + jitter], [10.0, 0.0, 0.0], false));
     out
 }
 

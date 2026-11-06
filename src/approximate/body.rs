@@ -153,6 +153,12 @@ impl Body {
             && self.angular_velocity.abs().max_component() < 1e9
             && self.orientation.finite()
             && self.shape.valid_dimensions()
+            && (!matches!(
+                self.shape,
+                Shape::TriangleMesh { .. } | Shape::ConvexHull { .. }
+            ) || (self.orientation == Quaternion::IDENTITY
+                && self.mass == 0.0
+                && !self.external))
             && (!matches!(self.shape, Shape::Wedge(_)) || self.rotation_locked || !self.movable())
             && (!self.shape.query_only() || (self.mass == 0.0 && !self.external))
             && self.mass.is_finite()

@@ -1,6 +1,6 @@
 //! Collision shapes: dimensions, bounds radii and inverse inertia.
 
-use super::{ConvexHullId, Real, TerrainId, Vector};
+use super::{ConvexHullId, Real, TerrainId, TriangleMeshId, Vector};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -27,6 +27,11 @@ pub enum Shape {
     /// Static solid halfspace below the plane through the body position; the outward normal is
     /// the body's local +Y (an infinite floor with the identity orientation).
     HalfSpace,
+    /// Immutable static triangle mesh admitted by [`World::add_triangle_mesh`](super::World::add_triangle_mesh).
+    TriangleMesh {
+        mesh: TriangleMeshId,
+        half_extents: Vector,
+    },
 }
 impl Shape {
     pub const fn capsule(half_segment: Real, radius: Real) -> Self {
@@ -56,6 +61,9 @@ impl Shape {
             }
             | Self::Heightfield {
                 half_extents: h, ..
+            }
+            | Self::TriangleMesh {
+                half_extents: h, ..
             } => h.length(),
             Self::HalfSpace => 0.0,
             Self::Sphere(r) => r,
@@ -73,6 +81,9 @@ impl Shape {
                 half_extents: h, ..
             }
             | Self::Heightfield {
+                half_extents: h, ..
+            }
+            | Self::TriangleMesh {
                 half_extents: h, ..
             } => h,
             Self::HalfSpace => Vector::ZERO,
@@ -92,6 +103,9 @@ impl Shape {
             } => h.finite() && h.min_component() >= 1e-6 && h.max_component() < 1e12,
             Self::Sphere(radius) => radius.is_finite() && (1e-6..1e12).contains(&radius),
             Self::Heightfield {
+                half_extents: h, ..
+            }
+            | Self::TriangleMesh {
                 half_extents: h, ..
             } => h.finite() && h.max_component() < 1e12,
             Self::HalfSpace => true,
@@ -147,6 +161,7 @@ impl Shape {
             Self::Wedge(_)
             | Self::ConvexHull { .. }
             | Self::Heightfield { .. }
+            | Self::TriangleMesh { .. }
             | Self::HalfSpace => None,
         }
     }

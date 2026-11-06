@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use super::{
     Body, BodyId, BodyStorage, CachedPoint, CharacterSettings, CombineRule, Config, Convergence,
     ConvergenceScope, ConvexHullId, Embedded, HeightfieldDesc, Order, PositionCorrection,
-    Quaternion, REAL_BITS, Real, Scalar, Shape, TerrainId, Vector, World, character, contact,
-    convex_hull, narrow_time, substep_length, terrain, widen_time,
+    Quaternion, REAL_BITS, Real, Scalar, Shape, TerrainId, TriangleMeshId, Vector, World,
+    character, contact, convex_hull, narrow_time, substep_length, terrain, widen_time,
 };
 use crate::CollisionLayers3d;
 
@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 8;
+const FORMAT: u32 = 9;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 11;
 const DIGEST_BYTES: usize = 32;
@@ -124,6 +124,7 @@ pub struct Checkpoint {
     next_serial: u64,
     /// Every terrain the world ever added; restore keeps their [`TerrainId`]s.
     terrain_slots: u32,
+    meshes: Vec<Option<geometry_kernels::triangle_mesh::TriangleMeshData3>>,
     /// Live heightfields in terrain order: terrain index and geometry fingerprint. Heights are
     /// consumer content: restore takes their descriptions and checks them against these.
     heightfields: Vec<(u32, [u8; 32])>,
@@ -205,6 +206,11 @@ impl World {
             next_serial: self.next_serial,
             terrain_slots,
             heightfields,
+            meshes: self
+                .triangle_meshes
+                .iter()
+                .map(|m| m.as_ref().map(|m| m.prepared.data().clone()))
+                .collect(),
             hulls,
             halfspaces: self.halfspaces.clone(),
             characters,
@@ -223,6 +229,17 @@ impl Checkpoint {
                     .cache
                     .values()
                     .map(|p| p.capacity() * size_of::<CachedPoint>())
+                    .sum::<usize>()
+                + self.meshes.capacity()
+                    * size_of::<Option<geometry_kernels::triangle_mesh::TriangleMeshData3>>()
+                + self
+                    .meshes
+                    .iter()
+                    .flatten()
+                    .map(|data| {
+                        data.vertices.capacity() * size_of::<[f64; 3]>()
+                            + data.triangles.capacity() * size_of::<[u32; 3]>()
+                    })
                     .sum::<usize>()
                 + self.heightfields.capacity() * size_of::<(u32, [u8; 32])>()
                 + self
@@ -307,6 +324,20 @@ impl Checkpoint {
         }
         let mut world = World::new(self.config).expect("checkpoint configuration was validated");
         world.terrains = terrains;
+        world.triangle_meshes = self
+            .meshes
+            .into_iter()
+            .map(|data| {
+                data.map(|data| {
+                    geometry_kernels::triangle_mesh::PreparedTriangleMesh3::try_new(data)
+                        .map(|prepared| super::triangle_mesh::TriangleMesh {
+                            prepared: std::sync::Arc::new(prepared),
+                        })
+                        .map_err(|_| CheckpointError::InvalidData)
+                })
+                .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         world.hulls = hulls;
         world.halfspaces = self.halfspaces;
         world.elapsed = self.elapsed;
@@ -388,6 +419,24 @@ impl Checkpoint {
         for (index, fingerprint) in &self.heightfields {
             out.extend_from_slice(&index.to_le_bytes());
             out.extend_from_slice(fingerprint);
+        }
+        count(&mut out, self.meshes.len());
+        for data in &self.meshes {
+            out.push(u8::from(data.is_some()));
+            if let Some(data) = data {
+                count(&mut out, data.vertices.len());
+                for vertex in &data.vertices {
+                    for &axis in vertex {
+                        time(&mut out, axis);
+                    }
+                }
+                count(&mut out, data.triangles.len());
+                for triangle in &data.triangles {
+                    for &index in triangle {
+                        out.extend_from_slice(&index.to_le_bytes());
+                    }
+                }
+            }
         }
         count(&mut out, self.hulls.len());
         for hull in &self.hulls {
@@ -519,6 +568,70 @@ impl Checkpoint {
         for _ in 0..heightfield_count {
             heightfields.push((reader.u32()?, reader.array()?));
         }
+        let mesh_slots = reader.count(limits.bodies, 1)?;
+        if mesh_slots as u64 > next_serial {
+            return Err(CheckpointError::InvalidData);
+        }
+        let mut meshes = Vec::with_capacity(mesh_slots);
+        for _ in 0..mesh_slots {
+            meshes.push(match reader.u8()? {
+                0 => None,
+                1 => {
+                    let count = reader.count(limits.bytes / 24, 24)?;
+                    let mut vertices = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        vertices.push([reader.time()?, reader.time()?, reader.time()?]);
+                    }
+                    let count = reader.count(limits.bytes / 12, 12)?;
+                    let mut triangles = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        triangles.push([reader.u32()?, reader.u32()?, reader.u32()?]);
+                    }
+                    let data = geometry_kernels::triangle_mesh::TriangleMeshData3 {
+                        vertices,
+                        triangles,
+                    };
+                    geometry_kernels::triangle_mesh::PreparedTriangleMesh3::try_new(data.clone())
+                        .map_err(|_| CheckpointError::InvalidData)?;
+                    Some(data)
+                }
+                _ => return Err(CheckpointError::InvalidData),
+            });
+        }
+        let mut mesh_bodies = std::collections::BTreeSet::new();
+        for body in &bodies {
+            if let Shape::TriangleMesh { mesh, half_extents } = body.shape {
+                if !mesh_bodies.insert(mesh.0) {
+                    return Err(CheckpointError::InvalidData);
+                }
+                let data = meshes
+                    .get(mesh.0 as usize)
+                    .and_then(Option::as_ref)
+                    .ok_or(CheckpointError::InvalidData)?;
+                let bounds = data.vertices.iter().fold([0.0f64; 3], |mut bounds, v| {
+                    for k in 0..3 {
+                        bounds[k] = bounds[k].max(v[k].abs());
+                    }
+                    bounds
+                });
+                if half_extents
+                    != Vector(
+                        super::primitive::round_up(bounds[0]),
+                        super::primitive::round_up(bounds[1]),
+                        super::primitive::round_up(bounds[2]),
+                    )
+                {
+                    return Err(CheckpointError::InvalidData);
+                }
+            }
+        }
+        if meshes
+            .iter()
+            .enumerate()
+            .any(|(slot, data)| data.is_some() != mesh_bodies.contains(&(slot as u32)))
+        {
+            return Err(CheckpointError::InvalidData);
+        }
         let hull_count = reader.count(limits.bodies, 4)?;
         let mut hulls = Vec::with_capacity(hull_count);
         for _ in 0..hull_count {
@@ -569,6 +682,7 @@ impl Checkpoint {
             next_serial,
             terrain_slots,
             heightfields,
+            meshes,
             hulls,
             halfspaces,
             characters,
@@ -847,8 +961,13 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             vector(out, half_extents);
         }
         Shape::HalfSpace => out.push(5),
-        Shape::ConvexHull { hull, half_extents } => {
+        Shape::TriangleMesh { mesh, half_extents } => {
             out.push(6);
+            out.extend_from_slice(&mesh.0.to_le_bytes());
+            vector(out, half_extents);
+        }
+        Shape::ConvexHull { hull, half_extents } => {
+            out.push(7);
             out.extend_from_slice(&hull.0.to_le_bytes());
             vector(out, half_extents);
         }
@@ -1082,7 +1201,11 @@ impl<'a> Reader<'a> {
                 half_extents: self.vector()?,
             },
             5 => Shape::HalfSpace,
-            6 => Shape::ConvexHull {
+            6 => Shape::TriangleMesh {
+                mesh: TriangleMeshId(self.u32()?),
+                half_extents: self.vector()?,
+            },
+            7 => Shape::ConvexHull {
                 hull: ConvexHullId(self.u32()?),
                 half_extents: self.vector()?,
             },

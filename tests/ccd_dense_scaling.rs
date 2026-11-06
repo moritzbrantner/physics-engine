@@ -35,6 +35,8 @@ struct Sample {
     narrow_tests: u64,
     sweep_queries: u64,
     tree_nodes: u64,
+    heap_pushes: u64,
+    heap_stale_pops: u64,
     impacts: u64,
     fallbacks: u64,
 }
@@ -125,6 +127,8 @@ fn sample(case: Case, count: usize, storage: BodyStorage) -> Sample {
         narrow_tests: r.narrow_tests,
         sweep_queries: r.geometry.sweep_queries,
         tree_nodes: work::get(Counter::TreeNodes),
+        heap_pushes: work::get(Counter::CcdHeapPushes),
+        heap_stale_pops: work::get(Counter::CcdHeapStalePops),
         impacts: r.swept_contacts,
         fallbacks: r.geometry.ccd_budget_fallbacks,
     }
@@ -167,10 +171,16 @@ fn dense_co_moving_sweeps_never_create_collisions() {
 
 #[test]
 fn converging_sweeps_produce_deterministic_real_impacts() {
-    for count in [8, 16, 32] {
+    // The 64-body case exercises repeated near-imminent rescheduling and CCD
+    // budget exhaustion without permitting a change in admitted-event count.
+    for count in [8, 16, 32, 64] {
         let ordered = sample(Case::Converging, count, BodyStorage::Ordered);
         let indexed = sample(Case::Converging, count, BodyStorage::Indexed);
         verify_converging(&ordered);
+        if count == 64 {
+            assert_eq!(ordered.impacts, 268, "dense event chronology changed");
+            assert_eq!(ordered.fallbacks, 64, "dense budget behavior changed");
+        }
         assert_eq!(ordered, indexed, "storage divergence at n={count}");
     }
 }
@@ -222,12 +232,14 @@ fn print_dense_first_tick_timings() {
             let p95_us = timings[(SAMPLES * 95).div_ceil(100) - 1] as f64 / 1000.0;
             let swept_aabb_pairs = count * (count - 1) / 2;
             eprintln!(
-                "ccd-dense case={} n={count} potential_swept_aabb_pairs={swept_aabb_pairs} pairs={} narrows={} sweeps={} tree_nodes={} impacts={} fallbacks={} median_us={median_us:.2} p95_us={p95_us:.2}",
+                "ccd-dense case={} n={count} potential_swept_aabb_pairs={swept_aabb_pairs} pairs={} narrows={} sweeps={} tree_nodes={} heap_pushes={} heap_stale_pops={} impacts={} fallbacks={} median_us={median_us:.2} p95_us={p95_us:.2}",
                 case.label(),
                 evidence.pair_tests,
                 evidence.narrow_tests,
                 evidence.sweep_queries,
                 evidence.tree_nodes,
+                evidence.heap_pushes,
+                evidence.heap_stale_pops,
                 evidence.impacts,
                 evidence.fallbacks,
             );

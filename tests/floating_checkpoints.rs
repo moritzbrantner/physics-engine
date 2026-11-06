@@ -600,7 +600,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_eight_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
+fn format_nine_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -610,12 +610,13 @@ fn format_eight_algorithm_eleven_f32_empty_world_wire_fixture_is_stable() {
     .unwrap();
     let encoded = bytes(&world);
     assert_eq!(&encoded[..8], b"PEFLT32\0");
+    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 9);
     assert_eq!(
         Sha256::digest(&encoded)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "eaccbf9ff044a7594cc1088b171b0177a7368c194e87b1fa786d14ef3e4e2868"
+        "0a3eb296f52022f04131a43fb982a869df2b773448e9e45e3b374db36d63355e"
     );
 }
 

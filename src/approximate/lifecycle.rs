@@ -10,7 +10,7 @@ impl World {
     pub fn add_body(&mut self, body: Body) -> Result<BodyId, Error> {
         if matches!(
             body.shape,
-            Shape::Heightfield { .. } | Shape::ConvexHull { .. }
+            Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::TriangleMesh { .. }
         ) {
             return Err(Error::InvalidInput);
         }
@@ -145,7 +145,19 @@ impl World {
                 && b.id != body.id
                 && b.sleeping
                 && b.layers.collides_with(body.layers)
-                && contact::current(b, body, margin).is_some()
+                && if let Shape::TriangleMesh { mesh, .. } = body.shape {
+                    super::triangle_mesh::manifold(
+                        self.triangle_mesh(mesh),
+                        body,
+                        b,
+                        margin,
+                        None,
+                        &mut super::GeometryStats::default(),
+                    )
+                    .map_or(true, |m| m.is_some())
+                } else {
+                    contact::current(b, body, margin).is_some()
+                }
         };
         let mut wake = Vec::new();
         if self.query_tree.current(self.bookkeeping.generation) {
@@ -224,6 +236,9 @@ impl World {
         let i = self.index(id).ok()?;
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies[i].clone();
+        if let Shape::TriangleMesh { mesh, .. } = removed.shape {
+            self.triangle_meshes[mesh.0 as usize] = None;
+        }
         if let Shape::ConvexHull { hull, .. } = removed.shape {
             self.hulls[hull.0 as usize] = None;
         }

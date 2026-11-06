@@ -13,6 +13,7 @@ pub enum RayFeature {
     CapsulePositiveCap,
     WedgeFace(u8),
     HeightfieldTriangle(u32),
+    TriangleMeshTriangle(u32),
     ConvexHullFace(u32),
 }
 impl From<PrimitiveRayFeature3> for RayFeature {
@@ -26,6 +27,7 @@ impl From<PrimitiveRayFeature3> for RayFeature {
             PrimitiveRayFeature3::CapsulePositiveCap => Self::CapsulePositiveCap,
             PrimitiveRayFeature3::WedgeFace(i) => Self::WedgeFace(i),
             PrimitiveRayFeature3::HeightfieldTriangle(i) => Self::HeightfieldTriangle(i),
+            PrimitiveRayFeature3::TriangleMeshTriangle(i) => Self::TriangleMeshTriangle(i),
         }
     }
 }
@@ -261,6 +263,36 @@ impl World {
                         },
                     ),
                 )
+            } else if let Shape::TriangleMesh { mesh, .. } = target.shape {
+                let start = super::super::triangle_mesh::local(
+                    [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from),
+                    target.position,
+                );
+                let finish = super::super::triangle_mesh::local(
+                    [end.0, end.1, end.2].map(f64::from),
+                    target.position,
+                );
+                let mut mesh_work = geometry_kernels::triangle_mesh::TriangleMeshWork3::default();
+                let result =
+                    self.triangle_mesh(mesh)
+                        .segment_hit_counted(start, finish, &mut mesh_work);
+                super::super::triangle_mesh::counted(mesh_work, stats);
+                work.queries += 1;
+                result
+                    .map_err(super::super::triangle_mesh::failure)
+                    .map(|hit| {
+                        hit.map(|hit| geometry_kernels::primitive3::PrimitiveRayHit3 {
+                            fraction: hit.fraction,
+                            point: [
+                                hit.point[0] + f64::from(target.position.0),
+                                hit.point[1] + f64::from(target.position.1),
+                                hit.point[2] + f64::from(target.position.2),
+                            ],
+                            normal: hit.normal,
+                            feature: PrimitiveRayFeature3::TriangleMeshTriangle(hit.triangle),
+                            starts_inside: false,
+                        })
+                    })
             } else if let Shape::Heightfield { terrain, .. } = target.shape {
                 let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
                 let end = [end.0, end.1, end.2].map(f64::from);
