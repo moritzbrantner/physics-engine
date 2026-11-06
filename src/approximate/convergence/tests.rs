@@ -14,6 +14,7 @@ fn row(a: usize, b: usize) -> Constraint {
         t1: V::Y,
         t2: V::Z,
         angular: [[V::ZERO; 3]; 2],
+        finite_response: false,
         normal_mass: 1.0,
         tangent_mass: [1.0; 2],
         bias: 0.0,
@@ -465,5 +466,116 @@ fn contact_velocity_skips_static_zero_motion_and_preserves_moving_external_bodie
                 V::ZERO
             };
         assert_eq!(contact_velocity(&moving, arm, spin), expected);
+    }
+}
+
+#[test]
+fn zero_correction_does_not_hide_nonfinite_response_coefficients() {
+    for axis in 0..3 {
+        let mut bodies = vec![sphere(1, 0.0, 0.0), sphere(2, 1.0, 1.0)];
+        let mut report = Report::default();
+        let prepared: Vec<_> = bodies
+            .iter()
+            .map(|b| PreparedResponse::new(b, &mut report))
+            .collect();
+        let mut c = row(0, 1);
+        c.response = [false, true];
+        c.spin = true;
+        c.angular[1][axis] = V(Real::INFINITY, 0.0, 0.0);
+        c.prepare_finite_response(&prepared);
+        assert!(!c.finite_response);
+        solve_row::<false>(&mut bodies, &prepared, &mut c);
+        assert!(!bodies[1].angular_velocity.finite(), "axis {axis}");
+    }
+}
+
+#[test]
+fn zero_correction_reuse_matches_full_response_with_moving_external_support() {
+    for response in [[false, true], [true, false], [true, true]] {
+        for spin in [false, true] {
+            let mut bodies = vec![sphere(1, 0.0, 1.0), sphere(2, 1.0, 2.0)];
+            // A moving external side still contributes its real contact-point velocity.
+            bodies[0].external = !response[0];
+            bodies[1].external = !response[1];
+            for (i, body) in bodies.iter_mut().enumerate() {
+                body.velocity = V(-0.0, 0.3 * i as Real, -0.0);
+                body.angular_velocity = V(0.0, -0.0, 0.1);
+            }
+            let prepared: Vec<_> = bodies
+                .iter()
+                .map(|b| PreparedResponse::new(b, &mut Report::default()))
+                .collect();
+            let mut expected = bodies.clone();
+            let mut actual_row = row(0, 1);
+            actual_row.spin = spin;
+            actual_row.response = response;
+            actual_row.ra = V(0.1, 0.2, -0.3);
+            actual_row.rb = V(-0.3, 0.2, 0.1);
+            actual_row.angular = [[V(0.0, 0.0, 0.2), V(0.0, 0.0, 0.1), V(0.0, 0.0, 0.0)]; 2];
+            actual_row.prepare_finite_response(&prepared);
+            assert!(actual_row.finite_response);
+            let mut reference = actual_row.clone();
+            // Keep the existing full update as the independent execution path.
+            reference.finite_response = false;
+            let mut zero_corrections = 0;
+            for _ in 0..64 {
+                let change = solve_row::<true>(&mut bodies, &prepared, &mut actual_row);
+                solve_row::<false>(&mut expected, &prepared, &mut reference);
+                zero_corrections += usize::from(change.impulse == [0.0; 3]);
+                for (a, b) in bodies.iter().zip(&expected) {
+                    assert_eq!(a.velocity, b.velocity);
+                    assert_eq!(a.angular_velocity, b.angular_velocity);
+                }
+                assert_eq!(actual_row.normal_impulse, reference.normal_impulse);
+                assert_eq!(actual_row.tangent_impulse, reference.tangent_impulse);
+            }
+            assert!(zero_corrections > 0, "response={response:?}, spin={spin}");
+        }
+    }
+}
+
+#[test]
+fn zero_correction_retains_overflowed_inverse_mass_failure() {
+    let mut bodies = vec![sphere(1, 0.0, 0.0), sphere(2, 1.0, 1.0)];
+    let mut prepared: Vec<_> = bodies
+        .iter()
+        .map(|b| PreparedResponse::new(b, &mut Report::default()))
+        .collect();
+    prepared[1].inverse_mass = Real::INFINITY;
+    let mut c = row(0, 1);
+    c.response = [false, true];
+    c.prepare_finite_response(&prepared);
+    assert!(!c.finite_response);
+    solve_row::<false>(&mut bodies, &prepared, &mut c);
+    assert!(!bodies[1].velocity.finite());
+}
+
+#[test]
+fn tangent_impulse_specialization_matches_general_finite_response() {
+    for response in [[false, false], [true, false], [false, true], [true, true]] {
+        for spin in [false, true] {
+            for impulse in [[0.0, -0.0], [1e-20, -1e-20], [-0.4, 0.7], [1e10, -1e10]] {
+                let mut expected = vec![sphere(1, 0.0, 1.0), sphere(2, 1.0, 2.0)];
+                for body in &mut expected {
+                    body.velocity = V(-0.2, 1.0, 4.0);
+                    body.angular_velocity = V(0.3, -0.4, 0.2);
+                }
+                let mut actual = expected.clone();
+                let prepared: Vec<_> = expected
+                    .iter()
+                    .map(|b| PreparedResponse::new(b, &mut Report::default()))
+                    .collect();
+                let mut c = row(0, 1);
+                c.response = response;
+                c.spin = spin;
+                c.angular = [[V(0.2, -0.3, 0.4), V(0.7, 0.1, -0.3), V(-0.1, 0.4, 0.2)]; 2];
+                apply(&mut expected, &prepared, &c, [0.0, impulse[0], impulse[1]]);
+                apply_tangent(&mut actual, &prepared, &c, impulse);
+                assert_eq!(
+                    actual, expected,
+                    "response={response:?}, spin={spin}, impulse={impulse:?}"
+                );
+            }
+        }
     }
 }

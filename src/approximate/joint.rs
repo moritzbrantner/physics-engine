@@ -294,7 +294,7 @@ impl World {
             };
             let impulse = r.impulse * scale;
             report.max_penetration = report.max_penetration.max((-sep).max(0.0));
-            rows.push(Constraint {
+            let mut constraint = Constraint {
                 a: i,
                 b: j,
                 n,
@@ -303,6 +303,7 @@ impl World {
                 t1,
                 t2: n.cross(t1),
                 angular,
+                finite_response: false,
                 normal_mass: 1.0 / k_n,
                 // Frictionless: the tangent impulses stay zero.
                 tangent_mass: [1.0 / k_n; 2],
@@ -317,7 +318,9 @@ impl World {
                 offset: b.position - a.position,
                 restitution: 0.0,
                 bounce: 0.0,
-            });
+            };
+            constraint.prepare_finite_response(&self.responses);
+            rows.push(constraint);
             self.joints.rows.push(k as u32);
         }
     }

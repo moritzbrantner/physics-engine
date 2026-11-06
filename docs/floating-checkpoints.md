@@ -226,3 +226,13 @@ failure checks remain in place.
 The same algorithm version also skips contact-point velocity arithmetic for admitted
 mass-zero geometry, whose validated linear and angular motion is zero. Positive-mass
 external platforms retain their full prescribed contact-point velocity.
+
+## Finite zero-correction reuse (algorithm 16, #510)
+
+Algorithm 16 omits exactly zero solver updates after proving the row's applied response
+coefficients finite. A zero normal correction reuses the unchanged contact-point velocity;
+friction updates omit their unused normal component. The full response arithmetic remains
+the fallback for nonfinite coefficients so numerical failures are not hidden. Finite physical
+response is unchanged apart from possible signed zeros. Format 9 is unchanged; algorithm 15
+and earlier checkpoints are rejected because bitwise continuation may differ. The empty-world
+digest changes only with the algorithm header and checksum.

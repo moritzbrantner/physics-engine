@@ -137,6 +137,8 @@ struct Constraint {
     /// angular velocity change per unit impulse along `d` (zero where the side does not
     /// spin). Prepared once per row, as Rapier's solver contacts do (#424).
     angular: [[Vector; 3]; 2],
+    /// Zero impulses may omit updates only when every applied coefficient is finite.
+    finite_response: bool,
     normal_mass: Real,
     tangent_mass: [Real; 2],
     bias: Real,
