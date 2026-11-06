@@ -24,6 +24,7 @@ pub mod props;
 pub mod push;
 pub mod ray_sight;
 pub mod redbrand_cave;
+pub mod rigid_rocks;
 pub mod rope_joints;
 pub mod slopes;
 pub mod stairs;

@@ -86,6 +86,24 @@ cover local support casts at 16–256 rocks, one-time preparation and retained g
 Native/WASM oracle gates remain required; game integration and browser acceptance are not
 established by the engine fixture.
 
+### Rigid box contacts against authored rocks (in progress)
+
+`greyhaven-rigid-rocks` exercises the actual Greyhaven proxy with a launched upright
+0.7 m crate and a falling/tumbling 0.58 × 0.58 × 0.06 m crate panel, at 60 Hz with the
+game's gravity, density, material and damping. Rapier's reference run passes the fixture:
+the crate advances and stops at the rock, both bodies settle, and neither penetrates more
+than the independent reference's maximum depth plus 5 mm (with a separate 5 cm cap).
+Collision checks run outside the timed simulation. This fixture uses retained worlds;
+it does not yet establish the game's rebuilt-world cost or consumer adoption.
+
+The differential reproducer is currently **red**:
+`cargo run --locked -p physics-oracle -- --only greyhaven-rigid-rocks --no-timing`.
+At tick 12 Engine rejects the rock/crate pair with `InvalidGeometryInput`. This is missing
+rigid-contact support, not permission to remove the guard or substitute a box proxy. The
+scenario is registered in the shared oracle so it must pass before this work can merge.
+The standalone Rapier reference check is
+`cargo test --locked -p physics-oracle --lib rigid_rocks`.
+
 ## Experiment: circumsphere proxies for dodecahedron and icosahedron visuals (#465)
 
 An owner-approved, bounded experiment, not consumer adoption and not exact convex parity.
