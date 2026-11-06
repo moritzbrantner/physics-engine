@@ -33,3 +33,5 @@ pub mod static_queries;
 pub mod terrain;
 #[cfg(feature = "rapier")]
 mod upright_queries;
+
+pub mod terrain_seam;

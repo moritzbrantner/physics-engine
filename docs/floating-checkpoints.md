@@ -9,6 +9,10 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
+Algorithm 12 corrects tangential heightfield sweep admission for character moves. A nearly
+tangential earliest hit no longer hides a later blocking triangle. This changes continuation
+at terrain seams; format 9 is unchanged. Older algorithm checkpoints are rejected.
+
 Format 9 (#180) adds static convex hull shape tag 7 and embedded canonical hull vertices
 after the format-8 mesh slots. A u64 hull-slot count precedes one u64 vertex count per
 slot, then three physical scalars per vertex; zero vertices marks a removed slot. Restore
@@ -192,8 +196,7 @@ the heights to prepare and one to fingerprint); capture does not.
 
 Static push-out now checks the authoritative physical pose on every character move instead
 of trusting an earlier move's clear hint. This changes continuation on a shallow embedded
-terrain pose, so the algorithm becomes 13 while the wire format stays 9. Version 12 is
-already allocated by the parallel rigid-box/hull work (#499); versions 11 and 12 are rejected.
+terrain pose, so the algorithm becomes 13 while the wire format stays 9. Version 12 contains the merged terrain-seam correction (#501); versions 11 and 12 are rejected.
 The known-clear field remains in the wire layout as a character-separation hint, not authority
 for static overlap. The empty-world digest changes with the algorithm header/checksum.
 The game still owns canonical pose/settings reconstruction and its integration acceptance.

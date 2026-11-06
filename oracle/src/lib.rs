@@ -191,6 +191,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::capsule_normals::scenario(),
         scenarios::redbrand_cave::scenario(),
         scenarios::terrain::scenario(),
+        scenarios::terrain_seam::scenario(),
         scenarios::terrain::scenario_holes(),
         scenarios::mmorpg_tick::scenario(),
         scenarios::arpg_tick::scenario(),

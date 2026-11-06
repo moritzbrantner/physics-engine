@@ -208,3 +208,8 @@ offers none and the standing rules make no cross-target claim.
 These stay on their current pin until they move to Rapier: battle-royale (`World`), ecs-lab
 (`RotatingWorld3d`), medieval (`collider_contact` only; removing the dependency), game-server
 (`World` behind an unused feature). collision-lab's current main uses only `approximate::World`.
+
+The `terrain-seam` oracle covers MMORPG's flat-to-rising Hollow approach: the character
+climbs the next triangle instead of accepting a tangential hit as the terrain's only
+contact. The native `slope_restore` regression also requires no endpoint penetration
+and exact continuation after reconstructing the character from its position.
