@@ -1829,3 +1829,65 @@ fn rigid_rock_contact_narrow_phase_does_not_scan_distant_hulls() {
         ],
     );
 }
+
+#[test]
+fn rigid_mesh_contacts_visit_local_triangles_not_the_whole_mesh() {
+    use physics_engine::approximate::TriangleMeshDesc;
+    let mut samples = Vec::new();
+    for patches in [32u64, 64, 128, 256, 512] {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            ..Config::default()
+        })
+        .unwrap();
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for patch in 0..patches {
+            let x = patch as f32 * 6.0;
+            let start = vertices.len() as u32;
+            vertices.extend([
+                V(x - 2.0, 0.0, -2.0),
+                V(x + 2.0, 0.0, -2.0),
+                V(x + 2.0, 0.0, 2.0),
+                V(x - 2.0, 0.0, 2.0),
+            ]);
+            triangles.extend([[start, start + 1, start + 2], [start, start + 2, start + 3]]);
+        }
+        world
+            .add_triangle_mesh(
+                TriangleMeshDesc {
+                    position: V::ZERO,
+                    vertices,
+                    triangles,
+                    material: Default::default(),
+                },
+                Some(1),
+            )
+            .unwrap();
+        let mut body = Body::keyed(2, Shape::Box(V(0.5, 0.5, 0.5)), V(0.0, 0.49, 0.0), 1.0);
+        body.rotation_locked = true;
+        body.sleep_allowed = false;
+        let id = world.add_body(body).unwrap();
+        work::reset();
+        let report = world.step(1.0 / 60.0).unwrap();
+        assert!(world.body(id).unwrap().position.1 >= 0.49);
+        assert!(report.geometry.mesh_triangles_tested > 0);
+        samples.push((
+            vec![("triangles", 2 * patches)],
+            vec![
+                ("mesh-nodes", work::get(Counter::MeshNodes)),
+                ("triangle-tests", work::get(Counter::MeshTriangles)),
+                ("preparations", work::get(Counter::MeshPreparations)),
+            ],
+        ));
+    }
+    judge(
+        "authored-mesh-rigid-contact",
+        &samples,
+        &[
+            ("mesh-nodes", "triangles", "logarithmic"),
+            ("triangle-tests", "triangles", "constant"),
+            ("preparations", "", "zero"),
+        ],
+    );
+}

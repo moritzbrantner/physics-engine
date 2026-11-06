@@ -2516,7 +2516,9 @@
           "unit": "tests",
           "signal": "operation-count",
           "notes": "A retained orientation/extent plan performs no new hull-vertex projections on the next contacting tick; shape/orientation changes rebuild it.",
-          "budget": { "max": 0 }
+          "budget": {
+            "max": 0
+          }
         },
         {
           "name": "preparations",
@@ -2526,6 +2528,68 @@
           "budget": {
             "max": 0
           }
+        }
+      ]
+    },
+    {
+      "id": "authored-mesh-rigid-contact",
+      "description": "World::step on one rigid box above one patch in a retained mesh with increasingly many distant triangle patches.",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "triangles": {
+          "description": "two-sided triangles in the retained mesh"
+        }
+      },
+      "scalePoints": [
+        {
+          "triangles": 64
+        },
+        {
+          "triangles": 128
+        },
+        {
+          "triangles": 256
+        },
+        {
+          "triangles": 512
+        },
+        {
+          "triangles": 1024
+        }
+      ],
+      "metrics": [
+        {
+          "name": "mesh-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "logarithmic"
+            }
+          ],
+          "notes": "Box candidates reuse the existing retained mesh BVH, including the conservative interval prediction margin; adding distant triangles grows traversal by tree height, not a mesh scan."
+        },
+        {
+          "name": "triangle-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "triangles",
+              "bound": "constant"
+            }
+          ],
+          "notes": "Only local triangles receive box SAT/clipping; distant patches do not increase exact contact work."
+        },
+        {
+          "name": "preparations",
+          "unit": "triangles",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Static mesh geometry is prepared at admission and not rebuilt by the rigid-contact query."
         }
       ]
     }

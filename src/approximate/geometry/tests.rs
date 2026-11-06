@@ -560,3 +560,105 @@ fn hull_box_cache_reuses_only_exact_geometry_dependencies_and_prunes_removed_pai
     cache.finish(&mut GeometryStats::default());
     assert!(cache.hull_boxes.is_empty());
 }
+
+#[test]
+fn mesh_box_cache_reuses_only_exact_geometry_dependencies_and_prunes_removed_pairs() {
+    use crate::approximate::TriangleMeshDesc;
+    let mut world = World::new(Config::default()).unwrap();
+    let id = world
+        .add_triangle_mesh(
+            TriangleMeshDesc {
+                vertices: vec![
+                    Vector(-2.0, 0.0, -2.0),
+                    Vector(2.0, 0.0, -2.0),
+                    Vector(2.0, 0.0, 2.0),
+                    Vector(-2.0, 0.0, 2.0),
+                ],
+                triangles: vec![[0, 1, 2], [0, 2, 3]],
+                position: Vector::ZERO,
+                material: Default::default(),
+            },
+            Some(1),
+        )
+        .unwrap();
+    let mut fixed = world.body(id).unwrap().clone();
+    let mesh = world.triangle_meshes[0].as_ref().unwrap().prepared.clone();
+    let mut moving = Body::fixture(
+        100,
+        Shape::Box(Vector(0.5, 0.5, 0.5)),
+        Vector(0.0, 0.49, 0.0),
+        1.0,
+    );
+    let mut cache = GeometryCache::default();
+    let query = |cache: &mut GeometryCache, a: &Body, b: &Body, margin: Real| {
+        cache.begin(2);
+        let mut work = GeometryStats::default();
+        let mut result = Vec::new();
+        cache
+            .mesh_box(&mesh, a, b, margin, &mut work, |m| result.push(m))
+            .unwrap();
+        let mut expected = Vec::new();
+        primitive::box_mesh_manifolds(&mesh, a, b, margin, &mut GeometryStats::default(), |m| {
+            expected.push(m)
+        })
+        .unwrap();
+        assert_eq!(result, expected);
+        cache.finish(&mut work);
+        work
+    };
+    assert_eq!(
+        query(&mut cache, &fixed, &moving, 0.02).manifold_refreshes,
+        1
+    );
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.03).manifold_hits, 0);
+    for margin in [0.02, 0.03, 0.02, 0.03] {
+        let work = query(&mut cache, &fixed, &moving, margin);
+        assert_eq!(work.manifold_refreshes, 0);
+        assert_eq!(work.mesh_triangles_tested, 0);
+        assert_eq!(work.manifold_hits, 1);
+    }
+    moving.position.1 = 0.45;
+    let work = query(&mut cache, &fixed, &moving, 0.02);
+    assert_eq!(work.manifold_refreshes, 1);
+    assert_eq!(work.manifold_hits, 0);
+    assert!(work.mesh_triangles_tested > 0);
+    moving.orientation = Quaternion(0.0, 0.1, 0.0, 0.995).normalized();
+    assert_eq!(
+        query(&mut cache, &fixed, &moving, 0.02).manifold_refreshes,
+        1
+    );
+    moving.shape = Shape::Box(Vector(0.4, 0.6, 0.3));
+    assert_eq!(
+        query(&mut cache, &fixed, &moving, 0.02).manifold_refreshes,
+        1
+    );
+    fixed.position.1 = -0.0;
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).manifold_hits, 0);
+    fixed.position.0 = 0.2;
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).manifold_hits, 0);
+    moving.position.0 = 5.0;
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).negative_hits, 0);
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).negative_hits, 1);
+    let mut invalid = moving.clone();
+    invalid.shape = Shape::Box(Vector(-1.0, 0.5, 0.5));
+    for _ in 0..2 {
+        assert!(
+            cache
+                .mesh_box(
+                    &mesh,
+                    &fixed,
+                    &invalid,
+                    0.02,
+                    &mut GeometryStats::default(),
+                    |_| {}
+                )
+                .is_err()
+        );
+    }
+    cache.remove(moving.order);
+    assert!(cache.mesh_boxes.is_empty());
+    query(&mut cache, &fixed, &moving, 0.02);
+    cache.begin(2);
+    cache.finish(&mut GeometryStats::default());
+    assert!(cache.mesh_boxes.is_empty());
+}

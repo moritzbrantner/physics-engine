@@ -82,6 +82,61 @@ pub(super) fn prepare_box_hull_frame(
     result
 }
 
+/// Widen an engine box into the retained mesh kernel and conservatively narrow witnesses.
+pub(super) fn box_mesh_manifolds(
+    mesh: &geometry_kernels::triangle_mesh::PreparedTriangleMesh3,
+    a: &Body,
+    b: &Body,
+    margin: Real,
+    stats: &mut GeometryStats,
+    mut emit: impl FnMut(super::contact::Manifold),
+) -> Result<(), SweepFailure> {
+    let mesh_first = matches!(a.shape, Shape::TriangleMesh { .. });
+    let (target, moving) = if mesh_first { (a, b) } else { (b, a) };
+    let Shape::Box(half) = moving.shape else {
+        return Err(SweepFailure::InvalidGeometryInput);
+    };
+    let origin = to_array(target.position);
+    let mut work = geometry_kernels::triangle_mesh::TriangleMeshWork3::default();
+    let result = mesh.box_contacts_counted(
+        geometry_kernels::math3::sub(to_array(moving.position), origin),
+        to_array(half),
+        kernel_axes(moving.orientation),
+        f64::from(margin),
+        &mut work,
+        |contact| {
+            let direction = from_array(contact.normal);
+            let normal = if mesh_first { direction } else { -direction };
+            let mut points = [super::contact::Point::default(); 4];
+            for (out, p) in points.iter_mut().zip(&contact.points[..contact.len]) {
+                let world = |v| from_array(geometry_kernels::math3::add(v, origin));
+                let (pa, pb) = if mesh_first {
+                    (world(p.point_mesh), world(p.point_box))
+                } else {
+                    (world(p.point_box), world(p.point_mesh))
+                };
+                *out = super::contact::Point {
+                    ra: pa - a.position,
+                    rb: pb - b.position,
+                    separation: round_down(p.separation),
+                };
+            }
+            emit(super::contact::Manifold {
+                normal,
+                points: super::contact::Points::selected(&points[..contact.len]),
+                swept: false,
+                time: 0.0,
+            });
+        },
+    );
+    stats.current_queries += 1;
+    stats.mesh_nodes_visited += work.nodes_visited;
+    stats.mesh_triangles_tested += work.triangles_tested;
+    crate::work::add(crate::work::Counter::MeshNodes, work.nodes_visited);
+    crate::work::add(crate::work::Counter::MeshTriangles, work.triangles_tested);
+    result.map_err(super::triangle_mesh::failure)
+}
+
 pub(super) fn box_hull_manifold(
     hull: &geometry_kernels::segment_hull::PreparedBoxHull,
     a: &Body,

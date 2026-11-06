@@ -167,7 +167,7 @@ and angular approach bounds, regenerating the geometry at each substep. Rigid sp
 capsules, hull/hull pairs and CCD-enabled boxes remain unsupported: an admitted physical
 pair returns `CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back
 the entire step. This does not expose a general box/hull shape sweep or rotational CCD.
-The game retains its Rapier fallback pending native performance parity and box/mesh support. Actual MMORPG
+The game retains its Rapier fallback pending consumer adoption and rigid box/mesh parity. Actual MMORPG
 projectiles sweep rays and reflect/stick at their first hit; those query paths use real hull
 faces. `QueryHit::feature` and ray hits expose deterministic `ConvexHullFace` identities;
 edge/corner witnesses choose the first canonical supporting face plane. Hull poses remain translation-only;
@@ -512,7 +512,12 @@ the query side, including underside/ceiling contacts. Characters use these queri
 existing movement, grounding, slope and snapping rules; no mesh-specific character solver exists.
 
 Rigid sphere contacts and translational sphere CCD use the existing response/event scheduler,
-including the remaining interval after impact. Other dynamic rigid shapes meeting a mesh return
+including the remaining interval after impact. Non-CCD dynamic boxes now use shared finite
+triangle SAT/clipped manifolds and the existing speculative response with linear, gravity/drift
+and angular approach bounds over the full interval. Geometry is regenerated per substep.
+Exact pose/margin contact results may be reused, keyed by immutable mesh/body identity, shape
+and orientation; new positions/margins recompute witnesses. Removed/unused pairs are pruned.
+A failed geometry query discards partial emissions. CCD boxes and other unsupported rigid shapes return
 `InvalidGeometryInput` atomically rather than passing through; external capsule characters remain
 supported through `move_characters`. Dynamic meshes, rotational mesh/shape CCD and mesh×mesh
 response are unsupported. Generic `add_body` cannot forge a mesh geometry slot.
@@ -525,3 +530,13 @@ existing slopes/terrain oracle's physical-clearance and completed-route checks r
 requiring identical whole trajectories. Single-move mesh probes, static query fractions/normals
 and deterministic storage/replay checks remain precise. MMORPG backend selection and in-game
 acceptance belong to the consumer repository and are not changed here.
+
+### Rigid box/mesh parity draft (#182)
+
+`redbrand-rigid-mesh` drops two 0.7 m crates and a tumbling 0.58 m panel onto the actual
+cave floor and upper shelf with the game's gravity, density, damping and material. Both
+backends must settle and satisfy independent Parry mesh penetration checks. Ordered and
+Indexed Engine traces remain exact. Native performance does not yet match Rapier, so the
+game's authored-geometry rigid fallback remains required. This does not claim general
+rotational CCD. `static_triangle_mesh` additionally covers full-interval fast-box response
+in both body orders/storage modes and exact mid-contact checkpoint continuation.

@@ -245,20 +245,22 @@ fn supported_fast_sphere_hits_authored_wall_and_uses_the_remaining_interval() {
 
 #[test]
 fn unsupported_rigid_mesh_pair_is_an_explicit_atomic_error() {
-    let mut w = cave(BodyStorage::Ordered);
-    let mut body = Body::keyed(1, Shape::capsule(0.6, 0.3), V(58.0, 12.0, -135.0), 1.0);
-    body.velocity = V(0.0, 0.0, -900.0);
-    body.ccd = true;
-    let id = w.add_body(body).unwrap();
-    let before = w.body(id).unwrap().clone();
-    assert!(matches!(
-        w.step(1.0 / 60.0),
-        Err(physics_engine::approximate::Error::CollisionSearchFailed {
-            reason: physics_engine::approximate::SweepFailure::InvalidGeometryInput,
-            ..
-        })
-    ));
-    assert_eq!(w.body(id).unwrap(), &before);
+    for shape in [Shape::capsule(0.6, 0.3), Shape::Box(V(0.35, 0.35, 0.35))] {
+        let mut w = cave(BodyStorage::Ordered);
+        let mut body = Body::keyed(1, shape, V(58.0, 12.0, -135.0), 1.0);
+        body.velocity = V(0.0, 0.0, -900.0);
+        body.ccd = true;
+        let id = w.add_body(body).unwrap();
+        let before = w.body(id).unwrap().clone();
+        assert!(matches!(
+            w.step(1.0 / 60.0),
+            Err(physics_engine::approximate::Error::CollisionSearchFailed {
+                reason: physics_engine::approximate::SweepFailure::InvalidGeometryInput,
+                ..
+            })
+        ));
+        assert_eq!(w.body(id).unwrap(), &before);
+    }
 }
 
 #[test]
@@ -361,4 +363,86 @@ fn real_cave_mouth_roundtrip_crosses_from_flat_terrace_to_mesh_and_back() {
     }
     assert!(saw_terrace && saw_mesh);
     assert!((w.body(id).unwrap().position.2 + 126.5).abs() < 0.01);
+}
+
+#[test]
+fn non_ccd_boxes_stop_at_finite_mesh_faces_across_the_entire_interval() {
+    use physics_engine::approximate::TriangleMeshDesc;
+    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
+        for reverse in [false, true] {
+            for speed in [6.0, 60.0, 600.0] {
+                let mut w = World::new(Config {
+                    gravity: V::ZERO,
+                    body_storage: storage,
+                    ..Config::default()
+                })
+                .unwrap();
+                w.add_triangle_mesh(
+                    TriangleMeshDesc {
+                        position: V::ZERO,
+                        vertices: vec![
+                            V(0.0, -2.0, -2.0),
+                            V(0.0, 2.0, -2.0),
+                            V(0.0, 2.0, 2.0),
+                            V(0.0, -2.0, 2.0),
+                        ],
+                        triangles: vec![[0, 1, 2], [0, 2, 3]],
+                        material: Default::default(),
+                    },
+                    Some(if reverse { 2 } else { 1 }),
+                )
+                .unwrap();
+                let mut body = Body::keyed(
+                    if reverse { 1 } else { 2 },
+                    Shape::Box(V(0.25, 0.25, 0.25)),
+                    V(-3.0, 0.0, 0.0),
+                    1.0,
+                );
+                body.velocity = V(speed, 0.0, 0.0);
+                body.rotation_locked = true;
+                body.sleep_allowed = false;
+                let id = w.add_body(body).unwrap();
+                for _ in 0..60 {
+                    w.step(1.0 / 60.0).unwrap();
+                    assert!(
+                        w.body(id).unwrap().position.0 <= -0.25 + 1e-4,
+                        "speed {speed}"
+                    );
+                }
+                assert!((w.body(id).unwrap().position.0 + 0.25).abs() < 0.01);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "checkpoints")]
+#[test]
+fn box_mesh_contact_continues_exactly_after_checkpoint_restore() {
+    let mut world = cave(BodyStorage::Ordered);
+    let mut body = Body::keyed(
+        1,
+        Shape::Box(V(0.35, 0.35, 0.35)),
+        V(62.0, 11.349, -138.0),
+        1.0,
+    );
+    body.velocity = V(0.2, -0.5, 0.0);
+    body.angular_velocity = V(0.7, 0.3, -0.5);
+    body.sleep_allowed = false;
+    let id = world.add_body(body).unwrap();
+    for _ in 0..8 {
+        world.step(1.0 / 60.0).unwrap();
+    }
+    let mut restored = world
+        .checkpoint(physics_engine::approximate::CheckpointContext {
+            build: [1; 32],
+            content: [2; 32],
+        })
+        .unwrap()
+        .restore(&[])
+        .unwrap();
+    for _ in 0..60 {
+        world.step(1.0 / 60.0).unwrap();
+        restored.step(1.0 / 60.0).unwrap();
+        assert_eq!(world.body(id), restored.body(id));
+    }
 }

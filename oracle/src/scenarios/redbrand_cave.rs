@@ -29,13 +29,13 @@ fn desired(lane: usize, tick: u32) -> [f32; 3] {
         _ => [0.05, -0.05, 0.0],
     }
 }
-struct Chunk {
-    key: u64,
-    position: [f32; 3],
-    vertices: Vec<[f32; 3]>,
-    triangles: Vec<[u32; 3]>,
+pub(super) struct Chunk {
+    pub(super) key: u64,
+    pub(super) position: [f32; 3],
+    pub(super) vertices: Vec<[f32; 3]>,
+    pub(super) triangles: Vec<[u32; 3]>,
 }
-fn chunks() -> Vec<Chunk> {
+pub(super) fn chunks() -> Vec<Chunk> {
     let json: serde_json::Value =
         serde_json::from_str(include_str!("../../../tests/fixtures/redbrand-cave.json")).unwrap();
     let vector = |v: &serde_json::Value| {

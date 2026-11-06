@@ -191,6 +191,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::debris_town::scenario_tumble(),
         scenarios::capsule_normals::scenario(),
         scenarios::redbrand_cave::scenario(),
+        scenarios::rigid_mesh::scenario(),
         scenarios::terrain::scenario(),
         scenarios::terrain_seam::scenario(),
         scenarios::terrain::scenario_holes(),

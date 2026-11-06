@@ -167,11 +167,24 @@ impl HullBoxPair {
         })
     }
 }
+#[derive(Clone, Debug)]
+struct MeshBoxContact {
+    positions: [[u32; 3]; 2],
+    margin: u32,
+    manifolds: Vec<contact::Manifold>,
+}
+#[derive(Clone, Debug)]
+struct MeshBoxPair {
+    keys: [ShapeKey; 2],
+    current: [Option<MeshBoxContact>; 2],
+    epoch: u64,
+}
 #[derive(Clone, Debug, Default)]
 pub(super) struct GeometryCache {
     frames: Vec<Option<Frame>>,
     pairs: BTreeMap<(Order, Order), Pair>,
     hull_boxes: BTreeMap<(Order, Order), HullBoxPair>,
+    mesh_boxes: BTreeMap<(Order, Order), MeshBoxPair>,
     clipping: contact::ClipScratch,
     epoch: u64,
     retained_bytes: usize,
@@ -181,6 +194,7 @@ impl GeometryCache {
         self.frames.clear();
         self.pairs.clear();
         self.hull_boxes.clear();
+        self.mesh_boxes.clear();
         self.retained_bytes = self.measure_retained_bytes();
     }
     pub fn begin(&mut self, bodies: usize) {
@@ -192,6 +206,7 @@ impl GeometryCache {
         if self.epoch == 0 {
             self.pairs.clear();
             self.hull_boxes.clear();
+            self.mesh_boxes.clear();
             self.frames.fill(None);
         }
     }
@@ -436,20 +451,87 @@ impl GeometryCache {
         });
         Ok(result)
     }
+    pub fn mesh_box(
+        &mut self,
+        mesh: &geometry_kernels::triangle_mesh::PreparedTriangleMesh3,
+        a: &Body,
+        b: &Body,
+        margin: Real,
+        work: &mut GeometryStats,
+        mut emit: impl FnMut(contact::Manifold),
+    ) -> Result<(), SweepFailure> {
+        let keys = [ShapeKey::new(a), ShapeKey::new(b)];
+        let cached = self
+            .mesh_boxes
+            .entry((a.order, b.order))
+            .or_insert_with(|| MeshBoxPair {
+                keys,
+                current: [None, None],
+                epoch: self.epoch,
+            });
+        if cached.keys != keys {
+            cached.keys = keys;
+            cached.current = [None, None];
+        }
+        cached.epoch = self.epoch;
+        let positions = [vector_bits(a.position), vector_bits(b.position)];
+        let margin = bits(margin);
+        if let Some(current) = cached
+            .current
+            .iter()
+            .flatten()
+            .find(|c| c.positions == positions && c.margin == margin)
+        {
+            if current.manifolds.is_empty() {
+                work.negative_hits += 1;
+            } else {
+                work.manifold_hits += 1;
+            }
+            for manifold in &current.manifolds {
+                emit(manifold.clone());
+            }
+            return Ok(());
+        }
+        cached.current.swap(0, 1);
+        let current = cached.current[0].get_or_insert_with(|| MeshBoxContact {
+            positions,
+            margin,
+            manifolds: Vec::new(),
+        });
+        current.positions = positions;
+        current.margin = margin;
+        current.manifolds.clear();
+        if let Err(error) =
+            primitive::box_mesh_manifolds(mesh, a, b, Real::from_bits(margin), work, |m| {
+                current.manifolds.push(m)
+            })
+        {
+            cached.current[0] = None;
+            return Err(error);
+        }
+        work.manifold_refreshes += 1;
+        for manifold in &current.manifolds {
+            emit(manifold.clone());
+        }
+        Ok(())
+    }
     pub fn finish(&mut self, work: &mut GeometryStats) {
-        let before = self.pairs.len() + self.hull_boxes.len();
+        let before = self.pairs.len() + self.hull_boxes.len() + self.mesh_boxes.len();
         self.pairs.retain(|_, p| p.epoch == self.epoch);
         self.hull_boxes.retain(|_, p| p.epoch == self.epoch);
-        work.pair_invalidations += (before - self.pairs.len() - self.hull_boxes.len()) as u64;
+        self.mesh_boxes.retain(|_, p| p.epoch == self.epoch);
+        work.pair_invalidations +=
+            (before - self.pairs.len() - self.hull_boxes.len() - self.mesh_boxes.len()) as u64;
         work.cached_pairs_peak = work
             .cached_pairs_peak
-            .max((self.pairs.len() + self.hull_boxes.len()) as u64);
+            .max((self.pairs.len() + self.hull_boxes.len() + self.mesh_boxes.len()) as u64);
         self.retained_bytes = self.measure_retained_bytes();
         work.retained_bytes = self.retained_bytes as u64;
     }
     pub fn remove(&mut self, id: Order) {
         self.pairs.retain(|&(a, b), _| a != id && b != id);
         self.hull_boxes.retain(|&(a, b), _| a != id && b != id);
+        self.mesh_boxes.retain(|&(a, b), _| a != id && b != id);
         // Body indices may all move, including remove/reinsert with the same length and id.
         self.frames.clear();
         self.retained_bytes = self.measure_retained_bytes();
@@ -462,7 +544,18 @@ impl GeometryCache {
         self.retained_bytes
     }
     fn measure_retained_bytes(&self) -> usize {
-        self.clipping.retained_bytes()
+        self.mesh_boxes
+            .values()
+            .map(|p| {
+                size_of::<((Order, Order), MeshBoxPair)>()
+                    + p.current
+                        .iter()
+                        .flatten()
+                        .map(|c| c.manifolds.capacity() * size_of::<contact::Manifold>())
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
+            + self.clipping.retained_bytes()
             + self
                 .hull_boxes
                 .values()
