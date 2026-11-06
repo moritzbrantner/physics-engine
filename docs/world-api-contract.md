@@ -249,7 +249,10 @@ test against walkable static support: like Rapier's ground prediction, support w
 plus 5 cm (in `length_unit`, measured along the ground's normal as Rapier's contact distance)
 makes the character grounded without moving it, and a character
 that started the move in ground contact (below) and does not move up snaps down to `offset` from
-any gap beyond it within `offset + snap_to_ground`, as Rapier's snap. `CharacterMoveResult::ground_contact`
+any gap beyond it within `offset + snap_to_ground`, as Rapier's snap. Crossing a
+positive-time grazing triangle support edge preserves height for that move, like Rapier's
+edge slide; support is still determined from the final pose, so walking off an edge or
+over a hole does not retain grounding. `CharacterMoveResult::ground_contact`
 is Rapier's `grounded`: some static contact within that prediction (true distance, in any
 direction) faces up at all, a step's rounded edge beside the character included; it is implied
 by `grounded` and tested (one overlap query) only off walkable support. This depends on geometry alone, so a world rebuilt from game state

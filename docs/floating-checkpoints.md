@@ -11,8 +11,11 @@ consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
 Algorithm 12 corrects tangential heightfield sweep admission for character moves. A nearly
 tangential earliest hit no longer hides a later blocking triangle. This changes continuation
-at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruction; algorithm 14 adds box/hull response; current algorithm 15 adds non-CCD box/mesh response
-(see below). Older algorithm checkpoints are rejected.
+at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruction;
+algorithm 14 adds box/hull response; algorithm 15 adds non-CCD box/mesh response
+(see below). Current algorithm 16 preserves character height while crossing a grazing
+triangle support edge before snapping; format 9 is unchanged. Older algorithm checkpoints
+are rejected.
 
 Format 9 (#180) adds static convex hull shape tag 7 and embedded canonical hull vertices
 after the format-8 mesh slots. A u64 hull-slot count precedes one u64 vertex count per
