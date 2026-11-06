@@ -209,51 +209,6 @@ pub(super) fn box_mesh_manifolds(
     }
     let origin = to_array(target.position);
     let center = geometry_kernels::math3::sub(to_array(moving.position), origin);
-    use geometry_kernels::triangle_mesh::{TriangleMeshBoxManifold3, TriangleMeshBoxPoint3};
-    struct Patch {
-        normal: [f64; 3],
-        points: [TriangleMeshBoxPoint3; 4],
-        triangles: [u32; 4],
-        len: usize,
-    }
-    let pack = |contact: TriangleMeshBoxManifold3| Patch {
-        normal: contact.normal,
-        points: contact.points,
-        triangles: [contact.triangle; 4],
-        len: contact.len,
-    };
-    let mut emit_patch = |patch: Patch| {
-        let normal = if mesh_first {
-            from_array(patch.normal)
-        } else {
-            -from_array(patch.normal)
-        };
-        let mut points = [super::contact::Point::default(); 4];
-        for (out, p) in points.iter_mut().zip(&patch.points[..patch.len]) {
-            // Form lever arms in the exactly widened mesh frame before narrowing.
-            // World-origin addition followed by subtraction loses sub-ulp offsets.
-            let mesh_arm = from_array(p.point_on_triangle);
-            let box_arm = from_array(geometry_kernels::math3::sub(p.point_on_box, center));
-            let (ra, rb) = if mesh_first {
-                (mesh_arm, box_arm)
-            } else {
-                (box_arm, mesh_arm)
-            };
-            *out = super::contact::Point {
-                ra,
-                rb,
-                separation: round_down(p.separation),
-            };
-        }
-        emit(super::contact::Manifold {
-            normal,
-            points: super::contact::Points::selected(&points[..patch.len]),
-            swept: false,
-            time: 0.0,
-        });
-    };
-    let mut pending: Option<Patch> = None;
-    let mut reduction_failure = None;
     let mut work = geometry_kernels::triangle_mesh::TriangleMeshWork3::default();
     stats.current_queries += 1;
     let result = mesh.box_contacts_counted(
@@ -263,62 +218,42 @@ pub(super) fn box_mesh_manifolds(
         f64::from(margin),
         &mut work,
         |contact| {
-            if reduction_failure.is_some() {
-                return;
-            }
-            let Some(mut previous) = pending.take() else {
-                pending = Some(pack(contact));
-                return;
+            let normal = if mesh_first {
+                from_array(contact.normal)
+            } else {
+                -from_array(contact.normal)
             };
-            let plane =
-                geometry_kernels::math3::dot(previous.points[0].point_on_triangle, previous.normal);
-            // Exact equality is deliberately conservative: uncertain planes and every
-            // differently oriented normal keep separate response patches. Query triangle
-            // identity is unchanged; each selected witness retains its input triangle.
-            let coplanar = previous.normal == contact.normal
-                && previous.points[..previous.len]
-                    .iter()
-                    .chain(&contact.points[..contact.len])
-                    .all(|p| {
-                        geometry_kernels::math3::dot(p.point_on_triangle, previous.normal) == plane
-                    });
-            if !coplanar {
-                emit_patch(previous);
-                pending = Some(pack(contact));
-                return;
+            let mut points = [super::contact::Point::default(); 4];
+            for (out, p) in points.iter_mut().zip(&contact.points[..contact.len]) {
+                // Form lever arms in the exactly widened mesh frame before narrowing.
+                // Adding the world origin only to subtract it again loses precision at
+                // large coordinates and repeats work for every witness.
+                let mesh_arm = from_array(p.point_on_triangle);
+                let box_arm = from_array(geometry_kernels::math3::sub(p.point_on_box, center));
+                let (ra, rb) = if mesh_first {
+                    (mesh_arm, box_arm)
+                } else {
+                    (box_arm, mesh_arm)
+                };
+                *out = super::contact::Point {
+                    ra,
+                    rb,
+                    separation: round_down(p.separation),
+                };
             }
-            let len = previous.len + contact.len;
-            let mut candidates = [TriangleMeshBoxPoint3::default(); 8];
-            let mut triangles = [contact.triangle; 8];
-            candidates[..previous.len].copy_from_slice(&previous.points[..previous.len]);
-            candidates[previous.len..len].copy_from_slice(&contact.points[..contact.len]);
-            triangles[..previous.len].copy_from_slice(&previous.triangles[..previous.len]);
-            match geometry_kernels::triangle_mesh::reduce_box_contact_points(&candidates[..len]) {
-                Ok(selected) => {
-                    for (out, &index) in selected.indices[..selected.len].iter().enumerate() {
-                        previous.points[out] = candidates[index];
-                        previous.triangles[out] = triangles[index];
-                    }
-                    previous.len = selected.len;
-                    pending = Some(previous);
-                }
-                Err(error) => reduction_failure = Some(error),
-            }
+            emit(super::contact::Manifold {
+                normal,
+                points: super::contact::Points::selected(&points[..contact.len]),
+                swept: false,
+                time: 0.0,
+            });
         },
     );
-    if result.is_ok()
-        && reduction_failure.is_none()
-        && let Some(patch) = pending
-    {
-        emit_patch(patch);
-    }
     stats.mesh_nodes_visited += work.nodes_visited;
     stats.mesh_triangles_tested += work.triangles_tested;
     crate::work::add(crate::work::Counter::MeshNodes, work.nodes_visited);
     crate::work::add(crate::work::Counter::MeshTriangles, work.triangles_tested);
-    result
-        .and(reduction_failure.map_or(Ok(()), Err))
-        .map_err(super::triangle_mesh::failure)
+    result.map_err(super::triangle_mesh::failure)
 }
 
 #[cfg(test)]
@@ -742,57 +677,6 @@ mod tests {
 
     fn body(id: u64, shape: Shape, position: V) -> Body {
         Body::fixture(id, shape, position, 0.0)
-    }
-
-    #[test]
-    fn coplanar_mesh_response_selects_existing_witnesses_and_keeps_other_planes_separate() {
-        use geometry_kernels::triangle_mesh::{PreparedTriangleMesh3, TriangleMeshData3};
-        let moving = body(2, Shape::Box(V(0.3, 0.3, 0.3)), V(0.0, 0.3, 0.0));
-        let target = body(
-            1,
-            Shape::TriangleMesh {
-                mesh: crate::approximate::TriangleMeshId(0),
-                half_extents: V(4.0, 0.02, 4.0),
-            },
-            V::ZERO,
-        );
-        for separate_plane in [false, true] {
-            let mut vertices = vec![
-                [-4.0, 0.0, -4.0],
-                [4.0, 0.0, -4.0],
-                [4.0, 0.0, 4.0],
-                [-4.0, 0.0, 4.0],
-            ];
-            let mut triangles = vec![[0, 1, 2], [0, 2, 3]];
-            if separate_plane {
-                vertices.extend([[-4.0, 0.01, -4.0], [4.0, 0.01, -4.0], [0.0, 0.01, 4.0]]);
-                triangles.push([4, 5, 6]);
-            }
-            let prepared = PreparedTriangleMesh3::try_new(TriangleMeshData3 {
-                vertices,
-                triangles,
-            })
-            .unwrap();
-            let mut patches = Vec::new();
-            box_mesh_manifolds(
-                &prepared,
-                &target,
-                &moving,
-                0.02,
-                &mut GeometryStats::default(),
-                |m| patches.push(m),
-            )
-            .unwrap();
-            assert_eq!(patches.len(), if separate_plane { 2 } else { 1 });
-            for patch in &patches {
-                assert!(patch.points.len() <= 4);
-                for p in &patch.points {
-                    assert!(p.ra.0.abs() <= 0.300001 && p.ra.2.abs() <= 0.300001);
-                    assert!(p.ra.1 == 0.0 || p.ra.1 == 0.01);
-                    assert_eq!(p.rb.1, -0.3);
-                }
-            }
-        }
     }
 
     #[test]
