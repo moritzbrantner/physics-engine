@@ -110,11 +110,13 @@ to shape, orientation, body identity, position or margin invalidate the relevant
 Unused/removed pairs are pruned. Tests compare retained geometry with fresh preparation
 through those transitions, including signed zero, negative contacts and checkpoint recovery.
 
-**Not native performance parity yet.** The local release comparison improved from 13.71/13.67
-µs per tick to 6.51/6.45 (Ordered/Indexed), versus Rapier 6.12 µs: 1.06× still fails the
-native 1.05× gate. Focused WASM measured 8.31/8.23 µs versus Rapier 19.17 µs (0.43×) in the same scenario.
-These are exploratory local measurements, not whole-zone acceptance. Game adoption,
-box/mesh response and the remaining native cost gap keep the fallback and this PR draft.
+**Focused local native and WASM gates pass.** Deferring box/edge-axis preparation until
+hull-face certificates are insufficient brings the standalone native release comparison to
+5.38/5.33 µs per tick (Ordered/Indexed), versus Rapier 6.17 µs (0.87×), from the initial
+13.71/13.67 µs. Focused WASM measured 7.21/7.31 µs versus Rapier 19.97 µs (0.36×).
+Some local native runs were noisy and mixed; CI must confirm the committed revision.
+These are local measurements for this scenario, not whole-zone acceptance. Game adoption,
+box/mesh response and full CI remain incomplete; the fallback remains in the game.
 The standalone Rapier reference check is
 `cargo test --locked -p physics-oracle --lib rigid_rocks`.
 

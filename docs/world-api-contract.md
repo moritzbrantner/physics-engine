@@ -176,6 +176,8 @@ Hull/box geometry uses the existing geometry-cache lifecycle: a frame owns immut
 geometry and is keyed by body identity, shape and orientation. The two most recent exact
 position/margin queries may reuse their positive or negative manifold. Translation with a
 new query signature recomputes witnesses, and shape/orientation changes rebuild projections.
+Hull faces are prepared first. Queries certified by those faces avoid box-vertex projections
+and edge-axis construction; the remaining axes are prepared once on demand and retained.
 Removed or unused pair data is pruned; these derived caches are not checkpoint authority.
 
 The opt-in checkpoint format 9 stores canonical hull vertices in their original hull-slot order,
