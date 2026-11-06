@@ -1804,11 +1804,16 @@ fn rigid_rock_contact_narrow_phase_does_not_scan_distant_hulls() {
         let report = world.step(1.0 / 60.0).unwrap();
         assert!(report.geometry.sat_queries > 0);
         assert!(world.body(id).unwrap().position.0 < -1.0);
+        let warm = world.step(1.0 / 60.0).unwrap();
+        assert_eq!(warm.geometry.frame_preparations, 0);
+        assert!(warm.geometry.frame_reuses > 0);
+        assert_eq!(warm.geometry.primitive_vertex_tests, 0);
         samples.push((
             vec![("rocks", rocks)],
             vec![
                 ("sat-axes", report.geometry.sat_axes_tested),
                 ("vertex-tests", report.geometry.primitive_vertex_tests),
+                ("warm-vertex-tests", warm.geometry.primitive_vertex_tests),
                 ("preparations", work::get(Counter::HullPreparations)),
             ],
         ));
@@ -1819,6 +1824,7 @@ fn rigid_rock_contact_narrow_phase_does_not_scan_distant_hulls() {
         &[
             ("sat-axes", "rocks", "constant"),
             ("vertex-tests", "rocks", "constant"),
+            ("warm-vertex-tests", "", "zero"),
             ("preparations", "", "zero"),
         ],
     );

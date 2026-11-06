@@ -1493,10 +1493,13 @@ impl World {
                             + moving.angular_velocity.length() * moving.shape.radius() * interval;
                         report.narrow_tests += 1;
                         regenerate = true;
-                        if let Some(manifold) = self.hulls[hull.0 as usize]
-                            .as_deref()
-                            .expect("live convex hull")
-                            .box_manifold(
+                        if let Some(manifold) = self
+                            .geometry
+                            .hull_box(
+                                &self.hulls[hull.0 as usize]
+                                    .as_deref()
+                                    .expect("live convex hull")
+                                    .hull,
                                 a,
                                 b,
                                 self.scene.contact_slop + approach,

@@ -104,11 +104,17 @@ orders), exact mid-contact checkpoint continuation, and unchanged atomic rejecti
 unsupported CCD pairs. The `authored-rock-rigid-contact` work family keeps local SAT and
 vertex projections independent of unrelated rocks, with no geometry re-preparation.
 
-**Not performance parity yet.** A local release run measured Ordered/Indexed 13.71/13.67 µs
-per tick versus Rapier 6.13 µs (2.24×), failing the native 1.05× gate. Focused WASM
-measured 14.29/14.05 versus Rapier 19.11 (0.75×/0.74×), passing its 1.10× gate.
-These are exploratory local measurements, not whole-zone acceptance. The game adapter,
-box/mesh response and native cost remain incomplete; keep the fallback and this PR draft.
+The engine now retains orientation/extent-keyed SAT plans and the two most recent exact
+pose/margin contact results. Translation refreshes points while reusing projections; changes
+to shape, orientation, body identity, position or margin invalidate the relevant retained data.
+Unused/removed pairs are pruned. Tests compare retained geometry with fresh preparation
+through those transitions, including signed zero, negative contacts and checkpoint recovery.
+
+**Not native performance parity yet.** The local release comparison improved from 13.71/13.67
+µs per tick to 6.51/6.45 (Ordered/Indexed), versus Rapier 6.12 µs: 1.06× still fails the
+native 1.05× gate. Focused WASM measured 8.31/8.23 µs versus Rapier 19.17 µs (0.43×) in the same scenario.
+These are exploratory local measurements, not whole-zone acceptance. Game adoption,
+box/mesh response and the remaining native cost gap keep the fallback and this PR draft.
 The standalone Rapier reference check is
 `cargo test --locked -p physics-oracle --lib rigid_rocks`.
 

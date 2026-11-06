@@ -62,54 +62,51 @@ pub struct GeometryStats {
     pub retained_bytes: u64,
 }
 
-/// Exact cache-key bits; widening to f64 keeps keys injective in both builds.
-fn bits(x: Real) -> u64 {
-    primitive::widen(x).to_bits()
+/// Exact physical-state bits, including signed zero. Real is f32 in the sole build.
+fn bits(x: Real) -> u32 {
+    x.to_bits()
 }
-fn vector_bits(v: Vector) -> [u64; 3] {
+fn vector_bits(v: Vector) -> [u32; 3] {
     [bits(v.0), bits(v.1), bits(v.2)]
 }
-fn quaternion_bits(q: Quaternion) -> [u64; 4] {
+fn quaternion_bits(q: Quaternion) -> [u32; 4] {
     [bits(q.0), bits(q.1), bits(q.2), bits(q.3)]
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ShapeKey {
     id: BodyId,
-    shape: [u64; 4],
-    orientation: [u64; 4],
+    shape_tag: u64,
+    dimensions: [u32; 3],
+    orientation: [u32; 4],
 }
 impl ShapeKey {
     fn new(b: &Body) -> Self {
-        let shape = match b.shape {
-            Shape::Box(h) => [0, bits(h.0), bits(h.1), bits(h.2)],
-            Shape::Sphere(r) => [1, bits(r), 0, 0],
+        let (shape_tag, dimensions) = match b.shape {
+            Shape::Box(h) => (0, vector_bits(h)),
+            Shape::Sphere(r) => (1, [bits(r), 0, 0]),
             Shape::Capsule {
                 half_segment,
                 radius,
-            } => [2, bits(half_segment), bits(radius), 0],
-            Shape::Wedge(h) => [3, bits(h.0), bits(h.1), bits(h.2)],
+            } => (2, [bits(half_segment), bits(radius), 0]),
+            Shape::Wedge(h) => (3, vector_bits(h)),
             Shape::TriangleMesh {
                 mesh,
                 half_extents: h,
-            } => [
-                u64::MAX - 1 - u64::from(mesh.0),
-                bits(h.0),
-                bits(h.1),
-                bits(h.2),
-            ],
+            } => (u64::MAX - 1 - u64::from(mesh.0), vector_bits(h)),
             Shape::ConvexHull {
                 hull,
                 half_extents: h,
-            } => [5 + u64::from(hull.0), bits(h.0), bits(h.1), bits(h.2)],
-            Shape::HalfSpace => [u64::MAX, 0, 0, 0],
+            } => (5 + u64::from(hull.0), vector_bits(h)),
+            Shape::HalfSpace => (u64::MAX, [0; 3]),
             Shape::Heightfield {
                 terrain,
                 half_extents: h,
-            } => [4 + u64::from(terrain.0), bits(h.0), bits(h.1), bits(h.2)],
+            } => (4 + u64::from(terrain.0), vector_bits(h)),
         };
         Self {
             id: b.id,
-            shape,
+            shape_tag,
+            dimensions,
             orientation: quaternion_bits(b.orientation),
         }
     }
@@ -123,17 +120,58 @@ struct Frame {
 #[derive(Clone, Debug)]
 struct Pair {
     keys: [ShapeKey; 2],
-    positions: [[u64; 3]; 2],
-    margin: u64,
+    positions: [[u32; 3]; 2],
+    margin: u32,
     // Negative entries retain no manifold allocation; positive storage is reused on refresh.
     current: Option<Box<contact::Manifold>>,
     projections: contact::BoxProjections,
     epoch: u64,
 }
+#[derive(Clone, Debug)]
+struct HullBoxContact {
+    positions: [[u32; 3]; 2],
+    margin: u32,
+    manifold: Option<contact::Manifold>,
+}
+#[derive(Clone, Debug)]
+struct HullBoxPair {
+    keys: [ShapeKey; 2],
+    plan: geometry_kernels::segment_hull::PreparedBoxHull,
+    // Retain the two most recent exact pose/margin queries: the consumer's two
+    // substeps can alternate margins even while the body remains at rest.
+    current: [Option<HullBoxContact>; 2],
+    epoch: u64,
+}
+impl HullBoxPair {
+    #[cold]
+    fn prepare(
+        hull: &std::sync::Arc<geometry_kernels::segment_hull::PreparedSegmentHull>,
+        a: &Body,
+        b: &Body,
+        keys: [ShapeKey; 2],
+        epoch: u64,
+        work: &mut GeometryStats,
+    ) -> Result<Self, SweepFailure> {
+        let moving = if matches!(a.shape, Shape::ConvexHull { .. }) {
+            b
+        } else {
+            a
+        };
+        let plan = primitive::prepare_box_hull_frame(hull.clone(), moving, work)?;
+        work.frame_preparations += 1;
+        Ok(Self {
+            keys,
+            plan,
+            current: [None, None],
+            epoch,
+        })
+    }
+}
 #[derive(Clone, Debug, Default)]
 pub(super) struct GeometryCache {
     frames: Vec<Option<Frame>>,
     pairs: BTreeMap<(Order, Order), Pair>,
+    hull_boxes: BTreeMap<(Order, Order), HullBoxPair>,
     clipping: contact::ClipScratch,
     epoch: u64,
     retained_bytes: usize,
@@ -142,6 +180,7 @@ impl GeometryCache {
     pub fn invalidate(&mut self) {
         self.frames.clear();
         self.pairs.clear();
+        self.hull_boxes.clear();
         self.retained_bytes = self.measure_retained_bytes();
     }
     pub fn begin(&mut self, bodies: usize) {
@@ -152,6 +191,7 @@ impl GeometryCache {
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 {
             self.pairs.clear();
+            self.hull_boxes.clear();
             self.frames.fill(None);
         }
     }
@@ -344,16 +384,72 @@ impl GeometryCache {
         pair.epoch = self.epoch;
         result
     }
+    pub fn hull_box(
+        &mut self,
+        hull: &std::sync::Arc<geometry_kernels::segment_hull::PreparedSegmentHull>,
+        a: &Body,
+        b: &Body,
+        margin: Real,
+        work: &mut GeometryStats,
+    ) -> Result<Option<contact::Manifold>, SweepFailure> {
+        let key = (a.order, b.order);
+        let keys = [ShapeKey::new(a), ShapeKey::new(b)];
+        let epoch = self.epoch;
+        let cached = match self.hull_boxes.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(HullBoxPair::prepare(hull, a, b, keys, epoch, work)?)
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                let cached = entry.into_mut();
+                if cached.keys != keys {
+                    *cached = HullBoxPair::prepare(hull, a, b, keys, epoch, work)?;
+                } else {
+                    work.frame_reuses += 1;
+                    work.projection_reuses += 1;
+                }
+                cached
+            }
+        };
+        cached.epoch = self.epoch;
+        let positions = [vector_bits(a.position), vector_bits(b.position)];
+        let margin_bits = bits(margin);
+        if let Some(current) = cached
+            .current
+            .iter()
+            .flatten()
+            .find(|current| current.margin == margin_bits && current.positions == positions)
+        {
+            if current.manifold.is_some() {
+                work.manifold_hits += 1;
+            } else {
+                work.negative_hits += 1;
+            }
+            return Ok(current.manifold.clone());
+        }
+        let result = primitive::box_hull_manifold(&cached.plan, a, b, margin, work)?;
+        work.manifold_refreshes += 1;
+        cached.current.swap(0, 1);
+        cached.current[0] = Some(HullBoxContact {
+            positions,
+            margin: margin_bits,
+            manifold: result.clone(),
+        });
+        Ok(result)
+    }
     pub fn finish(&mut self, work: &mut GeometryStats) {
-        let before = self.pairs.len();
+        let before = self.pairs.len() + self.hull_boxes.len();
         self.pairs.retain(|_, p| p.epoch == self.epoch);
-        work.pair_invalidations += (before - self.pairs.len()) as u64;
-        work.cached_pairs_peak = work.cached_pairs_peak.max(self.pairs.len() as u64);
+        self.hull_boxes.retain(|_, p| p.epoch == self.epoch);
+        work.pair_invalidations += (before - self.pairs.len() - self.hull_boxes.len()) as u64;
+        work.cached_pairs_peak = work
+            .cached_pairs_peak
+            .max((self.pairs.len() + self.hull_boxes.len()) as u64);
         self.retained_bytes = self.measure_retained_bytes();
         work.retained_bytes = self.retained_bytes as u64;
     }
     pub fn remove(&mut self, id: Order) {
         self.pairs.retain(|&(a, b), _| a != id && b != id);
+        self.hull_boxes.retain(|&(a, b), _| a != id && b != id);
         // Body indices may all move, including remove/reinsert with the same length and id.
         self.frames.clear();
         self.retained_bytes = self.measure_retained_bytes();
@@ -367,6 +463,11 @@ impl GeometryCache {
     }
     fn measure_retained_bytes(&self) -> usize {
         self.clipping.retained_bytes()
+            + self
+                .hull_boxes
+                .values()
+                .map(|p| size_of::<((Order, Order), HullBoxPair)>() + p.plan.retained_bytes())
+                .sum::<usize>()
             + self.frames.capacity() * std::mem::size_of::<Option<Frame>>()
             + self
                 .pairs

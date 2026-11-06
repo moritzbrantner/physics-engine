@@ -64,7 +64,7 @@ fn pair() -> [Body; 2] {
         ),
     ]
 }
-fn bits(m: &Option<contact::Manifold>) -> Option<(Vec<u64>, bool)> {
+fn bits(m: &Option<contact::Manifold>) -> Option<(Vec<u32>, bool)> {
     m.as_ref().map(|m| {
         let mut out = vector_bits(m.normal).to_vec();
         out.push(super::bits(m.time));
@@ -475,4 +475,88 @@ fn prepared_sweeps_preserve_thin_wall_and_changed_interval() {
     );
     assert_eq!(work.manifold_candidates, 1);
     assert_eq!(work.generic_fallback_calls, 0);
+}
+
+#[test]
+fn hull_box_cache_reuses_only_exact_geometry_dependencies_and_prunes_removed_pairs() {
+    use crate::approximate::ConvexHullDesc;
+    let mut world = World::new(Config::default()).unwrap();
+    let id = world
+        .add_convex_hull(
+            ConvexHullDesc {
+                vertices: [-1.0, 1.0]
+                    .into_iter()
+                    .flat_map(|x| {
+                        [-1.0, 1.0].into_iter().flat_map(move |y| {
+                            [-1.0, 1.0].into_iter().map(move |z| Vector(x, y, z))
+                        })
+                    })
+                    .collect(),
+                position: Vector::ZERO,
+                material: Default::default(),
+            },
+            Some(1),
+        )
+        .unwrap();
+    let mut fixed = world.body(id).unwrap().clone();
+    let hull = world.hulls[0].as_ref().unwrap().hull.clone();
+    let mut moving = Body::fixture(
+        100,
+        Shape::Box(Vector(0.5, 0.5, 0.5)),
+        Vector(1.4, 0.0, 0.0),
+        1.0,
+    );
+    let mut cache = GeometryCache::default();
+    let query = |cache: &mut GeometryCache, a: &Body, b: &Body, margin: Real| {
+        cache.begin(2);
+        let mut work = GeometryStats::default();
+        let result = cache.hull_box(&hull, a, b, margin, &mut work).unwrap();
+        let mut fresh = GeometryCache::default();
+        fresh.begin(2);
+        let expected = fresh
+            .hull_box(&hull, a, b, margin, &mut GeometryStats::default())
+            .unwrap();
+        assert_eq!(result, expected);
+        cache.finish(&mut work);
+        work
+    };
+    assert_eq!(
+        query(&mut cache, &fixed, &moving, 0.02).frame_preparations,
+        1
+    );
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.03).manifold_hits, 0);
+    for margin in [0.02, 0.03, 0.02, 0.03] {
+        let work = query(&mut cache, &fixed, &moving, margin);
+        assert_eq!(work.frame_preparations, 0);
+        assert_eq!(work.sat_queries, 0);
+        assert_eq!(work.manifold_hits, 1);
+    }
+    moving.position.1 = 0.1;
+    let work = query(&mut cache, &fixed, &moving, 0.02);
+    assert_eq!(work.frame_preparations, 0);
+    assert_eq!(work.manifold_hits, 0);
+    assert!(work.sat_queries > 0);
+    moving.orientation = Quaternion(0.0, 0.1, 0.0, 0.995).normalized();
+    assert_eq!(
+        query(&mut cache, &fixed, &moving, 0.02).frame_preparations,
+        1
+    );
+    moving.shape = Shape::Box(Vector(0.4, 0.6, 0.3));
+    assert_eq!(
+        query(&mut cache, &fixed, &moving, 0.02).frame_preparations,
+        1
+    );
+    fixed.position.1 = -0.0;
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).manifold_hits, 0);
+    fixed.position.0 = 0.2;
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).manifold_hits, 0);
+    moving.position.0 = 5.0;
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).negative_hits, 0);
+    assert_eq!(query(&mut cache, &fixed, &moving, 0.02).negative_hits, 1);
+    cache.remove(moving.order);
+    assert!(cache.hull_boxes.is_empty());
+    query(&mut cache, &fixed, &moving, 0.02);
+    cache.begin(2);
+    cache.finish(&mut GeometryStats::default());
+    assert!(cache.hull_boxes.is_empty());
 }

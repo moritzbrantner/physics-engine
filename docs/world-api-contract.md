@@ -170,7 +170,13 @@ inline/allocator/world-tree overhead). Immutable geometry is shared across clone
 reused after moving its fixed body. The `authored-rock-query` complexity family checks local
 queries among 16–256 actual Greyhaven rocks, with no full scan or query-time preparation.
 The `authored-rock-rigid-contact` family separately checks constant exact SAT/projection work
-for one contacting box amid 16–256 distant hulls; it does not claim constant whole-step work.
+for one contacting box amid 16–256 distant hulls and no repeated vertex projections on a
+warm, unchanged orientation/extent plan; it does not claim constant whole-step work.
+Hull/box geometry uses the existing geometry-cache lifecycle: a frame owns immutable hull
+geometry and is keyed by body identity, shape and orientation. The two most recent exact
+position/margin queries may reuse their positive or negative manifold. Translation with a
+new query signature recomputes witnesses, and shape/orientation changes rebuild projections.
+Removed or unused pair data is pruned; these derived caches are not checkpoint authority.
 
 The opt-in checkpoint format 9 stores canonical hull vertices in their original hull-slot order,
 including empty slots for removed hulls. Restore rebuilds the prepared hulls and verifies their

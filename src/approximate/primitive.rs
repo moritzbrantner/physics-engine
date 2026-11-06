@@ -54,8 +54,36 @@ pub(super) fn bounds_extents(body: &Body) -> V {
     V(round_up(x), round_up(y), round_up(z))
 }
 
+pub(super) fn prepare_box_hull_frame(
+    hull: std::sync::Arc<geometry_kernels::segment_hull::PreparedSegmentHull>,
+    moving: &Body,
+    stats: &mut GeometryStats,
+) -> Result<geometry_kernels::segment_hull::PreparedBoxHull, SweepFailure> {
+    let Shape::Box(half) = moving.shape else {
+        return Err(SweepFailure::InvalidGeometryInput);
+    };
+    let mut work = geometry_kernels::segment_hull::BoxHullWork::default();
+    let result = geometry_kernels::segment_hull::PreparedBoxHull::new(
+        hull,
+        to_array(half),
+        kernel_axes(moving.orientation),
+        &mut work,
+    )
+    .map_err(|error| match error {
+        geometry_kernels::segment_hull::BoxHullError::InvalidInput => {
+            SweepFailure::InvalidGeometryInput
+        }
+        geometry_kernels::segment_hull::BoxHullError::NonFiniteComputation => {
+            SweepFailure::NonFiniteComputation
+        }
+    });
+    stats.primitive_vertex_tests += work.vertex_tests;
+    stats.projection_preparations += 1;
+    result
+}
+
 pub(super) fn box_hull_manifold(
-    hull: &geometry_kernels::segment_hull::PreparedSegmentHull,
+    hull: &geometry_kernels::segment_hull::PreparedBoxHull,
     a: &Body,
     b: &Body,
     margin: Real,
@@ -63,15 +91,10 @@ pub(super) fn box_hull_manifold(
 ) -> Result<Option<super::contact::Manifold>, SweepFailure> {
     let hull_first = matches!(a.shape, Shape::ConvexHull { .. });
     let (target, moving) = if hull_first { (a, b) } else { (b, a) };
-    let Shape::Box(half) = moving.shape else {
-        return Err(SweepFailure::InvalidGeometryInput);
-    };
     let mut work = geometry_kernels::segment_hull::BoxHullWork::default();
     let result = hull
-        .box_contact(
+        .contact(
             geometry_kernels::math3::sub(to_array(moving.position), to_array(target.position)),
-            to_array(half),
-            kernel_axes(moving.orientation),
             f64::from(margin),
             &mut work,
         )

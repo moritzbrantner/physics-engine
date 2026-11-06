@@ -2512,6 +2512,13 @@
           ]
         },
         {
+          "name": "warm-vertex-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "A retained orientation/extent plan performs no new hull-vertex projections on the next contacting tick; shape/orientation changes rebuild it.",
+          "budget": { "max": 0 }
+        },
+        {
           "name": "preparations",
           "unit": "vertices",
           "signal": "operation-count",
