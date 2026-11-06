@@ -46,9 +46,11 @@ pub enum Counter {
     MeshTriangles,
     /// Immutable mesh triangles prepared at admission (never during a query).
     MeshPreparations,
+    /// Authored hull input vertices prepared at admission/restore, never during queries.
+    HullPreparations,
 }
 
-const COUNTERS: usize = 17;
+const COUNTERS: usize = 18;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

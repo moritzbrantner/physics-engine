@@ -38,7 +38,10 @@ pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool)
             Shape::Box(_) => PrimitiveKind::Box,
             Shape::Capsule { .. } => PrimitiveKind::Capsule,
             Shape::Wedge(_) => PrimitiveKind::Wedge,
-            Shape::Heightfield { .. } | Shape::TriangleMesh { .. } | Shape::HalfSpace => {
+            Shape::Heightfield { .. }
+            | Shape::ConvexHull { .. }
+            | Shape::TriangleMesh { .. }
+            | Shape::HalfSpace => {
                 unreachable!("terrain and halfspaces are queried through their closed forms")
             }
         }
@@ -201,7 +204,10 @@ fn shape(shape: Shape) -> PrimitiveShape3 {
             radius,
         } => PrimitiveShape3::capsule(widen(half_segment), widen(radius)),
         Shape::Wedge(half) => PrimitiveShape3::wedge(to_array(half)),
-        Shape::Heightfield { .. } | Shape::TriangleMesh { .. } | Shape::HalfSpace => {
+        Shape::Heightfield { .. }
+        | Shape::ConvexHull { .. }
+        | Shape::TriangleMesh { .. }
+        | Shape::HalfSpace => {
             unreachable!("terrain and halfspaces are queried through their closed forms")
         }
     }
@@ -298,6 +304,7 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
         ],
         Shape::Box(_)
         | Shape::Wedge(_)
+        | Shape::ConvexHull { .. }
         | Shape::Heightfield { .. }
         | Shape::TriangleMesh { .. }
         | Shape::HalfSpace => kernel_axes(body.orientation),

@@ -1457,6 +1457,29 @@ impl World {
                         && a.external
                         && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
+                // Authored hulls currently serve kinematic/query consumers. An unsupported
+                // physical pair must fail the whole step rather than silently tunnel through it.
+                if matches!(a.shape, Shape::ConvexHull { .. })
+                    || matches!(b.shape, Shape::ConvexHull { .. })
+                {
+                    let moving = if matches!(a.shape, Shape::ConvexHull { .. }) {
+                        b
+                    } else {
+                        a
+                    };
+                    if !a.sensor
+                        && !b.sensor
+                        && moving.inverse_mass() > 0.0
+                        && !moving.sleeping
+                        && a.layers.collides_with(b.layers)
+                    {
+                        return Err(Error::CollisionSearchFailed {
+                            bodies: [a.id, b.id],
+                            reason: super::SweepFailure::InvalidGeometryInput,
+                        });
+                    }
+                    continue;
+                }
                 // Boxes take rigid contacts with heightfield terrain, one manifold per triangle.
                 // As with halfspaces, the approach over the step is the speculative margin.
                 if let (Shape::Heightfield { terrain, .. }, body)

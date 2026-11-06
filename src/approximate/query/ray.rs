@@ -1,6 +1,36 @@
 use super::*;
-pub use geometry_kernels::primitive3::PrimitiveRayFeature3 as RayFeature;
+use geometry_kernels::primitive3::PrimitiveRayFeature3;
 use geometry_kernels::primitive3::PrimitiveRayWork3;
+
+/// Stable surface identity. Rock hull faces are canonical QuickHull triangle indices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RayFeature {
+    Interior,
+    Sphere,
+    BoxFace(u8),
+    CapsuleSide,
+    CapsuleNegativeCap,
+    CapsulePositiveCap,
+    WedgeFace(u8),
+    HeightfieldTriangle(u32),
+    TriangleMeshTriangle(u32),
+    ConvexHullFace(u32),
+}
+impl From<PrimitiveRayFeature3> for RayFeature {
+    fn from(feature: PrimitiveRayFeature3) -> Self {
+        match feature {
+            PrimitiveRayFeature3::Interior => Self::Interior,
+            PrimitiveRayFeature3::Sphere => Self::Sphere,
+            PrimitiveRayFeature3::BoxFace(i) => Self::BoxFace(i),
+            PrimitiveRayFeature3::CapsuleSide => Self::CapsuleSide,
+            PrimitiveRayFeature3::CapsuleNegativeCap => Self::CapsuleNegativeCap,
+            PrimitiveRayFeature3::CapsulePositiveCap => Self::CapsulePositiveCap,
+            PrimitiveRayFeature3::WedgeFace(i) => Self::WedgeFace(i),
+            PrimitiveRayFeature3::HeightfieldTriangle(i) => Self::HeightfieldTriangle(i),
+            PrimitiveRayFeature3::TriangleMeshTriangle(i) => Self::TriangleMeshTriangle(i),
+        }
+    }
+}
 
 /// Current-pose ray across a complete finite displacement; zero displacement is invalid.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -214,6 +244,7 @@ impl World {
             crate::work::add(crate::work::Counter::ExactTests, 1);
             stats.geometry_preparations += 1;
             let mut work = PrimitiveRayWork3::default();
+            let mut rock_face = None;
             let result = if target.shape == Shape::HalfSpace {
                 let (point, normal) = super::super::terrain::plane_of(target);
                 let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
@@ -227,7 +258,7 @@ impl World {
                                 start[k] + (end[k] - start[k]) * fraction
                             }),
                             normal,
-                            feature: RayFeature::Interior,
+                            feature: PrimitiveRayFeature3::Interior,
                             starts_inside: fraction == 0.0,
                         },
                     ),
@@ -258,7 +289,7 @@ impl World {
                                 hit.point[2] + f64::from(target.position.2),
                             ],
                             normal: hit.normal,
-                            feature: RayFeature::TriangleMeshTriangle(hit.triangle),
+                            feature: PrimitiveRayFeature3::TriangleMeshTriangle(hit.triangle),
                             starts_inside: false,
                         })
                     })
@@ -283,8 +314,27 @@ impl World {
                         fraction: hit.fraction,
                         point: hit.point,
                         normal: hit.normal,
-                        feature: RayFeature::HeightfieldTriangle(hit.triangle),
+                        feature: PrimitiveRayFeature3::HeightfieldTriangle(hit.triangle),
                         starts_inside: false,
+                    }),
+                )
+            } else if let Shape::ConvexHull { hull, .. } = target.shape {
+                let hit = self
+                    .convex_hull(hull)
+                    .ray(target, cast.origin, cast.displacement);
+                rock_face = hit.as_ref().and_then(|h| h.face);
+                work.queries += 1;
+                work.planes_tested += 1;
+                Ok(
+                    hit.map(|hit| geometry_kernels::primitive3::PrimitiveRayHit3 {
+                        fraction: hit.fraction,
+                        point: [0, 1, 2].map(|i| {
+                            f64::from(cast.origin.at(i))
+                                + f64::from(cast.displacement.at(i)) * hit.fraction
+                        }),
+                        normal: hit.normal,
+                        feature: PrimitiveRayFeature3::Interior,
+                        starts_inside: hit.starts_inside,
                     }),
                 )
             } else {
@@ -328,7 +378,7 @@ impl World {
                     primitive::nearest(hit.normal[1]),
                     primitive::nearest(hit.normal[2]),
                 ),
-                feature: hit.feature,
+                feature: rock_face.map_or_else(|| hit.feature.into(), RayFeature::ConvexHullFace),
                 starts_overlapping: hit.starts_inside,
                 support_velocity,
                 sensor: target.sensor,

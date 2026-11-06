@@ -9,6 +9,13 @@ state and contact/wake/retirement reports for the same commands and timesteps. C
 build- and target-specific; moving between targets or providers reconstructs physics from
 consumer-owned game state. `Checkpoint::restore()` never accepts Rapier state.
 
+Format 9 (#180) adds static convex hull shape tag 7 and embedded canonical hull vertices
+after the format-8 mesh slots. A u64 hull-slot count precedes one u64 vertex count per
+slot, then three physical scalars per vertex; zero vertices marks a removed slot. Restore
+rebuilds prepared geometry and validates one live hull body per populated slot. The algorithm
+version remains 11. The format-9 empty-world fixture changes intentionally; mesh tag 6 and
+its slot layout remain intact.
+
 Format 8 (#182) adds immutable static triangle meshes: shape tag 6 contains the geometry slot
 and conservative half extents. After the heightfield entries, a u64 mesh-slot count is followed
 by one presence byte per slot; live slots contain a u64 vertex count and f64 triples, then a
@@ -38,6 +45,7 @@ state and what the physics checkpoint continues:
 | Heightfield heights, grid, cell size, origin, removed cells | Game content | A SHA-256 fingerprint per live heightfield (its terrain index and the exact bits of the description's geometry). `restore` takes the descriptions again and rejects any other with `TerrainMismatch { index }` |
 | Heightfield body (id, key, material, layers) and its contacts | Physics | Inline body record (shape tag 4: terrain index, half extents); restore also checks the description yields the recorded centre and half extents |
 | Halfspaces | Physics | Inline body records (shape tag 5) and the halfspace test order (their creation order, which orders plane contacts in the solver) |
+| Convex rock hulls | Game content originally, physics continuation after admission | Canonical local hull vertices for each live slot; shape tag 6 stores slot id and conservative half extents. Removed hull slots have empty payloads so later ids remain stable. No dynamic hull solver state exists. |
 | Character settings (`CharacterSettings`) | Game configuration, but tiny | Inline, so a restored world needs no `add_character` |
 | Character's latest `exclude` | Physics continuation | Inline: a character pushed between its own moves still excludes that body. A game that registered its characters again after restore loses it, and the zone's push into an idler standing in the floor-excluded basin comes out differently (`re_registering_characters_after_restore_diverges`) |
 | Character known free of overlap | Physics continuation | One flag, restored at the new layout generation: the next move skips separation/depenetration exactly when the uninterrupted world would. No zone divergence was observed without it; it is kept so the next move's work path is the same |

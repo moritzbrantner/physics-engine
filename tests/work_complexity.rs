@@ -1639,3 +1639,90 @@ fn static_mesh_queries_prune_distant_triangles_and_reuse_preparation() {
         ],
     );
 }
+
+#[path = "support/greyhaven_rock.rs"]
+mod greyhaven_rock;
+
+#[test]
+fn authored_rock_queries_prune_unrelated_hulls_and_never_reprepare() {
+    use physics_engine::approximate::ConvexHullDesc;
+    let mut samples = Vec::new();
+    for rocks in [16u64, 32, 64, 128, 256] {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            ..Config::default()
+        })
+        .unwrap();
+        work::reset();
+        let mut retained_bytes = 0;
+        for i in 0..rocks {
+            let id = world
+                .add_convex_hull(
+                    ConvexHullDesc {
+                        vertices: greyhaven_rock::vertices()
+                            .into_iter()
+                            .map(|p| V(p[0], p[1], p[2]))
+                            .collect(),
+                        position: V((i % 16) as f32 * 6.0, 1.1, (i / 16) as f32 * 6.0),
+                        material: Default::default(),
+                    },
+                    Some(i),
+                )
+                .unwrap();
+            retained_bytes += world.convex_hull_stats(id).unwrap().retained_bytes as u64;
+        }
+        assert_eq!(work::get(Counter::HullPreparations), rocks * 32);
+        let mut hits = Vec::with_capacity(1);
+        let (mut nodes, mut exact, mut triangles, mut full_scans, mut preparations) =
+            (0, 0, 0, 0, 0);
+        for _ in 0..QUERIES {
+            work::reset();
+            let stats = world
+                .cast_shape(
+                    ShapeCast::new(
+                        QueryPose::new(Shape::capsule(0.3, 0.2), V(-2.3, 0.35, -0.4)),
+                        V(4.6, 0.0, 0.0),
+                    ),
+                    QueryFilter::default(),
+                    &mut hits,
+                )
+                .unwrap();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(world.body(hits[0].body).unwrap().key, Some(0));
+            nodes += work::get(Counter::TreeNodes);
+            exact += stats.exact_candidates;
+            triangles += stats.hull_segment_triangles_considered;
+            full_scans += work::get(Counter::FullScanBodies);
+            preparations += work::get(Counter::HullPreparations);
+        }
+        assert!(
+            triangles > 0,
+            "fixture must exercise exact edge/corner kernel work"
+        );
+        samples.push((
+            vec![("rocks", rocks)],
+            vec![
+                ("tree-nodes", nodes / QUERIES),
+                ("exact-tests", exact / QUERIES),
+                ("hull-triangles", triangles / QUERIES),
+                ("retained-bytes", retained_bytes),
+                ("prepared-vertices", rocks * 32),
+                ("preparations", preparations),
+                ("full-scan-bodies", full_scans),
+            ],
+        ));
+    }
+    judge(
+        "authored-rock-query",
+        &samples,
+        &[
+            ("tree-nodes", "rocks", "logarithmic"),
+            ("exact-tests", "rocks", "constant"),
+            ("hull-triangles", "rocks", "constant"),
+            ("retained-bytes", "rocks", "linear"),
+            ("prepared-vertices", "rocks", "linear"),
+            ("preparations", "", "zero"),
+            NO_FULL_SCAN,
+        ],
+    );
+}

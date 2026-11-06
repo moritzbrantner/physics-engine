@@ -30,7 +30,9 @@ wedge faces are bottom/-X/slope/+Z/-Z. Capsule cap/side seam ties prefer the cap
 a zero-length capsule uses the sphere feature. Feature identity describes
 local geometry, not a persistent contact/cache identifier; it expires when a
 body’s shape/lifecycle changes. Static-mesh rays expose `TriangleMeshTriangle(input_index)`. Shape casts expose
-`QueryHit::feature` for heightfield/static-mesh triangles; primitive shape features remain
+`QueryHit::feature` for heightfield/static-mesh triangles and `ConvexHullFace` for authored
+static hulls. Hull identifiers are canonical supporting face-plane indices; coplanar
+triangulated faces keep the first canonical plane containing the witness. Primitive shape features remain
 unspecified. Moving a chunk preserves its local triangle IDs; removal ends its identity.
 
 The shared kernel uses 32-machine-epsilon relative distance rounding for

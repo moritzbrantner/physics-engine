@@ -10,7 +10,7 @@ impl World {
     pub fn add_body(&mut self, body: Body) -> Result<BodyId, Error> {
         if matches!(
             body.shape,
-            Shape::Heightfield { .. } | Shape::TriangleMesh { .. }
+            Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::TriangleMesh { .. }
         ) {
             return Err(Error::InvalidInput);
         }
@@ -238,6 +238,9 @@ impl World {
         let removed = self.bodies[i].clone();
         if let Shape::TriangleMesh { mesh, .. } = removed.shape {
             self.triangle_meshes[mesh.0 as usize] = None;
+        }
+        if let Shape::ConvexHull { hull, .. } = removed.shape {
+            self.hulls[hull.0 as usize] = None;
         }
         self.bodies[i].id = BodyId::NONE;
         self.tombstones += 1;

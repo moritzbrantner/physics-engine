@@ -131,6 +131,45 @@ a fingerprint of each heightfield's description; `Checkpoint::restore` takes the
 again (#452). `add_body` rejects
 heightfield shapes.
 
+## Authored convex rocks (#180)
+
+`World::add_convex_hull(ConvexHullDesc { vertices, position, material }, key)` admits one
+immutable, nondegenerate **static** convex hull from its authored local vertices. The input can
+contain duplicates/interior vertices; the reusable `geometry-kernels::hull` QuickHull prepares a
+canonical outward-face representation once. The returned body has
+`Shape::ConvexHull { hull, half_extents }`: extents conservatively enclose every vertex even if
+the local proxy is asymmetric. The game owns the asset-to-scene fit and units (the Greyhaven rock
+proxies are fitted and quarter-turned by MMORPG). The engine owns contact queries, broad-phase
+admission and stable body/face identities. `add_body` cannot forge a hull id; remove and re-add
+releases/rebuilds the prepared geometry. No dynamic hull mass/inertia or hull×hull solver is added.
+
+In this first consumer slice, rays hit the **real convex faces** (with
+`RayFeature::ConvexHullFace`), and spheres/oriented capsules have overlap and translation-only
+shape casts. Sweeps first clip against a conservative capsule-expanded face envelope; exact
+face-interior impacts avoid iterative distance search, while edges, corners, and initial overlaps
+use the reusable f64 support-map distance/GJK/EPA kernels. Character movement, grounded
+state and line-of-sight queries use those paths. A swept or overlap query with an unsupported
+non-capsule/ball shape returns an explicit query error. Dynamic bodies do **not** receive
+rigid contact response against a static hull: an admitted physical pair returns
+`CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back the entire step.
+The game must keep Rapier as fallback for zones that need that interaction. Actual MMORPG
+projectiles sweep rays and reflect/stick at their first hit; those query paths use real hull
+faces. `QueryHit::feature` and ray hits expose deterministic `ConvexHullFace` identities;
+edge/corner witnesses choose the first canonical supporting face plane. Hull poses remain translation-only;
+nonidentity body orientations and forged hull query shapes are rejected. The oracle scenario `greyhaven-rock-hulls` uses the first real
+Greyhaven asset proxy, without box substitution; run `bash scripts/greyhaven-rock-hulls.sh`
+locally (`--perf` for the native release timing gate or `--stats` for exact work counters).
+
+`World::convex_hull_stats(body)` reports canonical vertex/triangle/unique-edge counts and
+retained geometry payload bytes (including prepared faces/edges and engine planes, excluding
+inline/allocator/world-tree overhead). Immutable geometry is shared across cloned worlds and
+reused after moving its fixed body. The `authored-rock-query` complexity family checks local
+queries among 16–256 actual Greyhaven rocks, with no full scan or query-time preparation.
+
+The opt-in checkpoint format 9 stores canonical hull vertices in their original hull-slot order,
+including empty slots for removed hulls. Restore rebuilds the prepared hulls and verifies their
+body extents. Ordinary game saves continue to reconstruct collision from game content.
+
 ## Halfspaces
 
 `Shape::HalfSpace` is the solid side of the plane through the body position; the outward

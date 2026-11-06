@@ -1,6 +1,6 @@
 //! Collision shapes: dimensions, bounds radii and inverse inertia.
 
-use super::{Real, TerrainId, TriangleMeshId, Vector};
+use super::{ConvexHullId, Real, TerrainId, TriangleMeshId, Vector};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -13,6 +13,11 @@ pub enum Shape {
     },
     /// Right triangular prism inside the local bounding box. The ramp rises toward -X.
     Wedge(Vector),
+    /// Authored immutable static convex hull, prepared by [`World::add_convex_hull`](super::World::add_convex_hull).
+    ConvexHull {
+        hull: ConvexHullId,
+        half_extents: Vector,
+    },
     /// Static terrain created by [`World::add_heightfield`](super::World::add_heightfield);
     /// `half_extents` bounds it around the body position.
     Heightfield {
@@ -42,12 +47,18 @@ impl Shape {
     /// answer queries and character moves; halfspaces also give dynamic bodies rigid contacts,
     /// heightfields give dynamic boxes rigid contacts.
     pub fn query_only(self) -> bool {
-        matches!(self, Self::Heightfield { .. } | Self::HalfSpace)
+        matches!(
+            self,
+            Self::Heightfield { .. } | Self::ConvexHull { .. } | Self::HalfSpace
+        )
     }
     pub fn radius(self) -> Real {
         match self {
             Self::Box(h)
             | Self::Wedge(h)
+            | Self::ConvexHull {
+                half_extents: h, ..
+            }
             | Self::Heightfield {
                 half_extents: h, ..
             }
@@ -66,6 +77,9 @@ impl Shape {
         match self {
             Self::Box(h)
             | Self::Wedge(h)
+            | Self::ConvexHull {
+                half_extents: h, ..
+            }
             | Self::Heightfield {
                 half_extents: h, ..
             }
@@ -82,9 +96,11 @@ impl Shape {
     }
     pub(super) fn valid_dimensions(self) -> bool {
         match self {
-            Self::Box(h) | Self::Wedge(h) => {
-                h.finite() && h.min_component() >= 1e-6 && h.max_component() < 1e12
-            }
+            Self::Box(h)
+            | Self::Wedge(h)
+            | Self::ConvexHull {
+                half_extents: h, ..
+            } => h.finite() && h.min_component() >= 1e-6 && h.max_component() < 1e12,
             Self::Sphere(radius) => radius.is_finite() && (1e-6..1e12).contains(&radius),
             Self::Heightfield {
                 half_extents: h, ..
@@ -143,6 +159,7 @@ impl Shape {
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
             // wedge inertia/pose contract is introduced. Terrain is static.
             Self::Wedge(_)
+            | Self::ConvexHull { .. }
             | Self::Heightfield { .. }
             | Self::TriangleMesh { .. }
             | Self::HalfSpace => None,

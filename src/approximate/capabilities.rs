@@ -147,7 +147,10 @@ mod tests {
                 let (low, high) = contact::bounds(&body);
                 let mut points = Vec::new();
                 match shape {
-                    Shape::Heightfield { .. } | Shape::TriangleMesh { .. } | Shape::HalfSpace => {
+                    Shape::Heightfield { .. }
+                    | Shape::ConvexHull { .. }
+                    | Shape::TriangleMesh { .. }
+                    | Shape::HalfSpace => {
                         unreachable!("primitives only")
                     }
                     Shape::Sphere(radius) => {

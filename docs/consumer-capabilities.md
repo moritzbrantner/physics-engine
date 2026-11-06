@@ -67,6 +67,25 @@ mmorpg#300, mmorpg#290 and a narrow MMORPG dragging adapter, but not game-side a
 filtering, multi-hit queries and projectiles, with the consumer issues that would gate each, is
 [D7](technical-decisions.md#d7--physical-interactions-reuse-the-world-consumer-gated-q32q38).
 
+### Greyhaven authored rock hulls (#180; consumer-gated partial C4/C11/C12)
+
+The first actual Greyhaven convex rock proxy is now exercised by `greyhaven-rock-hulls` in the
+Rapier oracle. `World::add_convex_hull` admits fixed hulls and the engine queries their true faces
+for rays, sphere/capsule overlaps and sweeps used by kinematic characters. A box no longer has
+to replace the authored shape in this engine-side fixture. This is **partial** until the game
+updates its rock adapter and the native/WASM cost and behavior gates demonstrate acceptable
+parity. Actual game projectiles use complete ray segments, including first-hit reflection;
+the fixture covers those segments without a frame-end overlap substitute. Unsupported
+dynamic-body/hull pairs return an atomic step error rather than silently separating. Generic
+hull×hull response remains unsupported, and the game
+must retain Rapier as its compatibility fallback for unsupported interactions. Run
+`bash scripts/greyhaven-rock-hulls.sh` (optional `--perf` timing gate or `--stats` work
+diagnostics) for the local reproducer (`--wasm` selects the WASM gate). The same-pose probe
+compares six actual two-rock grounding/seam moves with Rapier. Deterministic work contracts
+cover local support casts at 16–256 rocks, one-time preparation and retained geometry bytes.
+Native/WASM oracle gates remain required; game integration and browser acceptance are not
+established by the engine fixture.
+
 ## Experiment: circumsphere proxies for dodecahedron and icosahedron visuals (#465)
 
 An owner-approved, bounded experiment, not consumer adoption and not exact convex parity.

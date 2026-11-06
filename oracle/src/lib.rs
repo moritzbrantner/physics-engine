@@ -2,6 +2,8 @@
 //! and on physics-engine, records comparable observations, and checks behaviour invariants. The
 //! native binary also times both sides and fails when physics-engine is slower than Rapier.
 
+#[path = "../../tests/support/greyhaven_rock.rs"]
+mod greyhaven_fixture;
 pub mod kcc;
 pub mod probe;
 pub mod scenarios;
@@ -176,6 +178,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::crowd_fight::scenario(),
         scenarios::push::scenario(),
         scenarios::slopes::scenario(),
+        scenarios::greyhaven_rocks::scenario(),
         scenarios::stairs::scenario(),
         scenarios::stairs_pace::scenario(),
         scenarios::platforms::scenario(),

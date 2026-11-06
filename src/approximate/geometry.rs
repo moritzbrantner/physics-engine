@@ -97,6 +97,10 @@ impl ShapeKey {
                 bits(h.1),
                 bits(h.2),
             ],
+            Shape::ConvexHull {
+                hull,
+                half_extents: h,
+            } => [5 + u64::from(hull.0), bits(h.0), bits(h.1), bits(h.2)],
             Shape::HalfSpace => [u64::MAX, 0, 0, 0],
             Shape::Heightfield {
                 terrain,
