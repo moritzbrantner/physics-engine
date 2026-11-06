@@ -670,6 +670,7 @@ impl World {
                     t1,
                     t2,
                     angular,
+                    finite_response: false,
                     normal_mass: 1.0 / k,
                     tangent_mass: if spins {
                         [mass(1, t1).recip(), mass(2, t2).recip()]
@@ -698,6 +699,7 @@ impl World {
                     restitution,
                     bounce,
                 };
+                c.prepare_finite_response(&self.responses);
                 if self.scene.warm_start
                     && warm_reach > 0.0
                     && point.separation <= self.scene.contact_slop
@@ -1988,7 +1990,7 @@ pub(super) fn apply(
     c: &Constraint,
     impulse: [Real; 3],
 ) {
-    apply_components::<true>(bodies, responses, c, impulse);
+    apply_components::<true, true>(bodies, responses, c, impulse);
 }
 
 /// The normal solve has no tangential impulse. Keep its response update with the general
@@ -2000,17 +2002,31 @@ pub(super) fn apply_normal(
     c: &Constraint,
     impulse: Real,
 ) {
-    apply_components::<false>(bodies, responses, c, [impulse, 0.0, 0.0]);
+    apply_components::<true, false>(bodies, responses, c, [impulse, 0.0, 0.0]);
+}
+
+/// Friction changes only the two tangent components. The caller proves finite coefficients
+/// before omitting the normal's zero products.
+#[inline]
+pub(super) fn apply_tangent(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    c: &Constraint,
+    impulse: [Real; 2],
+) {
+    apply_components::<false, true>(bodies, responses, c, [0.0, impulse[0], impulse[1]]);
 }
 
 #[inline]
-fn apply_components<const TANGENTS: bool>(
+fn apply_components<const NORMAL: bool, const TANGENTS: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],
     c: &Constraint,
     impulse: [Real; 3],
 ) {
-    let j = if TANGENTS {
+    let j = if !NORMAL {
+        c.t1 * impulse[1] + c.t2 * impulse[2]
+    } else if TANGENTS {
         c.n * impulse[0] + c.t1 * impulse[1] + c.t2 * impulse[2]
     } else {
         c.n * impulse[0]
@@ -2021,7 +2037,9 @@ fn apply_components<const TANGENTS: bool>(
             b.velocity += j * (sign * responses[i].inverse_mass);
             if c.spin {
                 let [n, t1, t2] = c.angular[side];
-                let angular = if TANGENTS {
+                let angular = if !NORMAL {
+                    t1 * impulse[1] + t2 * impulse[2]
+                } else if TANGENTS {
                     n * impulse[0] + t1 * impulse[1] + t2 * impulse[2]
                 } else {
                     n * impulse[0]
@@ -2029,5 +2047,20 @@ fn apply_components<const TANGENTS: bool>(
                 b.angular_velocity += angular * sign;
             }
         }
+    }
+}
+
+impl Constraint {
+    /// Cache this proof with the row coefficients, not its changing velocities/impulses.
+    /// The unguarded response remains the failure path for overflowed mass/inertia.
+    pub(super) fn prepare_finite_response(&mut self, responses: &[PreparedResponse]) {
+        self.finite_response = self.n.finite()
+            && self.t1.finite()
+            && self.t2.finite()
+            && [(0, self.a), (1, self.b)].into_iter().all(|(side, i)| {
+                !self.response[side]
+                    || (responses[i].inverse_mass.is_finite()
+                        && (!self.spin || self.angular[side].iter().all(|v| v.finite())))
+            });
     }
 }
