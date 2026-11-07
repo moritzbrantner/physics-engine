@@ -853,10 +853,8 @@ impl World {
         let mut probe = self.bodies[i].clone();
         probe.position = position;
         let travel = probe.velocity * clock.remaining();
-        let swept_bounds = {
-            let now = contact::bounds(&probe);
-            union(now, (now.0 + travel, now.1 + travel))
-        };
+        let probe_now = contact::bounds(&probe);
+        let swept_bounds = union(probe_now, (probe_now.0 + travel, probe_now.1 + travel));
         let mut best: Option<(Real, usize, contact::Manifold, bool)> = None;
         let candidates = search.targets.map_or_else(
             || self.ccd_candidates(swept_bounds, &probe, travel, search.always, search.moving),
@@ -878,12 +876,15 @@ impl World {
             } else {
                 target.position = self.position_at(j, clock.elapsed, clock.h);
             }
-            let target_bounds = {
-                let now = contact::bounds(&target);
-                let motion = target.velocity * clock.remaining();
-                union(now, (now.0 + motion, now.1 + motion))
-            };
+            let target_now = contact::bounds(&target);
+            let motion = target.velocity * clock.remaining();
+            let target_bounds = union(target_now, (target_now.0 + motion, target_now.1 + motion));
             if !overlaps(swept_bounds, target_bounds) {
+                continue;
+            }
+            if let Some((time, ..)) = &best
+                && !self.may_hit_by(&probe, &target, (probe_now, target_now), *time, clock)
+            {
                 continue;
             }
             report.narrow_tests += 1;
@@ -924,6 +925,44 @@ impl World {
             }
         }
         Ok(best)
+    }
+
+    /// Whether `probe` and `target` can touch by `time`, a fraction of the remaining substep.
+    /// Once a hit at `time` is known, a candidate that cannot reach the probe by then can be
+    /// neither the earliest nor the order-tied hit, so its exact sweep can be skipped (#485)
+    /// without changing which event is selected. Only the closed-form sphere/box sweeps
+    /// qualify: they report the first surface contact (within 1e-6 of the radius), never an
+    /// earlier admission-margin time, and cannot fail on finite relative motion, so a skipped
+    /// sweep would have reported no hit or a later one. The window bounds are padded for that
+    /// contact tolerance, the slop and rounding, as the swept candidate bounds are.
+    fn may_hit_by(
+        &self,
+        probe: &Body,
+        target: &Body,
+        (probe_now, target_now): ((Vector, Vector), (Vector, Vector)),
+        time: Real,
+        clock: TickTime,
+    ) -> bool {
+        let analytic = |shape| matches!(shape, Shape::Sphere(_) | Shape::Box(_));
+        if !analytic(probe.shape) || !analytic(target.shape) {
+            return true;
+        }
+        let relative = (target.velocity - probe.velocity) * clock.remaining();
+        let span = time * clock.remaining();
+        let (a, b) = (probe.velocity * span, target.velocity * span);
+        let window_a = union(probe_now, (probe_now.0 + a, probe_now.1 + a));
+        let window_b = union(target_now, (target_now.0 + b, target_now.1 + b));
+        let magnitude = [window_a.0, window_a.1, window_b.0, window_b.1, relative]
+            .iter()
+            .fold(0.0, |m: Real, v| m.max(v.abs().max_component()));
+        let pad = 128.0 * Real::EPSILON * (1.0 + magnitude)
+            + 1e-5 * (1.0 + probe.shape.radius() + target.shape.radius())
+            + self.scene.contact_slop;
+        if !pad.is_finite() {
+            return true;
+        }
+        let padding = Vector(pad, pad, pad);
+        overlaps((window_a.0 - padding, window_a.1 + padding), window_b)
     }
 
     /// A body reaching its CCD pass limit is fixed at this TOI for the remainder of the tick.
