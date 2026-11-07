@@ -28,6 +28,7 @@ pub mod ray_sight;
 pub mod redbrand_cave;
 pub mod rigid_rocks;
 pub mod rope_joints;
+pub mod rotating_kinematic;
 pub mod slopes;
 pub mod stairs;
 pub mod stairs_pace;

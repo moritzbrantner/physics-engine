@@ -315,6 +315,29 @@ only to moves whose translation did not rise (as Rapier), so a step or a slide u
 height.
 `set_kinematic_position` places an external body without resolving contact; sleeping bodies
 within twice the contact slop of its old pose, or touching its new one, wake.
+`set_next_kinematic_pose(id, position, orientation)` moves an external body with positive mass
+to a pose over the next step, as Rapier's `set_next_kinematic_position(Pose)` on a
+`kinematic_position_based` body (#520; solid blades, rotating platforms, swinging doors). The
+step gives it the linear velocity and the angular velocity (shorter arc) of that pose change
+over its `dt`, so contacts see its real point velocities and push what it strikes; the step ends
+with the body exactly at the pose and at rest (velocities zero) until the next target. A later
+call before the step replaces the target; `step(0.0)` and a failed step keep it; `remove_body`
+drops it. The call places and wakes nothing: the moving body wakes the sleeping bodies it
+touches, leaves or meets on the way in the step's contact phase, as any moving kinematic body
+does. Its contact pairs are swept with its rotation (conservative advancement: no point of the
+pair moves faster than the relative speed plus angular speed × radius, so each round advances by
+the proven-free gap; at most 32 rounds, ending early at a proven-safe time), so a fast dynamic or
+CCD body is struck within the substep, not passed; its rows are reused across the step's
+substeps, advancing by its point velocities, as Rapier's are. Rejected (`InvalidInput`): a
+non-external or massless body, a character (moved by `move_characters`), a rotation-locked
+body given a new orientation, non-finite or out-of-range positions, an orientation farther than
+1e-4 from unit length (it is normalized), and at the step a target whose velocity is out of range
+(the step fails before changing anything). Characters touching it behave as on Rapier's
+controller: a character walking into its face is pushed out of the overlap (`Embedded::PushOut`;
+Rapier moves it by the body's velocity over the coming tick, so it leads by one tick of travel),
+and one not moving into it is passed through. Characters are not carried by its rotation. A
+pending target is not checkpointed (`CheckpointError::PendingKinematicPose`). The
+`rotating-kinematic` oracle scenario covers it.
 `set_static_position` moves a static body (mass 0, not external; not a halfspace or heightfield)
 in place, as Rapier moves a fixed collider (moving platforms): the layout stays valid, sleeping
 bodies it was in contact with or now touches wake, and characters it now reaches check for overlap
@@ -331,7 +354,9 @@ the rest of that substep rather than tunnelling (`Report::geometry.ccd_budget_fa
 `retire_on_impact` bodies instead stop at their impact and leave the world; the game owns their
 damage and other attack rules. `Report::swept_contacts` counts admitted remaining-time impulses.
 This is **translational** CCD: orientations are held fixed during each sweep, with rotation
-integrated between substeps. Sampled rotation is not exact rotational swept collision.
+integrated between substeps. Sampled rotation is not exact rotational swept collision. The
+exception is a pair with a turning kinematic (external) body, which is swept with that body's
+rotation by conservative advancement (#520, `set_next_kinematic_pose`).
 
 `ccd-ricochet`, `ccd-glancing`, `ccd-moving-wall` and `ccd-synchronized` (C20, MMORPG #290)
 exercise two elastic impacts in one 60 Hz tick, a moving kinematic obstacle, a glancing hit and
@@ -469,9 +494,9 @@ between the joined bodies stay enabled, as Rapier's default.
   across the joint. A taut rope holding a body from above supports it for sleep, as a contact
   under it does, so a still hanging load sleeps. A sleeping body joined to a moving external
   (kinematic) body wakes in the next step's contact phase.
-- **Driven anchors.** An external body moved by `set_velocity` drags its rope with its
-  velocity, as Rapier's velocity-based kinematic body. A body moved by `set_kinematic_position`
-  or `move_characters` carries no velocity, so a rope follows it only through the 3 m/s
+- **Driven anchors.** An external body moved by `set_velocity` or `set_next_kinematic_pose`
+  drags its rope with its velocity, as Rapier's kinematic bodies. A body moved by
+  `set_kinematic_position` or `move_characters` carries no velocity, so a rope follows it only through the 3 m/s
   position correction; a consumer dragging with a character sets the anchor body's velocity.
 - **Cost.** O(joints) per substep (rows and the wake test visit every joint, asleep or not);
   nothing without joints. Lookups and `remove_joint` are O(joints); `remove_body` adds
@@ -496,7 +521,8 @@ Checkpoints are opt-in (Cargo feature `checkpoints`) for debugging and logging. 
 checkpoints restore only on their own build and target
 ([floating checkpoints](floating-checkpoints.md)). Moving between providers or targets
 reconstructs physics from consumer-owned game state; Rapier state is never deserialized into a
-Physics Engine checkpoint. Worlds with joints are not checkpointed (`UnsupportedJoints`).
+Physics Engine checkpoint. Worlds with joints are not checkpointed (`UnsupportedJoints`), nor are
+worlds holding a `set_next_kinematic_pose` target for the next step (`PendingKinematicPose`).
 Heightfield heights stay game content: `checkpoint` records a fingerprint of each live
 heightfield's description, `Checkpoint::heightfield_bodies()` lists them and
 `Checkpoint::restore(&[HeightfieldDesc]) -> Result<World, CheckpointError>` takes their

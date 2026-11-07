@@ -1,6 +1,8 @@
 //! Body placement, velocity, impulses and forces, and the island wake they trigger.
 
-use super::{BodyId, Error, Order, Real, Shape, Vector, World, bookkeeping, contact, query};
+use super::{
+    BodyId, Error, Order, Quaternion, Real, Shape, Vector, World, bookkeeping, contact, query,
+};
 use crate::CollisionLayers3d;
 
 impl World {
@@ -30,6 +32,122 @@ impl World {
             self.body_placed(id);
         }
         Ok(())
+    }
+    /// Moves an external (kinematic) body with positive mass to `position` and `orientation`
+    /// over the next [`World::step`], as Rapier's `set_next_kinematic_position(Pose)` on a
+    /// `kinematic_position_based` body (#520). The step gives the body the linear and angular
+    /// velocity of that pose change over its `dt` (the shorter arc), so contacts see the
+    /// body's real point velocities and push what it strikes; the step ends with the body
+    /// exactly at the pose and at rest, until the next call. A later call before the step
+    /// replaces the target; `step(0.0)` and a failed step keep it. Nothing is placed or woken by
+    /// the call: the moving body wakes the sleeping bodies it touches, leaves or meets on the
+    /// way in the step's contact phase, as any moving kinematic body does (the moving body's
+    /// swept test against a sleeper). Characters are moved by
+    /// [`World::move_characters`] and are rejected, as are non-finite or out-of-range positions
+    /// and an orientation farther than 1e-4 from unit length (it is normalized).
+    pub fn set_next_kinematic_pose(
+        &mut self,
+        id: BodyId,
+        position: Vector,
+        orientation: Quaternion,
+    ) -> Result<(), Error> {
+        let i = self.index(id)?;
+        let b = &self.bodies[i];
+        let norm = (orientation.0 * orientation.0
+            + orientation.1 * orientation.1
+            + orientation.2 * orientation.2
+            + orientation.3 * orientation.3)
+            .sqrt();
+        if !b.external
+            || b.mass <= 0.0
+            || self.characters.contains(id)
+            || !position.finite()
+            || position.abs().max_component() >= 1e12
+            || !orientation.finite()
+            || !norm.is_finite()
+            || (norm - 1.0).abs() > 1e-4
+        {
+            return Err(Error::InvalidInput);
+        }
+        let orientation = orientation.normalized();
+        if b.rotation_locked && orientation != b.orientation {
+            return Err(Error::InvalidInput);
+        }
+        let bits = id.to_bits();
+        let target = (bits, position, orientation);
+        match self.kinematic_poses.binary_search_by_key(&bits, |t| t.0) {
+            Ok(at) => self.kinematic_poses[at] = target,
+            Err(at) => self.kinematic_poses.insert(at, target),
+        }
+        Ok(())
+    }
+    /// The velocity and angular velocity taking body `i` to `(position, orientation)` over
+    /// `1 / rate` seconds, or `None` when out of range.
+    fn pose_motion(
+        &self,
+        i: usize,
+        position: Vector,
+        orientation: Quaternion,
+        rate: Real,
+    ) -> Option<(Vector, Vector)> {
+        let b = &self.bodies[i];
+        let v = (position - b.position) * rate;
+        let w = b.orientation.rotation_to(orientation) * rate;
+        (v.finite()
+            && v.abs().max_component() < 1e12
+            && w.finite()
+            && w.abs().max_component() < 1e9)
+            .then_some((v, w))
+    }
+    /// Step start (after the transaction began): each pending pose target sets its body's
+    /// velocity and angular velocity to reach it over `dt`. Rejects, before changing anything,
+    /// a target whose velocity is out of range.
+    pub(super) fn begin_kinematic_poses(
+        &mut self,
+        dt: crate::numeric::Scalar,
+    ) -> Result<(), Error> {
+        if self.kinematic_poses.is_empty() {
+            return Ok(());
+        }
+        let rate = (1.0 / dt) as Real;
+        for &(bits, position, orientation) in &self.kinematic_poses {
+            if let Ok(i) = self.index(BodyId::from_bits(bits))
+                && self.pose_motion(i, position, orientation, rate).is_none()
+            {
+                return Err(Error::InvalidInput);
+            }
+        }
+        for n in 0..self.kinematic_poses.len() {
+            let (bits, position, orientation) = self.kinematic_poses[n];
+            let Ok(i) = self.index(BodyId::from_bits(bits)) else {
+                continue;
+            };
+            let (v, w) = self
+                .pose_motion(i, position, orientation, rate)
+                .expect("checked above");
+            let b = &mut self.bodies[i];
+            self.transaction.body(i, b);
+            b.velocity = v;
+            b.angular_velocity = w;
+        }
+        Ok(())
+    }
+    /// Step end (inside the transaction): each pose-driven body lands exactly on its target and
+    /// stops. A successful step then consumes the targets; a rollback keeps them (see `step`).
+    pub(super) fn finish_kinematic_poses(&mut self) {
+        for n in 0..self.kinematic_poses.len() {
+            let (bits, position, orientation) = self.kinematic_poses[n];
+            let Ok(i) = self.index(BodyId::from_bits(bits)) else {
+                continue;
+            };
+            let b = &mut self.bodies[i];
+            self.transaction.body(i, b);
+            b.position = position;
+            b.orientation = orientation;
+            b.velocity = Vector::ZERO;
+            b.angular_velocity = Vector::ZERO;
+            b.cached_bounds = contact::bounds(b);
+        }
     }
     /// Wakes the islands of `wake` (body orders), once each.
     fn wake_orders(&mut self, mut wake: Vec<Order>) {

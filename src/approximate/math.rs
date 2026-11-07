@@ -130,6 +130,27 @@ impl Quaternion {
         )
         .normalized()
     }
+    /// The rotation vector (axis times angle, radians, at most pi) taking `self` to `to`, in
+    /// world coordinates: `to = exp(r) * self`, along the shorter arc.
+    pub(crate) fn rotation_to(self, to: Self) -> Vector {
+        // d = to * conj(self).
+        let (a, b) = (to, Self(-self.0, -self.1, -self.2, self.3));
+        let mut d = Self(
+            a.3 * b.0 + a.0 * b.3 + a.1 * b.2 - a.2 * b.1,
+            a.3 * b.1 - a.0 * b.2 + a.1 * b.3 + a.2 * b.0,
+            a.3 * b.2 + a.0 * b.1 - a.1 * b.0 + a.2 * b.3,
+            a.3 * b.3 - a.0 * b.0 - a.1 * b.1 - a.2 * b.2,
+        );
+        if d.3 < 0.0 {
+            d = Self(-d.0, -d.1, -d.2, -d.3);
+        }
+        let v = Vector(d.0, d.1, d.2);
+        let s = v.length();
+        if s == 0.0 {
+            return Vector::ZERO;
+        }
+        v * (2.0 * s.atan2(d.3) / s)
+    }
     pub fn axes(self) -> [Vector; 3] {
         [
             self.rotate(Vector::X),

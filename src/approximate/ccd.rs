@@ -38,6 +38,15 @@ fn union((lo, hi): (Vector, Vector), (bl, bh): (Vector, Vector)) -> (Vector, Vec
     )
 }
 
+/// How far a turning kinematic body's points reach through rotation in `time` (#520).
+fn turning_reach(b: &Body, time: Real) -> Real {
+    if b.external {
+        contact::spin_reach(b) * time
+    } else {
+        0.0
+    }
+}
+
 fn ccd_contact_velocity(body: &Body, arm: Vector, frozen: bool) -> Vector {
     if frozen {
         Vector::ZERO
@@ -238,6 +247,16 @@ impl World {
             b.position + b.velocity * (fraction * h) + offset
         } else {
             b.position
+        }
+    }
+
+    /// A turning kinematic target's orientation at the clock (#520): the remaining-time search
+    /// sweeps it on from there (`contact::turning_sweep`).
+    fn turn_to(&self, target: &mut Body, clock: TickTime) {
+        if target.external && contact::spin_reach(target) > 0.0 && clock.elapsed > 0.0 {
+            target.orientation = target
+                .orientation
+                .integrate(target.angular_velocity, clock.elapsed * clock.h);
         }
     }
 
@@ -775,15 +794,21 @@ impl World {
             return None;
         }
         let mut target = b.clone();
-        let motion = if let Some((_, position)) = frozen.iter().find(|(index, _)| *index == j) {
-            target.position = *position;
-            Vector::ZERO
-        } else {
-            target.position = self.position_at(j, clock.elapsed, clock.h);
-            target.velocity * clock.remaining()
-        };
+        let (motion, turn) =
+            if let Some((_, position)) = frozen.iter().find(|(index, _)| *index == j) {
+                target.position = *position;
+                (Vector::ZERO, 0.0)
+            } else {
+                target.position = self.position_at(j, clock.elapsed, clock.h);
+                self.turn_to(&mut target, clock);
+                (
+                    target.velocity * clock.remaining(),
+                    turning_reach(&target, clock.remaining()),
+                )
+            };
         let now = contact::bounds(&target);
         let (lo, hi) = union(now, (now.0 + motion, now.1 + motion));
+        let (lo, hi) = (lo - Vector(turn, turn, turn), hi + Vector(turn, turn, turn));
         if !lo.finite() || !hi.finite() {
             return None;
         }
@@ -875,10 +900,16 @@ impl World {
                 target.velocity = Vector::ZERO;
             } else {
                 target.position = self.position_at(j, clock.elapsed, clock.h);
+                self.turn_to(&mut target, clock);
             }
             let target_now = contact::bounds(&target);
             let motion = target.velocity * clock.remaining();
+            let turn = turning_reach(&target, clock.remaining());
             let target_bounds = union(target_now, (target_now.0 + motion, target_now.1 + motion));
+            let target_bounds = (
+                target_bounds.0 - Vector(turn, turn, turn),
+                target_bounds.1 + Vector(turn, turn, turn),
+            );
             if !overlaps(swept_bounds, target_bounds) {
                 continue;
             }
@@ -950,7 +981,8 @@ impl World {
         clock: TickTime,
     ) -> bool {
         let analytic = |shape| matches!(shape, Shape::Sphere(_) | Shape::Box(_));
-        if !analytic(probe.shape) || !analytic(target.shape) {
+        if !analytic(probe.shape) || !analytic(target.shape) || contact::driven_spin(probe, target)
+        {
             return true;
         }
         let relative = (target.velocity - probe.velocity) * clock.remaining();

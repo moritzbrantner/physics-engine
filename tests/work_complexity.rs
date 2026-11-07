@@ -13,8 +13,8 @@ use physics_engine::{
     BodyId, CollisionLayers3d,
     approximate::{
         Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config,
-        DistanceJoint, Error, HeightfieldDesc, QueryFilter, QueryHit, QueryPose, RayCast, RayHit,
-        Shape, ShapeCast, Vector as V, World,
+        DistanceJoint, Error, HeightfieldDesc, Quaternion, QueryFilter, QueryHit, QueryPose,
+        RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -1984,6 +1984,77 @@ fn sphere_static_contacts_visit_only_the_nearby_terrain_and_hull() {
             ("narrow-tests", "terrainCells", "constant"),
             ("narrow-tests", "rocks", "constant"),
             ("preparations", "", "zero"),
+        ],
+    );
+}
+
+/// `blades` kinematic blades high above a static town, each spinning about its own centre with
+/// a small sphere 0.23 m ahead in its path (#520).
+fn turning_town(statics: usize, blades: u64) -> (World, Vec<BodyId>, Vec<BodyId>) {
+    let mut w = debris_town(statics, 1 << (statics.trailing_zeros().div_ceil(2)), 0);
+    let (mut ids, mut balls) = (Vec::new(), Vec::new());
+    for k in 0..blades {
+        // 6 m apart: a blade's broad-phase box (its radius of turning room) reaches no other.
+        let centre = cell((k % 16) as usize * 3, (k / 16) as usize * 3) + V(0.0, 20.0, 0.0);
+        let mut blade = Body::keyed(5_000_000 + k, Shape::Box(V(1.0, 0.25, 0.02)), centre, 1.0);
+        blade.external = true;
+        ids.push(w.add_body(blade).unwrap());
+        let ball = Body::keyed(
+            6_000_000 + k,
+            Shape::Sphere(0.05),
+            centre + V(0.9, 0.0, -0.3),
+            1.0,
+        );
+        balls.push(w.add_body(ball).unwrap());
+    }
+    (w, ids, balls)
+}
+
+/// A step that turns kinematic blades through the spheres in their paths: the pose targets,
+/// the turning sweeps and the step's per-body work follow the blades, not the town (#520).
+#[test]
+fn turning_kinematic_bodies_follow_the_blades_not_the_town() {
+    let mut samples = Vec::new();
+    let points = [9u32, 10, 11, 12, 13]
+        .iter()
+        .map(|&s| (s, 8u64))
+        .chain([1u64, 2, 4, 16, 32, 64].iter().map(|&b| (12, b)));
+    for (log2, blades) in points {
+        let statics = 1usize << log2;
+        let (mut w, ids, balls) = turning_town(statics, blades);
+        w.step(1.0 / 60.0).unwrap();
+        work::reset();
+        // 60 rad/s: each blade passes its sphere within the step.
+        let (s, c) = 0.5f32.sin_cos();
+        for &id in &ids {
+            let p = w.body(id).unwrap().position;
+            w.set_next_kinematic_pose(id, p, Quaternion(0.0, s, 0.0, c))
+                .unwrap();
+        }
+        let report = w.step(1.0 / 60.0).unwrap();
+        for &ball in &balls {
+            let b = w.body(ball).unwrap();
+            assert!(b.velocity.2 < -10.0, "a sphere was not struck: {b:?}");
+        }
+        samples.push((
+            vec![("statics", statics as u64), ("blades", blades)],
+            vec![
+                ("sweep-rounds", report.geometry.primitive_sweep_iterations),
+                ("body-visits", work::get(Counter::BodyVisits)),
+                ("pair-tests", report.pair_tests),
+            ],
+        ));
+    }
+    judge(
+        "step-kinematic-pose",
+        &samples,
+        &[
+            ("sweep-rounds", "statics", "constant"),
+            ("sweep-rounds", "blades", "linear"),
+            ("body-visits", "statics", "constant"),
+            ("body-visits", "blades", "linear"),
+            ("pair-tests", "statics", "constant"),
+            ("pair-tests", "blades", "linear"),
         ],
     );
 }

@@ -10,7 +10,8 @@
 //! rational remainder tree, event-restart loop, or whole-world sleep proxy conversion is used.
 //!
 //! CCD sweeps translation over each substep for fast shapes. Orientations are held fixed during
-//! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD.
+//! those sweeps and integrated between substeps, so this is NOT analytic rotational CCD; only a
+//! pair with a turning kinematic body is swept with its rotation (conservative advancement).
 
 /// Physical-state scalar. Elapsed time stays [`numeric::Scalar`] (`f64`).
 pub type Real = f32;
@@ -228,6 +229,8 @@ pub struct World {
     held_contacts: Vec<ContactChange>,
     /// Joints in canonical row order (#453).
     joints: joint::Joints,
+    /// Pose targets for the next step (`set_next_kinematic_pose`, #520), sorted by body id bits.
+    kinematic_poses: Vec<(u64, Vector, Quaternion)>,
 }
 /// One contact cache insertion or removal, with the pair's ids at that moment.
 #[derive(Clone, Copy, Debug)]
@@ -330,6 +333,7 @@ impl World {
             removed_contacts: 0,
             held_contacts: Vec::new(),
             joints: joint::Joints::default(),
+            kinematic_poses: Vec::new(),
         })
     }
     /// Work from the most recent step attempt, including a numerical failure.

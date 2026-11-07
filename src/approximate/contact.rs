@@ -1075,6 +1075,9 @@ pub(super) fn swept(
     work: &mut GeometryStats,
 ) -> Result<Option<Manifold>, super::SweepFailure> {
     work.sweep_queries += 1;
+    if driven_spin(a, b) {
+        return Ok(turning_sweep(a, b, dt, margin, work));
+    }
     let (pair, reversed) = primitive::canonical_pair(a.shape, b.shape);
     let (left, right) = if reversed { (b, a) } else { (a, b) };
     let time = match pair {
@@ -1190,6 +1193,82 @@ fn impact_margin(a: &Body, b: &Body, dt: Real, margin: Real) -> Real {
         + a.shape.radius()
         + b.shape.radius();
     margin.max(1e-6) + super::NARROWING_ULPS * Real::EPSILON * (1.0 + scale)
+}
+
+/// Whether the pair holds an external (kinematic) body that turns a non-spherical shape: its
+/// sweep follows that rotation (`turning_sweep`) instead of holding orientations fixed (#520).
+pub(super) fn driven_spin(a: &Body, b: &Body) -> bool {
+    [a, b]
+        .into_iter()
+        .any(|x| x.external && spin_reach(x) > 0.0)
+}
+/// The farthest any point of `b` moves per second through its rotation about its centre.
+pub(super) fn spin_reach(b: &Body) -> Real {
+    if matches!(b.shape, Shape::Sphere(_) | Shape::HalfSpace) || b.rotation_locked {
+        0.0
+    } else {
+        b.angular_velocity.length() * b.shape.radius()
+    }
+}
+/// `b` after `t` seconds of its velocity and rotation, as the substep integrates them.
+fn advanced(b: &Body, t: Real) -> Body {
+    let mut x = b.clone();
+    x.position += b.velocity * t;
+    if spin_reach(b) > 0.0 {
+        x.orientation = b.orientation.integrate(b.angular_velocity, t);
+    }
+    x
+}
+/// Conservative advancement over `dt` for a pair whose kinematic side turns (#520): no point
+/// of either body moves faster than `|v_b - v_a| + spin_reach(a) + spin_reach(b)`, so the
+/// pair cannot touch before its current gap closes at that speed. Each round advances both
+/// bodies (translation and rotation) by that lower bound until the gap is within the stop
+/// distance; a pair whose gap the bound cannot close within `dt` has no impact. The manifold
+/// is taken at the impact poses, its separations moved back to the substep start along the
+/// contact points' relative velocity, as `finish_sweep` does for translation. The round
+/// budget ends early at the last proven-safe time, never later than the impact.
+fn turning_sweep(
+    a: &Body,
+    b: &Body,
+    dt: Real,
+    margin: Real,
+    work: &mut GeometryStats,
+) -> Option<Manifold> {
+    const ROUNDS: usize = 32;
+    let speed = (b.velocity - a.velocity).length() + spin_reach(a) + spin_reach(b);
+    let stop = impact_margin(a, b, dt, margin)
+        .max(0.01 * a.shape.radius().min(b.shape.radius()).max(1e-3));
+    if !(speed > 0.0 && speed.is_finite() && dt > 0.0) {
+        return None;
+    }
+    let mut time: Real = 0.0;
+    for round in 0..ROUNDS {
+        work.primitive_sweep_iterations += 1;
+        let (aa, bb) = (advanced(a, dt * time), advanced(b, dt * time));
+        let reach = speed * dt * (1.0 - time);
+        let m = current_counted(&aa, &bb, stop + reach, work)?;
+        let gap = (&m.points)
+            .into_iter()
+            .map(|p| p.separation)
+            .fold(Real::INFINITY, Real::min);
+        if gap <= stop || round + 1 == ROUNDS {
+            let mut m = m;
+            for p in &mut m.points {
+                let relative = (b.velocity + b.angular_velocity.cross(p.rb))
+                    - (a.velocity + a.angular_velocity.cross(p.ra));
+                p.separation -= relative.dot(m.normal) * dt * time;
+            }
+            m.swept = true;
+            m.time = time;
+            return Some(m);
+        }
+        let next = time + (gap - 0.5 * stop) / (speed * dt);
+        if next.is_nan() || next >= 1.0 {
+            return None;
+        }
+        time = next;
+    }
+    None
 }
 
 fn finish_sweep(
