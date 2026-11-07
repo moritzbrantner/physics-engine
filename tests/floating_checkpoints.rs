@@ -106,6 +106,8 @@ fn fixture(config: Config) -> World {
     rotating.orientation = Quaternion(1.0, 2.0, 3.0, 4.0);
     rotating.angular_velocity = V(0.3, 0.2, -0.1);
     rotating.sleep_allowed = false;
+    // Per-body state round-trips (#521).
+    rotating.additional_solver_iterations = 3;
     world.add_body(rotating).unwrap();
     let mut external = Body::keyed(31, Shape::capsule(0.3, 0.3), V(20.0, 0.6, 0.0), 2.5);
     external.external = true;
@@ -361,10 +363,10 @@ const CONFIG_BYTES: usize = 7 * W + 7;
 fn body_start() -> usize {
     config_start() + CONFIG_BYTES + 16 + 8
 }
-/// Sphere and box body records: 29 fixed bytes (id, key tag, key or serial, ...) plus 30 or
+/// Sphere and box body records: 30 fixed bytes (id, key tag, key or serial, ...) plus 30 or
 /// 32 physical scalars. Physical fields start 17 bytes into a record.
-const SPHERE_BODY_BYTES: usize = 29 + 32 * W;
-const BOX_BODY_BYTES: usize = 29 + 34 * W;
+const SPHERE_BODY_BYTES: usize = 30 + 32 * W;
+const BOX_BODY_BYTES: usize = 30 + 34 * W;
 
 #[test]
 fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_world() {
@@ -384,6 +386,7 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         );
     }
     for (offset, value, error) in [
+        (8, 10u32, CheckpointError::UnsupportedFormat(10)),
         (8, 9u32, CheckpointError::UnsupportedFormat(9)),
         (8, 6u32, CheckpointError::UnsupportedFormat(6)),
         (8, 5u32, CheckpointError::UnsupportedFormat(5)),
@@ -462,8 +465,8 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
         (b + 18 + 16 * W, 1.1),
         (b + 18 + 17 * W, -1.0),
         (b + 18 + 18 * W, Real::NAN),
-        (b + 29 + 19 * W, -0.1),
-        (b + 29 + 20 * W, Real::NAN),
+        (b + 30 + 19 * W, -0.1),
+        (b + 30 + 20 * W, Real::NAN),
         (c + 3 * W + 3, -0.1),
     ] {
         let mut bad = saved.clone();
@@ -478,7 +481,9 @@ fn bounded_parser_rejects_semantically_invalid_authoritative_data() {
     for (offset, value) in [
         (b + 17 + 13 * W, 99),
         (b + 19 + 19 * W, 128),
-        (b + 28 + 19 * W, 2),
+        // Additional solver iterations above 64, then an unknown support tag.
+        (b + 20 + 19 * W, 65),
+        (b + 29 + 19 * W, 2),
         (c + 6 * W + 4, 2),
         (c + 6 * W + 5, 3),
     ] {
@@ -609,7 +614,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_ten_algorithm_nineteen_f32_empty_world_wire_fixture_is_stable() {
+fn format_eleven_algorithm_nineteen_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -619,13 +624,13 @@ fn format_ten_algorithm_nineteen_f32_empty_world_wire_fixture_is_stable() {
     .unwrap();
     let encoded = bytes(&world);
     assert_eq!(&encoded[..8], b"PEFLT32\0");
-    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 10);
+    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 11);
     assert_eq!(
         Sha256::digest(&encoded)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "c6c11a50d46b1aa6bb8482d13a1286ba5bb8211231a64c7414f0ff36533da5d5"
+        "fac591873fa7e148baed0cc2094bc4510b36bc70538640829ecb6a32873c101a"
     );
 }
 

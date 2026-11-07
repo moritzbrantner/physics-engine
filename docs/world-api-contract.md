@@ -525,6 +525,38 @@ between the joined bodies stay enabled, as Rapier's default.
 The `rope-joints` oracle scenario (C21) checks dragged and hanging fixtures against Rapier; see
 [consumer capabilities](consumer-capabilities.md).
 
+## Additional solver iterations
+
+`Body::additional_solver_iterations` (`u8`, `0..=64`, default 0; larger values are
+`InvalidInput`) is Rapier's `RigidBodyBuilder::additional_solver_iterations` for one world that
+mixes cheap and demanding bodies (#521: MMORPG's upright props at one pass and its tumbling
+debris at four, previously two worlds).
+
+- **Islands.** Each substep, the awake dynamic bodies joined by that substep's contact and joint
+  rows form islands, as for the contact-island convergence scope; fixed, external and sleeping
+  bodies join none, so they never glue two islands together and their own request is unused.
+  This is Rapier's grouping (`update_substep_groups`: a union over active contacts and joints
+  between awake dynamic bodies, the island taking the largest request among its bodies).
+- **Passes.** After the world's `velocity_iterations` passes over every row, each island holding a
+  requesting body runs the largest request among its bodies as further passes over its own rows,
+  in row order. Islands share no mutable velocity, so an island with extra `e` solves exactly as
+  it would with `velocity_iterations + e` passes (fixed passes; with `Config::convergence` its
+  extra passes probe for an early exit after 2, 4, 8, ... of them), and every other island's solve
+  is unchanged. Rapier spends its extra iterations as extra substeps (a smaller `dt`, with its
+  stabilization pass in each); here they are extra velocity passes in the same substep. The
+  world's substeps, position correction and the CCD impact budget (`velocity_iterations`) are
+  unchanged.
+- **Default.** With no live body requesting extra passes the step is bit-identical to a world
+  without the field; the solver never looks for islands. Otherwise finding the elevated islands
+  is one scan of the substep's rows, and the extra row visits are proportional to the elevated
+  islands' rows (`Report::islands.{elevated_islands, extra_iterations,
+  extra_constraint_visits}`, `step-additional-iterations` complexity contract).
+- **Determinism.** Islands are solved in order of their lowest body, rows in their canonical
+  order; the result is the same in both storage modes and for any worker count.
+
+The field is set before `add_body`, like the body's material. The `mixed-iterations` oracle
+scenario (C18) runs upright props and extra-pass debris in one world against Rapier.
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the

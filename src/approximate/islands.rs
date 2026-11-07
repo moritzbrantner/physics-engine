@@ -40,6 +40,13 @@ pub struct IslandStats {
     /// Shared first two passes, allowing wholly easy substeps to avoid partitioning at all.
     pub shared_prefix_iterations: u64,
     pub prefix_converged_substeps: u64,
+    /// Islands given extra passes by a body's `additional_solver_iterations`, summed over
+    /// substeps.
+    pub elevated_islands: u64,
+    /// Extra passes run over those islands (after any early exit), summed over islands.
+    pub extra_iterations: u64,
+    /// Row visits of those extra passes.
+    pub extra_constraint_visits: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -50,6 +57,8 @@ struct Node {
     first: usize,
     rows: usize,
     cursor: usize,
+    /// The largest `additional_solver_iterations` among the island's bodies (roots only).
+    extra: u8,
 }
 
 /// Reusable union-find plus a stable CSR row view; constraints themselves are never reordered.
@@ -71,6 +80,14 @@ fn reserve<T>(values: &mut Vec<T>, needed: usize, stats: &mut IslandStats) {
 fn mutable_velocity(b: &Body) -> bool {
     b.movable() && !b.sleeping
 }
+/// A body whose island takes extra passes.
+fn elevated(b: &Body) -> u8 {
+    if mutable_velocity(b) {
+        b.additional_solver_iterations
+    } else {
+        0
+    }
+}
 
 impl Scratch {
     pub fn retained_bytes(&self) -> u64 {
@@ -87,6 +104,7 @@ impl Scratch {
                 first: i,
                 rows: 0,
                 cursor: 0,
+                extra: 0,
             };
             stats.dynamic_nodes += 1;
         }
@@ -293,6 +311,63 @@ pub(super) fn solve(
         result
     };
     convergence::record_substep(outcome, iterations, report);
+}
+
+/// Rapier's `additional_solver_iterations`: after the world's passes, each island whose bodies
+/// request extra passes runs the largest request among them over its own rows. Islands share no
+/// mutable body, so this equals that island running `velocity_iterations + extra` passes while
+/// every other island keeps exactly its world-pass result. Only called while the world holds an
+/// elevated body; with none in this substep's rows it is one scan of the rows.
+pub(super) fn solve_extra(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    tolerance: Option<Convergence>,
+    scratch: &mut Scratch,
+    report: &mut Report,
+) {
+    if !constraints
+        .iter()
+        .any(|c| elevated(&bodies[c.a]) > 0 || elevated(&bodies[c.b]) > 0)
+    {
+        return;
+    }
+    scratch.prepare(bodies, constraints, &mut report.islands);
+    for c in constraints.iter() {
+        for i in [c.a, c.b] {
+            let extra = elevated(&bodies[i]);
+            if extra > 0 {
+                let root = scratch.root(i, &mut report.islands);
+                scratch.nodes[root].extra = scratch.nodes[root].extra.max(extra);
+            }
+        }
+    }
+    let mut run = |selected: Option<&[usize]>, extra: u8, report: &mut Report| {
+        let visits = report.convergence.constraint_visits;
+        let outcome = convergence::solve_extra(
+            bodies,
+            responses,
+            constraints,
+            selected,
+            extra,
+            tolerance,
+            report,
+        );
+        report.islands.elevated_islands += 1;
+        report.islands.extra_iterations += u64::from(outcome.passes);
+        report.islands.extra_constraint_visits += report.convergence.constraint_visits - visits;
+    };
+    if scratch.roots.len() == 1 {
+        let extra = scratch.nodes[scratch.roots[0]].extra;
+        run(None, extra, report);
+        return;
+    }
+    for (k, bounds) in scratch.offsets.windows(2).enumerate() {
+        let extra = scratch.nodes[scratch.roots[k]].extra;
+        if extra > 0 {
+            run(Some(&scratch.rows[bounds[0]..bounds[1]]), extra, report);
+        }
+    }
 }
 
 #[cfg(test)]

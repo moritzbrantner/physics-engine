@@ -223,6 +223,7 @@ impl Journal {
         // can shift every later storage index during an earlier substep.
         for body in self.removed.drain(..) {
             world.static_changed(&body);
+            world.elevated_bodies += usize::from(body.additional_solver_iterations > 0);
             let index = world
                 .bodies
                 .binary_search_by_key(&body.order, |b| b.order)

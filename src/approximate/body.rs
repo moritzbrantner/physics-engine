@@ -3,6 +3,9 @@
 use super::{CombineRule, Quaternion, Real, Shape, Vector};
 use crate::{BodyId, CollisionLayers3d};
 
+/// The largest [`Body::additional_solver_iterations`], as `Config::velocity_iterations` is capped.
+const MAX_ADDITIONAL_SOLVER_ITERATIONS: u8 = 64;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Body {
     /// Assigned by [`World::add_body`](super::World::add_body); [`BodyId::NONE`] before.
@@ -47,6 +50,13 @@ pub struct Body {
     pub ccd: bool,
     pub retire_on_impact: bool,
     pub linear_support: Option<Vector>,
+    /// Extra velocity-solver passes, `0..=64`, default 0 (Rapier's
+    /// `RigidBodyBuilder::additional_solver_iterations`). Each substep, the contact island holding
+    /// this body (awake dynamic bodies joined by this substep's contact and joint rows) runs
+    /// `Config::velocity_iterations` plus the largest extra count among its bodies. External,
+    /// immovable and sleeping bodies join no island, so their own count is unused. See
+    /// docs/world-api-contract.md.
+    pub additional_solver_iterations: u8,
     pub(super) sleeping: bool,
     pub(super) quiet_time: Real,
     pub(super) force: Vector,
@@ -95,6 +105,7 @@ impl Body {
             ccd: false,
             retire_on_impact: false,
             linear_support: None,
+            additional_solver_iterations: 0,
             sleeping: false,
             quiet_time: 0.0,
             force: Vector::ZERO,
@@ -174,6 +185,7 @@ impl Body {
             && (0.0..=1.0).contains(&self.restitution)
             && (0.0..1e6).contains(&self.linear_damping)
             && (0.0..1e6).contains(&self.angular_damping)
+            && self.additional_solver_iterations <= MAX_ADDITIONAL_SOLVER_ITERATIONS
             && (!self.rotation_locked || self.angular_velocity == Vector::ZERO)
             && (self.mass > 0.0
                 || (self.velocity == Vector::ZERO && self.angular_velocity == Vector::ZERO))

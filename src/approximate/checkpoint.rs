@@ -20,14 +20,14 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 10;
+const FORMAT: u32 = 11;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 19;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
-// Fixed fields: id 8, key tag 1, key or serial 8, shape tag 1, flags 2, layers 8, support tag
-// 1; 31 physical scalars (a halfspace has no dimensions).
-const MIN_BODY_BYTES: usize = 29 + 31 * REAL_BYTES;
+// Fixed fields: id 8, key tag 1, key or serial 8, shape tag 1, flags 2, additional solver
+// iterations 1, layers 8, support tag 1; 31 physical scalars (a halfspace has no dimensions).
+const MIN_BODY_BYTES: usize = 30 + 31 * REAL_BYTES;
 // Id 8, offset and slope, four option/count/policy tags, exclusion tag and clear flag.
 const MIN_CHARACTER_BYTES: usize = 15 + 2 * REAL_BYTES;
 const POINT_BYTES: usize = 13 * REAL_BYTES;
@@ -386,6 +386,11 @@ impl Checkpoint {
             .bodies
             .iter()
             .filter(|b| b.mass > 0.0 && !b.sleeping)
+            .count();
+        world.elevated_bodies = world
+            .bodies
+            .iter()
+            .filter(|b| b.additional_solver_iterations > 0)
             .count();
         world.bookkeeping.layout_changed();
         world.slots = self
@@ -1094,6 +1099,7 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
         | b.friction_combine.bits() << 7
         | b.restitution_combine.bits() << 9;
     out.extend_from_slice(&flags.to_le_bytes());
+    out.push(b.additional_solver_iterations);
     out.extend_from_slice(&b.layers.memberships().to_le_bytes());
     out.extend_from_slice(&b.layers.mask().to_le_bytes());
     optional_vector(out, b.linear_support);
@@ -1333,6 +1339,7 @@ impl<'a> Reader<'a> {
         body.ccd = flags & 16 != 0;
         body.retire_on_impact = flags & 32 != 0;
         body.sleeping = flags & 64 != 0;
+        body.additional_solver_iterations = self.u8()?;
         body.layers = CollisionLayers3d::new(self.u32()?, self.u32()?);
         body.linear_support = self.optional_vector()?;
         body.quiet_time = self.scalar()?;

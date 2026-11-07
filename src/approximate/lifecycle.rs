@@ -55,6 +55,7 @@ impl World {
             }
         }
         self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
+        self.elevated_bodies += usize::from(body.additional_solver_iterations > 0);
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let (id, key, order) = (body.id, body.key, body.order);
         self.static_changed(&body);
@@ -239,6 +240,7 @@ impl World {
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let removed = self.bodies[i].clone();
         self.static_changed(&removed);
+        self.elevated_bodies -= usize::from(removed.additional_solver_iterations > 0);
         if let Shape::TriangleMesh { mesh, .. } = removed.shape {
             self.triangle_meshes[mesh.0 as usize] = None;
         }

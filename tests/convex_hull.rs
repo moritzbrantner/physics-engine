@@ -616,7 +616,7 @@ fn checkpoint_preserves_hulls_and_meshes_with_distinct_tags_and_removed_slots() 
         content: [7; 32],
     };
     let saved = world.checkpoint(context).unwrap().to_bytes();
-    assert_eq!(u32::from_le_bytes(saved[8..12].try_into().unwrap()), 10);
+    assert_eq!(u32::from_le_bytes(saved[8..12].try_into().unwrap()), 11);
     let restored = Checkpoint::from_bytes(&saved, context, CheckpointLimits::default())
         .unwrap()
         .restore(&[])
