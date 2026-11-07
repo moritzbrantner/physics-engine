@@ -98,8 +98,9 @@ updates its rock adapter and the native/WASM cost and behavior gates demonstrate
 parity. Actual game projectiles use complete ray segments, including first-hit reflection;
 the fixture covers those segments without a frame-end overlap substitute. Unsupported
 dynamic-body/hull pairs return an atomic step error rather than silently separating. Generic
-hull×hull response remains unsupported, and the game
-must retain Rapier as its compatibility fallback for unsupported interactions. Run
+hull×hull response remains unsupported. MMORPG production now runs Physics Engine only
+(mmorpg#648, exact hull/mesh geometry in retained isolated Engine response worlds), so
+interactions it needs must be supported by the engine; there is no Rapier fallback. Run
 `bash scripts/greyhaven-rock-hulls.sh` (optional `--perf` timing gate or `--stats` work
 diagnostics) for the local reproducer (`--wasm` selects the WASM gate). The same-pose probe
 compares six actual two-rock grounding/seam moves with Rapier. Deterministic work contracts
@@ -136,8 +137,8 @@ hull-face certificates are insufficient brings the standalone native release com
 5.38/5.33 µs per tick (Ordered/Indexed), versus Rapier 6.17 µs (0.87×), from the initial
 13.71/13.67 µs. Focused WASM measured 7.21/7.31 µs versus Rapier 19.97 µs (0.36×).
 Some local native runs were noisy and mixed; CI must confirm the committed revision.
-These are local measurements for this scenario, not whole-zone acceptance. Game adoption and whole-consumer acceptance remain incomplete;
-the fallback remains in the game.
+These are local measurements for this scenario, not whole-zone acceptance. MMORPG production has since moved
+to Physics Engine only (mmorpg#648); its acceptance is recorded there, not by this fixture.
 The standalone Rapier reference check is
 `cargo test --locked -p physics-oracle --lib rigid_rocks`.
 
@@ -213,8 +214,9 @@ The oracle scenarios above are engine-owned copies of the games' call patterns. 
 games' **real** physics integrations on both backends: an A/B diagnostic feature in each game
 compares Rapier and a thin physics-engine adapter behind its unchanged physics API, with shared
 invariants checked in CI. The measurements below predate the owner's 2026-11-05 decision to
-use Physics Engine first in MMORPG where content is supported. Actual backend rollout and
-fallback decisions belong to MMORPG; ARPG's production baseline remains Rapier.
+use Physics Engine first in MMORPG where content is supported. Backend rollout belongs to the
+games: MMORPG production is Physics Engine only since mmorpg#648 (Rapier only under
+`physics-ab`); ARPG's production baseline remains Rapier.
 
 | Consumer | PR / engine rev | Workloads | Behaviour | Native per-tick physics, engine / Rapier (median) |
 | --- | --- | --- | --- | --- |

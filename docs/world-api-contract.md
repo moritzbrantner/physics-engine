@@ -174,7 +174,7 @@ and angular approach bounds, regenerating the geometry at each substep. Rigid sp
 capsules, hull/hull pairs and CCD-enabled boxes remain unsupported: an admitted physical
 pair returns `CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back
 the entire step. This does not expose a general box/hull shape sweep or rotational CCD.
-The game retains its Rapier fallback pending whole-consumer acceptance. Actual MMORPG
+MMORPG production no longer has a Rapier fallback (mmorpg#648); its exact hull/mesh geometry runs in retained isolated Engine response worlds. Actual MMORPG
 projectiles sweep rays and reflect/stick at their first hit; those query paths use real hull
 faces. `QueryHit::feature` and ray hits expose deterministic `ConvexHullFace` identities;
 edge/corner witnesses choose the first canonical supporting face plane. Hull poses remain translation-only;
