@@ -48,9 +48,11 @@ pub enum Counter {
     MeshPreparations,
     /// Authored hull input vertices prepared at admission/restore, never during queries.
     HullPreparations,
+    /// Convex hull face planes tested by rigid sphere contacts and sweeps (#519).
+    HullPlanes,
 }
 
-const COUNTERS: usize = 18;
+const COUNTERS: usize = 19;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

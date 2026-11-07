@@ -2563,6 +2563,128 @@
       ]
     },
     {
+      "id": "sphere-static-contact",
+      "description": "World::step of one rolling sphere on heightfield terrain that strikes an actual Greyhaven hull (#519), amid terrain of increasing size and increasing distant fixed rocks; one contacting step per point.",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "terrainCells": {
+          "description": "cells in the terrain"
+        },
+        "rocks": {
+          "description": "fixed authored rock hulls at constant spatial density"
+        }
+      },
+      "scalePoints": [
+        {
+          "terrainCells": 1024,
+          "rocks": 16
+        },
+        {
+          "terrainCells": 4096,
+          "rocks": 16
+        },
+        {
+          "terrainCells": 16384,
+          "rocks": 16
+        },
+        {
+          "terrainCells": 65536,
+          "rocks": 16
+        },
+        {
+          "terrainCells": 16384,
+          "rocks": 32
+        },
+        {
+          "terrainCells": 16384,
+          "rocks": 64
+        },
+        {
+          "terrainCells": 16384,
+          "rocks": 128
+        },
+        {
+          "terrainCells": 16384,
+          "rocks": 256
+        }
+      ],
+      "metrics": [
+        {
+          "name": "terrain-cells",
+          "unit": "cells",
+          "signal": "operation-count",
+          "notes": "Only the cells under the sphere's footprint plus its speculative margin are visited.",
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            },
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "terrain-triangles",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Two triangles per visited cell: the sphere/terrain manifold never scans the terrain.",
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            },
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "hull-planes",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Face planes of the one touched hull: distant hulls never reach the sphere/hull manifold.",
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            },
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "narrow-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "One terrain pair and one hull pair; broad-phase pruning keeps distant rocks out.",
+          "growth": [
+            {
+              "dimension": "terrainCells",
+              "bound": "constant"
+            },
+            {
+              "dimension": "rocks",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "preparations",
+          "unit": "vertices",
+          "signal": "operation-count",
+          "notes": "Contacts reuse prepared hull geometry.",
+          "budget": {
+            "max": 0
+          }
+        }
+      ]
+    },
+    {
       "id": "static-mesh-rigid-contact",
       "description": "Non-CCD rigid box touching one nearby triangle in a retained mesh while distant triangles double; 16 warm ticks per size.",
       "publicContract": "physics_engine::approximate::World::step",

@@ -135,23 +135,9 @@ pub(super) fn manifold(
             primitive::nearest(contact.point[2] + f64::from(target.position.2)),
         );
         let separation = primitive::round_down(contact.separation);
-        let body_point = surface + normal * separation;
-        let (normal, point_a, point_b) = if mesh_first {
-            (normal, surface, body_point)
-        } else {
-            (-normal, body_point, surface)
-        };
-        let offset = sweep.unwrap_or(0.0) * time;
-        super::contact::Manifold {
-            normal,
-            points: super::contact::Points::one(super::contact::Point {
-                ra: point_a - (a.position + a.velocity * offset),
-                rb: point_b - (b.position + b.velocity * offset),
-                separation: separation - (b.velocity - a.velocity).dot(normal) * offset,
-            }),
-            swept: sweep.is_some(),
-            time,
-        }
+        super::static_sphere::sphere_manifold(
+            a, b, mesh_first, time, normal, surface, separation, sweep,
+        )
     }))
 }
 

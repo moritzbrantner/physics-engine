@@ -1,6 +1,7 @@
 pub mod arpg_planar;
 pub mod arpg_tick;
 pub mod basin;
+pub mod boulder_slope;
 pub mod bounce;
 pub mod capsule_normals;
 pub mod ccd_margin_start;

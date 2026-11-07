@@ -126,7 +126,13 @@ rigid contacts with terrain automatically, one manifold per triangle under the b
 Rapier: the triangle's upward normal is the contact normal, the box face most opposed to it is
 clipped to the triangle's prism (so ridges and peaks under a face give points), and up to four
 points within the contact slop plus the step's approach are kept, ranked by their separation
-after the body's current motion. Other dynamic shapes take no terrain contacts. Checkpoints record
+after the body's current motion. Dynamic spheres take one-point rigid contacts with terrain
+(#519): the deepest triangle under the sphere's footprint, with the same diagonals and removed
+cells as queries. A non-CCD sphere admits it within the contact slop plus the step's approach,
+speculatively, as boxes do; a CCD sphere takes the current contact within the slop, else its
+first contact along the substep's translation (the terrain capsule sweep), so it responds at its
+swept time of impact and never tunnels. Only the cells under that footprint are visited (the
+`sphere-static-contact` work family). Other dynamic shapes take no terrain contacts. Checkpoints record
 a fingerprint of each heightfield's description; `Checkpoint::restore` takes the descriptions
 again (#452). `add_body` rejects
 heightfield shapes.
@@ -170,10 +176,17 @@ recomputed from the current query and target positions. The cache is not checkpo
 restore rebuilds it lazily, and `convex_hull_stats` includes its retained allocation. Non-CCD dynamic boxes now receive
 rigid contacts against fixed hulls through the shared box/hull SAT and clipped manifolds.
 The existing solver admits speculative points using the substep's linear, gravity/force-drift
-and angular approach bounds, regenerating the geometry at each substep. Rigid spheres,
-capsules, hull/hull pairs and CCD-enabled boxes remain unsupported: an admitted physical
+and angular approach bounds, regenerating the geometry at each substep. Dynamic spheres
+take one-point rigid contacts with fixed hulls (#519): the hull face plane of greatest signed
+distance gives the contact when the centre is inside the hull or projects onto that face;
+edges and corners use the checked segment-distance/GJK/EPA path of sphere queries. A non-CCD
+sphere admits it within the slop plus the step's approach, speculatively; a CCD sphere takes
+its swept time of impact by the hull's face clip and conservative advancement, as sphere casts
+do, and its remaining-time CCD search sweeps hulls the same way. Capsules, hull/hull pairs and
+CCD-enabled boxes remain unsupported: an admitted physical
 pair returns `CollisionSearchFailed { reason: InvalidGeometryInput, .. }` and rolls back
-the entire step. This does not expose a general box/hull shape sweep or rotational CCD.
+the entire step. The `boulder-slope` Rapier oracle rolls a 0.5 m debris-material ball down
+heightfield terrain into the actual Greyhaven proxy through MMORPG's retained response lane. This does not expose a general box/hull shape sweep or rotational CCD.
 MMORPG production no longer has a Rapier fallback (mmorpg#648); its exact hull/mesh geometry runs in retained isolated Engine response worlds. Actual MMORPG
 projectiles sweep rays and reflect/stick at their first hit; those query paths use real hull
 faces. `QueryHit::feature` and ray hits expose deterministic `ConvexHullFace` identities;

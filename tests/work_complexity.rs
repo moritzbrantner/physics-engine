@@ -1880,3 +1880,110 @@ fn rigid_rock_contact_narrow_phase_does_not_scan_distant_hulls() {
         ],
     );
 }
+
+/// A rolling sphere on heightfield terrain that strikes one actual Greyhaven hull, amid a
+/// terrain of `cells`² cells and `rocks` fixed hulls (#519).
+fn boulder_world(cells: usize, rocks: u64) -> (World, BodyId) {
+    use physics_engine::approximate::ConvexHullDesc;
+    let mut w = World::new(Config {
+        gravity: V(0.0, -9.0, 0.0),
+        substeps: 2,
+        velocity_iterations: 4,
+        ..Config::default()
+    })
+    .unwrap();
+    let n = cells + 1;
+    let heights = (0..n * n)
+        .map(|k| 0.05 * ((k % n) as f32 * 0.7).sin() * ((k / n) as f32 * 0.5).cos())
+        .collect();
+    w.add_heightfield(
+        HeightfieldDesc {
+            origin: V::ZERO,
+            cell_size: (1.0, 1.0),
+            columns: n,
+            rows: n,
+            heights,
+            removed_cells: None,
+            material: Default::default(),
+        },
+        Some(1),
+    )
+    .unwrap();
+    for i in 0..rocks {
+        w.add_convex_hull(
+            ConvexHullDesc {
+                vertices: greyhaven_rock::vertices()
+                    .into_iter()
+                    .map(|p| V(p[0], p[1], p[2]))
+                    .collect(),
+                position: V(
+                    10.0 + (i % 16) as f32 * 6.0,
+                    1.1,
+                    10.0 + (i / 16) as f32 * 6.0,
+                ),
+                material: Default::default(),
+            },
+            Some(100 + i),
+        )
+        .unwrap();
+    }
+    let r = 0.5;
+    let mut ball = Body::new(Shape::Sphere(r), V(7.0, 0.56, 10.0), 314.0);
+    ball.velocity = V(3.0, 0.0, 0.0);
+    ball.friction = 0.8;
+    ball.restitution = 0.15;
+    ball.sleep_allowed = false;
+    let id = w.add_body(ball).unwrap();
+    (w, id)
+}
+
+#[test]
+fn sphere_static_contacts_visit_only_the_nearby_terrain_and_hull() {
+    let mut samples = Vec::new();
+    for (cells, rocks) in [(32usize, 16u64), (64, 16), (128, 16), (256, 16)]
+        .into_iter()
+        .chain([32u64, 64, 128, 256].map(|r| (128usize, r)))
+    {
+        let (mut w, id) = boulder_world(cells, rocks);
+        // Roll into the first rock, then measure a contacting step.
+        for _ in 0..40 {
+            w.step(1.0 / 60.0).unwrap();
+        }
+        work::reset();
+        let report = w.step(1.0 / 60.0).unwrap();
+        let ball = w.body(id).unwrap();
+        assert!(
+            ball.position.0 < 9.0,
+            "the ball passed the rock: {:?}",
+            ball.position
+        );
+        assert!(ball.position.1 > 0.3, "the ball sank: {:?}", ball.position);
+        let planes = work::get(Counter::HullPlanes);
+        assert!(planes > 0, "the ball does not touch the rock");
+        samples.push((
+            vec![("terrainCells", (cells * cells) as u64), ("rocks", rocks)],
+            vec![
+                ("terrain-cells", work::get(Counter::TerrainCells)),
+                ("terrain-triangles", work::get(Counter::TerrainTriangles)),
+                ("hull-planes", planes),
+                ("narrow-tests", report.narrow_tests),
+                ("preparations", work::get(Counter::HullPreparations)),
+            ],
+        ));
+    }
+    judge(
+        "sphere-static-contact",
+        &samples,
+        &[
+            ("terrain-cells", "terrainCells", "constant"),
+            ("terrain-cells", "rocks", "constant"),
+            ("terrain-triangles", "terrainCells", "constant"),
+            ("terrain-triangles", "rocks", "constant"),
+            ("hull-planes", "terrainCells", "constant"),
+            ("hull-planes", "rocks", "constant"),
+            ("narrow-tests", "terrainCells", "constant"),
+            ("narrow-tests", "rocks", "constant"),
+            ("preparations", "", "zero"),
+        ],
+    );
+}

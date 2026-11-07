@@ -261,24 +261,17 @@ impl World {
                             &mut GeometryStats::default(),
                             &mut s.position.clipping,
                         )
-                    } else if let Shape::TriangleMesh { mesh, .. } = a.shape {
-                        super::triangle_mesh::manifold(
-                            &self.triangle_meshes[mesh.0 as usize]
-                                .as_ref()
-                                .expect("live mesh")
-                                .prepared,
-                            a,
-                            b,
-                            0.0,
-                            None,
-                            &mut report.geometry,
-                        )
-                        .map_err(|reason| {
-                            Error::CollisionSearchFailed {
+                    } else if let Some(surface) = super::static_sphere::Surface::of(
+                        a.shape,
+                        &self.triangle_meshes,
+                        &self.terrains,
+                        &self.hulls,
+                    ) {
+                        super::static_sphere::correction(surface, a, b, &mut report.geometry)
+                            .map_err(|reason| Error::CollisionSearchFailed {
                                 bodies: [a.id, b.id],
                                 reason,
-                            }
-                        })?
+                            })?
                     } else {
                         contact::current(a, b, 0.0)
                     };

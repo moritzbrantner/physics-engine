@@ -894,9 +894,15 @@ impl World {
             } else {
                 (&target, &probe)
             };
-            let swept = if let Shape::TriangleMesh { mesh, .. } = target.shape {
-                super::triangle_mesh::manifold(
-                    self.triangle_mesh(mesh),
+            let swept = if let Some(surface) = super::static_sphere::Surface::of(
+                target.shape,
+                &self.triangle_meshes,
+                &self.terrains,
+                &self.hulls,
+            ) {
+                // Spheres sweep meshes, terrain and hulls; any other probe fails explicitly.
+                super::static_sphere::manifold(
+                    surface,
                     a,
                     b,
                     self.scene.contact_slop,

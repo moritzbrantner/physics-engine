@@ -1464,6 +1464,84 @@ impl World {
                         && a.external
                         && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
                 let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
+                // Rigid spheres take one-point contacts with fixed meshes, terrain and hulls. A
+                // CCD sphere (and any sphere on a mesh) takes the current contact within the
+                // slop, else the first along this substep's translation, so it keeps its swept
+                // time of impact; a non-CCD sphere on terrain or a hull takes the deepest
+                // contact within the slop plus the step's approach, speculatively (#519).
+                if let Some((surface, surface_first)) = super::static_sphere::Surface::sphere_pair(
+                    a.shape,
+                    b.shape,
+                    &self.triangle_meshes,
+                    &self.terrains,
+                    &self.hulls,
+                ) {
+                    let moving = if surface_first { b } else { a };
+                    if moving.inverse_mass() == 0.0
+                        || a.sensor
+                        || b.sensor
+                        || moving.sleeping
+                        || !a.layers.collides_with(b.layers)
+                    {
+                        continue;
+                    }
+                    report.narrow_tests += 1;
+                    let failure = |reason| Error::CollisionSearchFailed {
+                        bodies: [a.id, b.id],
+                        reason,
+                    };
+                    let deferred = ccd::deferred(a, b);
+                    if !deferred && !matches!(surface, super::static_sphere::Surface::Mesh(_)) {
+                        // Terrain and hulls: the step's approach is the speculative margin, as
+                        // for boxes on terrain. A sphere's one point needs no regeneration for
+                        // spin, so later substeps reuse the row as Rapier does (#378).
+                        let approach = moving.velocity.length() * interval
+                            + step_drift(moving, self.scene.gravity, gain).length();
+                        if let Some(m) = super::static_sphere::manifold(
+                            surface,
+                            a,
+                            b,
+                            self.scene.contact_slop + approach,
+                            None,
+                            &mut report.geometry,
+                        )
+                        .map_err(failure)?
+                        {
+                            push(out, (i, j, m), &mut s.work);
+                        }
+                        continue;
+                    }
+                    let current = super::static_sphere::manifold(
+                        surface,
+                        a,
+                        b,
+                        self.scene.contact_slop,
+                        None,
+                        &mut report.geometry,
+                    )
+                    .map_err(failure)?;
+                    let current = current.filter(|m| {
+                        !deferred || (&m.points).into_iter().all(|p| p.separation <= 0.0)
+                    });
+                    let m = if current.is_some() {
+                        current
+                    } else {
+                        regenerate = true;
+                        super::static_sphere::manifold(
+                            surface,
+                            a,
+                            b,
+                            self.scene.contact_slop,
+                            Some(h),
+                            &mut report.geometry,
+                        )
+                        .map_err(failure)?
+                    };
+                    if let Some(m) = m {
+                        push(out, (i, j, m), &mut s.work);
+                    }
+                    continue;
+                }
                 // Box/hull rigid contacts use the shared SAT/clipping kernel and the existing
                 // speculative response rows. Unsupported pairs/CCD still fail atomically.
                 if matches!(a.shape, Shape::ConvexHull { .. })
@@ -1604,37 +1682,8 @@ impl World {
                         .map_err(failure)?;
                         continue;
                     }
-                    let current = super::triangle_mesh::manifold(
-                        prepared,
-                        a,
-                        b,
-                        self.scene.contact_slop,
-                        None,
-                        &mut report.geometry,
-                    )
-                    .map_err(failure)?;
-                    let deferred = ccd::deferred(a, b);
-                    let current = current.filter(|m| {
-                        !deferred || (&m.points).into_iter().all(|p| p.separation <= 0.0)
-                    });
-                    let m = if current.is_some() {
-                        current
-                    } else {
-                        regenerate = true;
-                        super::triangle_mesh::manifold(
-                            prepared,
-                            a,
-                            b,
-                            self.scene.contact_slop,
-                            Some(h),
-                            &mut report.geometry,
-                        )
-                        .map_err(failure)?
-                    };
-                    if let Some(m) = m {
-                        push(out, (i, j, m), &mut s.work);
-                    }
-                    continue;
+                    // Spheres were handled above; no other moving shape has mesh contacts.
+                    return Err(failure(super::SweepFailure::InvalidGeometryInput));
                 }
                 if a.sensor
                     || b.sensor
