@@ -1420,11 +1420,16 @@ impl World {
             {
                 return;
             }
-            let pair = if self.bodies[i].order < b.order {
-                (i, j)
-            } else {
-                (j, i)
-            };
+            // A CCD pair the narrow phase would skip unswept is dropped here, before it is
+            // stored, sorted and visited: co-moving CCD bodies overlap in world space.
+            let a = &self.bodies[i];
+            if (a.ccd || b.ccd)
+                && skip_separated_ccd(a, b, h, self.scene.gravity, gain, self.scene.contact_slop)
+            {
+                regenerate = true;
+                return;
+            }
+            let pair = if a.order < b.order { (i, j) } else { (j, i) };
             push(&mut candidates, pair, &mut s.work);
         };
         for &(i, lo, hi) in rows {
@@ -1681,20 +1686,8 @@ impl World {
                             - step_drift(a, self.scene.gravity, gain))
                         .length()
                 };
-                // Swept *world* bounds can overlap for every pair of co-moving CCD bodies,
-                // even though their relative trajectories cannot close the initial gap.
-                // Only omit the expensive current/swept query when a padded axis separates
-                // both shapes throughout this substep. Rotation and future force drift stay
-                // on the exact path; later substeps still regenerate their contact search.
-                if fast
-                    && (a.ccd || b.ccd)
-                    && step_drift(a, self.scene.gravity, gain) == Vector::ZERO
-                    && step_drift(b, self.scene.gravity, gain) == Vector::ZERO
-                    && separated_ccd_translation(a, b, h, self.scene.contact_slop)
-                {
-                    regenerate = true;
-                    continue;
-                }
+                // Separated co-moving CCD pairs never get here: the broad phase drops them
+                // (`skip_separated_ccd`).
                 report.narrow_tests += 1;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
                 // complete pair results only when both orientation dependencies are stable.
@@ -1900,6 +1893,32 @@ fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
     } else {
         Vector::ZERO
     }
+}
+/// Whether the narrow phase would skip the candidate pair `a`, `b` without a query: two
+/// colliding bodies, one of them CCD, both without force drift, whose padded axis gap stays
+/// open under their relative translation. Swept *world* bounds overlap for every pair of
+/// co-moving CCD bodies even though their relative trajectories cannot close the initial gap.
+/// Rotation, drift and mesh pairs stay on the exact path; later substeps still regenerate
+/// their contact search, so the caller marks the substep for regeneration.
+#[inline(never)]
+fn skip_separated_ccd(
+    a: &Body,
+    b: &Body,
+    h: Real,
+    gravity: Vector,
+    gain: Real,
+    slop: Real,
+) -> bool {
+    (a.ccd || b.ccd)
+        && !matches!(a.shape, Shape::TriangleMesh { .. })
+        && !matches!(b.shape, Shape::TriangleMesh { .. })
+        && !a.sensor
+        && !b.sensor
+        && a.layers.collides_with(b.layers)
+        && (a.inverse_mass() > 0.0 || b.inverse_mass() > 0.0)
+        && step_drift(a, gravity, gain) == Vector::ZERO
+        && step_drift(b, gravity, gain) == Vector::ZERO
+        && separated_ccd_translation(a, b, h, slop)
 }
 /// Proves an axis gap stays open under the pair's relative *translation*. A conservative
 /// rounding/slop allowance also covers independently rounded world-space swept endpoints.
