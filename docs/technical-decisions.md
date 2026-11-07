@@ -1,17 +1,22 @@
 # Technical decisions
 
-Current direction, owner-approved 2026-10-18 and refined 2026-11-05. This page replaces the former TECH-001…TECH-013
+Current direction, owner-approved 2026-10-18, refined 2026-11-05 and updated 2026-11-07. This page replaces the former TECH-001…TECH-013
 register; superseded entries are intentionally not kept. Source code and tests prove what is
 implemented; GitHub issues track remaining work.
 
-## D1 — Physics Engine first for MMORPG; Rapier fallback and oracle
+## D1 — Physics Engine only in MMORPG production; Rapier as oracle
 
 The owner chose Physics Engine as the default backend for MMORPG wherever its authored collision
-and gameplay requirements are supported (2026-11-05). A zone with unsupported geometry or a
-missing physics capability stays on [Rapier](https://rapier.rs) until a consumer-driven parity
-implementation lands. Do not approximate away a cave surface, convex rock proxy or gameplay
-collision just to claim adoption. The ARPG retains its Rapier integration (ARPG Atlas 2.3.1/2.3.2);
-this decision alone does not migrate other consumers.
+and gameplay requirements were supported (2026-11-05). Since mmorpg#648 (merged 2026-11-07,
+fixing mmorpg#647, pinned at `721a9298`), MMORPG's production native, server and WASM builds
+contain only Physics Engine; [Rapier](https://rapier.rs) and the backend selectors compile only
+under the game's optional `physics-ab` feature for A/B tests and the oracle. Exact hull/mesh
+geometry and transient debris run in retained isolated Engine response worlds in the game.
+There is no production Rapier fallback: a capability MMORPG needs must be implemented in the
+engine, consumer-driven and with an oracle scenario. Do not approximate away a cave surface,
+convex rock proxy or gameplay collision to work around a gap. ARPG keeps Rapier as its
+production backend (ARPG Atlas 2.3.1/2.3.2), with Physics Engine compiled only behind its
+test/bench `physics-ab` feature; this decision does not migrate other consumers.
 
 Rapier remains the independent behavioural reference and speed baseline, natively and in WASM;
 there is no second reference build. Add missing Physics Engine functionality ad hoc in response
