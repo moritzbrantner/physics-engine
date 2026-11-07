@@ -1030,7 +1030,7 @@
           "name": "tree-nodes",
           "unit": "nodes",
           "signal": "operation-count",
-          "notes": "O(m log n): every move's casts descend the tree. Density is held by the budget, not a class: node visits stay flat up to density 4 and then step up when characters start touching (2846, 2859, 2859, 3474), which no growth class describes.",
+          "notes": "O(m log n): every move's casts descend the tree. Density is held by the budget, not a class: node visits stay flat up to density 4 and then step up when characters start touching (2846, 2859, 2859, 3474), which no growth class describes. Moving characters never reuse a support test; zero-motion moves do (#526, `move-characters-still`).",
           "growth": [
             {
               "product": [
@@ -1210,6 +1210,106 @@
                   "bound": "linear"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "full-scan-bodies",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Bodies visited through the O(n) stale-tree fallback scan, or characters marked for an overlap re-check by it, totalled over every query of a point (#414). Every public mutator keeps the query tree current and every step ends with a sync, so queries never take it; the fallback stays only as a debug-asserted safety net."
+        }
+      ]
+    },
+    {
+      "id": "move-characters-still",
+      "description": "Zero-motion World::move_characters batches of characters standing on the town's boxes (one per box, non-planar), with nothing static changed since the previous batch: a repeated batch, then the first batch after a World::step.",
+      "publicContract": "physics_engine::approximate::World::move_characters",
+      "dimensions": {
+        "bodies": {
+          "description": "static bodies in the world"
+        },
+        "characters": {
+          "description": "characters in the batch"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 4096,
+          "characters": 8
+        },
+        {
+          "bodies": 4096,
+          "characters": 16
+        },
+        {
+          "bodies": 4096,
+          "characters": 32
+        },
+        {
+          "bodies": 4096,
+          "characters": 64
+        },
+        {
+          "bodies": 4096,
+          "characters": 128
+        },
+        {
+          "bodies": 512,
+          "characters": 32
+        },
+        {
+          "bodies": 1024,
+          "characters": 32
+        },
+        {
+          "bodies": 2048,
+          "characters": 32
+        },
+        {
+          "bodies": 8192,
+          "characters": 32
+        },
+        {
+          "bodies": 16384,
+          "characters": 32
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tree-nodes",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "A zero-motion move from a verified clear pose reuses the last such move's support and ground-contact outcome while its exact pose, exclusion, the layout generation and World::static_revision are unchanged (#526), and the overlap check is already skipped for a pose verified at the same time: a repeated batch does no shape query at all. Before, every move cast its capsule down for support (MMORPG: 34,547 of 34,920 idle-town moves are zero motion)."
+        },
+        {
+          "name": "exact-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "No exact shape test either: the same reuse as tree-nodes."
+        },
+        {
+          "name": "tree-nodes-after-step",
+          "unit": "nodes",
+          "signal": "operation-count",
+          "notes": "After a step the pose is verified clear again by one overlap query per character (#500), and the support cast is still reused: one descent of the moving-body tree per character, which holds the m characters, and the box below is offset away so nothing is tested exactly. Measured 72, 176, 416, 960, 2288 at 8..128 characters and 416 at every world size.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            },
+            {
+              "dimension": "characters",
+              "bound": "linearithmic"
             }
           ]
         },

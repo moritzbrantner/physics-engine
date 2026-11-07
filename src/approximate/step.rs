@@ -1032,6 +1032,7 @@ impl World {
             let id = self.bookkeeping.retired[n];
             if let Some(i) = self.index_of_order(id) {
                 let b = self.bodies.remove(i);
+                self.static_changed(&b);
                 let handle = b.id;
                 self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                 self.geometry.remove(id);

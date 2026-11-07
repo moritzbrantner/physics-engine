@@ -140,6 +140,9 @@ pub(super) struct Characters {
     verified_clear: Vec<Option<(QueryPose, f64)>>,
     /// The body the latest move excluded ([`CharacterMove::exclude`]).
     exclude: Vec<Option<BodyId>>,
+    /// The latest zero-motion move's support outcome, reused by the next zero-motion move from
+    /// the same verified pose while nothing it depends on changed (#526).
+    still: Vec<Option<StillMove>>,
     /// Incremented whenever a character is placed rather than moved: a placed character can
     /// overlap any other, so every character checks again once.
     placements: u64,
@@ -151,6 +154,36 @@ pub(super) struct Characters {
 }
 
 const DIRTY: (u64, u64) = (u64::MAX, u64::MAX);
+
+/// What a zero-motion move from a verified clear pose found below the character, and the key
+/// it holds for (#526). Such a move neither slides nor depenetrates, and its support and ground
+/// contact tests admit only static bodies, so it is a function of the exact pose, the move's
+/// exclusion and the static geometry: the layout generation and [`World::static_revision`]
+/// cover the latter. Only a move that did not snap is kept (it left the pose unchanged).
+#[derive(Clone, Copy, Debug)]
+struct StillMove {
+    /// The pose bitwise: position, orientation, then the capsule's half segment and radius.
+    pose: [u32; 9],
+    exclude: Option<BodyId>,
+    generation: u64,
+    revision: u64,
+    support: Option<BodyId>,
+    ground_contact: bool,
+}
+
+impl StillMove {
+    fn key(pose: QueryPose) -> [u32; 9] {
+        let (half_segment, radius) = match pose.shape {
+            Shape::Capsule {
+                half_segment,
+                radius,
+            } => (half_segment, radius),
+            _ => (Real::NAN, Real::NAN),
+        };
+        let (p, q) = (pose.position, pose.orientation);
+        [p.0, p.1, p.2, q.0, q.1, q.2, q.3, half_segment, radius].map(Real::to_bits)
+    }
+}
 
 impl Characters {
     fn slot(&self, id: BodyId) -> Option<usize> {
@@ -174,12 +207,14 @@ impl Characters {
             self.clear.resize(slot + 1, DIRTY);
             self.verified_clear.resize(slot + 1, None);
             self.exclude.resize(slot + 1, None);
+            self.still.resize(slot + 1, None);
         }
         self.ids[slot] = id;
         self.settings[slot] = settings;
         self.clear[slot] = DIRTY;
         self.verified_clear[slot] = None;
         self.exclude[slot] = None;
+        self.still[slot] = None;
     }
     /// Whether the character is known free of overlap at layout `generation`.
     fn is_clear(&self, id: BodyId, generation: u64) -> bool {
@@ -236,6 +271,7 @@ impl Characters {
     pub fn remove(&mut self, id: BodyId) {
         if let Some(slot) = self.slot(id) {
             self.ids[slot] = BodyId::NONE;
+            self.still[slot] = None;
         }
     }
     fn pushed(&mut self, id: BodyId) -> Option<&mut V> {
@@ -294,7 +330,7 @@ pub(super) fn can_be_character(b: &Body) -> bool {
 }
 
 fn is_static(b: &Body) -> bool {
-    b.mass == 0.0 && !b.external
+    b.is_static()
 }
 
 impl World {
@@ -876,6 +912,31 @@ impl World {
             result.depenetration += push;
         }
 
+        // A zero-motion move from a verified clear pose neither slides nor depenetrates: what
+        // it finds below depends only on the pose, its exclusion and static geometry, so the
+        // last such move's outcome stands while none of them changed (#526).
+        let still = (!planar
+            && flat(desired).length() <= s.offset * 1e-3
+            && result.depenetration == V::ZERO
+            && self.characters.verified_clear[slot] == Some((pose, self.elapsed)))
+        .then(|| StillMove::key(pose));
+        let (exclude, revision) = (self.characters.exclude[slot], self.static_revision);
+        if let Some(key) = still
+            && let Some(last) = self.characters.still[slot].filter(|last| {
+                last.pose == key
+                    && last.exclude == exclude
+                    && last.generation == generation
+                    && last.revision == revision
+            })
+        {
+            result.grounded = last.support.is_some();
+            result.support = last.support;
+            result.ground_contact = last.ground_contact;
+            self.characters
+                .set_clear(id, resolved.then_some(generation));
+            return Ok(result);
+        }
+
         // Collide and slide, keeping `offset` to every surface.
         let mut translation = V::ZERO;
         let mut remaining = flat(desired);
@@ -1082,6 +1143,18 @@ impl World {
         }
         // Walkable support is a contact facing up; only off it does the contact test run.
         result.ground_contact = result.grounded || self.ground_contact_at(id, pose, s, hits)?;
+        // Kept only when it did not snap, so the pose it leaves is the one it is keyed by.
+        self.characters.still[slot] =
+            still
+                .filter(|&key| StillMove::key(pose) == key)
+                .map(|pose| StillMove {
+                    pose,
+                    exclude,
+                    generation,
+                    revision,
+                    support,
+                    ground_contact: result.ground_contact,
+                });
         // Keep the inter-character separation hint. Static penetration is checked
         // independently from the physical pose on the next move.
         self.characters
@@ -1216,5 +1289,195 @@ mod recovery_tests {
             fresh.body(other).unwrap().position,
             "warm {left:?}, fresh {right:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod still_tests {
+    use super::*;
+    use crate::CollisionLayers3d;
+    use crate::approximate::Config;
+
+    const STAND: Real = 0.5 + 0.3 + 0.0025;
+
+    fn capsule(at: V) -> Body {
+        let mut body = Body::new(Shape::capsule(0.5, 0.3), at, 1.0);
+        body.external = true;
+        body
+    }
+
+    /// A character standing on a static floor box, and a kinematic box beside it.
+    fn sample() -> (World, BodyId, BodyId, BodyId) {
+        let mut world = World::new(Config {
+            gravity: V::ZERO,
+            ..Config::default()
+        })
+        .unwrap();
+        let floor = world
+            .add_body(Body::keyed(
+                1,
+                Shape::Box(V(5.0, 0.5, 5.0)),
+                V(0.0, -0.5, 0.0),
+                0.0,
+            ))
+            .unwrap();
+        let mut platform = Body::keyed(2, Shape::Box(V(0.5, 0.1, 0.5)), V(3.0, 0.1, 0.0), 1.0);
+        platform.external = true;
+        let platform = world.add_body(platform).unwrap();
+        let id = world.add_body(capsule(V(0.0, STAND, 0.0))).unwrap();
+        world.add_character(id, world.character_settings()).unwrap();
+        (world, id, floor, platform)
+    }
+
+    /// The same move on `world` and on a clone without any zero-motion outcome kept.
+    fn compare(world: &mut World, movement: CharacterMove, what: &str) -> CharacterMoveResult {
+        let mut cold = world.clone();
+        cold.characters.still.fill(None);
+        let (mut out, mut expected) = (Vec::new(), Vec::new());
+        world.move_characters(&[movement], &mut out).unwrap();
+        cold.move_characters(&[movement], &mut expected).unwrap();
+        assert_eq!(out, expected, "{what}");
+        let id = movement.body;
+        assert_eq!(
+            world.body(id).unwrap().position,
+            cold.body(id).unwrap().position,
+            "{what}"
+        );
+        out[0]
+    }
+
+    #[test]
+    fn reused_zero_motion_moves_match_a_cold_world() {
+        let (mut world, mut id, floor, platform) = sample();
+        let still = |body| CharacterMove {
+            body,
+            desired: V::ZERO,
+            exclude: None,
+            autostep: None,
+        };
+        let first = compare(&mut world, still(id), "first");
+        assert!(first.grounded && first.support == Some(floor));
+        // An unchanged repeat reuses the kept outcome: a poisoned one shows through.
+        let slot = id.slot() as usize;
+        let kept = world.characters.still[slot].expect("kept");
+        world.characters.still[slot] = Some(StillMove {
+            support: None,
+            ..kept
+        });
+        let mut out = Vec::new();
+        world.move_characters(&[still(id)], &mut out).unwrap();
+        assert_eq!(out[0].support, None, "reused");
+        world.characters.still[slot] = Some(kept);
+
+        let mut movement = still(id);
+        for change in 0..14 {
+            let revision = world.static_revision();
+            let static_change = match change {
+                0 => false,
+                1 => {
+                    world.set_static_position(floor, V(0.0, -0.8, 0.0)).unwrap();
+                    true
+                }
+                2 => {
+                    world.set_static_position(floor, V(0.0, -0.5, 0.0)).unwrap();
+                    true
+                }
+                3 => {
+                    world
+                        .set_layers(floor, CollisionLayers3d::new(0, 0))
+                        .unwrap();
+                    true
+                }
+                4 => {
+                    world.set_layers(floor, CollisionLayers3d::ALL).unwrap();
+                    true
+                }
+                5 => {
+                    movement.exclude = Some(floor);
+                    false
+                }
+                6 => {
+                    movement.exclude = None;
+                    false
+                }
+                7 => {
+                    // Under the character's feet, inside the floor: never support.
+                    world
+                        .set_kinematic_position(platform, V(0.0, -0.2, 0.0))
+                        .unwrap();
+                    false
+                }
+                8 => {
+                    world
+                        .set_next_kinematic_pose(platform, V(3.0, 0.1, 0.0), Default::default())
+                        .unwrap();
+                    world.step(1.0 / 60.0).unwrap();
+                    false
+                }
+                9 => {
+                    world.step(1.0 / 60.0).unwrap();
+                    false
+                }
+                10 => {
+                    // A static slab level with the floor's top, earlier in body order: the
+                    // support changes.
+                    world
+                        .add_body(Body::keyed(
+                            0,
+                            Shape::Box(V(1.0, 0.25, 1.0)),
+                            V(0.0, -0.25, 0.0),
+                            0.0,
+                        ))
+                        .unwrap();
+                    true
+                }
+                11 => {
+                    let slab = world.body_id(0).unwrap();
+                    world.remove_body(slab).unwrap();
+                    true
+                }
+                12 => {
+                    // The slot's next character, at the same pose.
+                    world.remove_body(id).unwrap();
+                    let next = world.add_body(capsule(V(0.0, STAND, 0.0))).unwrap();
+                    assert_eq!(next.slot(), id.slot());
+                    world
+                        .add_character(next, world.character_settings())
+                        .unwrap();
+                    id = next;
+                    movement.body = id;
+                    false
+                }
+                _ => {
+                    #[cfg(feature = "checkpoints")]
+                    {
+                        let context = crate::approximate::CheckpointContext {
+                            build: [0; 32],
+                            content: [0; 32],
+                        };
+                        let restored = world.checkpoint(context).unwrap().restore(&[]).unwrap();
+                        assert!(restored.characters.still.iter().all(Option::is_none));
+                        world = restored;
+                    }
+                    false
+                }
+            };
+            assert_eq!(
+                world.static_revision() > revision,
+                static_change,
+                "revision after change {change}"
+            );
+            compare(&mut world, movement, &format!("change {change}"));
+            // And once more from the outcome that move kept.
+            let result = compare(&mut world, movement, &format!("repeat {change}"));
+            match change {
+                1 | 3 | 5 => assert!(!result.grounded, "change {change}"),
+                10 => assert!(result.grounded && result.support == world.body_id(0)),
+                _ => assert!(
+                    result.grounded && result.support == Some(floor),
+                    "change {change}"
+                ),
+            }
+        }
     }
 }
