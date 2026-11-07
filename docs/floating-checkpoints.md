@@ -15,11 +15,12 @@ at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruc
 algorithm 14 adds box/hull response; algorithm 15 adds non-CCD box/mesh response
 (see below). Algorithm 16 skips finite zero solver corrections. Algorithm 17
 preserves character height while crossing a grazing
-triangle support edge before snapping. Current algorithm 18 (#519) gives rigid spheres
-contacts and swept CCD against heightfield terrain and fixed convex hulls, so a world with a
-sphere over terrain or beside a hull continues differently; format 10 is unchanged and the
-empty-world digest changes only for the algorithm header. Older algorithm checkpoints
-are rejected.
+triangle support edge before snapping. Algorithm 18 (#519) gives rigid spheres
+contacts and swept CCD against heightfield terrain and fixed convex hulls. Current algorithm 19
+(#520) sweeps a turning kinematic (external) body's rotation (conservative advancement), reuses
+its rows across the step's substeps and leaves a kinematic body at rest unintegrated, so a world
+with a spinning external body continues differently; format 10 is unchanged and the empty-world
+digest changes only for the algorithm header. Older algorithm checkpoints are rejected.
 
 Format 10 (#505) keeps the contact stops the next successful step reports: a `remove_body`
 removal of a cached contact, or a held uncached impact. Before, a checkpoint taken between
@@ -60,6 +61,9 @@ next creation serial, so restored ids stay valid and stale ids stay rejected.
 Joints (#453) are not part of the format: `checkpoint` of a world with any joint returns
 `CheckpointError::UnsupportedJoints` without capturing anything, so a checkpoint never drops a
 joint silently. A world without joints builds no joint rows, so its continuation is unaffected.
+Likewise a `World::set_next_kinematic_pose` target is not part of the format (#520): between that
+call and the next step `checkpoint` returns `CheckpointError::PendingKinematicPose`; the step
+consumes the target and leaves the body at rest at its pose, which the format already holds.
 
 ## Terrain and character state (#452)
 

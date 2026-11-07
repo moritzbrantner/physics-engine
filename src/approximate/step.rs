@@ -70,7 +70,9 @@ impl World {
         if !self.joints.is_empty() {
             self.joints.begin();
         }
-        let result = self.advance_substeps(dt);
+        let result = self
+            .begin_kinematic_poses(dt)
+            .and_then(|()| self.advance_substeps(dt));
         self.last_transaction = self.transaction.stats(result.is_err());
         if let Some(work) = &mut self.failed_work {
             work.transaction = self.last_transaction;
@@ -78,6 +80,7 @@ impl World {
         let result = match result {
             Ok(mut report) => {
                 self.transaction.commit();
+                self.kinematic_poses.clear();
                 report.contact_events = self.take_contact_events();
                 self.last_report = report.clone();
                 Ok(report)
@@ -242,6 +245,7 @@ impl World {
             reuse = reuse_next && self.bookkeeping.retired.is_empty();
             self.last_h = widen_time(h);
         }
+        self.finish_kinematic_poses();
         self.clear_forces(layout);
         self.elapsed += dt;
         self.finish_bookkeeping(&mut report);
@@ -470,11 +474,15 @@ impl World {
                 // A tumbling corner can reach a feature this manifold lacks. A halfspace
                 // manifold already holds every corner the step's spin can bring within reach
                 // of the plane (its margin includes it), so it is reused as Rapier reuses
-                // every manifold for the step's substeps (#426).
+                // every manifold for the step's substeps (#426). A turning kinematic body's
+                // rows are reused too, as Rapier's are: they advance by its point velocity, and
+                // a contact its rotation brings within the step is swept, which regenerates
+                // (#520).
                 let (a, b) = (&self.bodies[i], &self.bodies[j]);
                 let plane = a.shape == Shape::HalfSpace || b.shape == Shape::HalfSpace;
                 let tumbles = |b: &Body| {
-                    !matches!(b.shape, Shape::Sphere(_))
+                    !b.external
+                        && !matches!(b.shape, Shape::Sphere(_))
                         && b.angular_velocity.length() * b.shape.radius() * lookahead
                             > self.scene.contact_slop
                 };
@@ -964,6 +972,14 @@ impl World {
         );
         for &i in &scratch.activity.indices {
             let b = &mut self.bodies[i];
+            // A kinematic body at rest keeps its pose exactly: nothing to integrate.
+            if b.external
+                && b.velocity == Vector::ZERO
+                && b.angular_velocity == Vector::ZERO
+                && scratch.ccd_offsets.get(i).is_none()
+            {
+                continue;
+            }
             self.transaction.body(i, b);
             report.integrated_bodies += 1;
             let (movement, spin, correction_quiet) = (b.velocity, b.angular_velocity, true);
@@ -1331,6 +1347,15 @@ impl World {
                 continue;
             }
             let d = b.velocity * ahead;
+            // A turning kinematic body's box leaves room for its rotation over those steps too,
+            // or it would leave the box and query the tree almost every step (#520); rotation
+            // alone never takes a point farther than its radius from the centre.
+            let turn = if b.external {
+                (contact::spin_reach(b) * ahead).min(b.shape.radius())
+            } else {
+                0.0
+            };
+            let room = room + Vector(turn, turn, turn);
             let (bl, bh) = (lo.min(lo + d) - room, hi.max(hi + d) + room);
             if !finite((bl, bh)) {
                 e.epoch = 0;

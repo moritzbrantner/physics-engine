@@ -193,6 +193,7 @@ impl World {
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let order = self.bodies[self.index(id).ok()?].order;
         self.characters.remove(id);
+        self.kinematic_poses.retain(|t| t.0 != id.to_bits());
         self.halfspaces.retain(|&h| h != id);
         // Its joints go with it; the bodies they held wake (#453).
         self.remove_body_joints(order);

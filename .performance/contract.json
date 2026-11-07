@@ -2170,6 +2170,115 @@
       ]
     },
     {
+      "id": "step-kinematic-pose",
+      "description": "One World::step (1/60 s, default config) after World::set_next_kinematic_pose turns `blades` kinematic blades 1 rad about their own centres, each through a small sphere in its path, high above a static town of `statics` boxes (#520).",
+      "publicContract": "physics_engine::approximate::World::set_next_kinematic_pose",
+      "dimensions": {
+        "statics": {
+          "description": "static boxes in the town (doubling sizes), never reached by a blade"
+        },
+        "blades": {
+          "description": "pose-driven turning blades, each striking one sphere"
+        }
+      },
+      "scalePoints": [
+        {
+          "statics": 512,
+          "blades": 8
+        },
+        {
+          "statics": 1024,
+          "blades": 8
+        },
+        {
+          "statics": 2048,
+          "blades": 8
+        },
+        {
+          "statics": 4096,
+          "blades": 8
+        },
+        {
+          "statics": 8192,
+          "blades": 8
+        },
+        {
+          "statics": 4096,
+          "blades": 1
+        },
+        {
+          "statics": 4096,
+          "blades": 2
+        },
+        {
+          "statics": 4096,
+          "blades": 4
+        },
+        {
+          "statics": 4096,
+          "blades": 16
+        },
+        {
+          "statics": 4096,
+          "blades": 32
+        },
+        {
+          "statics": 4096,
+          "blades": 64
+        }
+      ],
+      "metrics": [
+        {
+          "name": "sweep-rounds",
+          "unit": "rounds",
+          "signal": "operation-count",
+          "notes": "GeometryStats::primitive_sweep_iterations: conservative-advancement rounds of the turning sweeps (a new operation, #520), a constant few per blade/sphere pair; the town never reaches them.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "blades",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "work::Counter::BodyVisits: applying and finishing the pose targets adds no per-body loop beyond the awake bodies (#412).",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "blades",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Broad-phase candidate tests: a blade's swept bounds include its rotation and reach only its own sphere.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "blades",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "static-mesh-query",
       "description": "One short ray plus one fixed-orientation capsule cast in a retained mesh of distant disjoint triangles. Local geometry remains constant while irrelevant triangles double; 16 samples per size.",
       "publicContract": "physics_engine::approximate::World::{cast_ray_first,cast_shape,add_triangle_mesh}",

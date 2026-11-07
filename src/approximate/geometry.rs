@@ -289,7 +289,9 @@ impl GeometryCache {
         work: &mut GeometryStats,
     ) -> Result<Option<contact::Manifold>, SweepFailure> {
         let [a, b] = bodies;
-        if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+        if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_)))
+            && !contact::driven_spin(a, b)
+        {
             let frames = [
                 self.frame(indices[0], a, work),
                 self.frame(indices[1], b, work),
