@@ -231,6 +231,8 @@ pub struct World {
     joints: joint::Joints,
     /// Pose targets for the next step (`set_next_kinematic_pose`, #520), sorted by body id bits.
     kinematic_poses: Vec<(u64, Vector, Quaternion)>,
+    /// [`World::static_revision`].
+    static_revision: u64,
 }
 /// One contact cache insertion or removal, with the pair's ids at that moment.
 #[derive(Clone, Copy, Debug)]
@@ -334,6 +336,7 @@ impl World {
             held_contacts: Vec::new(),
             joints: joint::Joints::default(),
             kinematic_poses: Vec::new(),
+            static_revision: 0,
         })
     }
     /// Work from the most recent step attempt, including a numerical failure.
@@ -358,6 +361,22 @@ impl World {
     }
     pub fn elapsed_seconds(&self) -> Scalar {
         self.elapsed
+    }
+    /// A counter that changes whenever static geometry a query can see changes: a static body
+    /// (mass 0, not external; halfspaces, heightfields, meshes and hulls included) is added,
+    /// removed (retirement and a failed step's rollback included) or moved by
+    /// [`World::set_static_position`], or its layers change ([`World::set_layers`]). It only
+    /// increases. Dynamic and external (kinematic, character) bodies never change it, nor do
+    /// steps that leave static bodies alone. A query result that admits only static bodies, from
+    /// a pose the caller keeps, therefore stands while the revision is unchanged (MMORPG's
+    /// ground probes; zero-motion character moves reuse their support test the same way, #526).
+    /// Compare revisions of one world only: [`World::new`] and a checkpoint restore start at 0.
+    pub fn static_revision(&self) -> u64 {
+        self.static_revision
+    }
+    /// Static geometry changed ([`World::static_revision`]).
+    pub(super) fn static_changed(&mut self, body: &Body) {
+        self.static_revision += u64::from(body.is_static());
     }
     pub fn is_quiescent(&self) -> bool {
         self.bookkeeping.activity.count == 0

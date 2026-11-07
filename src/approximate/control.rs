@@ -190,6 +190,7 @@ impl World {
                     .or_else(|| (b == order).then_some(a))
             })
             .collect::<Vec<_>>();
+        self.static_revision += 1;
         let body = &mut self.bodies[i];
         let before = body.cached_bounds;
         body.position = position;
@@ -243,6 +244,7 @@ impl World {
             wake.push(order);
         }
         self.bodies[i].layers = layers;
+        self.static_revision += u64::from(self.bodies[i].is_static());
         if solid {
             wake.extend(self.sleepers_touching(&self.bodies[i]));
         }

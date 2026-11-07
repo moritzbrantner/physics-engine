@@ -222,6 +222,7 @@ impl Journal {
         // Membership first, then before-images by stable identity: retirement
         // can shift every later storage index during an earlier substep.
         for body in self.removed.drain(..) {
+            world.static_changed(&body);
             let index = world
                 .bodies
                 .binary_search_by_key(&body.order, |b| b.order)

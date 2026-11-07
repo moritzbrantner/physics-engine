@@ -1070,6 +1070,66 @@ fn placing_a_character_rechecks_its_neighbourhood_not_the_crowd() {
     );
 }
 
+/// Zero-motion moves of characters standing on the town's boxes reuse their support test
+/// while nothing static changed (#526): a repeated batch does no shape query, and the first
+/// batch after a step only checks each character's pose for overlap (a moving-body tree descent
+/// that meets no body: the box below is `offset` away).
+#[test]
+fn zero_motion_moves_skip_queries_while_statics_stand() {
+    let mut samples = Vec::new();
+    let mut out: Vec<CharacterMoveResult> = Vec::new();
+    for (log2, m) in placement_points() {
+        let mut w = town(log2);
+        let settings = w.character_settings();
+        let ids: Vec<_> = (0..m as usize)
+            .map(|c| {
+                let p = cell(c % 8, c / 8) + V(0.0, BOX + 0.3 + settings.offset, 0.0);
+                let mut body = Body::keyed(1_000_000 + c as u64, Shape::capsule(0.2, 0.1), p, 1.0);
+                body.external = true;
+                let id = w.add_body(body).unwrap();
+                w.add_character(id, settings).unwrap();
+                id
+            })
+            .collect();
+        let rest: Vec<_> = ids
+            .iter()
+            .map(|&body| CharacterMove {
+                body,
+                desired: V::ZERO,
+                exclude: None,
+                autostep: None,
+            })
+            .collect();
+        w.move_characters(&rest, &mut out).unwrap();
+        assert!(out.iter().all(|r| r.grounded), "standing on the boxes");
+        let first = out.clone();
+        let (n, e, f) = counted(|| w.move_characters(&rest, &mut out).unwrap());
+        assert_eq!(out, first);
+        w.step(1.0 / 60.0).unwrap();
+        let (stepped, _, _) = counted(|| w.move_characters(&rest, &mut out).unwrap());
+        assert_eq!(out, first);
+        samples.push((
+            vec![("bodies", 1u64 << log2), ("characters", m)],
+            vec![
+                ("tree-nodes", n),
+                ("exact-tests", e),
+                ("tree-nodes-after-step", stepped),
+                ("full-scan-bodies", f),
+            ],
+        ));
+    }
+    judge(
+        "move-characters-still",
+        &samples,
+        &[
+            ("tree-nodes", "", "zero"),
+            ("exact-tests", "", "zero"),
+            ("tree-nodes-after-step", "bodies", "constant"),
+            NO_FULL_SCAN,
+        ],
+    );
+}
+
 /// Moving a static body in place (#352) rechecks only the characters it reaches.
 #[test]
 fn moving_a_static_body_rechecks_its_neighbourhood_not_the_crowd() {

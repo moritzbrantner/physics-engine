@@ -124,6 +124,10 @@ impl Body {
     pub fn is_sleeping(&self) -> bool {
         self.sleeping
     }
+    /// Static geometry: mass 0 and not external ([`super::World::static_revision`]).
+    pub(super) fn is_static(&self) -> bool {
+        self.mass == 0.0 && !self.external
+    }
     pub(super) fn movable(&self) -> bool {
         self.mass > 0.0 && !self.external
     }

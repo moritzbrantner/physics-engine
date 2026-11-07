@@ -286,6 +286,14 @@ resolved, a surface the character is inside blocks only motion into it, and each
 steps it 0.1 mm (in `length_unit`) off that surface, as Rapier's normal nudge does. Rapier
 0.36.1 depenetrates a character asked for zero motion; `Stay` never moves it then (MMORPG skips
 zero-motion moves). Other characters are always separated by the batch (below).
+A zero-motion move (desired motion within a thousandth of `offset`) from a pose already verified
+clear, which therefore neither slides nor depenetrates, reuses the last such move's `grounded`,
+`support` and `ground_contact` exactly while its bitwise pose, `exclude`, the layout generation
+and `static_revision()` are unchanged and that move did not snap (#526): those tests admit only
+static bodies, so nothing else can change them. A repeated batch then makes no shape query; after
+a step only the overlap check that re-verifies the pose runs. The kept outcome is derived per
+character slot, cleared when a character is added or removed, absent after a checkpoint restore,
+and not checkpointed.
 `CharacterSettings::plane: Some(height)` makes a planar character: it moves only horizontally
 at its height, needs no floor collider and is always grounded with `support` `None`.
 Depenetration leaves static and kinematic bodies, not other characters.
@@ -343,6 +351,14 @@ in place, as Rapier moves a fixed collider (moving platforms): the layout stays 
 bodies it was in contact with or now touches wake, and characters it now reaches check for overlap
 again. Characters are not carried; the consumer adds a platform's displacement to its riders' moves
 (MMORPG's adapter, the `platforms` oracle scenario).
+`static_revision() -> u64` changes whenever static geometry a query can see changes: a static body
+(mass 0, not external; halfspaces, heightfields, meshes and hulls included) is added or removed
+(retirement and a failed step's rollback of one included), moved by `set_static_position`, or its
+layers change through `set_layers`. It only increases; dynamic and external (kinematic and
+character) bodies, `set_kinematic_position`, `set_next_kinematic_pose` and steps never change it.
+A query result that admits only static bodies, from a pose the caller holds, stands while it is
+unchanged (MMORPG's `probe_ground_gap` and `grounded()`). Compare revisions of one world only:
+`World::new` and a checkpoint restore start at 0.
 
 ## Persistent projectile CCD
 
