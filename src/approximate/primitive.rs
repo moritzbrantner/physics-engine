@@ -50,6 +50,11 @@ pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool)
 }
 
 pub(super) fn bounds_extents(body: &Body) -> V {
+    // The kernel's sphere extent is the widened radius, which narrows back to the radius
+    // exactly: skip building the kernel frame for the most common swept-bounds shape (#485).
+    if let Shape::Sphere(radius) = body.shape {
+        return V(radius, radius, radius);
+    }
     let [x, y, z] = kernel_bounds(kernel_body(body));
     V(round_up(x), round_up(y), round_up(z))
 }
@@ -677,6 +682,22 @@ mod tests {
 
     fn body(id: u64, shape: Shape, position: V) -> Body {
         Body::fixture(id, shape, position, 0.0)
+    }
+
+    #[test]
+    fn sphere_bounds_shortcut_matches_kernel_extents() {
+        for radius in [1e-6, 0.1, 0.3, 1.0 / 3.0, 7.25, 1.0e6, 9.99e11] {
+            let mut b = body(1, Shape::Sphere(radius), V(-3.5, 1.0e5, 0.25));
+            b.velocity = V(1.0e3, -2.0, 0.0);
+            b.orientation = Quaternion(0.0, 0.6, 0.0, 0.8);
+            let [x, y, z] = kernel_bounds(kernel_body(&b));
+            let kernel = V(round_up(x), round_up(y), round_up(z));
+            let fast = bounds_extents(&b);
+            assert_eq!(
+                [fast.0, fast.1, fast.2].map(Real::to_bits),
+                [kernel.0, kernel.1, kernel.2].map(Real::to_bits),
+            );
+        }
     }
 
     #[test]
