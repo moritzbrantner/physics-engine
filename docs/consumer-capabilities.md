@@ -265,6 +265,5 @@ The intended authored prop/debris adapter pattern uses isolated retained static 
 transient rigid body admission/removal, with the game's one upright/four free solver
 iterations and no retained character state. The oracle measures that pattern on both
 engines against persistent bare Rapier; final adoption remains consumer-owned. Physical
-continuation across transient cleanup is covered. Existing [#505](https://github.com/moritzbrantner/physics-engine/issues/505)
-loses pending removal `Stopped` events when a checkpoint is captured after cleanup;
-full report-event continuation at that boundary is not claimed.
+continuation across transient cleanup is covered, including the pending removal `Stopped`
+events a checkpoint captured after cleanup carries into the next step (format 10, #505).

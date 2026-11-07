@@ -198,7 +198,7 @@ Hull faces are prepared first. Queries certified by those faces avoid box-vertex
 and edge-axis construction; the remaining axes are prepared once on demand and retained.
 Removed or unused pair data is pruned; these derived caches are not checkpoint authority.
 
-The opt-in checkpoint format 9 stores canonical hull vertices in their original hull-slot order,
+The opt-in checkpoint format (9 and later) stores canonical hull vertices in their original hull-slot order,
 including empty slots for removed hulls. Restore rebuilds the prepared hulls and verifies their
 body extents. Ordinary game saves continue to reconstruct collision from game content.
 

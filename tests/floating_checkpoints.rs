@@ -384,6 +384,7 @@ fn damaged_truncated_unknown_and_incompatible_bytes_reject_without_touching_a_wo
         );
     }
     for (offset, value, error) in [
+        (8, 9u32, CheckpointError::UnsupportedFormat(9)),
         (8, 6u32, CheckpointError::UnsupportedFormat(6)),
         (8, 5u32, CheckpointError::UnsupportedFormat(5)),
         (8, 4u32, CheckpointError::UnsupportedFormat(4)),
@@ -606,7 +607,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_nine_algorithm_seventeen_f32_empty_world_wire_fixture_is_stable() {
+fn format_ten_algorithm_seventeen_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -616,13 +617,13 @@ fn format_nine_algorithm_seventeen_f32_empty_world_wire_fixture_is_stable() {
     .unwrap();
     let encoded = bytes(&world);
     assert_eq!(&encoded[..8], b"PEFLT32\0");
-    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 9);
+    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 10);
     assert_eq!(
         Sha256::digest(&encoded)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "78c1cb142ef53efb965c6ffdf29d39c3724847b600fc50a571740eab147ceca0"
+        "359e1bd9c5956760ea4d0b3ec0d5fc86631078d23c9a0c999a197ed1404c7588"
     );
 }
 
@@ -746,5 +747,95 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
             .unwrap()
             .0
             .is_nan()
+    );
+}
+
+/// A ground with a resting sphere that `remove_body` takes away: its `Stopped` is pending.
+fn removed_contact() -> World {
+    let mut world = World::new(Config::default()).unwrap();
+    world
+        .add_body(Body::new(Shape::HalfSpace, V::ZERO, 0.0))
+        .unwrap();
+    let sphere = world
+        .add_body(Body::new(Shape::Sphere(0.5), V(0.0, 0.5, 0.0), 1.0))
+        .unwrap();
+    assert!(!world.step(1.0 / 60.0).unwrap().contact_events.is_empty());
+    world.remove_body(sphere).unwrap();
+    world
+}
+
+#[test]
+fn pending_removed_contact_event_continues_after_restore() {
+    let mut world = removed_contact();
+    let mut restored = restore(&bytes(&world));
+    same(&restored, &world);
+    let expected = world.step(1.0 / 60.0).unwrap().contact_events;
+    assert_eq!(expected.len(), 1, "{expected:?}");
+    assert_eq!(restored.step(1.0 / 60.0).unwrap().contact_events, expected);
+    // The stop is reported once: neither world holds it afterwards.
+    same(&restored, &world);
+    assert!(world.step(1.0 / 60.0).unwrap().contact_events.is_empty());
+    assert!(restored.step(1.0 / 60.0).unwrap().contact_events.is_empty());
+}
+
+#[test]
+fn pending_stops_are_validated() {
+    let saved = bytes(&removed_contact());
+    // The pending stops close the payload: a u64 count, then two u128 orders and two u64 ids.
+    let entry = saved.len() - 32 - 48;
+    assert_eq!(
+        u64::from_le_bytes(saved[entry - 8..entry].try_into().unwrap()),
+        1
+    );
+    let order =
+        |bytes: &[u8], at: usize| u128::from_le_bytes(bytes[at..at + 16].try_into().unwrap());
+    let id = |bytes: &[u8], at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
+    let (a, b) = (order(&saved, entry), order(&saved, entry + 16));
+    let (x, y) = (id(&saved, entry + 32), id(&saved, entry + 40));
+    let mut cases: Vec<Vec<u8>> = Vec::new();
+    let mut edit = |at: usize, value: &[u8]| {
+        let mut bad = saved.clone();
+        bad[at..at + value.len()].copy_from_slice(value);
+        rehash(&mut bad);
+        cases.push(bad);
+    };
+    // Pair out of body order or with itself.
+    edit(entry, &b.to_le_bytes());
+    edit(entry + 16, &a.to_le_bytes());
+    // An order no body was ever created with, and one past the key/serial range.
+    edit(entry + 16, &((1u128 << 64) | 99).to_le_bytes());
+    edit(entry + 16, &(2u128 << 64).to_le_bytes());
+    // Missing, repeated and out-of-range ids, and a live id under another body's order.
+    edit(entry + 40, &u64::MAX.to_le_bytes());
+    edit(entry + 40, &x.to_le_bytes());
+    edit(entry + 40, &(y | 0xffff).to_le_bytes());
+    let mut swapped = saved.clone();
+    swapped[entry + 32..entry + 40].copy_from_slice(&y.to_le_bytes());
+    swapped[entry + 40..entry + 48].copy_from_slice(&x.to_le_bytes());
+    rehash(&mut swapped);
+    cases.push(swapped);
+    for (i, bad) in cases.iter().enumerate() {
+        assert_eq!(
+            Checkpoint::from_bytes(bad, CONTEXT, CheckpointLimits::default()).unwrap_err(),
+            CheckpointError::InvalidData,
+            "case {i}"
+        );
+    }
+    // A count beyond the entries present, and beyond the caller's pair budget.
+    let mut long = saved.clone();
+    long[entry - 8..entry].copy_from_slice(&2u64.to_le_bytes());
+    rehash(&mut long);
+    assert!(Checkpoint::from_bytes(&long, CONTEXT, CheckpointLimits::default()).is_err());
+    assert_eq!(
+        Checkpoint::from_bytes(
+            &saved,
+            CONTEXT,
+            CheckpointLimits {
+                pairs: 0,
+                ..CheckpointLimits::default()
+            }
+        )
+        .unwrap_err(),
+        CheckpointError::ResourceLimit
     );
 }

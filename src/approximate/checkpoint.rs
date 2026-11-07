@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 9;
+const FORMAT: u32 = 10;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 17;
 const DIGEST_BYTES: usize = 32;
@@ -31,6 +31,8 @@ const MIN_BODY_BYTES: usize = 29 + 31 * REAL_BYTES;
 // Id 8, offset and slope, four option/count/policy tags, exclusion tag and clear flag.
 const MIN_CHARACTER_BYTES: usize = 15 + 2 * REAL_BYTES;
 const POINT_BYTES: usize = 13 * REAL_BYTES;
+// Pending stop: two u128 orders and two u64 ids.
+const PENDING_STOP_BYTES: usize = 48;
 // Conservative envelopes for stored normalization/rotated-normal results. The
 // existing normalization can lose unit length for extreme finite input scales;
 // a checkpoint preserves that accepted state rather than silently repairing it.
@@ -135,7 +137,14 @@ pub struct Checkpoint {
     halfspaces: Vec<BodyId>,
     /// Character registrations in slot order.
     characters: Vec<SavedCharacter>,
+    /// Contact stops the next successful step reports (`remove_body` removals and held
+    /// impacts), in the order they happened: pair orders and the pair's ids at that moment.
+    pending_stops: Vec<PendingStop>,
 }
+
+/// A pending contact stop: the pair's orders and its ids when it stopped (one side may be
+/// removed, or re-added under a key with a new id).
+type PendingStop = ((Order, Order), (BodyId, BodyId));
 
 /// A character registration and the state its next move reads (#452).
 #[derive(Clone, Copy, Debug)]
@@ -187,6 +196,23 @@ impl World {
             })
             .collect::<Vec<_>>();
         let terrain_slots = u32::try_from(self.terrains.len()).expect("terrain ids are u32");
+        // Between steps every pending change is a stop: the step turns insertions into events.
+        debug_assert_eq!(self.contact_changes.len(), self.removed_contacts);
+        let pending_stops = self
+            .contact_changes
+            .iter()
+            .map(|c| {
+                debug_assert!(!c.started && !c.held);
+                (c.key, c.ids)
+            })
+            .collect::<Vec<_>>();
+        let slot_generations = self.slots.iter().map(|s| s.generation).collect::<Vec<_>>();
+        validate_pending_stops(
+            &bodies,
+            slot_generations.len(),
+            self.next_serial,
+            &pending_stops,
+        )?;
         validate_parts(
             &bodies,
             terrain_slots,
@@ -202,7 +228,7 @@ impl World {
             last_h: self.last_h,
             bodies,
             cache: self.cache.clone(),
-            slot_generations: self.slots.iter().map(|s| s.generation).collect(),
+            slot_generations,
             next_serial: self.next_serial,
             terrain_slots,
             heightfields,
@@ -214,6 +240,7 @@ impl World {
             hulls,
             halfspaces: self.halfspaces.clone(),
             characters,
+            pending_stops,
         })
     }
 }
@@ -248,7 +275,8 @@ impl Checkpoint {
                     .map(|h| h.as_ref().map_or(0, |v| v.capacity() * size_of::<Vector>()))
                     .sum::<usize>()
                 + self.halfspaces.capacity() * size_of::<BodyId>()
-                + self.characters.capacity() * size_of::<SavedCharacter>(),
+                + self.characters.capacity() * size_of::<SavedCharacter>()
+                + self.pending_stops.capacity() * size_of::<PendingStop>(),
         }
     }
 
@@ -372,6 +400,17 @@ impl Checkpoint {
                 .characters
                 .restore(c.id, c.settings, c.exclude, c.clear.then_some(generation));
         }
+        world.contact_changes = self
+            .pending_stops
+            .into_iter()
+            .map(|(key, ids)| super::ContactChange {
+                key,
+                ids,
+                started: false,
+                held: false,
+            })
+            .collect();
+        world.removed_contacts = world.contact_changes.len();
         Ok(world)
     }
 
@@ -453,6 +492,13 @@ impl Checkpoint {
         count(&mut out, self.characters.len());
         for c in &self.characters {
             encode_character(&mut out, c);
+        }
+        count(&mut out, self.pending_stops.len());
+        for &((a, b), (x, y)) in &self.pending_stops {
+            out.extend_from_slice(&a.0.to_le_bytes());
+            out.extend_from_slice(&b.0.to_le_bytes());
+            out.extend_from_slice(&x.to_bits().to_le_bytes());
+            out.extend_from_slice(&y.to_bits().to_le_bytes());
         }
         let digest = Sha256::digest(&out);
         out.extend_from_slice(&digest);
@@ -651,6 +697,16 @@ impl Checkpoint {
         for _ in 0..character_count {
             characters.push(reader.character()?);
         }
+        let stop_count = reader.count(limits.pairs, PENDING_STOP_BYTES)?;
+        let mut pending_stops = Vec::with_capacity(stop_count);
+        for _ in 0..stop_count {
+            let key = (Order(reader.u128()?), Order(reader.u128()?));
+            let ids = (
+                BodyId::from_bits(reader.u64()?),
+                BodyId::from_bits(reader.u64()?),
+            );
+            pending_stops.push((key, ids));
+        }
         if !reader.bytes.is_empty() {
             return Err(CheckpointError::InvalidData);
         }
@@ -663,6 +719,7 @@ impl Checkpoint {
             &halfspaces,
             &characters,
         )?;
+        validate_pending_stops(&bodies, slot_generations.len(), next_serial, &pending_stops)?;
         let mut keys = std::collections::BTreeSet::new();
         if bodies.iter().any(|b| {
             slot_generations.get(b.id.slot() as usize) != Some(&b.id.generation())
@@ -686,6 +743,7 @@ impl Checkpoint {
             hulls,
             halfspaces,
             characters,
+            pending_stops,
         })
     }
 }
@@ -792,6 +850,39 @@ fn validate_parts(
         })
     {
         return invalid;
+    }
+    Ok(())
+}
+
+/// Each pending stop names a pair in body order with two distinct ids from existing slots. A
+/// side's order is a valid key or an issued creation serial; an id that is still live must
+/// carry that side's order (a removed side's order may be reused by a re-added keyed body).
+fn validate_pending_stops(
+    bodies: &[Body],
+    slots: usize,
+    next_serial: u64,
+    stops: &[PendingStop],
+) -> Result<(), CheckpointError> {
+    let orders = bodies
+        .iter()
+        .map(|b| (b.id.to_bits(), b.order))
+        .collect::<BTreeMap<_, _>>();
+    let valid_side = |order: Order, id: BodyId| {
+        let issued = match order.0 >> 64 {
+            0 => true,
+            1 => (order.0 as u64) < next_serial,
+            _ => false,
+        };
+        issued
+            && id != BodyId::NONE
+            && (id.slot() as usize) < slots
+            && orders.get(&id.to_bits()).is_none_or(|&o| o == order)
+    };
+    if stops
+        .iter()
+        .any(|&((a, b), (x, y))| a >= b || x == y || !valid_side(a, x) || !valid_side(b, y))
+    {
+        return Err(CheckpointError::InvalidData);
     }
     Ok(())
 }
