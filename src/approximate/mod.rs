@@ -71,6 +71,7 @@ pub use joint::{DistanceJoint, JointId};
 mod ccd;
 mod character;
 mod convex_hull;
+mod static_sphere;
 mod terrain;
 mod triangle_mesh;
 pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};

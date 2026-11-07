@@ -183,7 +183,7 @@ fn terrain_rejects_rigid_body_api_misuse() {
         &mut Vec::new(),
     );
     assert!(r.is_err());
-    // Stepping a world with terrain and a dynamic body does not touch the terrain.
+    // Stepping a world with terrain and a dynamic sphere above it succeeds.
     w.add_body(Body::new(Shape::Sphere(0.5), V(0.0, 10.0, 0.0), 1.0))
         .unwrap();
     w.step(1.0 / 60.0).unwrap();

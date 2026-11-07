@@ -474,11 +474,8 @@ fn local_ray_vs_capsule_cost() {
 
 #[test]
 fn unsupported_rigid_hull_pairs_fail_atomically_instead_of_tunneling() {
-    for shape in [
-        Shape::Sphere(0.2),
-        Shape::capsule(0.3, 0.2),
-        Shape::Box(V(0.2, 0.2, 0.2)),
-    ] {
+    // Spheres take hull contacts and CCD (#519, tests/sphere_static_contacts.rs).
+    for shape in [Shape::capsule(0.3, 0.2), Shape::Box(V(0.2, 0.2, 0.2))] {
         let mut world = cube_rock();
         let mut body = Body::keyed(42, shape, V(-3.0, 0.0, 0.0), 1.0);
         body.velocity = V(600.0, 0.0, 0.0);

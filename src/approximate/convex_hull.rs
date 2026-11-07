@@ -448,6 +448,78 @@ impl PreparedHull {
         })
     }
 
+    /// Current contact of a rigid sphere (#519). The face plane of greatest signed distance
+    /// is exact when the centre is inside the hull (the nearest boundary point is on that
+    /// plane) or when its projection onto that plane lies on the hull; edges and corners fall
+    /// back to [`Self::capsule_contact`]'s checked segment distance and GJK/EPA.
+    pub(super) fn sphere_contact(
+        &self,
+        query: &Body,
+        target: &Body,
+        work: &mut HullWork,
+    ) -> Result<Contact, SweepFailure> {
+        let Shape::Sphere(radius) = query.shape else {
+            return Err(SweepFailure::InvalidGeometryInput);
+        };
+        let origin = to64(target.position);
+        let c = sub(to64(query.position), origin);
+        let mut best: Option<(&Plane, f64)> = None;
+        for plane in &self.planes {
+            work.face_planes_tested += 1;
+            let signed = dot(plane.normal, c) - plane.offset;
+            if best.is_none_or(|(_, s)| signed > s) {
+                best = Some((plane, signed));
+            }
+        }
+        let (plane, signed) = best.ok_or(SweepFailure::InvalidGeometryInput)?;
+        if !signed.is_finite() {
+            return Err(SweepFailure::NonFiniteComputation);
+        }
+        let projected: Vec3 = std::array::from_fn(|i| c[i] - plane.normal[i] * signed);
+        let tolerance = 1e-8 * (1.0 + projected.into_iter().map(f64::abs).fold(0.0, f64::max));
+        let on_face = signed <= 0.0
+            || self.planes.iter().all(|other| {
+                work.face_planes_tested += 1;
+                dot(other.normal, projected) <= other.offset + tolerance
+            });
+        if !on_face {
+            return self.capsule_contact(query, target, work);
+        }
+        work.face_hits += 1;
+        let r = f64::from(radius);
+        Ok(Contact {
+            separation: primitive::round_down(signed - r),
+            normal: -to_real(plane.normal),
+            point_query: to_real(std::array::from_fn(|i| {
+                c[i] - plane.normal[i] * r + origin[i]
+            })),
+            point_hull: to_real(std::array::from_fn(|i| projected[i] + origin[i])),
+            face: Some(plane.face),
+        })
+    }
+
+    /// First contact of a sphere translating by `displacement`, as a fraction of it. A sphere
+    /// already within the contact tolerance is hit at 0 when it moves into the hull and
+    /// ignored when it leaves or slides along it, as the terrain and mesh sweeps do.
+    pub(super) fn sphere_sweep(
+        &self,
+        query: &Body,
+        target: &Body,
+        displacement: V,
+        work: &mut HullWork,
+    ) -> Result<Option<(Real, Contact)>, SweepFailure> {
+        let initial = self.sphere_contact(query, target, work)?;
+        let tolerance = 1e-6 * (1.0 + f64::from(query.shape.radius()));
+        if f64::from(initial.separation) <= tolerance {
+            // The normal points from the sphere toward the hull.
+            let closing = dot(to64(initial.normal), to64(displacement));
+            return Ok((closing > 0.0).then_some((0.0, initial)));
+        }
+        Ok(self
+            .capsule_query(query, target, displacement, Some(128), work)?
+            .map(|(fraction, contact, ..)| (fraction, contact)))
+    }
+
     /// Conservative advancement: the distance kernel gives a supporting separation plane;
     /// advancing by no more than distance / relative closing speed cannot skip a convex hit.
     pub(super) fn capsule_query(

@@ -13,9 +13,12 @@ Algorithm 12 corrects tangential heightfield sweep admission for character moves
 tangential earliest hit no longer hides a later blocking triangle. This changes continuation
 at terrain seams; format 9 is unchanged. Algorithm 13 fixes character reconstruction;
 algorithm 14 adds box/hull response; algorithm 15 adds non-CCD box/mesh response
-(see below). Algorithm 16 skips finite zero solver corrections. Current algorithm 17
+(see below). Algorithm 16 skips finite zero solver corrections. Algorithm 17
 preserves character height while crossing a grazing
-triangle support edge before snapping. Older algorithm checkpoints
+triangle support edge before snapping. Current algorithm 18 (#519) gives rigid spheres
+contacts and swept CCD against heightfield terrain and fixed convex hulls, so a world with a
+sphere over terrain or beside a hull continues differently; format 10 is unchanged and the
+empty-world digest changes only for the algorithm header. Older algorithm checkpoints
 are rejected.
 
 Format 10 (#505) keeps the contact stops the next successful step reports: a `remove_body`
@@ -28,7 +31,7 @@ removed body, or a keyed body re-added under its key with a new id. Restore vali
 pair (increasing orders, each a key or an issued creation serial; distinct ids, neither
 `BodyId::NONE`, in existing slots; a live id carries that side's order) and holds them for
 the next step, which reports them exactly as the original would. The count is bounded by the
-caller's pair budget. The algorithm stays 17: stepping rules are unchanged. Format 9
+caller's pair budget. The algorithm stayed 17: stepping rules were unchanged. Format 9
 checkpoints are rejected; the empty-world digest changes for the format header and the empty
 pending-stop count.
 
