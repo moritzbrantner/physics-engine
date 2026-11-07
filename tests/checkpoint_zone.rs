@@ -267,7 +267,9 @@ fn halfspace_and_character_records_must_match_the_bodies() {
     let c = w.add_body(c).unwrap();
     w.add_character(c, w.character_settings()).unwrap();
     let saved = bytes(&w);
-    let end = saved.len() - 32;
+    // The character records end before the (empty) pending-stop count and the digest.
+    let end = saved.len() - 32 - 8;
+    assert_eq!(saved[end..end + 8], 0u64.to_le_bytes());
     let w_ = size_of::<physics_engine::approximate::Real>();
     let character = end - (8 + 2 * w_ + 1 + w_ + 6);
     let halfspace = character - 8 - 8;

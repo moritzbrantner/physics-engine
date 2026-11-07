@@ -544,7 +544,7 @@ fn small_rigid_motion_leaves_an_authored_edge_and_falls_through_the_open_gap() {
 
 #[cfg(feature = "checkpoints")]
 #[test]
-fn transient_rigid_mesh_calls_restore_physics_with_the_known_pending_event_limitation() {
+fn transient_rigid_mesh_calls_restore_physics_and_pending_events() {
     use physics_engine::approximate::{Checkpoint, CheckpointContext, CheckpointLimits};
     let mut world = cave(BodyStorage::Ordered);
     let static_count = world.body_count();
@@ -569,20 +569,12 @@ fn transient_rigid_mesh_calls_restore_physics_with_the_known_pending_event_limit
         let original = world.step(1.0 / 60.0).unwrap();
         let replay = restored.step(1.0 / 60.0).unwrap();
         if tick == 0 {
-            // Existing #505: capture after cleanup loses exactly the old body's pending
-            // Stopped event. Keep the actual cleanup boundary and verify physical state.
+            // #505: capture after cleanup keeps the old body's pending Stopped event.
             let old =
                 physics_engine::approximate::ContactEvent::Stopped(world.body_id(640).unwrap(), id);
             assert!(original.contact_events.contains(&old));
-            let retained: Vec<_> = original
-                .contact_events
-                .into_iter()
-                .filter(|event| *event != old)
-                .collect();
-            assert_eq!(retained, replay.contact_events);
-        } else {
-            assert_eq!(original.contact_events, replay.contact_events);
         }
+        assert_eq!(original.contact_events, replay.contact_events);
         assert_eq!(world.body(a).unwrap(), restored.body(b).unwrap());
         state = world.remove_body(a).unwrap();
         assert_eq!(Some(state.clone()), restored.remove_body(b));
