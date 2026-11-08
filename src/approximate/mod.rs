@@ -49,9 +49,11 @@ fn substep_length(dt: Scalar, substeps: u8) -> Real {
 mod bookkeeping;
 mod contact;
 mod mass;
+mod medium;
 mod position;
 mod primitive;
 pub use mass::{MassProperties, MassPropertiesError};
+pub use medium::Medium;
 mod query;
 pub use position::PositionReport;
 pub use query::{
@@ -76,9 +78,11 @@ mod static_sphere;
 mod terrain;
 mod triangle_mesh;
 pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};
-pub use convex_hull::{ConvexHullDesc, ConvexHullId, ConvexHullStats};
+pub use convex_hull::{ConvexHullDesc, ConvexHullId, ConvexHullStats, PreparedConvexHull};
 pub use terrain::{HeightfieldDesc, TerrainId};
-pub use triangle_mesh::{TriangleMeshDesc, TriangleMeshId, TriangleMeshStats};
+pub use triangle_mesh::{
+    PreparedTriangleMesh, TriangleMeshDesc, TriangleMeshId, TriangleMeshStats,
+};
 mod math;
 mod response;
 mod step;
@@ -236,6 +240,9 @@ pub struct World {
     /// Live bodies with [`Body::additional_solver_iterations`] above zero. While zero, the
     /// solver never looks for elevated islands.
     elevated_bodies: usize,
+    /// The first failed medium computation of a substep's force phase (`apply_substep_forces`
+    /// has no error path of its own); taken by `advance_substeps`, which rolls the step back.
+    force_failure: Option<Error>,
 }
 /// One contact cache insertion or removal, with the pair's ids at that moment.
 #[derive(Clone, Copy, Debug)]
@@ -317,7 +324,7 @@ impl World {
             last_report: Report::default(),
             transaction: transaction::Journal::default(),
             last_transaction: TransactionStats::default(),
-            query_tree: query::QueryTree::default(),
+            query_tree: query::QueryTree::new(config.length_unit),
             terrains: Vec::new(),
             triangle_meshes: Vec::new(),
             hulls: Vec::new(),
@@ -341,6 +348,7 @@ impl World {
             kinematic_poses: Vec::new(),
             static_revision: 0,
             elevated_bodies: 0,
+            force_failure: None,
         })
     }
     /// Work from the most recent step attempt, including a numerical failure.

@@ -64,6 +64,9 @@ pub struct Body {
     pub(super) impulse: Vector,
     pub(super) angular_impulse: Vector,
     pub(super) cached_bounds: (Vector, Vector),
+    /// Set by [`World::set_medium`](super::World::set_medium). Boxed, so a body without one
+    /// carries a null pointer.
+    pub(super) medium: Option<Box<super::medium::BodyMedium>>,
 }
 impl Body {
     /// A body carrying the game's stable `key` (see [`World::body_id`](super::World::body_id)).
@@ -113,6 +116,7 @@ impl Body {
             impulse: Vector::ZERO,
             angular_impulse: Vector::ZERO,
             cached_bounds: (Vector::ZERO, Vector::ZERO),
+            medium: None,
         }
     }
     /// Diagnostic kinetic energy in mass-units * scene-units squared / second squared.

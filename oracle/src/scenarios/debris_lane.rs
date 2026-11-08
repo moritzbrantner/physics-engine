@@ -4,7 +4,9 @@
 //! 2 substeps × 4 passes and removed together. A piece that settles by the game's rule is
 //! re-added as a fixed box on later ticks. The pieces' invariants are `debris`'s.
 //!
-//! The Rapier side rebuilds the world per tick, statics included, as MMORPG's adapter did.
+//! The Rapier side rebuilds the world per tick, statics included, as MMORPG's adapter did. The
+//! perf gate is that pattern only (owner decision, #523): bare persistent Rapier keeps bodies and
+//! warm starts, a different workload from a lane that re-adds every piece.
 
 use super::debris::{self, Start, starts};
 use crate::{Scenario, Trace};

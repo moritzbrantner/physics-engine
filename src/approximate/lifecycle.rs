@@ -346,9 +346,14 @@ impl World {
         }
         // O(contact pairs), independent of the body count.
         self.geometry.remove(order);
-        self.cache.retain(|&(a, b), _| {
+        let pool = &mut self.bookkeeping;
+        self.cache.retain(|&(a, b), points| {
             crate::work::add(crate::work::Counter::CachedPairVisits, 1);
-            a != order && b != order
+            let keep = a != order && b != order;
+            if !keep {
+                pool.recycle_points(std::mem::take(points));
+            }
+            keep
         });
         let i = self.index(id).ok()?;
         let removed = self.release_body(id, i);
@@ -393,7 +398,8 @@ impl World {
                     .id
                 }
             };
-            cache.retain(|&(a, b), _| {
+            let pool = &mut self.bookkeeping;
+            cache.retain(|&(a, b), points| {
                 crate::work::add(crate::work::Counter::CachedPairVisits, 1);
                 let (gone_a, gone_b) = (
                     orders.binary_search(&a).is_ok(),
@@ -415,6 +421,7 @@ impl World {
                     started: false,
                     held: false,
                 });
+                pool.recycle_points(std::mem::take(points));
                 false
             });
             if !roots.is_empty() {

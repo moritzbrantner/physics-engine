@@ -113,9 +113,10 @@ When to pick which:
   [floating ray queries](floating-ray-queries.md). `cast_ray_first` returns only the earliest
   hit (ties by lower BodyId), the same hit as `cast_ray(..)[0]`, without collecting the rest.
 - Queries traverse AABB trees (`bvh-kernels`) kept current by `add_body`, `remove_body` and
-  `step`: an incremental tree of moving bodies, and for fixed bodies an exact incremental tree
-  plus a four-wide `WideBvh` that the first ray or shape query builds (#415). The trees change
-  which bodies are tested, never a result.
+  `step`: an incremental tree of moving bodies, and for fixed bodies a four-wide `WideBvh` built
+  once by its first use, the first ray or shape query or the first step with an awake body
+  (#415, #528); adding fixed bodies only records their bounds. The trees change which bodies
+  are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
 ## Terrain
@@ -166,6 +167,13 @@ the local proxy is asymmetric. The game owns the asset-to-scene fit and units (t
 proxies are fitted and quarter-turned by MMORPG). The engine owns contact queries, broad-phase
 admission and stable body/face identities. `add_body` cannot forge a hull id; remove and re-add
 releases/rebuilds the prepared geometry. No dynamic hull mass/inertia or hull×hull solver is added.
+
+`PreparedConvexHull::new(&vertices)` runs the QuickHull preparation once; admit the handle into any
+number of worlds with `World::add_prepared_convex_hull(&prepared, position, material, key)` (#528).
+Results are identical to `add_convex_hull`, which is the same preparation plus admission. Worlds
+share the immutable prepared bytes through `Arc`s and each keeps its own derived query cache, so
+sharing adds no mutable cross-world state. A checkpoint still stores vertices and rebuilds its own
+preparation on restore, unshared.
 
 In this first consumer slice, rays hit the **real convex faces** (with
 `RayFeature::ConvexHullFace`), and spheres/oriented capsules have overlap and translation-only
@@ -564,6 +572,35 @@ debris at four, previously two worlds).
 The field is set before `add_body`, like the body's material. The `mixed-iterations` oracle
 scenario (C18) runs upright props and extra-pass debris in one world against Rapier.
 
+## Media
+
+`World::set_medium(id, Some(Medium { surface_point, surface_normal, density, flow, linear_drag,
+angular_drag }))` puts a dynamic body in a fluid; `None` takes it out (#525). The medium persists
+until changed; a change wakes the body's island and the same medium again changes nothing. It is
+`InvalidInput` when out of range (surface point and flow components finite and below 1e12 in
+magnitude, the normal finite with length in `1e-6..=1e6`, the density finite in `0..1e12`, each
+drag finite in `0..1e6`) or set on a body that is not dynamic; `None` succeeds on any body. Only
+dynamic spheres, boxes, capsules and rotation-locked wedges exist, so a convex hull never has one.
+
+Each substep the force phase of a body with a medium finds the volume `V_s` below the surface
+(`dot(x - surface_point, surface_normal) <= 0`) and its centroid through
+`geometry_kernels::primitive3::try_submerged_properties`, then:
+
+- buoyancy `-density * V_s * gravity` joins the forces at the centroid, so it also produces
+  torque;
+- drag toward the flow is implicit, with `phi = V_s / V`: `v = flow + (v - flow) / (1 + h *
+  linear_drag * phi)` and `w = w / (1 + h * angular_drag * phi)`.
+
+A body is held up by its medium for sleeping (`Body::sleep_allowed` applies as usual) when it is
+at least partly submerged and the forces on it, summed by magnitude, could not build a tenth of
+the sleep speed over the sleep time. A floating body therefore sleeps within a millimetre of its
+equilibrium, while one sinking at terminal speed, balanced only in sum, stays awake. Swept bounds
+and contact admission add the drift a medium can cause over the step's later substeps. A body
+without a medium skips the kernel; each body with one is visited once per substep (`step-medium`
+complexity contract) in body order, so results are deterministic and the same in both storage
+modes. The `float-brook` and `float-marsh` oracle scenarios (C25) check it against Rapier with
+the same force applied through `add_force`.
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the
@@ -600,6 +637,10 @@ is centred on its geometry bounds, as fixed primitives are. Finite, nondegenerat
 valid indices are required; invalid admission is atomic. Surfaces are two-sided, including
 arbitrary winding, and open boundaries remain open. A mesh is a set of surfaces, not a filled
 bounding box. Triangles retain their input indices across preparation and storage modes.
+`PreparedTriangleMesh::new(&vertices, triangles)` with
+`World::add_prepared_triangle_mesh(&prepared, position, material, key)` prepares one chunk once
+for several worlds, as prepared convex hulls do, with results identical to `add_triangle_mesh`
+(#528).
 
 Each chunk retains a local BVH prepared by `rust-kernels`. `triangle_mesh_stats(body)` reports
 prepared triangle/node counts and retained geometry bytes (excluding allocator overhead and the

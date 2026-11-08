@@ -365,6 +365,11 @@ pub(super) struct BroadBox {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Scratch {
+    /// Emptied contact-point buffers of removed pairs, reused by new ones: transient bodies
+    /// make and drop their pairs every tick. Never longer than the peak of cached pairs.
+    pub point_pool: Vec<Vec<CachedPoint>>,
+    /// The new pairs of one contact-cache walk, inserted after it.
+    pub fresh_pairs: Vec<((Order, Order), Vec<CachedPoint>)>,
     pub position: super::position::Scratch,
     pub activity: Activity,
     pub graph: Adjacency,
@@ -442,6 +447,11 @@ impl Scratch {
         self.graph.dirty = true;
         self.poses_changed();
     }
+    /// Keeps a removed pair's point buffer for the next new pair.
+    pub fn recycle_points(&mut self, mut points: Vec<CachedPoint>) {
+        points.clear();
+        push(&mut self.point_pool, points, &mut self.work);
+    }
     /// A body moved outside a step: derived pose caches are stale, the layout, the awake set
     /// and the contact graph are not.
     pub fn poses_changed(&mut self) {
@@ -458,7 +468,9 @@ impl Scratch {
     /// Excludes the broad-phase boxes, which persist with the query tree (its storage is not
     /// counted either).
     pub fn retained_bytes(&self) -> usize {
-        bytes(&self.activity.indices)
+        bytes(&self.point_pool)
+            + bytes(&self.fresh_pairs)
+            + bytes(&self.activity.indices)
             + self.graph.retained_bytes()
             + self.traversal.retained_bytes()
             + bytes(&self.bounds)

@@ -3053,6 +3053,181 @@
       ]
     },
     {
+      "id": "world-setup",
+      "description": "Adding n fixed bodies, then the first step and first ray query, and those operations repeated while the fixed set is unchanged (#528).",
+      "publicContract": "physics_engine::approximate::World::add_body",
+      "dimensions": {
+        "bodies": {
+          "description": "fixed bodies added during setup (doubling sizes)"
+        }
+      },
+      "scalePoints": [
+        {
+          "bodies": 512
+        },
+        {
+          "bodies": 1024
+        },
+        {
+          "bodies": 2048
+        },
+        {
+          "bodies": 4096
+        },
+        {
+          "bodies": 8192
+        },
+        {
+          "bodies": 16384
+        }
+      ],
+      "metrics": [
+        {
+          "name": "setup-tree-builds",
+          "unit": "builds",
+          "signal": "operation-count",
+          "notes": "Adding fixed bodies only pushes leaves; no tree is built during setup.",
+          "budget": {
+            "max": 0
+          }
+        },
+        {
+          "name": "setup-tree-inserts",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "notes": "No incremental fixed-tree insert happens during setup.",
+          "budget": {
+            "max": 0
+          }
+        },
+        {
+          "name": "first-use-tree-builds",
+          "unit": "builds",
+          "signal": "operation-count",
+          "notes": "One O(n log n) build of the wide tree by its first use (the first step with an awake body or the first query), shared by both.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "first-use-tree-inserts",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "notes": "That build handles every fixed leaf once.",
+          "growth": [
+            {
+              "dimension": "bodies",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "repeat-tree-builds",
+          "unit": "builds",
+          "signal": "operation-count",
+          "notes": "Further steps and queries with an unchanged fixed set never rebuild.",
+          "budget": {
+            "max": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "prepared-geometry-admission",
+      "description": "One authored rock hull and cave mesh prepared once and admitted into each of n worlds (#528).",
+      "publicContract": "physics_engine::approximate::World::add_prepared_convex_hull",
+      "dimensions": {
+        "worlds": {
+          "description": "worlds holding the same prepared geometry"
+        }
+      },
+      "scalePoints": [
+        {
+          "worlds": 1
+        },
+        {
+          "worlds": 2
+        },
+        {
+          "worlds": 4
+        },
+        {
+          "worlds": 8
+        },
+        {
+          "worlds": 16
+        }
+      ],
+      "metrics": [
+        {
+          "name": "preparations",
+          "unit": "vertices and triangles",
+          "signal": "operation-count",
+          "notes": "QuickHull and the mesh BVH run once, independent of how many worlds admit them.",
+          "growth": [
+            {
+              "dimension": "worlds",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "admission-preparations",
+          "unit": "vertices and triangles",
+          "signal": "operation-count",
+          "notes": "Admitting prepared geometry prepares nothing; every world shares the same immutable bytes.",
+          "budget": {
+            "max": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "step-medium",
+      "description": "One warm World::step (1/60 s, default substeps) of `plain` free-falling spheres and `media` spheres in a Medium (#525).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "plain": {
+          "description": "dynamic bodies without a medium"
+        },
+        "media": {
+          "description": "dynamic bodies with a medium"
+        }
+      },
+      "scalePoints": [
+        { "plain": 64, "media": 8 },
+        { "plain": 128, "media": 8 },
+        { "plain": 256, "media": 8 },
+        { "plain": 512, "media": 8 },
+        { "plain": 128, "media": 1 },
+        { "plain": 128, "media": 2 },
+        { "plain": 128, "media": 4 },
+        { "plain": 128, "media": 16 },
+        { "plain": 128, "media": 32 }
+      ],
+      "metrics": [
+        {
+          "name": "medium-forces",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "Counter::MediumForces, one per body with a medium per substep: a new operation (#525). A body without a medium never reaches the submerged-volume kernel.",
+          "growth": [
+            {
+              "dimension": "plain",
+              "bound": "constant"
+            },
+            {
+              "dimension": "media",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "transient-lane",
       "description": "BodyStorage::Ordered: one warm MMORPG lane tick (#523): add `pieces` keyless transient bodies (every fourth a fixed box) to a retained town, one World::step, then World::remove_bodies of them all.",
       "publicContract": "physics_engine::approximate::World::{add_body,step,remove_bodies}",

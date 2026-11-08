@@ -18,6 +18,7 @@ pub mod debris;
 pub mod debris_lane;
 pub mod debris_town;
 pub mod embedded_starts;
+pub mod float;
 pub mod greyhaven_rocks;
 pub mod materials;
 pub mod mixed_iterations;

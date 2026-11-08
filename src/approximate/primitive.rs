@@ -13,8 +13,8 @@ use super::{
 };
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveSweepError3, PrimitiveWork3,
-    bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
-    try_swept_time as kernel_swept_time,
+    SubmergedError3, bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
+    try_submerged_properties, try_swept_time as kernel_swept_time,
 };
 
 pub(super) use geometry_kernels::primitive3::PrimitiveKind3 as PrimitiveKind;
@@ -52,8 +52,24 @@ pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool)
 pub(super) fn bounds_extents(body: &Body) -> V {
     // The kernel's sphere extent is the widened radius, which narrows back to the radius
     // exactly: skip building the kernel frame for the most common swept-bounds shape (#485).
-    if let Shape::Sphere(radius) = body.shape {
-        return V(radius, radius, radius);
+    // With the identity frame the other kernel extents collapse too: terms multiplied by a
+    // zero axis component vanish, so box and wedge extents are the half-extents and only a
+    // capsule's Y needs the f64 sum and outward narrowing the kernel path gives it (#530).
+    let upright = body.orientation == Quaternion::IDENTITY;
+    match body.shape {
+        Shape::Sphere(radius) => return V(radius, radius, radius),
+        Shape::Capsule {
+            half_segment,
+            radius,
+        } if upright => {
+            return V(
+                radius,
+                round_up(widen(radius) + widen(half_segment)),
+                radius,
+            );
+        }
+        Shape::Box(half) | Shape::Wedge(half) if upright => return half,
+        _ => {}
     }
     let [x, y, z] = kernel_bounds(kernel_body(body));
     V(round_up(x), round_up(y), round_up(z))
@@ -438,6 +454,42 @@ pub(super) fn volume_properties(
     geometry_kernels::primitive3::try_volume_properties(shape(value))
 }
 
+/// What a medium's surface leaves of a body below it, in the body's own terms. Ratios narrow
+/// to nearest; the world centroid never narrows, so the offset from the body keeps its
+/// precision far from the origin.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Submerged {
+    /// Submerged volume over the whole volume, in `0..=1`.
+    pub fraction: Real,
+    /// `density * submerged volume / mass`: buoyancy per unit of gravity.
+    pub buoyancy: Real,
+    /// Submerged centroid relative to the body position.
+    pub offset: V,
+}
+
+pub(super) fn submerged(
+    body: &Body,
+    medium: &super::medium::BodyMedium,
+) -> Result<Submerged, SubmergedError3> {
+    let position = to_array(body.position);
+    let properties = try_submerged_properties(
+        shape(body.shape),
+        position,
+        kernel_axes(body.orientation),
+        to_array(medium.medium.surface_point),
+        to_array(medium.medium.surface_normal),
+    )?;
+    Ok(Submerged {
+        fraction: nearest(properties.volume / medium.volume),
+        buoyancy: nearest(widen(medium.medium.density) * properties.volume / widen(body.mass)),
+        offset: V(
+            nearest(properties.centroid[0] - position[0]),
+            nearest(properties.centroid[1] - position[1]),
+            nearest(properties.centroid[2] - position[2]),
+        ),
+    })
+}
+
 fn shape(shape: Shape) -> PrimitiveShape3 {
     match shape {
         Shape::Sphere(radius) => PrimitiveShape3::sphere(widen(radius)),
@@ -697,6 +749,45 @@ mod tests {
                 [fast.0, fast.1, fast.2].map(Real::to_bits),
                 [kernel.0, kernel.1, kernel.2].map(Real::to_bits),
             );
+        }
+    }
+
+    #[test]
+    fn upright_bounds_shortcuts_match_kernel_extents() {
+        let values: [Real; 9] = [
+            1e-6,
+            0.1,
+            0.3,
+            1.0 / 3.0,
+            0.75,
+            7.25,
+            1234.567,
+            1.0e6,
+            9.99e11,
+        ];
+        for (i, &a) in values.iter().enumerate() {
+            for &b in &values {
+                let c = values[(i + 3) % values.len()];
+                for shape in [
+                    Shape::Box(V(a, b, c)),
+                    Shape::Wedge(V(a, b, c)),
+                    Shape::Capsule {
+                        half_segment: a,
+                        radius: b,
+                    },
+                ] {
+                    let target = body(1, shape, V(-3.5, 1.0e5, 0.25));
+                    assert_eq!(target.orientation, Quaternion::IDENTITY);
+                    let [x, y, z] = kernel_bounds(kernel_body(&target));
+                    let kernel = V(round_up(x), round_up(y), round_up(z));
+                    let fast = bounds_extents(&target);
+                    assert_eq!(
+                        [fast.0, fast.1, fast.2].map(Real::to_bits),
+                        [kernel.0, kernel.1, kernel.2].map(Real::to_bits),
+                        "{shape:?}",
+                    );
+                }
+            }
         }
     }
 
