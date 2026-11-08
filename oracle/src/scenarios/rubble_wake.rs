@@ -31,9 +31,6 @@ const REST_SPIN: f32 = 0.9;
 const REST_SHARE: f32 = 0.9;
 const REST_TOLERANCE: f32 = 0.5;
 const REST_CAP: f32 = 1.5;
-/// Allowance on the Rapier comparison of how deep a piece sinks: the two engines' deepest contacts
-/// differ a little between native and WASM.
-const SLOP: f32 = 0.005;
 /// Least share of the settled pile the throw must wake, on each side.
 const WOKEN_SHARE: f32 = 0.15;
 
@@ -113,8 +110,7 @@ fn starts() -> Vec<Piece> {
 }
 
 /// Whether a piece of `age` ticks is slow enough; the game sleeps the whole pile once every
-/// live piece is (sleeping pieces beside awake ones, as a per-piece rule does, loses Rapier floor contacts in
-/// this scene: pieces fall through).
+/// live piece is (a per-piece rule let Rapier pieces fall through the floor here).
 fn settles(age: u32, velocity: [f32; 3], spin: [f32; 3]) -> bool {
     let length = |v: [f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     age >= SETTLE_AFTER && length(velocity) < REST_SPEED && length(spin) < REST_SPIN
@@ -222,7 +218,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         worst
     };
     let (sink, rapier_sink) = (deepest(&e), deepest(&r));
-    if sink > rapier_sink + SLOP {
+    if sink > rapier_sink {
         return Err(format!(
             "sinks {sink:.4} m into the floor, deeper than Rapier's {rapier_sink:.4} m"
         ));
