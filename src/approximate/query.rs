@@ -462,40 +462,19 @@ impl World {
                 let field = self.terrain(terrain);
                 let mut terrain_work = geometry_kernels::heightfield::HeightfieldWork3::default();
                 let capsule = super::terrain::capsule_of(&query);
-                let initial = match (capsule, cast) {
-                    (Some((p, q, r)), _) => {
-                        field.capsule_contact_counted(p, q, r, 0.0, &mut terrain_work)
-                    }
-                    // Boxes and wedges: overlap only (door probes); terrain casts take
-                    // spheres and capsules.
-                    (None, None) => {
-                        let Some(polytope) = primitive::polytope_of(&query) else {
-                            return Err(failure(SweepFailure::InvalidGeometryInput));
-                        };
-                        field.polytope_contact_counted(
-                            geometry_kernels::heightfield::ConvexPolytope3 {
-                                vertices: &polytope.vertices,
-                                face_normals: &polytope.face_normals,
-                                edges: &polytope.edges,
-                            },
-                            &mut terrain_work,
-                        )
-                    }
-                    (None, Some(_)) => {
-                        return Err(failure(SweepFailure::InvalidGeometryInput));
-                    }
-                };
                 // A terrain is one body, so a cast reports one contact with it: the triangle the
                 // motion runs into first (most head-on among those it starts touching), never
                 // one it starts touching and leaves. A capsule at a cliff's foot or in a corner
                 // touches several faces; the deepest of them can be one the motion leaves while
                 // it runs into another (#396). Only a cast that runs into nothing reports the
-                // initial contact, at fraction 0, as for any body it starts touching.
-                let outcome = match (initial, cast, capsule) {
-                    (initial, Some(cast), Some((p, q, r))) => {
+                // initial contact, at fraction 0, as for any body it starts touching. The
+                // initial contact decides nothing for a hit later in the motion, so it is
+                // computed only for a miss or a hit at fraction 0.
+                let (outcome, starts_overlapping) = match (capsule, cast) {
+                    (Some((p, q, r)), Some(cast)) => {
                         let d = [displacement.0, displacement.1, displacement.2].map(f64::from);
                         stats.sweep_iterations += 1;
-                        field
+                        let swept = field
                             .capsule_sweep_counted(
                                 p,
                                 q,
@@ -505,11 +484,49 @@ impl World {
                                 &mut terrain_work,
                             )
                             .map_err(|_| failure(SweepFailure::NonFiniteComputation))?
-                            .map(|hit| (primitive::toward_zero(hit.fraction), hit.contact))
-                            .or(initial.map(|c| (0.0, c)))
+                            .map(|hit| (primitive::toward_zero(hit.fraction), hit.contact));
+                        match swept {
+                            Some((fraction, _)) if fraction != 0.0 => (swept, false),
+                            _ => {
+                                let initial =
+                                    field.capsule_contact_counted(p, q, r, 0.0, &mut terrain_work);
+                                (
+                                    swept.or(initial.map(|c| (0.0, c))),
+                                    initial.is_some_and(|c| c.separation < 0.0),
+                                )
+                            }
+                        }
                     }
-                    (Some(c), ..) => Some((0.0, c)),
-                    _ => None,
+                    (Some((p, q, r)), None) => {
+                        let initial =
+                            field.capsule_contact_counted(p, q, r, 0.0, &mut terrain_work);
+                        (
+                            initial.map(|c| (0.0, c)),
+                            initial.is_some_and(|c| c.separation < 0.0),
+                        )
+                    }
+                    // Boxes and wedges: overlap only (door probes); terrain casts take
+                    // spheres and capsules.
+                    (None, None) => {
+                        let Some(polytope) = primitive::polytope_of(&query) else {
+                            return Err(failure(SweepFailure::InvalidGeometryInput));
+                        };
+                        let initial = field.polytope_contact_counted(
+                            geometry_kernels::heightfield::ConvexPolytope3 {
+                                vertices: &polytope.vertices,
+                                face_normals: &polytope.face_normals,
+                                edges: &polytope.edges,
+                            },
+                            &mut terrain_work,
+                        );
+                        (
+                            initial.map(|c| (0.0, c)),
+                            initial.is_some_and(|c| c.separation < 0.0),
+                        )
+                    }
+                    (None, Some(_)) => {
+                        return Err(failure(SweepFailure::InvalidGeometryInput));
+                    }
                 };
                 crate::work::add(
                     crate::work::Counter::TerrainCells,
@@ -533,8 +550,7 @@ impl World {
                     query_point: point + normal * separation,
                     target_point: point,
                     separation,
-                    starts_overlapping: fraction == 0.0
-                        && initial.is_some_and(|c| c.separation < 0.0),
+                    starts_overlapping,
                     support_velocity: V::ZERO,
                     sensor: target.sensor,
                 });
