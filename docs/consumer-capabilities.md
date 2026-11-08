@@ -93,7 +93,10 @@ Rapier and Engine produce the same one-move translation with that matching embed
 ### Greyhaven authored rock hulls (#180; consumer-gated partial C4/C11/C12)
 
 The first actual Greyhaven convex rock proxy is now exercised by `greyhaven-rock-hulls` in the
-Rapier oracle. `World::add_convex_hull` admits fixed hulls and the engine queries their true faces
+Rapier oracle. `World::add_prepared_convex_hull` and `add_prepared_triangle_mesh` admit one prepared
+rock or cave chunk into every world that holds it, MMORPG's character world and response lanes
+(`greyhaven-rigid-rocks-shared`, `redbrand-rigid-mesh-shared`, #528; the game's adoption is
+separate). `World::add_convex_hull` admits fixed hulls and the engine queries their true faces
 for rays, sphere/capsule overlaps and sweeps used by kinematic characters. A box no longer has
 to replace the authored shape in this engine-side fixture. This is **partial** until the game
 updates its rock adapter and the native/WASM cost and behavior gates demonstrate acceptable

@@ -6,13 +6,13 @@
 //! the trees never change a query result, only how many bodies are tested.
 //!
 //! Fixed bodies (level geometry, most of a game's bodies) live apart from moving ones (#415):
-//! in an incremental tree with exact bounds and, from the first ray or shape query on, also in
-//! a four-wide [`WideBvh`] that queries descend instead. That build is O(n log n), so it waits
-//! for a query: a world that only steps (whose broad phase touches a few fixed bodies per awake
-//! one) never pays for it, and the step uses the wide tree only once a query has built it. A
-//! fixed body added while the wide tree exists also waits in the moving tree, and a removed one
+//! as a list of exact leaves and a four-wide [`WideBvh`] over them that queries and the broad
+//! phase descend (#415). That O(n log n) build waits for its first use, the first ray or shape
+//! query or the first step with an awake body, and setup only pushes leaves (#528). Tree shape
+//! never changes a result: broad-phase pairs are sorted and queries order ties by body. A
+//! fixed body added while the wide tree exists waits in the moving tree, and a removed one
 //! is dropped from the wide tree in place, until enough such changes accumulate to drop the
-//! wide tree; the next query rebuilds it. A fixed body that moves becomes a moving one.
+//! wide tree; the next use rebuilds it. A fixed body that moves becomes a moving one.
 
 use super::super::{Body, BodyId, Real, Vector as V};
 use bvh_kernels::{DynamicAabbTree, WideBvh};
@@ -30,11 +30,10 @@ enum Place {
     Absent,
     /// A moving body in the moving tree.
     Moving,
-    /// A fixed body at this index of `fixed_leaves`, in the fixed tree (and in the wide tree,
-    /// when there is one).
+    /// A fixed body at this index of `fixed_leaves`, in the wide tree when there is one.
     Fixed(u32),
     /// A fixed body (index into `fixed_leaves`, then into `pending`) added while the wide tree
-    /// existed: in the fixed and moving trees until the wide tree is dropped.
+    /// existed: in the moving tree until the wide tree is dropped.
     Pending(u32, u32),
 }
 
@@ -61,21 +60,20 @@ impl Tree {
         self.inserts += 1;
         if self.inserts >= 16.max(self.tree.len() / 2) {
             crate::work::add(crate::work::Counter::TreeInserts, self.tree.len() as u64);
+            crate::work::add(crate::work::Counter::TreeBuilds, 1);
             self.tree.rebuild();
             self.inserts = 0;
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(in crate::approximate) struct QueryTree {
     /// Moving bodies and pending fixed ones.
     moving: Tree,
-    /// Every fixed body, exact bounds.
-    fixed: Tree,
-    /// Exact leaves of every fixed body: what a wide tree is built from.
+    /// Exact leaves of every fixed body: what the wide tree is built from.
     fixed_leaves: Vec<Leaf>,
-    /// Four-wide tree over `fixed_leaves`, built by the first query that needs it.
+    /// Four-wide tree over `fixed_leaves`, built by the first query or broad phase that needs it.
     wide: OnceLock<WideBvh>,
     /// Slots of the pending fixed bodies.
     pending: Vec<u32>,
@@ -89,11 +87,30 @@ pub(in crate::approximate) struct QueryTree {
     pub magnitude: Real,
 }
 
+impl Clone for QueryTree {
+    /// Builds the wide tree in the source first, so clones of a statics template all start with
+    /// it instead of each building their own.
+    fn clone(&self) -> Self {
+        if !self.fixed_leaves.is_empty() {
+            self.wide();
+        }
+        Self {
+            moving: self.moving.clone(),
+            fixed_leaves: self.fixed_leaves.clone(),
+            wide: self.wide.clone(),
+            pending: self.pending.clone(),
+            stale: self.stale,
+            places: self.places.clone(),
+            generation: self.generation,
+            magnitude: self.magnitude,
+        }
+    }
+}
+
 impl Default for QueryTree {
     fn default() -> Self {
         Self {
             moving: Tree::new(FAT_MARGIN),
-            fixed: Tree::new(0.0),
             fixed_leaves: Vec::new(),
             wide: OnceLock::new(),
             pending: Vec::new(),
@@ -155,6 +172,7 @@ impl QueryTree {
                 crate::work::Counter::TreeInserts,
                 self.fixed_leaves.len() as u64,
             );
+            crate::work::add(crate::work::Counter::TreeBuilds, 1);
             WideBvh::build(&self.fixed_leaves)
         })
     }
@@ -162,7 +180,6 @@ impl QueryTree {
     fn insert_fixed(&mut self, leaf: Leaf) -> u32 {
         let index = self.fixed_leaves.len() as u32;
         self.fixed_leaves.push(leaf);
-        self.fixed.insert(leaf);
         index
     }
 
@@ -194,7 +211,6 @@ impl QueryTree {
             }
         };
         if let Some(leaf) = leaf {
-            self.fixed.tree.remove(slot);
             self.fixed_leaves.swap_remove(leaf as usize);
             if let Some(other) = self.fixed_leaves.get(leaf as usize).map(|l| l.id) {
                 let place = match self.place(other) {
@@ -303,14 +319,12 @@ impl QueryTree {
             if is_static(body) {
                 let index = self.fixed_leaves.len() as u32;
                 self.fixed_leaves.push(leaf);
-                self.fixed.tree.insert(leaf);
                 self.set_place(leaf.id, Place::Fixed(index));
             } else {
                 self.moving.tree.insert(leaf);
                 self.set_place(leaf.id, Place::Moving);
             }
         }
-        self.fixed.tree.rebuild();
         self.moving.tree.rebuild();
         self.generation = Some(generation);
     }
@@ -367,17 +381,13 @@ impl QueryTree {
     }
 
     /// Visits every leaf whose bounds overlap `query`, fixed bodies first, without allocating:
-    /// a query's lookup, which builds the wide tree on first use. Returns the nodes visited.
+    /// a query's or broad phase's lookup, which builds the wide tree on first use. Returns the
+    /// nodes visited.
     pub fn visit_aabb(&self, query: Aabb, mut visit: impl FnMut(Leaf)) -> usize {
-        self.wide().visit_aabb(query, &mut visit) + self.moving.tree.visit_aabb(query, visit)
-    }
-
-    /// [`Self::visit_aabb`] for the step's broad phase: through the wide tree once a query has
-    /// built it, else through the fixed tree, so a world that only steps never builds it.
-    pub fn visit_broad_aabb(&self, query: Aabb, mut visit: impl FnMut(Leaf)) -> usize {
-        let fixed = match self.wide.get() {
-            Some(wide) => wide.visit_aabb(query, &mut visit),
-            None => self.fixed.tree.visit_aabb(query, &mut visit),
+        let fixed = if self.fixed_leaves.is_empty() {
+            0
+        } else {
+            self.wide().visit_aabb(query, &mut visit)
         };
         fixed + self.moving.tree.visit_aabb(query, visit)
     }

@@ -2183,6 +2183,106 @@ fn additional_solver_iterations_follow_the_elevated_islands() {
     );
 }
 
+/// Setup only pushes leaves (#528): the first step or query builds the wide tree once, and it
+/// does not rebuild while the fixed set is unchanged.
+#[test]
+fn setup_builds_each_fixed_tree_once_on_first_use() {
+    let mut samples = Vec::new();
+    for &log2 in &SIZES {
+        let n = 1u64 << log2;
+        work::reset();
+        let mut w = town(log2);
+        let setup_builds = work::get(Counter::TreeBuilds);
+        let setup_inserts = work::get(Counter::TreeInserts);
+        let mut ball = Body::new(Shape::Sphere(0.2), cell(0, 0) + V(0.0, 5.0, 0.0), 1.0);
+        ball.sleep_allowed = false;
+        w.add_body(ball).unwrap();
+        let mut first_use = || {
+            w.step(1.0 / 60.0).unwrap();
+            w.cast_ray_first(row_ray(1, 1), QueryFilter::default())
+                .unwrap();
+        };
+        work::reset();
+        first_use();
+        let (builds, inserts) = (
+            work::get(Counter::TreeBuilds),
+            work::get(Counter::TreeInserts),
+        );
+        work::reset();
+        first_use();
+        samples.push((
+            vec![("bodies", n)],
+            vec![
+                ("setup-tree-builds", setup_builds),
+                ("setup-tree-inserts", setup_inserts),
+                ("first-use-tree-builds", builds),
+                ("first-use-tree-inserts", inserts),
+                ("repeat-tree-builds", work::get(Counter::TreeBuilds)),
+            ],
+        ));
+    }
+    judge(
+        "world-setup",
+        &samples,
+        &[
+            ("setup-tree-builds", "", "zero"),
+            ("setup-tree-inserts", "", "zero"),
+            ("first-use-tree-builds", "bodies", "constant"),
+            ("first-use-tree-inserts", "bodies", "linear"),
+            ("repeat-tree-builds", "", "zero"),
+        ],
+    );
+}
+
+/// One preparation serves every world holding the same rock or cave chunk (#528).
+#[test]
+fn prepared_geometry_is_admitted_without_preparing_again() {
+    use physics_engine::approximate::{PreparedConvexHull, PreparedTriangleMesh};
+    let vertices = greyhaven_rock::vertices()
+        .into_iter()
+        .map(|p| V(p[0], p[1], p[2]))
+        .collect::<Vec<_>>();
+    let quad = [
+        V::ZERO,
+        V(4.0, 0.0, 0.0),
+        V(4.0, 0.0, 4.0),
+        V(0.0, 0.0, 4.0),
+    ];
+    let mut samples = Vec::new();
+    for worlds in [1u64, 2, 4, 8, 16] {
+        work::reset();
+        let hull = PreparedConvexHull::new(&vertices).unwrap();
+        let mesh = PreparedTriangleMesh::new(&quad, vec![[0, 1, 2], [0, 2, 3]]).unwrap();
+        let prepare = work::get(Counter::HullPreparations) + work::get(Counter::MeshPreparations);
+        work::reset();
+        for _ in 0..worlds {
+            let mut w = World::new(Config::default()).unwrap();
+            w.add_prepared_convex_hull(&hull, V(0.0, 1.0, 0.0), Default::default(), Some(1))
+                .unwrap();
+            w.add_prepared_triangle_mesh(&mesh, V(8.0, 0.0, 0.0), Default::default(), Some(2))
+                .unwrap();
+        }
+        samples.push((
+            vec![("worlds", worlds)],
+            vec![
+                ("preparations", prepare),
+                (
+                    "admission-preparations",
+                    work::get(Counter::HullPreparations) + work::get(Counter::MeshPreparations),
+                ),
+            ],
+        ));
+    }
+    judge(
+        "prepared-geometry-admission",
+        &samples,
+        &[
+            ("preparations", "worlds", "constant"),
+            ("admission-preparations", "", "zero"),
+        ],
+    );
+}
+
 /// `plain` free-falling spheres and `media` spheres in a medium, 4 m apart (#525).
 fn water_town(plain: u64, media: u64) -> World {
     let mut w = World::new(Config::default()).unwrap();
