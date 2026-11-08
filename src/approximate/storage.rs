@@ -60,6 +60,11 @@ impl World {
             return;
         }
         let records = self.bodies.len();
+        // Trailing tombstones only: every live body keeps its position.
+        let tail_only = self.storage_sorted()
+            && self.bodies[..records - self.tombstones]
+                .iter()
+                .all(|b| b.id != BodyId::NONE);
         let sorted_live = self.bodies[..self.sorted_len]
             .iter()
             .filter(|b| b.id != BodyId::NONE)
@@ -98,7 +103,11 @@ impl World {
         }
         // Positions moved; the bodies and the tree's slot-keyed leaves did not.
         let from = self.bookkeeping.generation;
-        self.bookkeeping.layout_changed();
+        if tail_only {
+            self.bookkeeping.record_changed();
+        } else {
+            self.bookkeeping.layout_changed();
+        }
         self.geometry.positions_moved();
         self.query_tree.retag(from, self.bookkeeping.generation);
     }
