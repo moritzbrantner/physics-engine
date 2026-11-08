@@ -129,7 +129,8 @@ fn same(a: &World, b: &World, ar: &PositionReport, br: &PositionReport) {
 fn pair(w: World) -> (World, World) {
     let mut reference = w.clone();
     reference.bookkeeping.position.reference = true;
-    (w, reference)
+    // Both clones: a clone's scratch capacities drop to their lengths, so the worlds compare alike.
+    (w.clone(), reference)
 }
 fn correct_pair(a: &mut World, b: &mut World) -> PositionReport {
     let mut ar = PositionReport::default();

@@ -202,6 +202,31 @@ impl World {
             }
         }
     }
+    /// [`World::remove_bodies`]: drops the joints of the bodies with `orders` (sorted) in one
+    /// pass and returns their surviving partners, whose islands wake.
+    pub(super) fn remove_batch_joints(&mut self, orders: &[Order]) -> Vec<Order> {
+        let mut roots = Vec::new();
+        if self.joints.is_empty() {
+            return roots;
+        }
+        let before = self.joints.records.len();
+        self.joints.records.retain(|r| {
+            crate::work::add(crate::work::Counter::JointRows, 1);
+            let (a, b) = r.key;
+            let (gone_a, gone_b) = (
+                orders.binary_search(&a).is_ok(),
+                orders.binary_search(&b).is_ok(),
+            );
+            if gone_a && !gone_b {
+                roots.push(b);
+            } else if gone_b && !gone_a {
+                roots.push(a);
+            }
+            !(gone_a || gone_b)
+        });
+        self.bookkeeping.graph.dirty |= self.joints.records.len() != before;
+        roots
+    }
     /// Contacts phase: a sleeping body held by a moving kinematic body wakes (its island
     /// roots), as a moving kinematic contact wakes what it touches.
     pub(super) fn joint_roots(&self, roots: &mut Vec<Order>) {

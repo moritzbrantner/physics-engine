@@ -387,6 +387,7 @@ impl Checkpoint {
             .iter()
             .filter(|b| b.mass > 0.0 && !b.sleeping)
             .count();
+        world.bookkeeping.activity.dynamic = world.bodies.iter().filter(|b| b.mass > 0.0).count();
         world.elevated_bodies = world
             .bodies
             .iter()

@@ -190,6 +190,7 @@ pub fn all() -> Vec<Scenario> {
         scenarios::props::scenario(),
         scenarios::materials::scenario(),
         scenarios::debris::scenario(),
+        scenarios::debris_lane::scenario(),
         scenarios::mixed_iterations::scenario(),
         scenarios::debris_town::scenario(),
         scenarios::debris_town::scenario_tumble(),

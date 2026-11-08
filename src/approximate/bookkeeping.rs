@@ -46,6 +46,9 @@ pub(super) fn bytes<T>(v: &Vec<T>) -> usize {
 #[derive(Clone, Debug, Default)]
 pub(super) struct Activity {
     pub count: usize,
+    /// Bodies with mass, awake or not. Where `count` reaches it no body sleeps, and a wake finds
+    /// nothing.
+    pub dynamic: usize,
     pub indices: Vec<usize>,
     pub dirty: bool,
 }
@@ -60,6 +63,19 @@ impl Activity {
         let needed = self.indices.len() + 1;
         reserve(&mut self.indices, needed, work);
         self.indices.insert(at, i);
+    }
+    /// Awake body `i` just left storage; no other body moved.
+    pub fn left(&mut self, i: usize) {
+        if self.dirty {
+            return;
+        }
+        let at = self.indices.partition_point(|&k| k < i);
+        debug_assert_eq!(self.indices.get(at), Some(&i));
+        self.indices.remove(at);
+    }
+    /// Whether some body with mass sleeps. Conservative for kinematic bodies with mass.
+    pub fn any_sleeper(&self) -> bool {
+        self.dynamic != self.count
     }
     /// Bodies of the list just fell asleep.
     pub fn slept(&mut self, bodies: &[Body]) {
@@ -89,15 +105,41 @@ impl Activity {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+/// One body's run in `Adjacency::neighbors`, valid while `epoch` is the graph's.
+#[derive(Clone, Copy, Debug, Default)]
+struct Run {
+    epoch: u64,
+    start: u32,
+    end: u32,
+}
+
+/// Contact and joint neighbours per storage position. A rebuild visits the edges only: runs are
+/// stamped with an epoch, so a body without an edge costs nothing (#523).
+#[derive(Clone, Debug)]
 pub(super) struct Adjacency {
     pub dirty: bool,
-    offsets: Vec<usize>,
+    epoch: u64,
+    runs: Vec<Run>,
+    /// Positions with an edge in this epoch, in the order first seen.
+    nodes: Vec<usize>,
     neighbors: Vec<usize>,
-    cursor: Vec<usize>,
     edges: Vec<(usize, usize)>,
 }
+impl Default for Adjacency {
+    /// Dirty until first built: the cache may already hold pairs (a restored checkpoint).
+    fn default() -> Self {
+        Self {
+            dirty: true,
+            epoch: 0,
+            runs: Vec::new(),
+            nodes: Vec::new(),
+            neighbors: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+}
 impl Adjacency {
+    /// O(edges · log bodies), independent of bodies without an edge.
     pub fn ensure(
         &mut self,
         bodies: &[Body],
@@ -105,17 +147,39 @@ impl Adjacency {
         joints: impl ExactSizeIterator<Item = (Order, Order)>,
         work: &mut BookkeepingStats,
     ) {
-        if !self.dirty && self.offsets.len() == bodies.len() + 1 {
+        if !self.dirty {
             return;
         }
         work.adjacency_rebuilds += 1;
         let edges = cache.len() + joints.len();
         work.adjacency_edges_indexed += edges as u64;
-        reserve(&mut self.offsets, bodies.len() + 1, work);
-        self.offsets.clear();
-        self.offsets.resize(bodies.len() + 1, 0);
+        self.epoch = self.epoch.wrapping_add(1);
+        if self.epoch == 0 {
+            self.runs.fill(Run::default());
+            self.epoch = 1;
+        }
+        // Grown only: positions past the end hold stale epochs, never read as current.
+        if self.runs.len() < bodies.len() {
+            reserve(&mut self.runs, bodies.len(), work);
+            self.runs.resize(bodies.len(), Run::default());
+        }
         reserve(&mut self.edges, edges, work);
         self.edges.clear();
+        self.nodes.clear();
+        let epoch = self.epoch;
+        let (runs, nodes) = (&mut self.runs, &mut self.nodes);
+        let mut count = |i: usize, work: &mut BookkeepingStats| {
+            let run = &mut runs[i];
+            if run.epoch != epoch {
+                *run = Run {
+                    epoch,
+                    start: 0,
+                    end: 0,
+                };
+                push(nodes, i, work);
+            }
+            run.end += 1;
+        };
         // Contact pairs in pair order, then joined pairs in joint order (#453).
         for (a, b) in cache.keys().copied().chain(joints) {
             let a = bodies
@@ -124,33 +188,41 @@ impl Adjacency {
             let b = bodies
                 .binary_search_by_key(&b, |b| b.order)
                 .expect("live contact endpoint");
-            self.offsets[a + 1] += 1;
-            self.offsets[b + 1] += 1;
+            count(a, work);
+            count(b, work);
             self.edges.push((a, b));
         }
-        for i in 1..self.offsets.len() {
-            self.offsets[i] += self.offsets[i - 1];
+        // `end` held the count; it becomes the fill cursor, and the run's end once filled.
+        let mut next = 0;
+        for &i in &self.nodes {
+            let run = &mut self.runs[i];
+            let len = run.end;
+            run.start = next;
+            run.end = next;
+            next += len;
         }
-        reserve(&mut self.cursor, bodies.len(), work);
-        self.cursor.clear();
-        self.cursor.extend_from_slice(&self.offsets[..bodies.len()]);
         reserve(&mut self.neighbors, self.edges.len() * 2, work);
         self.neighbors.clear();
         self.neighbors.resize(self.edges.len() * 2, 0);
         // Canonical pair order produces the same per-body neighbor order as the original full scan.
         for &(a, b) in &self.edges {
-            self.neighbors[self.cursor[a]] = b;
-            self.cursor[a] += 1;
-            self.neighbors[self.cursor[b]] = a;
-            self.cursor[b] += 1;
+            self.neighbors[self.runs[a].end as usize] = b;
+            self.runs[a].end += 1;
+            self.neighbors[self.runs[b].end as usize] = a;
+            self.runs[b].end += 1;
         }
         self.dirty = false;
     }
     pub fn neighbors(&self, i: usize) -> &[usize] {
-        &self.neighbors[self.offsets[i]..self.offsets[i + 1]]
+        match self.runs.get(i) {
+            Some(run) if run.epoch == self.epoch => {
+                &self.neighbors[run.start as usize..run.end as usize]
+            }
+            _ => &[],
+        }
     }
     fn retained_bytes(&self) -> usize {
-        bytes(&self.offsets) + bytes(&self.neighbors) + bytes(&self.cursor) + bytes(&self.edges)
+        bytes(&self.runs) + bytes(&self.nodes) + bytes(&self.neighbors) + bytes(&self.edges)
     }
 }
 
@@ -318,7 +390,7 @@ pub(super) struct Scratch {
     /// Bodies awake at some point of the current step (step start plus wakes), for the
     /// end-of-step force reset and query-tree refit.
     pub stepped: Vec<usize>,
-    /// Layout generation for which the per-body vectors (`responses`, `supported`,
+    /// The [`Self::layout`] for which the per-body vectors (`responses`, `supported`,
     /// `earliest`) hold their resting values for every body that is not awake: default
     /// responses, `true` and infinity. `None` after a rollback.
     pub per_body: Option<u64>,
@@ -342,6 +414,9 @@ pub(super) struct Scratch {
     pub ccd_retired: Vec<Order>,
     /// Incremented by every layout change; the query index records the one it was built for.
     pub generation: u64,
+    /// Incremented when live bodies' storage positions move (not when one is appended, or
+    /// removed without moving the others): what position-indexed scratch is valid for.
+    pub layout: u64,
 }
 impl Scratch {
     /// The epoch of valid broad-phase boxes (`BroadBox::epoch`), never zero.
@@ -359,8 +434,10 @@ impl Scratch {
             e.epoch = 0;
         }
     }
+    /// Storage positions moved: all position-indexed scratch is stale.
     pub fn layout_changed(&mut self) {
         self.generation += 1;
+        self.layout += 1;
         self.activity.dirty = true;
         self.graph.dirty = true;
         self.poses_changed();

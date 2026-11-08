@@ -54,12 +54,14 @@ impl Tree {
         }
     }
 
-    /// Inserts `leaf`; rebuilds once inserts reach half the tree: amortized O(log n).
+    /// Inserts `leaf`; rebuilds once inserts reach half the tree: amortized O(log n). A small
+    /// tree is not worth rebuilding: a batch of transient bodies grows from empty every tick
+    /// (#523).
     fn insert(&mut self, leaf: Leaf) {
         self.tree.insert(leaf);
         crate::work::add(crate::work::Counter::TreeInserts, 1);
         self.inserts += 1;
-        if self.inserts >= 16.max(self.tree.len() / 2) {
+        if self.inserts >= 64.max(self.tree.len() / 2) {
             crate::work::add(crate::work::Counter::TreeInserts, self.tree.len() as u64);
             self.tree.rebuild();
             self.inserts = 0;
@@ -172,6 +174,10 @@ impl QueryTree {
             Place::Absent => return,
             Place::Moving => {
                 self.moving.tree.remove(slot);
+                // An empty tree has no hierarchy left to degrade.
+                if self.moving.tree.is_empty() {
+                    self.moving.inserts = 0;
+                }
                 None
             }
             Place::Pending(leaf, index) => {
