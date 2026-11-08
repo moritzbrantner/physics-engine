@@ -19,7 +19,8 @@ use bvh_kernels::{DynamicAabbTree, WideBvh};
 use spatial_kernels::{Aabb, Body as Leaf};
 use std::sync::OnceLock;
 
-/// Fat margin of the moving tree's leaves, in scene units: small moves update a leaf in place.
+/// Fat margin of the moving tree's leaves, per `length_unit` (a tenth of a metre in the default
+/// metre world): small moves update a leaf in place at every world scale.
 const FAT_MARGIN: f32 = 0.1;
 /// Steps of motion a reinserted moving leaf is fattened for.
 const PREDICTED_STEPS: Real = 4.0;
@@ -89,10 +90,15 @@ pub(in crate::approximate) struct QueryTree {
     pub magnitude: Real,
 }
 
-impl Default for QueryTree {
-    fn default() -> Self {
+impl QueryTree {
+    /// An empty tree for a world of `length_unit` scene units per metre.
+    pub fn new(length_unit: Real) -> Self {
+        Self::with_margin(FAT_MARGIN * length_unit)
+    }
+
+    fn with_margin(fat_margin: f32) -> Self {
         Self {
-            moving: Tree::new(FAT_MARGIN),
+            moving: Tree::new(fat_margin),
             fixed: Tree::new(0.0),
             fixed_leaves: Vec::new(),
             wide: OnceLock::new(),
@@ -297,7 +303,7 @@ impl QueryTree {
             }
             return;
         }
-        *self = Self::default();
+        *self = Self::with_margin(self.moving.tree.fat_margin());
         for body in live {
             let leaf = self.leaf(body);
             if is_static(body) {
@@ -415,5 +421,19 @@ impl QueryTree {
                 .visit_segment(origin, delta, limit, pad, visit);
         }
         nodes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fat_margin_scales_with_length_unit_and_survives_a_rebuild() {
+        let mut tree = QueryTree::new(100.0);
+        assert_eq!(tree.moving.tree.fat_margin(), FAT_MARGIN * 100.0);
+        // Generation 7 is not current, so this is the full rebuild.
+        tree.sync(&[], 7);
+        assert_eq!(tree.moving.tree.fat_margin(), FAT_MARGIN * 100.0);
     }
 }

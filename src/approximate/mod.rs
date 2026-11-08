@@ -322,7 +322,7 @@ impl World {
             last_report: Report::default(),
             transaction: transaction::Journal::default(),
             last_transaction: TransactionStats::default(),
-            query_tree: query::QueryTree::default(),
+            query_tree: query::QueryTree::new(config.length_unit),
             terrains: Vec::new(),
             triangle_meshes: Vec::new(),
             hulls: Vec::new(),
