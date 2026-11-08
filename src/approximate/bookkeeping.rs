@@ -406,6 +406,12 @@ pub(super) struct Scratch {
     pub queries: u64,
     /// Broadphase pairs (lower, higher body order) before the narrow phase.
     pub candidates: Vec<(usize, usize)>,
+    /// Pairs the next substep retests alone while reusing every other row (#543).
+    pub retest: Vec<(usize, usize)>,
+    /// The pairs being retested this substep, in pair order.
+    pub retesting: Vec<(usize, usize)>,
+    /// Bodies whose fixed-boundary sweep also retests their halfspace pairs.
+    pub retest_bodies: Vec<usize>,
     /// Bodies awake at some point of the current step (step start plus wakes), for the
     /// end-of-step force reset and query-tree refit.
     pub stepped: Vec<usize>,
@@ -508,6 +514,9 @@ impl Scratch {
             + self.traversal.retained_bytes()
             + bytes(&self.bounds)
             + bytes(&self.candidates)
+            + bytes(&self.retest)
+            + bytes(&self.retesting)
+            + bytes(&self.retest_bodies)
             + bytes(&self.stepped)
             + bytes(&self.roots)
             + bytes(&self.step_pairs)

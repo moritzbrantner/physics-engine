@@ -614,9 +614,9 @@ sleep sets `Body::sleep_allowed = false` so the engine's quiet timers stay out o
 Sleepers cost nothing per step: their contact pairs are parked out of the per-substep walks, so
 a step's work follows the awake bodies and pairs only (see the `step` contract, #524).
 
-This capability has no Rapier oracle scenario or speed gate yet ([#543](https://github.com/moritzbrantner/physics-engine/issues/543)): its behaviour against
-Rapier and its cost relative to Rapier are unverified. The exact-continuation guarantee below is
-checked by `tests/sleeping_debris.rs`.
+The `rubble-wake` oracle scenario (#543) checks this capability against Rapier. Its speed gate
+compares with Rapier's contact recycling off: this lane keeps nothing across steps, so it cannot
+use recycling. The exact-continuation guarantee below is checked by `tests/sleeping_debris.rs`.
 
 **Exact continuation.** With `Config::warm_start = false` and `sleep_allowed = false` on every
 awake dynamic body, a world rebuilt from canonical state (keys, poses, velocities and sleep flags;

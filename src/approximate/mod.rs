@@ -200,6 +200,9 @@ pub struct World {
     geometry: GeometryCache,
     island_scratch: islands::Scratch,
     constraints: Vec<Constraint>,
+    /// A retest's new rows, and the buffer its merge writes into (#543).
+    fresh_rows: Vec<Constraint>,
+    merged_rows: Vec<Constraint>,
     manifold_scratch: Vec<(usize, usize, contact::Manifold)>,
     pub last_report: Report,
     transaction: transaction::Journal,
@@ -330,6 +333,8 @@ impl World {
             geometry: GeometryCache::default(),
             island_scratch: islands::Scratch::default(),
             constraints: Vec::new(),
+            fresh_rows: Vec::new(),
+            merged_rows: Vec::new(),
             manifold_scratch: Vec::new(),
             last_report: Report::default(),
             transaction: transaction::Journal::default(),

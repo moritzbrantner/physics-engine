@@ -200,7 +200,8 @@ impl World {
         self.begin_substeps();
         // Contacts are generated once per step and their constraints reused by later substeps,
         // as Rapier does (#378). A substep regenerates only after something the reused rows
-        // cannot represent: a sweep or CCD advance, a wake, a sleep or a retirement.
+        // cannot represent: a sweep or CCD advance, a wake, a sleep or a retirement. A pair the
+        // reused rows cannot answer for on its own is retested alone (#543).
         let mut reuse = false;
         for substep in 0..self.scene.substeps {
             let lookahead = h * Real::from(self.scene.substeps - 1 - substep);
@@ -211,6 +212,20 @@ impl World {
             }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
             let mut reuse_next = reuse;
+            let mut retested = false;
+            if reuse && !self.bookkeeping.retest.is_empty() {
+                match self.retest_contacts(h, lookahead, &mut pairs, &mut report) {
+                    Ok(Some(next)) => (retested, reuse_next) = (true, next),
+                    Ok(None) => {
+                        reuse = false;
+                        self.prepare_responses(&mut report);
+                    }
+                    Err(error) => {
+                        self.manifold_scratch = pairs;
+                        return Err(self.fail(&report, error));
+                    }
+                }
+            }
             if !reuse {
                 match self.contacts(h, lookahead, &mut pairs, &mut report) {
                     Ok(next) => reuse_next = next,
@@ -228,6 +243,9 @@ impl World {
             let mut constraints = std::mem::take(&mut self.constraints);
             if reuse {
                 self.advance_constraints(&mut constraints, h, &mut report);
+                if retested {
+                    self.merge_retested_rows(&mut pairs, &mut constraints, h, &mut report);
+                }
             } else {
                 self.build_constraints(&mut pairs, &mut constraints, h, &mut report);
             }
@@ -237,7 +255,15 @@ impl World {
             self.joint_rows(&mut constraints, h, &mut report);
             self.solve_constraints(&mut constraints, contact_rows, &mut report);
             let (contact_part, joint_part) = constraints.split_at(contact_rows);
-            self.cache_contacts(contact_part, joint_part, &mut report);
+            if reuse_next
+                && substep + 1 < self.scene.substeps
+                && joint_part.is_empty()
+                && self.contact_cache_can_wait()
+            {
+                self.note_step_pairs(contact_part);
+            } else {
+                self.cache_contacts(contact_part, joint_part, &mut report);
+            }
             self.integrate(h, &mut report)?;
             if substep + 1 == self.scene.substeps && !self.bounces.is_empty() {
                 self.bounce_contacts(&constraints[..contact_rows]);
@@ -356,10 +382,7 @@ impl World {
         // Responses are prepared with the contacts: reused rows keep the step's response,
         // as their masses do (#378). Resting bodies keep the default response.
         if !reuse {
-            crate::work::add(crate::work::Counter::BodyVisits, awake as u64);
-            for &i in &self.bookkeeping.activity.indices {
-                self.responses[i] = PreparedResponse::new(&self.bodies[i], report);
-            }
+            self.prepare_responses(report);
         }
         // External impulses still apply exactly once, before the first force integration.
         // Only awake bodies hold them: `apply_impulse` wakes its body.
@@ -385,6 +408,15 @@ impl World {
             if self.bodies[i].movable() {
                 self.apply_substep_forces(i, h, report);
             }
+        }
+    }
+    fn prepare_responses(&mut self, report: &mut Report) {
+        crate::work::add(
+            crate::work::Counter::BodyVisits,
+            self.bookkeeping.activity.indices.len() as u64,
+        );
+        for &i in &self.bookkeeping.activity.indices {
+            self.responses[i] = PreparedResponse::new(&self.bodies[i], report);
         }
     }
     /// Contacts phase: this substep's manifolds into `pairs`, wakes the islands they disturb
@@ -479,28 +511,119 @@ impl World {
         if !self.bookkeeping.ccd.is_empty() {
             self.advance_ccd_bodies(h, report)?;
         }
-        Ok(lookahead > 0.0
+        let reuse = lookahead > 0.0
             && !regenerate
             && woke == 0
             && self.bookkeeping.ccd.is_empty()
-            && !pairs.iter().any(|&(i, j, ref m)| {
-                // A tumbling corner can reach a feature this manifold lacks. A halfspace
-                // manifold already holds every corner the step's spin can bring within reach
-                // of the plane (its margin includes it), so it is reused as Rapier reuses
-                // every manifold for the step's substeps (#426). A turning kinematic body's
-                // rows are reused too, as Rapier's are: they advance by its point velocity, and
-                // a contact its rotation brings within the step is swept, which regenerates
-                // (#520).
-                let (a, b) = (&self.bodies[i], &self.bodies[j]);
-                let plane = a.shape == Shape::HalfSpace || b.shape == Shape::HalfSpace;
-                let tumbles = |b: &Body| {
-                    !b.external
-                        && !matches!(b.shape, Shape::Sphere(_))
-                        && b.angular_velocity.length() * b.shape.radius() * lookahead
-                            > self.scene.contact_slop
-                };
-                m.swept || (!plane && (tumbles(a) || tumbles(b)))
-            }))
+            && !pairs.iter().any(|(_, _, m)| m.swept);
+        if reuse {
+            self.retest_tumbling(pairs, lookahead);
+        }
+        Ok(reuse)
+    }
+    /// A tumbling corner can reach a feature its manifold lacks, and its fixed arms drift from
+    /// the surface, so the pair is retested next substep. A turning kinematic body's rows are
+    /// reused, as Rapier's are: they advance by its point velocity, and a contact its rotation
+    /// brings within the step is swept, which regenerates (#520).
+    fn retest_tumbling(&mut self, pairs: &Pairs, lookahead: Real) {
+        let s = &mut self.bookkeeping;
+        for &(i, j, _) in pairs.iter() {
+            let (a, b) = (&self.bodies[i], &self.bodies[j]);
+            let tumbles = |b: &Body| {
+                !b.external
+                    && !matches!(b.shape, Shape::Sphere(_))
+                    && b.angular_velocity.length() * b.shape.radius() * lookahead
+                        > self.scene.contact_slop
+            };
+            if tumbles(a) || tumbles(b) {
+                push(&mut s.retest, (i, j), &mut s.work);
+            }
+        }
+    }
+    /// Re-runs the narrow phase of only the pairs the previous substep left open (#543): new
+    /// rows replace theirs and every other row is reused. Returns whether the next substep may
+    /// reuse again, or `None` when a result needs what only full regeneration provides: a
+    /// sweep's response or a sleeping body's wake.
+    fn retest_contacts(
+        &mut self,
+        h: Real,
+        lookahead: Real,
+        pairs: &mut Pairs,
+        report: &mut Report,
+    ) -> Result<Option<bool>, Error> {
+        let s = &mut self.bookkeeping;
+        std::mem::swap(&mut s.retest, &mut s.retesting);
+        let mut retesting = std::mem::take(&mut s.retesting);
+        // A pair may be listed twice: several manifolds, or tumbling and a boundary sweep.
+        retesting.sort_unstable_by_key(|&(i, j)| (self.bodies[i].order, self.bodies[j].order));
+        retesting.dedup();
+        let regenerate =
+            self.narrow_phase(h, lookahead, report, &mut retesting, true, false, pairs);
+        self.bookkeeping.retesting = retesting;
+        if regenerate?
+            || pairs
+                .iter()
+                .any(|&(i, j, ref m)| m.swept || self.bodies[i].sleeping || self.bodies[j].sleeping)
+        {
+            return Ok(None);
+        }
+        if lookahead > 0.0 {
+            self.retest_tumbling(pairs, lookahead);
+        }
+        Ok(Some(lookahead > 0.0))
+    }
+    /// Replaces the retested pairs' rows in `constraints` by rows built from `pairs`, keeping
+    /// the pair order the cache walk relies on. Drains `pairs`.
+    fn merge_retested_rows(
+        &mut self,
+        pairs: &mut Pairs,
+        constraints: &mut Vec<Constraint>,
+        h: Real,
+        report: &mut Report,
+    ) {
+        let mut fresh = std::mem::take(&mut self.fresh_rows);
+        self.build_constraints(pairs, &mut fresh, h, report);
+        let bodies = &self.bodies;
+        let key = |c: &Constraint| (bodies[c.a].order, bodies[c.b].order);
+        // Rows and retested pairs are both in pair order: one cursor walks them together.
+        let mut open = self
+            .bookkeeping
+            .retesting
+            .iter()
+            .map(|&(i, j)| (bodies[i].order, bodies[j].order))
+            .peekable();
+        let mut keep = |c: &Constraint| {
+            let at = key(c);
+            while open.next_if(|pair| *pair < at).is_some() {}
+            open.peek() != Some(&at)
+        };
+        // Most retests find no contact: nothing to insert, nothing to move.
+        if fresh.is_empty() {
+            constraints.retain(keep);
+            self.fresh_rows = fresh;
+            return;
+        }
+        let mut merged = std::mem::take(&mut self.merged_rows);
+        merged.clear();
+        reserve(
+            &mut merged,
+            constraints.len() + fresh.len(),
+            &mut self.bookkeeping.work,
+        );
+        let mut old = constraints.iter().filter(|c| keep(c)).peekable();
+        let mut new = fresh.iter().peekable();
+        loop {
+            let row = match (old.peek(), new.peek()) {
+                (None, None) => break,
+                (Some(a), Some(b)) if key(a) < key(b) => old.next(),
+                (Some(_), None) => old.next(),
+                _ => new.next(),
+            };
+            merged.extend(row.cloned());
+        }
+        // The old rows' buffer becomes the next merge's.
+        self.merged_rows = std::mem::replace(constraints, merged);
+        self.fresh_rows = fresh;
     }
     /// Constraint phase: fresh rows for this substep's pairs, warm-started from the contact
     /// cache. Drains `pairs`.
@@ -518,8 +641,9 @@ impl World {
             &mut self.bookkeeping.work,
         );
         // Pairs and cache entries are both in pair order: a cursor finds each pair's history.
-        let mut history = self.cache.iter().peekable();
+        // Without warm starting no row reads any.
         let warm_start = self.scene.warm_start;
+        let mut history = warm_start.then(|| self.cache.iter().peekable());
         let mut last_history = None;
         for (i, j, m) in pairs.drain(..) {
             // Remaining-time advancement already resolved every contact of an advanced CCD
@@ -572,7 +696,7 @@ impl World {
             // one cache entry: its later manifolds read the same history.
             let cached = match last_history {
                 Some((last, points)) if last == key => points,
-                _ => {
+                _ => history.as_mut().and_then(|history| {
                     while history.next_if(|(k, _)| **k < key).is_some() {
                         crate::work::add(crate::work::Counter::StepCachedPairs, 1);
                     }
@@ -580,7 +704,7 @@ impl World {
                         crate::work::add(crate::work::Counter::StepCachedPairs, 1);
                         points
                     })
-                }
+                }),
             };
             last_history = Some((key, cached));
             // Restitution reads the pair's history: all of it with warm starting, this step's
@@ -826,6 +950,36 @@ impl World {
             );
         }
     }
+    /// Whether a substep whose rows the next one reuses may leave the contact cache to it, as
+    /// Rapier writes impulses back once per step (#543). Nothing may read the cache before then:
+    /// no warm start, and no awake body whose sleep or retirement depends on this substep.
+    fn contact_cache_can_wait(&self) -> bool {
+        let awake = &self.bookkeeping.activity.indices;
+        crate::work::add(crate::work::Counter::BodyVisits, awake.len() as u64);
+        !self.scene.warm_start
+            && !awake.iter().any(|&i| {
+                let b = &self.bodies[i];
+                b.sleep_allowed || b.retire_on_impact
+            })
+    }
+    /// The part of the cache phase a retest reads when the cache itself waits: which pairs
+    /// already held a contact this step, so a retested row does not bounce again.
+    fn note_step_pairs(&mut self, constraints: &[Constraint]) {
+        if self.bookkeeping.retest.is_empty() {
+            return;
+        }
+        let s = &mut self.bookkeeping;
+        for run in constraints.chunk_by(|x, y| x.a == y.a && x.b == y.b) {
+            if run.iter().any(|c| c.sep <= self.scene.contact_slop * 2.0) {
+                let key = (self.bodies[run[0].a].order, self.bodies[run[0].b].order);
+                push(&mut s.step_pairs, key, &mut s.work);
+            }
+        }
+        if !s.step_pairs.is_sorted() {
+            s.step_pairs.sort_unstable();
+            s.step_pairs.dedup();
+        }
+    }
     /// Contact cache phase: the solved rows' impulses become the cache's warm-start history,
     /// and support propagates from kinematic and resting bodies.
     fn cache_contacts(
@@ -945,9 +1099,18 @@ impl World {
                 if c.sep <= self.scene.contact_slop * 2.0
                     && let Some(points) = points.as_deref_mut()
                 {
+                    // Only warm starting reads the anchors.
+                    let (la, lb) = if self.scene.warm_start {
+                        (
+                            a.orientation.inverse_rotate(c.ra),
+                            b.orientation.inverse_rotate(c.rb),
+                        )
+                    } else {
+                        (Vector::ZERO, Vector::ZERO)
+                    };
                     points.push(CachedPoint {
-                        a: a.orientation.inverse_rotate(c.ra),
-                        b: b.orientation.inverse_rotate(c.rb),
+                        a: la,
+                        b: lb,
                         normal: c.n,
                         impulse: c.normal_impulse,
                         tangent: c.t1 * c.tangent_impulse[0] + c.t2 * c.tangent_impulse[1],
@@ -1269,6 +1432,8 @@ impl World {
         report.geometry.retained_bytes = self.geometry.retained_bytes() as u64;
         self.bookkeeping.work.scratch_retained_bytes = (self.bookkeeping.retained_bytes()
             + bookkeeping::bytes(&self.constraints)
+            + bookkeeping::bytes(&self.fresh_rows)
+            + bookkeeping::bytes(&self.merged_rows)
             + bookkeeping::bytes(&self.manifold_scratch))
             as u64;
         report.bookkeeping = std::mem::take(&mut self.bookkeeping.work);
@@ -1379,8 +1544,8 @@ impl World {
 
     /// Contacts for this substep plus `lookahead`, the rest of the step: pairs within reach
     /// before the step ends are admitted as speculative contacts, so later substeps can reuse
-    /// the constraints (#378). Returns whether the next substep must regenerate instead: a pair
-    /// needed a swept test, which covers only this substep, or two dynamic bodies can close.
+    /// the constraints (#378). Returns whether the next substep must regenerate every pair
+    /// instead; a pair that alone needs another look joins `Scratch::retest` (#543).
     pub(super) fn manifolds(
         &mut self,
         h: Real,
@@ -1388,17 +1553,38 @@ impl World {
         report: &mut Report,
         out: &mut Vec<(usize, usize, contact::Manifold)>,
     ) -> Result<bool, Error> {
+        self.rest_per_body();
+        let mut candidates = std::mem::take(&mut self.bookkeeping.candidates);
+        candidates.clear();
+        let regenerate = self.broad_phase(h, lookahead, report, &mut candidates);
+        let result = self.narrow_phase(
+            h,
+            lookahead,
+            report,
+            &mut candidates,
+            false,
+            regenerate,
+            out,
+        );
+        self.bookkeeping.candidates = candidates;
+        result
+    }
+    /// The candidate pairs of the awake bodies, unsorted. Returns whether a dropped pair needs
+    /// the next substep to regenerate.
+    fn broad_phase(
+        &mut self,
+        h: Real,
+        lookahead: Real,
+        report: &mut Report,
+        candidates: &mut Vec<(usize, usize)>,
+    ) -> bool {
         let mut regenerate = false;
         let interval = h + lookahead;
         // Displacement per unit of constant acceleration over the later substeps: velocity
         // gains a·h per substep after this one, so the step ends a·L·(L + h)/2 further on.
         let gain = lookahead * interval * 0.5;
         let step = h * Real::from(self.scene.substeps);
-        self.rest_per_body();
-        let in_order = self.storage_sorted();
         let s = &mut self.bookkeeping;
-        self.geometry.begin(self.bodies.len());
-        out.clear();
         // Broad phase (#412), as Rapier's: the query tree holds every body, so pairs come only
         // from awake bodies and a static, sleeping or resting kinematic body is visited only when
         // an awake one reaches it. Pairs of two resting bodies produce no contact. An awake
@@ -1529,8 +1715,6 @@ impl World {
             e.len = (s.broad_slots.len() - start) as u32;
         }
         crate::work::add(crate::work::Counter::TreeNodes, nodes as u64);
-        let mut candidates = std::mem::take(&mut s.candidates);
-        candidates.clear();
         let (rows, broad) = (&s.bounds, &s.broad);
         let has_box = |b: &Body| broad[b.id.slot() as usize].epoch == epoch;
         // The candidate pair of awake `i` (bounds `lo`, `hi`) and any body `j`, reported once:
@@ -1583,7 +1767,7 @@ impl World {
                 return;
             }
             let pair = if a.order < b.order { (i, j) } else { (j, i) };
-            push(&mut candidates, pair, &mut s.work);
+            push(candidates, pair, &mut s.work);
         };
         for &(i, lo, hi) in rows {
             let e = broad[self.bodies[i].id.slot() as usize];
@@ -1598,6 +1782,30 @@ impl World {
                 consider(i, (lo, hi), self.slots[slot as usize].index as usize);
             }
         }
+        regenerate
+    }
+    /// Contacts of `candidates` and of the halfspaces, as [`Self::manifolds`]; a `retest` takes
+    /// only the halfspace pairs listed in `candidates`. `regenerate` carries the broad phase's
+    /// answer into the result.
+    #[allow(clippy::too_many_arguments)]
+    fn narrow_phase(
+        &mut self,
+        h: Real,
+        lookahead: Real,
+        report: &mut Report,
+        candidates: &mut [(usize, usize)],
+        retest: bool,
+        mut regenerate: bool,
+        out: &mut Vec<(usize, usize, contact::Manifold)>,
+    ) -> Result<bool, Error> {
+        let interval = h + lookahead;
+        let gain = lookahead * interval * 0.5;
+        let in_order = self.storage_sorted();
+        let s = &mut self.bookkeeping;
+        s.retest.clear();
+        s.retest_bodies.clear();
+        self.geometry.begin(self.bodies.len());
+        out.clear();
         // Narrow phase in pair order, so the first failure and every cache visit are canonical.
         // Settled storage is in body order.
         if in_order {
@@ -1606,7 +1814,7 @@ impl World {
             candidates.sort_unstable_by_key(|&(i, j)| (self.bodies[i].order, self.bodies[j].order));
         }
         debug_assert!(candidates.windows(2).all(|w| w[0] != w[1]));
-        for &(i, j) in &candidates {
+        for &(i, j) in candidates.iter() {
             {
                 let a = &self.bodies[i];
                 let b = &self.bodies[j];
@@ -1921,7 +2129,18 @@ impl World {
                 let m = if current.is_some() {
                     current
                 } else if fast {
-                    regenerate = true;
+                    // The sweep covers only this substep, so the next one sweeps again: this
+                    // pair alone, unless the sweep's outcome has to stay world-wide. A body
+                    // about to cross a fixed boundary also refreshes its rows on the plane.
+                    if a.ccd || b.ccd || driven_contact_candidate {
+                        regenerate = true;
+                    } else {
+                        push(&mut s.retest, (i, j), &mut s.work);
+                        if a.mass == 0.0 || b.mass == 0.0 {
+                            let moving = if a.mass == 0.0 { j } else { i };
+                            push(&mut s.retest_bodies, moving, &mut s.work);
+                        }
+                    }
                     self.geometry
                         .swept([i, j], [a, b], h, margin, &mut report.geometry)
                         .map_err(|reason| Error::CollisionSearchFailed {
@@ -1939,8 +2158,8 @@ impl World {
                     );
                     if speculative.is_some() && a.mass > 0.0 && b.mass > 0.0 {
                         // Speculative rows between two dynamic bodies make stacks rock: such
-                        // a pair is discovered by the next substep's regeneration instead.
-                        regenerate = true;
+                        // a pair is discovered by the next substep's retest instead.
+                        push(&mut s.retest, (i, j), &mut s.work);
                         None
                     } else {
                         speculative
@@ -1953,7 +2172,6 @@ impl World {
                 }
             }
         }
-        s.candidates = candidates;
         self.geometry.finish(&mut report.geometry);
         // Pairs are solved in pair order. The broad phase's pairs were tested in pair order, a
         // pair's several manifolds (a box on heightfield triangles) in generation order; each
@@ -1968,6 +2186,16 @@ impl World {
             let Ok(plane) = self.index(self.halfspaces[p]) else {
                 continue;
             };
+            for q in 0..self.bookkeeping.retest_bodies.len() {
+                let k = self.bookkeeping.retest_bodies[q];
+                let pair = if self.bodies[plane].order < self.bodies[k].order {
+                    (plane, k)
+                } else {
+                    (k, plane)
+                };
+                let s = &mut self.bookkeeping;
+                push(&mut s.retest, pair, &mut s.work);
+            }
             let n = self.bodies[plane].orientation.rotate(Vector::Y);
             let awake = self.bookkeeping.activity.indices.len();
             crate::work::add(crate::work::Counter::BodyVisits, awake as u64);
@@ -1983,16 +2211,26 @@ impl World {
                 {
                     continue;
                 }
-                report.narrow_tests += 1;
-                let approach = (-b.velocity.dot(n)).max(0.0) * interval
-                    + (-step_drift(b, self.scene.gravity, gain).dot(n)).max(0.0)
-                    + b.medium_reach(self.scene.gravity, gain, lookahead)
-                    + b.angular_velocity.length() * b.shape.radius() * interval;
                 let (i, j) = if a.order < b.order {
                     (plane, k)
                 } else {
                     (k, plane)
                 };
+                if retest
+                    && candidates
+                        .binary_search_by_key(
+                            &(self.bodies[i].order, self.bodies[j].order),
+                            |&(x, y)| (self.bodies[x].order, self.bodies[y].order),
+                        )
+                        .is_err()
+                {
+                    continue;
+                }
+                report.narrow_tests += 1;
+                let approach = (-b.velocity.dot(n)).max(0.0) * interval
+                    + (-step_drift(b, self.scene.gravity, gain).dot(n)).max(0.0)
+                    + b.medium_reach(self.scene.gravity, gain, lookahead)
+                    + b.angular_velocity.length() * b.shape.radius() * interval;
                 if let Some(m) = contact::halfspace(
                     &self.bodies[i],
                     &self.bodies[j],

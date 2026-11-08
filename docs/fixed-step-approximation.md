@@ -42,10 +42,13 @@ arms, masses and friction; its separation advances by the bodies' measured relat
 translation plus the rotation linearised at the arms, and its position target follows. Its
 accumulated impulses warm-start the next substep, and body responses are prepared with the
 contacts. A substep regenerates contacts and responses instead after anything the rows cannot
-represent: a swept test or CCD advance, a wake, a sleep, a retirement, two dynamic bodies that
-can close, or a non-sphere body whose rotation moves its surface more than the slop by the end
-of the step against anything but a halfspace (a halfspace manifold already holds every corner
-the step's rotation can bring within reach, #426). Each row prepares its angular Jacobians
+represent: a swept or CCD contact, a CCD pair's sweep, a wake, a sleep or a retirement. A pair
+the rows cannot answer for alone is retested alone and every other row is reused (#543): two
+dynamic bodies that can close, a non-CCD pair whose sweep found no contact, and a non-sphere
+body whose rotation moves its surface more than the slop by the end of the step. A body sweeping
+toward a fixed body also refreshes its halfspace rows. Rows a retest replaces are rebuilt with
+the step's responses, and a retest that finds a swept contact or a sleeping partner falls back to
+full regeneration. Each row prepares its angular Jacobians
 `I⁻¹(r × d)` for the normal and both tangents with the world-space inverse inertia, as Rapier's
 solver contacts do, so iterations apply no inertia. Results of multi-substep worlds therefore differ from stepping `dt / n` with one
 substep `n` times; one-substep worlds are unchanged.
