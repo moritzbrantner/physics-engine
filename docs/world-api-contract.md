@@ -565,6 +565,35 @@ debris at four, previously two worlds).
 The field is set before `add_body`, like the body's material. The `mixed-iterations` oracle
 scenario (C18) runs upright props and extra-pass debris in one world against Rapier.
 
+## Media
+
+`World::set_medium(id, Some(Medium { surface_point, surface_normal, density, flow, linear_drag,
+angular_drag }))` puts a dynamic body in a fluid; `None` takes it out (#525). The medium persists
+until changed; a change wakes the body's island and the same medium again changes nothing. It is
+`InvalidInput` when out of range (surface point and flow components finite and below 1e12 in
+magnitude, the normal finite with length in `1e-6..=1e6`, the density finite in `0..1e12`, each
+drag finite in `0..1e6`) or set on a body that is not dynamic; `None` succeeds on any body. Only
+dynamic spheres, boxes, capsules and rotation-locked wedges exist, so a convex hull never has one.
+
+Each substep the force phase of a body with a medium finds the volume `V_s` below the surface
+(`dot(x - surface_point, surface_normal) <= 0`) and its centroid through
+`geometry_kernels::primitive3::try_submerged_properties`, then:
+
+- buoyancy `-density * V_s * gravity` joins the forces at the centroid, so it also produces
+  torque;
+- drag toward the flow is implicit, with `phi = V_s / V`: `v = flow + (v - flow) / (1 + h *
+  linear_drag * phi)` and `w = w / (1 + h * angular_drag * phi)`.
+
+A body is held up by its medium for sleeping (`Body::sleep_allowed` applies as usual) when it is
+at least partly submerged and the forces on it, summed by magnitude, could not build a tenth of
+the sleep speed over the sleep time. A floating body therefore sleeps within a millimetre of its
+equilibrium, while one sinking at terminal speed, balanced only in sum, stays awake. Swept bounds
+and contact admission add the drift a medium can cause over the step's later substeps. A body
+without a medium skips the kernel; each body with one is visited once per substep (`step-medium`
+complexity contract) in body order, so results are deterministic and the same in both storage
+modes. The `float-brook` and `float-marsh` oracle scenarios (C25) check it against Rapier with
+the same force applied through `add_force`.
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the

@@ -3184,6 +3184,48 @@
           }
         }
       ]
+    },
+    {
+      "id": "step-medium",
+      "description": "One warm World::step (1/60 s, default substeps) of `plain` free-falling spheres and `media` spheres in a Medium (#525).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "plain": {
+          "description": "dynamic bodies without a medium"
+        },
+        "media": {
+          "description": "dynamic bodies with a medium"
+        }
+      },
+      "scalePoints": [
+        { "plain": 64, "media": 8 },
+        { "plain": 128, "media": 8 },
+        { "plain": 256, "media": 8 },
+        { "plain": 512, "media": 8 },
+        { "plain": 128, "media": 1 },
+        { "plain": 128, "media": 2 },
+        { "plain": 128, "media": 4 },
+        { "plain": 128, "media": 16 },
+        { "plain": 128, "media": 32 }
+      ],
+      "metrics": [
+        {
+          "name": "medium-forces",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "Counter::MediumForces, one per body with a medium per substep: a new operation (#525). A body without a medium never reaches the submerged-volume kernel.",
+          "growth": [
+            {
+              "dimension": "plain",
+              "bound": "constant"
+            },
+            {
+              "dimension": "media",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
