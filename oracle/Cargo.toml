@@ -16,6 +16,11 @@ engine = ["dep:physics-engine"]
 rapier = ["dep:rapier3d"]
 # Test-only: physics-engine work counters, for tests/full_scan.rs.
 work-counters = ["engine", "physics-engine/work-counters"]
+# #545 solver comparison: forwarded engine variants, and per-phase timing.
+solver-hot = ["engine", "physics-engine/solver-hot"]
+solver-manifold = ["engine", "physics-engine/solver-manifold"]
+solver-colored = ["engine", "physics-engine/solver-colored"]
+phase-timing = ["engine", "physics-engine/phase-timing"]
 
 [dependencies]
 serde_json = "=1.0.154"
@@ -31,6 +36,11 @@ required-features = ["engine", "rapier"]
 name = "probe"
 path = "src/bin/probe.rs"
 required-features = ["engine", "rapier"]
+
+[[bin]]
+name = "solver-lab"
+path = "src/bin/solver_lab.rs"
+required-features = ["engine"]
 
 [[test]]
 name = "full_scan"

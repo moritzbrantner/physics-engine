@@ -241,19 +241,30 @@ impl World {
                 }
             }
             let mut constraints = std::mem::take(&mut self.constraints);
-            if reuse {
-                self.advance_constraints(&mut constraints, h, &mut report);
-                if retested {
-                    self.merge_retested_rows(&mut pairs, &mut constraints, h, &mut report);
+            let contact_rows = super::phase_timing::timed(super::phase_timing::Phase::Rows, || {
+                if reuse {
+                    self.advance_constraints(&mut constraints, h, &mut report);
+                    if retested {
+                        self.merge_retested_rows(&mut pairs, &mut constraints, h, &mut report);
+                    }
+                } else {
+                    self.build_constraints(&mut pairs, &mut constraints, h, &mut report);
                 }
-            } else {
-                self.build_constraints(&mut pairs, &mut constraints, h, &mut report);
-            }
+                // Joint rows follow the contact rows and are rebuilt every substep (#453).
+                let contact_rows = constraints.len();
+                self.joint_rows(&mut constraints, h, &mut report);
+                contact_rows
+            });
             self.manifold_scratch = pairs;
-            // Joint rows follow the contact rows and are rebuilt every substep (#453).
-            let contact_rows = constraints.len();
-            self.joint_rows(&mut constraints, h, &mut report);
-            self.solve_constraints(&mut constraints, contact_rows, &mut report);
+            #[cfg(any(
+                feature = "solver-hot",
+                feature = "solver-manifold",
+                feature = "solver-colored"
+            ))]
+            super::lab::set_contact_rows(contact_rows);
+            super::phase_timing::timed(super::phase_timing::Phase::Solve, || {
+                self.solve_constraints(&mut constraints, contact_rows, &mut report);
+            });
             let (contact_part, joint_part) = constraints.split_at(contact_rows);
             if reuse_next
                 && substep + 1 < self.scene.substeps

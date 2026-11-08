@@ -27,7 +27,13 @@ impl Convergence {
             .all(|x| x.is_finite() && x >= 0.0)
             && self.relative <= 0.01
     }
-    fn small(self, delta: Real, mass: Real, impulse_scale: Real, velocity_scale: Real) -> bool {
+    pub(super) fn small(
+        self,
+        delta: Real,
+        mass: Real,
+        impulse_scale: Real,
+        velocity_scale: Real,
+    ) -> bool {
         let impulse_limit = self.absolute_impulse + self.relative * impulse_scale;
         let velocity_limit = self.absolute_velocity + self.relative * velocity_scale;
         delta.is_finite()
@@ -71,7 +77,7 @@ fn projected_residual(
     projected_residual_rows(bodies, constraints.iter(), tolerance, stats)
 }
 
-fn projected_residual_rows<'a>(
+pub(super) fn projected_residual_rows<'a>(
     bodies: &[Body],
     constraints: impl Iterator<Item = &'a Constraint>,
     tolerance: Convergence,
@@ -164,7 +170,7 @@ fn projected_residual_rows<'a>(
 
 // Same row kernel and arithmetic for contiguous/global and indexed/island solving.
 // Indirection is specialized away for the existing single-island/fixed-pass path.
-trait Rows: Copy {
+pub(super) trait Rows: Copy {
     fn len(self) -> usize;
     fn index(self, row: usize) -> usize;
 }
@@ -346,6 +352,18 @@ pub(super) fn solve_prefix(
     )
 }
 
+#[cfg(any(
+    feature = "solver-hot",
+    feature = "solver-manifold",
+    feature = "solver-colored"
+))]
+use super::lab::solve_rows;
+
+#[cfg(not(any(
+    feature = "solver-hot",
+    feature = "solver-manifold",
+    feature = "solver-colored"
+)))]
 fn solve_rows<const EARLY: bool, const START: u8, const PREFIX: bool, R: Rows>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],

@@ -62,6 +62,19 @@ pub use query::{
 };
 mod convergence;
 mod islands;
+#[cfg(any(
+    feature = "solver-hot",
+    feature = "solver-manifold",
+    feature = "solver-colored"
+))]
+mod lab;
+pub mod phase_timing;
+#[cfg(any(
+    all(feature = "solver-hot", feature = "solver-manifold"),
+    all(feature = "solver-hot", feature = "solver-colored"),
+    all(feature = "solver-manifold", feature = "solver-colored")
+))]
+compile_error!("the solver-* features exclude each other");
 pub use convergence::{Convergence, ConvergenceStats};
 pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;

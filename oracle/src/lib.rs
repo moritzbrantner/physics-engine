@@ -7,6 +7,8 @@ mod greyhaven_fixture;
 pub mod kcc;
 pub mod probe;
 pub mod scenarios;
+#[cfg(feature = "engine")]
+pub mod solver_lab;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 

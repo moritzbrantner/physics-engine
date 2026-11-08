@@ -22,6 +22,7 @@ geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev
 bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "c219e947ad361e79c3c38e843854c73f8fbe9071" }
 spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "c219e947ad361e79c3c38e843854c73f8fbe9071" }
 sha2 = { version = "0.11.0", default-features = false, optional = true }
+wide = { version = "1.7.1", optional = true }
 
 [dev-dependencies]
 serde_json = "=1.0.154"
@@ -36,6 +37,12 @@ work-counters = []
 # Test-only: `Config::default()` uses `BodyStorage::Indexed`, so every suite checks that both
 # storage modes give identical results.
 indexed-storage = []
+# #545 prototype solvers; they exclude each other. See docs/solver-simd-comparison.md.
+solver-hot = []
+solver-manifold = ["dep:wide"]
+solver-colored = ["dep:wide"]
+# #545: per-phase solver timing on a clock the host installs.
+phase-timing = []
 
 [lib]
 name = "physics_engine"

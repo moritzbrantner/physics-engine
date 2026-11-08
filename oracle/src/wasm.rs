@@ -35,6 +35,57 @@ fn side(value: u32) -> Side {
     }
 }
 
+#[cfg(feature = "engine")]
+fn lab_now() -> f64 {
+    // SAFETY: a plain host import without arguments or memory access.
+    unsafe { oracle_now() * 1e3 }
+}
+
+#[cfg(feature = "engine")]
+std::thread_local! {
+    static LAB_PHASES: std::cell::Cell<[f64; 3]> = const { std::cell::Cell::new([0.0; 3]) };
+    static LAB_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+#[cfg(feature = "engine")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lab_workloads() -> u32 {
+    crate::solver_lab::names().len() as u32
+}
+
+/// Copies workload `index`'s name to a static buffer, returning its length; see `lab_name_ptr`.
+#[cfg(feature = "engine")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lab_name_len(index: u32) -> usize {
+    let name = crate::solver_lab::names().swap_remove(index as usize);
+    LAB_NAME.with_borrow_mut(|buffer| {
+        *buffer = name;
+        buffer.len()
+    })
+}
+
+#[cfg(feature = "engine")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lab_name_ptr() -> usize {
+    LAB_NAME.with_borrow(|buffer| buffer.as_ptr() as usize)
+}
+
+/// Microseconds per tick of one run of workload `index`.
+#[cfg(feature = "engine")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lab_run(index: u32) -> f64 {
+    let sample = crate::solver_lab::run(index as usize, lab_now);
+    LAB_PHASES.set(sample.phases);
+    sample.us_per_tick
+}
+
+/// The last `lab_run`'s phase, microseconds per tick: 0 rows, 1 solve, 2 prepare.
+#[cfg(feature = "engine")]
+#[unsafe(no_mangle)]
+pub extern "C" fn lab_phase(which: u32) -> f64 {
+    LAB_PHASES.get()[which as usize]
+}
+
 /// 1 when scenario `index` has a raw Rapier variant (side 2).
 #[unsafe(no_mangle)]
 pub extern "C" fn oracle_has_raw(index: u32) -> i32 {
