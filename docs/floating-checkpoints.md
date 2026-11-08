@@ -22,6 +22,13 @@ its rows across the step's substeps and leaves a kinematic body at rest unintegr
 with a spinning external body continues differently; format 10 is unchanged and the empty-world
 digest changes only for the algorithm header. Older algorithm checkpoints are rejected.
 
+Format 12 (#525) adds each body's [`Medium`](world-api-contract.md#media) after its
+`additional_solver_iterations`: a presence byte (0 or 1), then for a body with one the surface
+point, surface normal, density, flow, linear and angular drag. Restore rebuilds the derived
+volume and re-validates the values; a medium on a body that is not dynamic is rejected. The
+algorithm stays 19: worlds without a medium continue exactly as before. Format 11 checkpoints
+are rejected; the empty-world digest changes for the format header.
+
 Format 11 (#521) adds each body's `additional_solver_iterations` as one byte after its flags
 (values above 64 are rejected). The algorithm stays 19: worlds without the setting continue
 exactly as before. Format 10 checkpoints are rejected.

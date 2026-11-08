@@ -203,6 +203,8 @@ pub fn all() -> Vec<Scenario> {
         scenarios::embedded_starts::scenario(),
         scenarios::basin::scenario(),
         scenarios::bounce::scenario(),
+        scenarios::float::scenario(),
+        scenarios::float::scenario_marsh(),
         scenarios::contact_events::scenario(),
         scenarios::ccd_projectiles::ricochet(),
         scenarios::ccd_projectiles::glancing(),

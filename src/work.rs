@@ -50,9 +50,11 @@ pub enum Counter {
     HullPreparations,
     /// Convex hull face planes tested by rigid sphere contacts and sweeps (#519).
     HullPlanes,
+    /// Bodies given buoyancy and drag by their medium, one per body per substep (#525).
+    MediumForces,
 }
 
-const COUNTERS: usize = 19;
+const COUNTERS: usize = 20;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

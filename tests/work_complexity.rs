@@ -13,8 +13,8 @@ use physics_engine::{
     BodyId, CollisionLayers3d,
     approximate::{
         Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config,
-        DistanceJoint, Error, HeightfieldDesc, Quaternion, QueryFilter, QueryHit, QueryPose,
-        RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
+        DistanceJoint, Error, HeightfieldDesc, Medium, Quaternion, QueryFilter, QueryHit,
+        QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -2179,6 +2179,59 @@ fn additional_solver_iterations_follow_the_elevated_islands() {
             ("elevated-islands", "elevated", "linear"),
             ("extra-constraint-visits", "plain", "constant"),
             ("extra-constraint-visits", "elevated", "linear"),
+        ],
+    );
+}
+
+/// `plain` free-falling spheres and `media` spheres in a medium, 4 m apart (#525).
+fn water_town(plain: u64, media: u64) -> World {
+    let mut w = World::new(Config::default()).unwrap();
+    let water = Medium {
+        surface_point: V(0.0, 300.0, 0.0),
+        surface_normal: V(0.0, 1.0, 0.0),
+        density: 1000.0,
+        flow: V(1.0, 0.0, 0.0),
+        linear_drag: 1.0,
+        angular_drag: 1.0,
+    };
+    for k in 0..plain + media {
+        let p = cell((k % 64) as usize * 4, (k / 64) as usize * 4) + V(0.0, 200.0, 0.0);
+        let id = w
+            .add_body(Body::keyed(k, Shape::Sphere(0.5), p, 1.0))
+            .unwrap();
+        if k >= plain {
+            w.set_medium(id, Some(water)).unwrap();
+        }
+    }
+    w
+}
+
+/// Buoyancy and drag visit each body with a medium once per substep and no other body (#525).
+#[test]
+fn medium_forces_follow_the_bodies_with_a_medium() {
+    let mut samples = Vec::new();
+    let points = [64u64, 128, 256, 512]
+        .iter()
+        .map(|&p| (p, 8u64))
+        .chain([1u64, 2, 4, 16, 32].iter().map(|&m| (128, m)));
+    for (plain, media) in points {
+        let mut w = water_town(plain, media);
+        w.step(1.0 / 60.0).unwrap();
+        work::reset();
+        w.step(1.0 / 60.0).unwrap();
+        let visits = work::get(Counter::MediumForces);
+        assert_eq!(visits, media * u64::from(Config::default().substeps));
+        samples.push((
+            vec![("plain", plain), ("media", media)],
+            vec![("medium-forces", visits)],
+        ));
+    }
+    judge(
+        "step-medium",
+        &samples,
+        &[
+            ("medium-forces", "plain", "constant"),
+            ("medium-forces", "media", "linear"),
         ],
     );
 }
