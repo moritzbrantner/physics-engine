@@ -3367,6 +3367,18 @@
         {
           "statics": 4096,
           "pieces": 256
+        },
+        {
+          "statics": 512,
+          "pieces": 64
+        },
+        {
+          "statics": 512,
+          "pieces": 128
+        },
+        {
+          "statics": 512,
+          "pieces": 256
         }
       ],
       "metrics": [
@@ -3419,6 +3431,15 @@
             "max": 0
           },
           "notes": "Awake-set and fixed-collider rebuild scans: incremental updates replace them, so none after warm-up."
+        },
+        {
+          "name": "wide-tree-leaves",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Leaves taken by rebuilds of the wide fixed-body tree (Counter::WideTreeLeaves). A resting piece is a fixed body added before one step and removed after it: it never joins the wide tree or counts towards dropping it, so a warm lane tick never rebuilds it, even where the pieces reach 1/16 of the town (the statics=512 points). Before, each such tick rebuilt the whole town's tree."
         }
       ]
     },
@@ -3474,6 +3495,18 @@
         {
           "statics": 4096,
           "pieces": 256
+        },
+        {
+          "statics": 512,
+          "pieces": 64
+        },
+        {
+          "statics": 512,
+          "pieces": 128
+        },
+        {
+          "statics": 512,
+          "pieces": 256
         }
       ],
       "metrics": [
@@ -3526,6 +3559,15 @@
             "max": 0
           },
           "notes": "Awake-set and fixed-collider rebuild scans: incremental updates replace them, so none after warm-up."
+        },
+        {
+          "name": "wide-tree-leaves",
+          "unit": "leaves",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Leaves taken by rebuilds of the wide fixed-body tree (Counter::WideTreeLeaves). A resting piece is a fixed body added before one step and removed after it: it never joins the wide tree or counts towards dropping it, so a warm lane tick never rebuilds it, even where the pieces reach 1/16 of the town (the statics=512 points). Before, each such tick rebuilt the whole town's tree."
         }
       ]
     }

@@ -58,9 +58,12 @@ pub enum Counter {
     /// Contact-cache entries the step's per-substep walks visit (warm-start lookup and writeback).
     /// Sleeping pairs are parked out of the walks, so this follows the awake pairs (#524).
     StepCachedPairs,
+    /// Leaves the wide fixed-body tree's builds take, its first build and every rebuild after
+    /// it was dropped.
+    WideTreeLeaves,
 }
 
-const COUNTERS: usize = 22;
+const COUNTERS: usize = 23;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

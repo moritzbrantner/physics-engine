@@ -637,7 +637,10 @@ fn transient_lane_work_follows_the_pieces_not_the_town() {
         let points = SIZES
             .iter()
             .map(|&s| (s, 32u64))
-            .chain([16u64, 64, 128, 256].iter().map(|&k| (12, k)));
+            .chain([16u64, 64, 128, 256].iter().map(|&k| (12, k)))
+            // A small town, where the fixed pieces reach 1/16 of it: they must not rebuild
+            // its wide tree every tick.
+            .chain([64u64, 128, 256].iter().map(|&k| (9, k)));
         for (log2, pieces) in points {
             let statics = 1usize << log2;
             let cols = 1 << log2.div_ceil(2);
@@ -665,6 +668,7 @@ fn transient_lane_work_follows_the_pieces_not_the_town() {
                     ("storage-shifts", work::get(Counter::StorageShifts)),
                     ("cached-pair-visits", work::get(Counter::CachedPairVisits)),
                     ("derived-body-scans", scans),
+                    ("wide-tree-leaves", work::get(Counter::WideTreeLeaves)),
                 ],
             ));
         }
@@ -676,6 +680,7 @@ fn transient_lane_work_follows_the_pieces_not_the_town() {
                 ("body-visits", "pieces", "linear"),
                 ("storage-shifts", "", "zero"),
                 ("derived-body-scans", "", "zero"),
+                ("wide-tree-leaves", "", "zero"),
                 ("cached-pair-visits", "statics", "constant"),
                 ("cached-pair-visits", "pieces", "linear"),
             ],

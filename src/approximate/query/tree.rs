@@ -10,9 +10,12 @@
 //! phase descend (#415). That O(n log n) build waits for its first use, the first ray or shape
 //! query or the first step with an awake body, and setup only pushes leaves (#528). Tree shape
 //! never changes a result: broad-phase pairs are sorted and queries order ties by body. A
-//! fixed body added while the wide tree exists waits in the moving tree, and a removed one
-//! is dropped from the wide tree in place, until enough such changes accumulate to drop the
-//! wide tree; the next use rebuilds it. A fixed body that moves becomes a moving one.
+//! fixed body added after that build waits in the moving tree, and a removed one is dropped
+//! from the wide tree in place, until enough such changes accumulate to drop the wide tree;
+//! the next use rebuilds it. Only a waiting body that has stayed for [`SETTLED_STEPS`] step
+//! ends counts as such a change and joins the rebuilt tree, so a lane that adds fixed pieces
+//! for one step and removes them after it never rebuilds the wide tree. A fixed body that
+//! moves becomes a moving one.
 
 use super::super::{Body, BodyId, Real, Vector as V};
 use bvh_kernels::{DynamicAabbTree, WideBvh};
@@ -24,6 +27,10 @@ use std::sync::OnceLock;
 const FAT_MARGIN: f32 = 0.1;
 /// Steps of motion a reinserted moving leaf is fattened for.
 const PREDICTED_STEPS: Real = 4.0;
+/// Step ends a fixed body added after the wide tree's build must stay before it counts towards
+/// a rebuild and joins the rebuilt tree. A transient lane's resting piece, added before one
+/// step and removed after it (#523), sees one step end, so it never does.
+const SETTLED_STEPS: u64 = 2;
 
 /// Where a body's leaf lives.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -33,8 +40,8 @@ enum Place {
     Moving,
     /// A fixed body at this index of `fixed_leaves`, in the wide tree when there is one.
     Fixed(u32),
-    /// A fixed body (index into `fixed_leaves`, then into `pending`) added while the wide tree
-    /// existed: in the moving tree until the wide tree is dropped.
+    /// A fixed body (index into `fixed_leaves`, then into `pending`) added after the wide
+    /// tree's build: in the moving tree until it has settled and the wide tree is dropped.
     Pending(u32, u32),
 }
 
@@ -76,11 +83,18 @@ pub(in crate::approximate) struct QueryTree {
     moving: Tree,
     /// Exact leaves of every fixed body: what the wide tree is built from.
     fixed_leaves: Vec<Leaf>,
-    /// Four-wide tree over `fixed_leaves`, built by the first query or broad phase that needs it.
+    /// Four-wide tree over the `Fixed` leaves of `fixed_leaves`, built by the first query or
+    /// broad phase that needs it.
     wide: OnceLock<WideBvh>,
-    /// Slots of the pending fixed bodies.
-    pending: Vec<u32>,
-    /// Pending bodies plus leaves dropped from the wide tree.
+    /// Whether a wide tree was built and then dropped: fixed bodies added before its rebuild
+    /// are pending too, so the rebuild does not take in pieces added for one step.
+    dropped: bool,
+    /// Slots of the pending fixed bodies and the `steps` value when each was added.
+    pending: Vec<(u32, u64)>,
+    /// Step ends seen, the clock of `pending`.
+    steps: u64,
+    /// Pending bodies that have settled (seen [`SETTLED_STEPS`] step ends), as of the last
+    /// step end, minus those removed since, plus leaves dropped from the wide tree in place.
     stale: usize,
     /// Leaf place per id slot.
     places: Vec<Place>,
@@ -101,7 +115,9 @@ impl Clone for QueryTree {
             moving: self.moving.clone(),
             fixed_leaves: self.fixed_leaves.clone(),
             wide: self.wide.clone(),
+            dropped: self.dropped,
             pending: self.pending.clone(),
+            steps: self.steps,
             stale: self.stale,
             places: self.places.clone(),
             generation: self.generation,
@@ -121,7 +137,9 @@ impl QueryTree {
             moving: Tree::new(fat_margin),
             fixed_leaves: Vec::new(),
             wide: OnceLock::new(),
+            dropped: false,
             pending: Vec::new(),
+            steps: 0,
             stale: 0,
             places: Vec::new(),
             generation: Some(0),
@@ -173,16 +191,29 @@ impl QueryTree {
         self.places[slot] = place;
     }
 
-    /// The wide tree, built here on first use.
+    /// The wide tree, built here on first use over the fixed leaves that are not pending.
     fn wide(&self) -> &WideBvh {
         self.wide.get_or_init(|| {
-            crate::work::add(
-                crate::work::Counter::TreeInserts,
-                self.fixed_leaves.len() as u64,
-            );
+            let built = self.fixed_leaves.len() - self.pending.len();
+            crate::work::add(crate::work::Counter::TreeInserts, built as u64);
+            crate::work::add(crate::work::Counter::WideTreeLeaves, built as u64);
             crate::work::add(crate::work::Counter::TreeBuilds, 1);
-            WideBvh::build(&self.fixed_leaves)
+            if self.pending.is_empty() {
+                WideBvh::build(&self.fixed_leaves)
+            } else {
+                let leaves: Vec<Leaf> = self
+                    .fixed_leaves
+                    .iter()
+                    .filter(|l| matches!(self.place(l.id), Place::Fixed(_)))
+                    .copied()
+                    .collect();
+                WideBvh::build(&leaves)
+            }
         })
+    }
+
+    fn settled(&self, added: u64) -> bool {
+        self.steps - added >= SETTLED_STEPS
     }
 
     fn insert_fixed(&mut self, leaf: Leaf) -> u32 {
@@ -197,21 +228,20 @@ impl QueryTree {
             Place::Absent => return,
             Place::Moving => {
                 self.moving.tree.remove(slot);
-                // An empty tree has no hierarchy left to degrade.
-                if self.moving.tree.is_empty() {
-                    self.moving.inserts = 0;
-                }
                 None
             }
             Place::Pending(leaf, index) => {
                 self.moving.tree.remove(slot);
-                self.pending.swap_remove(index as usize);
-                if let Some(&other) = self.pending.get(index as usize)
+                let (_, added) = self.pending.swap_remove(index as usize);
+                if let Some(&(other, _)) = self.pending.get(index as usize)
                     && let Place::Pending(l, _) = self.place(other)
                 {
                     self.set_place(other, Place::Pending(l, index));
                 }
-                self.stale -= 1;
+                // Counted at the last step end only if it had settled by then.
+                if self.settled(added) {
+                    self.stale -= 1;
+                }
                 Some(leaf)
             }
             Place::Fixed(leaf) => {
@@ -232,25 +262,58 @@ impl QueryTree {
                 self.set_place(other, place);
             }
         }
+        // An empty tree has no hierarchy left to degrade, whichever leaf left it last.
+        if self.moving.tree.is_empty() {
+            self.moving.inserts = 0;
+        }
         self.set_place(slot, Place::Absent);
         self.drop_stale_wide();
     }
 
-    /// Once pending bodies and dropped leaves reach 1/16 of the fixed set, takes the pending
-    /// bodies out of the moving tree and drops the wide tree; the next query rebuilds it, so
-    /// the rebuild cost is amortized over the changes.
+    /// Once settled pending bodies and dropped leaves reach 1/16 of the fixed set, takes the
+    /// settled pending bodies out of the moving tree and drops the wide tree; the next query
+    /// rebuilds it with them, so the rebuild cost is amortized over lasting changes. Pending
+    /// bodies that have not settled stay in the moving tree, unless they number half the other
+    /// fixed bodies: then all join, so the moving tree stays bounded in a world that never
+    /// steps.
     fn drop_stale_wide(&mut self) {
-        if self.stale < 8.max(self.fixed_leaves.len() / 16) {
+        let others = self.fixed_leaves.len() - self.pending.len();
+        let all = self.pending.len() >= 8.max(others / 2);
+        if self.stale < 8.max(self.fixed_leaves.len() / 16) && !all {
             return;
         }
-        for slot in std::mem::take(&mut self.pending) {
-            self.moving.tree.remove(slot);
-            if let Place::Pending(leaf, _) = self.place(slot) {
+        let mut kept = 0;
+        for n in 0..self.pending.len() {
+            let (slot, added) = self.pending[n];
+            let Place::Pending(leaf, _) = self.place(slot) else {
+                continue;
+            };
+            if all || self.settled(added) {
+                self.moving.tree.remove(slot);
                 self.set_place(slot, Place::Fixed(leaf));
+            } else {
+                self.pending[kept] = (slot, added);
+                self.set_place(slot, Place::Pending(leaf, kept as u32));
+                kept += 1;
             }
         }
+        self.pending.truncate(kept);
         self.stale = 0;
         self.wide = OnceLock::new();
+        self.dropped = true;
+    }
+
+    /// A step ended: pending bodies age, and those that settle now count towards a rebuild.
+    /// O(pending).
+    pub fn step_ended(&mut self) {
+        self.steps += 1;
+        let steps = self.steps;
+        self.stale += self
+            .pending
+            .iter()
+            .filter(|&&(_, added)| steps - added == SETTLED_STEPS)
+            .count();
+        self.drop_stale_wide();
     }
 
     /// `body` was just added.
@@ -261,14 +324,13 @@ impl QueryTree {
             self.moving.insert(leaf);
         } else {
             let index = self.insert_fixed(leaf);
-            if self.wide.get().is_some() {
+            if self.dropped || self.wide.get().is_some() {
                 self.set_place(leaf.id, Place::Pending(index, self.pending.len() as u32));
-                self.pending.push(leaf.id);
+                self.pending.push((leaf.id, self.steps));
                 // Pending leaves leave when the wide tree is dropped, so they never degrade
                 // the moving tree for long and do not count towards its rebuild.
                 self.moving.tree.insert(leaf);
                 crate::work::add(crate::work::Counter::TreeInserts, 1);
-                self.stale += 1;
                 self.drop_stale_wide();
             } else {
                 self.set_place(leaf.id, Place::Fixed(index));
@@ -451,5 +513,75 @@ mod tests {
         // Generation 7 is not current, so this is the full rebuild.
         tree.sync(&[], 7);
         assert_eq!(tree.moving.tree.fat_margin(), FAT_MARGIN * 100.0);
+    }
+
+    /// A town of 128 fixed boxes whose wide tree a ray query has built.
+    fn town() -> super::super::super::World {
+        use super::super::super::{Body, Config, QueryFilter, RayCast, Shape, World};
+        let mut world = World::new(Config::default()).unwrap();
+        for k in 0..128 {
+            let p = V(k as Real * 3.0, 0.0, 0.0);
+            world
+                .add_body(Body::keyed(k, Shape::Box(V(1.0, 1.0, 1.0)), p, 0.0))
+                .unwrap();
+        }
+        let cast = RayCast::new(V(-10.0, 0.0, 0.0), V(1000.0, 0.0, 0.0));
+        world.cast_ray_first(cast, QueryFilter::default()).unwrap();
+        assert!(world.query_tree.wide.get().is_some());
+        world
+    }
+
+    fn pieces(world: &mut super::super::super::World, count: u64) -> Vec<BodyId> {
+        use super::super::super::{Body, Shape};
+        (0..count)
+            .map(|k| {
+                let p = V(k as Real * 3.0, 5.0, 0.0);
+                world
+                    .add_body(Body::new(Shape::Box(V(0.2, 0.2, 0.2)), p, 0.0))
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fixed_bodies_added_for_one_step_never_rebuild_the_wide_tree() {
+        let mut world = town();
+        for _ in 0..8 {
+            // Far more than the 1/16 of the town that drops the wide tree once settled.
+            let ids = pieces(&mut world, 32);
+            world.step(1.0 / 60.0).unwrap();
+            world.remove_bodies(&ids).unwrap();
+            let tree = &world.query_tree;
+            assert!(tree.wide.get().is_some() && !tree.dropped);
+            assert!(tree.pending.is_empty() && tree.stale == 0);
+        }
+    }
+
+    #[test]
+    fn fixed_bodies_that_stay_join_the_rebuilt_wide_tree() {
+        let mut world = town();
+        let ids = pieces(&mut world, 8);
+        world.step(1.0 / 60.0).unwrap();
+        assert_eq!(world.query_tree.pending.len(), 8);
+        // The second step end settles them: 8 is the smallest drop threshold.
+        world.step(1.0 / 60.0).unwrap();
+        let tree = &world.query_tree;
+        assert!(tree.wide.get().is_none() && tree.pending.is_empty());
+        assert!(
+            ids.iter()
+                .all(|id| matches!(tree.place(id.slot()), Place::Fixed(_)))
+        );
+        // The next query rebuilds the wide tree with them.
+        assert!(tree.wide().contains(ids[0].slot()));
+    }
+
+    #[test]
+    fn half_the_fixed_set_pending_joins_without_a_step() {
+        let mut world = town();
+        pieces(&mut world, 63);
+        assert_eq!(world.query_tree.pending.len(), 63);
+        pieces(&mut world, 1);
+        let tree = &world.query_tree;
+        assert!(tree.pending.is_empty() && tree.wide.get().is_none());
     }
 }
