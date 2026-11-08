@@ -50,7 +50,7 @@ fn reference_component(w: &World, root: Order) -> Vec<usize> {
 fn check_components(w: &mut World) {
     w.settle_storage();
     w.bookkeeping
-        .ensure_graph(&w.bodies, &w.cache, w.joints.pairs());
+        .ensure_graph(&w.bodies, &w.cache, &w.parked, w.joints.pairs());
     for i in 0..w.bodies.len() {
         let want = reference_component(w, w.bodies[i].order);
         let s = &mut w.bookkeeping;

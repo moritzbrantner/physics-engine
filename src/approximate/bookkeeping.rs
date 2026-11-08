@@ -143,7 +143,8 @@ impl Adjacency {
     pub fn ensure(
         &mut self,
         bodies: &[Body],
-        cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
+        cached: impl Iterator<Item = (Order, Order)>,
+        cached_len: usize,
         joints: impl ExactSizeIterator<Item = (Order, Order)>,
         work: &mut BookkeepingStats,
     ) {
@@ -151,7 +152,7 @@ impl Adjacency {
             return;
         }
         work.adjacency_rebuilds += 1;
-        let edges = cache.len() + joints.len();
+        let edges = cached_len + joints.len();
         work.adjacency_edges_indexed += edges as u64;
         self.epoch = self.epoch.wrapping_add(1);
         if self.epoch == 0 {
@@ -181,7 +182,7 @@ impl Adjacency {
             run.end += 1;
         };
         // Contact pairs in pair order, then joined pairs in joint order (#453).
-        for (a, b) in cache.keys().copied().chain(joints) {
+        for (a, b) in cached.chain(joints) {
             let a = bodies
                 .binary_search_by_key(&a, |b| b.order)
                 .expect("live contact endpoint");
@@ -250,6 +251,23 @@ impl Traversal {
         graph: &Adjacency,
         work: &mut BookkeepingStats,
     ) {
+        self.walk(root, bodies, work, |i, stack, work| {
+            let neighbors = graph.neighbors(i);
+            work.island_edge_visits += neighbors.len() as u64;
+            let needed = stack.len() + neighbors.len();
+            reserve(stack, needed, work);
+            stack.extend_from_slice(neighbors);
+        });
+    }
+    /// Collects the movable bodies `root` reaches through `expand`, which pushes a visited
+    /// body's neighbors. Fixed and external bodies end a path.
+    pub fn walk(
+        &mut self,
+        root: usize,
+        bodies: &[Body],
+        work: &mut BookkeepingStats,
+        mut expand: impl FnMut(usize, &mut Vec<usize>, &mut BookkeepingStats),
+    ) {
         self.stack.clear();
         self.island.clear();
         push(&mut self.stack, root, work);
@@ -263,11 +281,7 @@ impl Traversal {
             }
             work.island_body_visits += 1;
             push(&mut self.island, i, work);
-            let neighbors = graph.neighbors(i);
-            work.island_edge_visits += neighbors.len() as u64;
-            let needed = self.stack.len() + neighbors.len();
-            reserve(&mut self.stack, needed, work);
-            self.stack.extend_from_slice(neighbors);
+            expand(i, &mut self.stack, work);
         }
     }
     fn retained_bytes(&self) -> usize {
@@ -400,6 +414,9 @@ pub(super) struct Scratch {
     /// responses, `true` and infinity. `None` after a rollback.
     pub per_body: Option<u64>,
     pub roots: Vec<Order>,
+    /// Pairs that held a contact in this step, sorted (`Config::warm_start` off only): that
+    /// mode's restitution gate, which reads no history from earlier steps.
+    pub step_pairs: Vec<(Order, Order)>,
     pub used: Vec<usize>,
     pub retired: Vec<Order>,
     pub support: SupportPropagation,
@@ -461,9 +478,25 @@ impl Scratch {
         &mut self,
         bodies: &[Body],
         cache: &BTreeMap<(Order, Order), Vec<CachedPoint>>,
+        parked: &super::parked::ParkedContacts,
         joints: impl ExactSizeIterator<Item = (Order, Order)>,
     ) {
-        self.graph.ensure(bodies, cache, joints, &mut self.work);
+        self.graph.ensure(
+            bodies,
+            cache.keys().chain(parked.keys()).copied(),
+            cache.len() + parked.len(),
+            joints,
+            &mut self.work,
+        );
+    }
+    /// The graph of joints alone, for a world whose contact reach comes from geometry.
+    pub fn ensure_joint_graph(
+        &mut self,
+        bodies: &[Body],
+        joints: impl ExactSizeIterator<Item = (Order, Order)>,
+    ) {
+        self.graph
+            .ensure(bodies, std::iter::empty(), 0, joints, &mut self.work);
     }
     /// Excludes the broad-phase boxes, which persist with the query tree (its storage is not
     /// counted either).
@@ -477,6 +510,7 @@ impl Scratch {
             + bytes(&self.candidates)
             + bytes(&self.stepped)
             + bytes(&self.roots)
+            + bytes(&self.step_pairs)
             + bytes(&self.used)
             + bytes(&self.retired)
             + self.support.retained_bytes()

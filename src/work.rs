@@ -55,9 +55,12 @@ pub enum Counter {
     /// Full query-tree builds: the lazy first build of the wide tree and every amortized
     /// rebuild of the moving tree.
     TreeBuilds,
+    /// Contact-cache entries the step's per-substep walks visit (warm-start lookup and writeback).
+    /// Sleeping pairs are parked out of the walks, so this follows the awake pairs (#524).
+    StepCachedPairs,
 }
 
-const COUNTERS: usize = 21;
+const COUNTERS: usize = 22;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

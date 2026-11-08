@@ -46,6 +46,11 @@ The C20 `ccd-parallel` oracle additionally checks fast, separated spheres whose 
 bounds overlap but whose common velocity prevents contact. It compares analytic motion with
 Rapier at 60 Hz; the dense scaling measurements are kept separately in #477.
 
+Persistent sleeping debris (`World::set_sleeping`, exact continuation from canonical state, #524)
+is delivered without a Rapier scenario or speed gate, so it has no row in the table above;
+[#543](https://github.com/moritzbrantner/physics-engine/issues/543) adds the C26 row with
+`rubble-wake`.
+
 Scenarios live in `oracle/src/scenarios/`; `cargo run --release -p physics-oracle`
 checks them natively (invariants + not more than 5% slower than Rapier) and
 `node scripts/oracle-wasm.mjs` gates WASM timings; `bash scripts/size-budget.sh` also

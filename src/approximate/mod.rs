@@ -108,8 +108,10 @@ mod control;
 mod error;
 mod lifecycle;
 mod material;
+mod parked;
 mod report;
 mod shape;
+mod sleep;
 mod storage;
 pub use body::Body;
 pub(crate) use body::Order;
@@ -183,7 +185,13 @@ pub struct World {
     /// Closing speed above which restitution applies: 1 m/s in scene units.
     restitution_speed: Real,
     bodies: Vec<Body>,
+    /// Contact history of the pairs with an awake side: the only pairs the step walks.
     cache: BTreeMap<(Order, Order), Vec<CachedPoint>>,
+    /// Contact history of the pairs with no awake side (#524).
+    parked: parked::ParkedContacts,
+    /// A body fell asleep, so pairs in `cache` may have lost their last awake side: the next
+    /// step parks them. A delay only widens one step's walks; nothing reads the difference.
+    park_pending: bool,
     /// Prior substep length. Time composition and its checkpoint value stay f64.
     last_h: Scalar,
     // Derived substep scratch, indexed like bodies. Refresh contents; reuse allocated capacity.
@@ -314,6 +322,8 @@ impl World {
             restitution_speed: unit,
             bodies: Vec::new(),
             cache: BTreeMap::new(),
+            parked: parked::ParkedContacts::default(),
+            park_pending: false,
             last_h: 0.0,
             responses: Vec::new(),
             bookkeeping: Scratch::default(),

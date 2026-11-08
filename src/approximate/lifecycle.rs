@@ -17,7 +17,10 @@ impl World {
         self.insert_body(body)
     }
     pub(super) fn insert_body(&mut self, mut body: Body) -> Result<BodyId, Error> {
-        body.orientation = body.orientation.normalized();
+        // A pose read back from a world keeps its exact bits: only a non-unit input normalizes.
+        if !body.orientation.unit_to_rounding() {
+            body.orientation = body.orientation.normalized();
+        }
         if !body.valid() || self.slots.len() >= u32::MAX as usize - 1 {
             return Err(Error::InvalidInput);
         }
@@ -164,12 +167,19 @@ impl World {
                         &mut super::GeometryStats::default(),
                     )
                     .map_or(true, |m| m.is_some())
+                } else if body.shape.query_only() {
+                    // No closed-form contact here: the bounds overlap is the reach.
+                    true
                 } else {
                     contact::current(b, body, margin).is_some()
                 }
         };
         let mut wake = Vec::new();
-        if self.query_tree.current(self.bookkeeping.generation) {
+        if body.shape == Shape::HalfSpace {
+            // Unbounded and outside the tree: every sleeper is in reach of a plane.
+            wake.extend(self.bodies.iter().filter(|b| touches(b)).map(|b| b.order));
+            wake.sort_unstable();
+        } else if self.query_tree.current(self.bookkeeping.generation) {
             let tree = &self.query_tree;
             let (lo, hi) = body.cached_bounds;
             let reach = tree
@@ -316,6 +326,7 @@ impl World {
         let neighbors = self
             .cache
             .keys()
+            .chain(self.parked.keys())
             .filter_map(|&(a, b)| {
                 crate::work::add(crate::work::Counter::CachedPairVisits, 1);
                 (a == order)
@@ -323,9 +334,21 @@ impl World {
                     .or_else(|| (b == order).then_some(a))
             })
             .collect::<Vec<_>>();
-        if !neighbors.is_empty() {
+        // Who wakes without contact history (`warm_start` off): what a rebuilt world sees too.
+        let reach = if self.scene.warm_start || self.bodies[self.index(id).ok()?].sensor {
+            Vec::new()
+        } else {
+            self.sleepers_within(
+                &self.bodies[self.index(id).ok()?],
+                self.scene.contact_slop * 2.0,
+            )
+        };
+        if !neighbors.is_empty() || !reach.is_empty() {
             self.bookkeeping.graph.dirty = true;
             self.sort_storage();
+            for n in reach {
+                self.wake_island(n);
+            }
             for n in neighbors {
                 // Its contacts stop; the next successful step reports them.
                 let other = self.bodies[self.index_of_order(n).expect("live contact")].id;
@@ -341,20 +364,24 @@ impl World {
                     held: false,
                 });
                 self.removed_contacts = self.contact_changes.len();
-                self.wake_island(n);
+                if self.scene.warm_start {
+                    self.wake_island(n);
+                }
             }
         }
         // O(contact pairs), independent of the body count.
         self.geometry.remove(order);
         let pool = &mut self.bookkeeping;
-        self.cache.retain(|&(a, b), points| {
+        let mut discard = |&(a, b): &(Order, Order), points: &mut Vec<_>| {
             crate::work::add(crate::work::Counter::CachedPairVisits, 1);
             let keep = a != order && b != order;
             if !keep {
                 pool.recycle_points(std::mem::take(points));
             }
             keep
-        });
+        };
+        self.cache.retain(|key, points| discard(key, points));
+        self.parked.retain(|key, points| discard(key, points));
         let i = self.index(id).ok()?;
         let removed = self.release_body(id, i);
         self.truncate_tombstones();
@@ -385,10 +412,28 @@ impl World {
         // The surviving neighbours of the removed bodies are the roots of everything that wakes:
         // an island reached through a removed body is also reached from a survivor beside it.
         let mut roots = self.remove_batch_joints(&orders);
-        if !self.cache.is_empty() {
+        // Without contact history (`warm_start` off) the geometry names the sleepers in reach.
+        if !self.scene.warm_start {
+            for &(_, _, id) in &batch {
+                let body = &self.bodies[self.index(id)?];
+                if !body.sensor {
+                    let near = self.sleepers_within(body, self.scene.contact_slop * 2.0);
+                    roots.extend(
+                        near.into_iter()
+                            .filter(|o| orders.binary_search(o).is_err()),
+                    );
+                }
+            }
+        }
+        let warm_start = self.scene.warm_start;
+        if !self.cache.is_empty() || !self.parked.is_empty() {
             self.sort_storage();
-            let (cache, bodies, changes) =
-                (&mut self.cache, &self.bodies, &mut self.contact_changes);
+            let (cache, parked, bodies, changes) = (
+                &mut self.cache,
+                &mut self.parked,
+                &self.bodies,
+                &mut self.contact_changes,
+            );
             let id_of = |order: Order| match orders.binary_search(&order) {
                 Ok(at) => batch[at].2,
                 Err(_) => {
@@ -399,7 +444,7 @@ impl World {
                 }
             };
             let pool = &mut self.bookkeeping;
-            cache.retain(|&(a, b), points| {
+            let mut discard = |&(a, b): &(Order, Order), points: &mut Vec<_>| {
                 crate::work::add(crate::work::Counter::CachedPairVisits, 1);
                 let (gone_a, gone_b) = (
                     orders.binary_search(&a).is_ok(),
@@ -408,10 +453,10 @@ impl World {
                 if !(gone_a || gone_b) {
                     return true;
                 }
-                if !gone_a {
+                if warm_start && !gone_a {
                     roots.push(a);
                 }
-                if !gone_b {
+                if warm_start && !gone_b {
                     roots.push(b);
                 }
                 // A pair's changes stay ordered by pair: this order needs no sort by removal.
@@ -423,7 +468,9 @@ impl World {
                 });
                 pool.recycle_points(std::mem::take(points));
                 false
-            });
+            };
+            cache.retain(|key, points| discard(key, points));
+            parked.retain(|key, points| discard(key, points));
             if !roots.is_empty() {
                 self.bookkeeping.graph.dirty = true;
             }

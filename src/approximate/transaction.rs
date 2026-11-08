@@ -259,5 +259,7 @@ impl Journal {
         world.responses.clear();
         world.constraints.clear();
         world.manifold_scratch.clear();
+        // Restored pairs land in the walked map; the next step re-parks what has no awake side.
+        world.park_pending = true;
     }
 }

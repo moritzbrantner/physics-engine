@@ -305,7 +305,9 @@ impl World {
     /// Step setup: every per-body loop of the substeps runs over the awake bodies only (#412).
     fn begin_substeps(&mut self) {
         self.bounces.clear();
+        self.park_quiet_pairs();
         let s = &mut self.bookkeeping;
+        s.step_pairs.clear();
         s.activity.refresh(&self.bodies, &mut s.work);
         s.stepped.clear();
         reserve(&mut s.stepped, s.activity.indices.len(), &mut s.work);
@@ -517,6 +519,7 @@ impl World {
         );
         // Pairs and cache entries are both in pair order: a cursor finds each pair's history.
         let mut history = self.cache.iter().peekable();
+        let warm_start = self.scene.warm_start;
         let mut last_history = None;
         for (i, j, m) in pairs.drain(..) {
             // Remaining-time advancement already resolved every contact of an advanced CCD
@@ -570,13 +573,23 @@ impl World {
             let cached = match last_history {
                 Some((last, points)) if last == key => points,
                 _ => {
-                    while history.next_if(|(k, _)| **k < key).is_some() {}
-                    history
-                        .next_if(|(k, _)| **k == key)
-                        .map(|(_, points)| points)
+                    while history.next_if(|(k, _)| **k < key).is_some() {
+                        crate::work::add(crate::work::Counter::StepCachedPairs, 1);
+                    }
+                    history.next_if(|(k, _)| **k == key).map(|(_, points)| {
+                        crate::work::add(crate::work::Counter::StepCachedPairs, 1);
+                        points
+                    })
                 }
             };
             last_history = Some((key, cached));
+            // Restitution reads the pair's history: all of it with warm starting, this step's
+            // only without. A rebuilt world holds no earlier contacts (option A, #524).
+            let new_pair = if warm_start {
+                cached.is_none()
+            } else {
+                self.bookkeeping.step_pairs.binary_search(&key).is_err()
+            };
             // A cached point warm-starts only within this reach, a tenth of the smaller body.
             // A half-space is unbounded: the body on it sets the reach (#424), or a box resting
             // on the plane solves cold every step and never settles.
@@ -647,7 +660,7 @@ impl World {
                 }
                 let rel =
                     contact_velocity(b, point.rb, !linear) - contact_velocity(a, point.ra, !linear);
-                let restitution = if cached.is_none() {
+                let restitution = if new_pair {
                     pair_restitution(a, b)
                 } else {
                     0.0
@@ -853,6 +866,9 @@ impl World {
         let mut entries = self.cache.iter_mut().peekable();
         let mut impacts = Vec::new();
         loop {
+            if entries.peek().is_some() {
+                crate::work::add(crate::work::Counter::StepCachedPairs, 1);
+            }
             let run_key = runs
                 .peek()
                 .map(|run| (self.bodies[run[0].a].order, self.bodies[run[0].b].order));
@@ -890,6 +906,9 @@ impl World {
             let b = &self.bodies[run[0].b];
             let key = (a.order, b.order);
             let cached = run.iter().any(|c| c.sep <= self.scene.contact_slop * 2.0);
+            if cached && !self.scene.warm_start {
+                push(&mut scratch.step_pairs, key, &mut scratch.work);
+            }
             let mut new = None;
             let mut points = match entry {
                 _ if !cached => None,
@@ -956,6 +975,11 @@ impl World {
             }
         }
         self.cache.extend(scratch.fresh_pairs.drain(..));
+        // Runs arrive in pair order within one substep; substeps merge here.
+        if !scratch.step_pairs.is_sorted() {
+            scratch.step_pairs.sort_unstable();
+            scratch.step_pairs.dedup();
+        }
         let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
         self.cache.retain(|&key, points| {
             if points.is_empty() {
@@ -1074,33 +1098,38 @@ impl World {
                     &mut self.contact_changes,
                     &mut self.bookkeeping,
                 );
-                self.cache.retain(|&(a, b), points| {
-                    if a == id || b == id {
-                        self.transaction.pair((a, b), Some(points));
-                        // The retired body has left storage; its partner is still there.
-                        let other = |order| {
-                            bodies[bodies
-                                .binary_search_by_key(&order, |b| b.order)
-                                .expect("live contact")]
-                            .id
-                        };
-                        let ids = if a == id {
-                            (handle, other(b))
-                        } else {
-                            (other(a), handle)
-                        };
-                        changes.push(super::ContactChange {
-                            key: (a, b),
-                            ids,
-                            started: false,
-                            held: false,
-                        });
-                        pool.recycle_points(std::mem::take(points));
-                        false
+                let transaction = &mut self.transaction;
+                let mut discard = |(a, b): (Order, Order), points: &mut Vec<CachedPoint>| {
+                    transaction.pair((a, b), Some(points));
+                    // The retired body has left storage; its partner is still there.
+                    let other = |order| {
+                        bodies[bodies
+                            .binary_search_by_key(&order, |b| b.order)
+                            .expect("live contact")]
+                        .id
+                    };
+                    let ids = if a == id {
+                        (handle, other(b))
                     } else {
-                        true
+                        (other(a), handle)
+                    };
+                    changes.push(super::ContactChange {
+                        key: (a, b),
+                        ids,
+                        started: false,
+                        held: false,
+                    });
+                    pool.recycle_points(std::mem::take(points));
+                };
+                self.cache.retain(|&(a, b), points| {
+                    let incident = a == id || b == id;
+                    if incident {
+                        discard((a, b), points);
                     }
+                    !incident
                 });
+                self.parked
+                    .drain_body(id, |key, mut points| discard(key, &mut points));
                 self.transaction.remove(i, b);
                 // Later substeps look bodies up by query-tree slot.
                 self.shift_slots(i);
@@ -1256,7 +1285,7 @@ impl World {
         }) {
             return;
         }
-        s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
+        s.ensure_graph(&self.bodies, &self.cache, &self.parked, self.joints.pairs());
         s.traversal.begin(self.bodies.len(), &mut s.work);
         let mut slept = 0;
         // Fully sleeping components need no rediscovery. An awake root still reaches every
@@ -1283,35 +1312,43 @@ impl World {
                     // may not hold its leaf (it may have held theirs): they query again.
                     self.responses[i] = PreparedResponse::default();
                     s.supported[i] = true;
-                    let slot = b.id.slot();
-                    if self.query_tree.current(s.generation) {
-                        let e = s.broad.get(slot as usize).copied().unwrap_or_default();
-                        let near = if e.epoch == s.broad_epoch + 1 {
-                            (e.lo, e.hi)
-                        } else {
-                            b.cached_bounds
-                        };
-                        drop_boxes_near(
-                            &self.query_tree,
-                            &mut s.broad,
-                            near,
-                            self.scene.contact_slop,
-                        );
-                        self.query_tree.moved(b);
-                    } else {
-                        s.broad_epoch += 1;
-                        s.boxes_live = false;
-                    }
-                    if let Some(e) = s.broad.get_mut(slot as usize) {
-                        e.epoch = 0;
-                    }
+                    rest_broad_phase(
+                        b,
+                        s.generation,
+                        (&mut s.broad, &mut s.broad_epoch, &mut s.boxes_live),
+                        &mut self.query_tree,
+                        self.scene.contact_slop,
+                    );
                 }
             }
         }
         s.activity.count -= slept;
         if slept > 0 {
             s.activity.slept(&self.bodies);
+            self.park_pending = true;
         }
+    }
+    /// Moves the pairs with no awake side left to the parked map (at most once per step), so the
+    /// per-substep walks stop visiting them: O(active pairs · log n), only after a sleep.
+    pub(super) fn park_quiet_pairs(&mut self) {
+        if !self.park_pending {
+            return;
+        }
+        self.park_pending = false;
+        let (bodies, parked) = (&self.bodies, &mut self.parked);
+        self.cache.retain(|&(a, b), points| {
+            let at_rest = |order| {
+                bodies
+                    .binary_search_by_key(&order, |b| b.order)
+                    .is_ok_and(|i| !(bodies[i].mass > 0.0 && !bodies[i].sleeping))
+            };
+            if at_rest(a) && at_rest(b) {
+                parked.insert((a, b), std::mem::take(points));
+                false
+            } else {
+                true
+            }
+        });
     }
     /// Gives every resting body its resting per-body values (`Scratch::per_body`) after a
     /// layout change or rollback; O(1) otherwise.
@@ -2015,6 +2052,33 @@ impl World {
         }
         s.earliest_set.clear();
         Ok(regenerate)
+    }
+}
+/// A body fell asleep: its leaf returns to its bounds and broad-phase boxes that may not hold it
+/// (it may have held theirs) query again, so later substeps find it as a resting body.
+pub(super) fn rest_broad_phase(
+    b: &Body,
+    generation: u64,
+    (broad, broad_epoch, boxes_live): (&mut [bookkeeping::BroadBox], &mut u64, &mut bool),
+    tree: &mut super::query::QueryTree,
+    slop: Real,
+) {
+    let slot = b.id.slot() as usize;
+    if tree.current(generation) {
+        let e = broad.get(slot).copied().unwrap_or_default();
+        let near = if e.epoch == *broad_epoch + 1 {
+            (e.lo, e.hi)
+        } else {
+            b.cached_bounds
+        };
+        drop_boxes_near(tree, broad, near, slop);
+        tree.moved(b);
+    } else {
+        *broad_epoch += 1;
+        *boxes_live = false;
+    }
+    if let Some(e) = broad.get_mut(slot) {
+        e.epoch = 0;
     }
 }
 /// Pair order. Settled storage (`sorted`) is in body order, so storage positions compare

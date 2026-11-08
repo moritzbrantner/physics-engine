@@ -22,7 +22,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 };
 const FORMAT: u32 = 12;
 // Bump when continuation semantics change, even if the byte layout does not.
-const ALGORITHM: u32 = 19;
+const ALGORITHM: u32 = 20;
 const DIGEST_BYTES: usize = 32;
 const REAL_BYTES: usize = size_of::<Real>();
 // Fixed fields: id 8, key tag 1, key or serial 8, shape tag 1, flags 2, additional solver
@@ -176,7 +176,10 @@ impl World {
         }
         // Live bodies in body order, whatever the storage holds between steps.
         let bodies = self.bodies().cloned().collect::<Vec<_>>();
-        validate(self.config, self.elapsed, self.last_h, &bodies, &self.cache)?;
+        // Parked pairs are ordinary contact history: a checkpoint holds them all, in pair order.
+        let mut cache = self.cache.clone();
+        cache.extend(self.parked.iter().map(|(&key, p)| (key, p.clone())));
+        validate(self.config, self.elapsed, self.last_h, &bodies, &cache)?;
         let mut heightfields = bodies
             .iter()
             .filter_map(|b| match b.shape {
@@ -234,7 +237,7 @@ impl World {
             elapsed: self.elapsed,
             last_h: self.last_h,
             bodies,
-            cache: self.cache.clone(),
+            cache,
             slot_generations,
             next_serial: self.next_serial,
             terrain_slots,
@@ -381,6 +384,8 @@ impl Checkpoint {
         world.last_h = self.last_h;
         world.bodies = self.bodies;
         world.cache = self.cache;
+        // The first step parks the restored pairs that have no awake side.
+        world.park_pending = true;
         for body in &mut world.bodies {
             body.cached_bounds = contact::bounds(body);
         }

@@ -110,6 +110,12 @@ impl Quaternion {
             .iter()
             .all(|x| x.is_finite())
     }
+    /// Unit length to rounding: a normalized quaternion stays one after integration and
+    /// `f32` round trips. Re-normalizing such a pose would change its bits.
+    pub(crate) fn unit_to_rounding(self) -> bool {
+        let n = self.0 * self.0 + self.1 * self.1 + self.2 * self.2 + self.3 * self.3;
+        n.is_finite() && (n - 1.0).abs() <= 16.0 * super::Real::EPSILON
+    }
     pub fn rotate(self, v: Vector) -> Vector {
         let q = Vector(self.0, self.1, self.2);
         let t = q.cross(v) * 2.0;

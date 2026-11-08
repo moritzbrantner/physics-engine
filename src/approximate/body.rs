@@ -31,7 +31,8 @@ pub struct Body {
     /// Finite coefficient in [0, 1], default zero. Contacts combine the pair's coefficients by
     /// [`Body::restitution_combine`]. Restitution requires closing speed > 1 m/s (scaled by
     /// `length_unit`), separation <= contact_slop and no retained pair history; speculative
-    /// positive separation does not bounce.
+    /// positive separation does not bounce. With `Config::warm_start` off, the gate looks only
+    /// at the current step.
     pub restitution: Real,
     /// Default [`CombineRule::Average`], as in Rapier.
     pub friction_combine: CombineRule,

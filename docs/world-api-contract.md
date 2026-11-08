@@ -601,6 +601,45 @@ complexity contract) in body order, so results are deterministic and the same in
 modes. The `float-brook` and `float-marsh` oracle scenarios (C25) check it against Rapier with
 the same force applied through `add_force`.
 
+## Game-owned sleep and exact continuation
+
+`World::set_sleeping(id, bool)` puts a dynamic body to sleep or wakes it, as Rapier's
+`RigidBody::sleep()` and `wake_up`, and `World::is_sleeping` reads it. Going to sleep zeroes the
+velocities and drops pending forces and impulses; the body then takes no work in a step. Waking
+reaches the sleeping bodies touching it, as an impulse does. Wake semantics are unchanged: a
+sleeper wakes on disturbing contact from an awake body, `set_velocity`, `apply_impulse`, `add_force`,
+and static or kinematic changes around it. Fixed and external bodies are rejected. A game owning
+sleep sets `Body::sleep_allowed = false` so the engine's quiet timers stay out of it.
+
+Sleepers cost nothing per step: their contact pairs are parked out of the per-substep walks, so
+a step's work follows the awake bodies and pairs only (see the `step` contract, #524).
+
+This capability has no Rapier oracle scenario or speed gate yet ([#543](https://github.com/moritzbrantner/physics-engine/issues/543)): its behaviour against
+Rapier and its cost relative to Rapier are unverified. The exact-continuation guarantee below is
+checked by `tests/sleeping_debris.rs`.
+
+**Exact continuation.** With `Config::warm_start = false` and `sleep_allowed = false` on every
+awake dynamic body, a world rebuilt from canonical state (keys, poses, velocities and sleep flags;
+see `tests/sleeping_debris.rs`) continues bit-identically with the original: the rebuild adds
+fixed bodies with the same keys or in the same order first (a fixed body added later wakes what
+it touches), then re-adds each dynamic body from its canonical pose in any order and applies
+`set_sleeping`. `add_body` keeps an orientation that is already unit to rounding (it normalizes
+only otherwise), so a read-back pose keeps its exact bits. Consequences of `warm_start = false` this
+relies on:
+
+- no contact history crosses a step boundary for the restitution gate
+  ([contact materials](contact-materials.md));
+- wake reach (`remove_body`, `set_static_position`, `set_layers` and island traversal) comes from
+  current geometry within twice the contact slop rather than from the contact cache; a sleeping
+  body whose layers change wakes itself.
+
+The guarantee covers physical state only. Contact events (`Report::contact_events`) and
+`World::has_support` stay derived from the retained contact history, so a rebuilt world reports
+its contacts as `Started` on its first step and answers no support until a step has run. Joints,
+kinematic drive, characters and pending forces are outside it, as is any body the engine put to
+sleep itself (`sleep_allowed = true`), whose quiet timers are not canonical state. Worlds with
+`warm_start = true` keep their cached traversal and full restitution history.
+
 ## Failure behaviour
 
 A returned step error rolls back touched motion, history, sleep and retirement state; time and the
