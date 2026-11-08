@@ -20,7 +20,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 11;
+const FORMAT: u32 = 12;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 19;
 const DIGEST_BYTES: usize = 32;
@@ -1100,6 +1100,15 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
         | b.restitution_combine.bits() << 9;
     out.extend_from_slice(&flags.to_le_bytes());
     out.push(b.additional_solver_iterations);
+    out.push(u8::from(b.medium.is_some()));
+    if let Some(m) = &b.medium {
+        vector(out, m.medium.surface_point);
+        vector(out, m.medium.surface_normal);
+        scalar(out, m.medium.density);
+        vector(out, m.medium.flow);
+        scalar(out, m.medium.linear_drag);
+        scalar(out, m.medium.angular_drag);
+    }
     out.extend_from_slice(&b.layers.memberships().to_le_bytes());
     out.extend_from_slice(&b.layers.mask().to_le_bytes());
     optional_vector(out, b.linear_support);
@@ -1340,6 +1349,27 @@ impl<'a> Reader<'a> {
         body.retire_on_impact = flags & 32 != 0;
         body.sleeping = flags & 64 != 0;
         body.additional_solver_iterations = self.u8()?;
+        body.medium = match self.u8()? {
+            0 => None,
+            1 => {
+                let medium = super::Medium {
+                    surface_point: self.vector()?,
+                    surface_normal: self.vector()?,
+                    density: self.scalar()?,
+                    flow: self.vector()?,
+                    linear_drag: self.scalar()?,
+                    angular_drag: self.scalar()?,
+                };
+                if !body.movable() {
+                    return Err(CheckpointError::InvalidData);
+                }
+                Some(
+                    super::medium::BodyMedium::new(medium, body.shape, body.mass)
+                        .ok_or(CheckpointError::InvalidData)?,
+                )
+            }
+            _ => return Err(CheckpointError::InvalidData),
+        };
         body.layers = CollisionLayers3d::new(self.u32()?, self.u32()?);
         body.linear_support = self.optional_vector()?;
         body.quiet_time = self.scalar()?;
