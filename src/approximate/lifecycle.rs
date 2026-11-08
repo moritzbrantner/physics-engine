@@ -58,6 +58,7 @@ impl World {
             }
         }
         self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
+        self.bookkeeping.activity.dynamic += usize::from(body.mass > 0.0);
         self.elevated_bodies += usize::from(body.additional_solver_iterations > 0);
         let synced = self.query_tree.current(self.bookkeeping.generation);
         let (id, key, order) = (body.id, body.key, body.order);
@@ -125,7 +126,7 @@ impl World {
         if shifted {
             self.bookkeeping.layout_changed();
         } else {
-            self.bookkeeping.record_changed();
+            self.body_joined(at);
         }
         if synced {
             self.query_tree
@@ -208,11 +209,117 @@ impl World {
         }
         wake
     }
+    /// Position-indexed scratch after the body at `at` was appended or reused a tombstone: no
+    /// other body moved, so nothing is rebuilt per body (#523). A new body has no edges.
+    fn body_joined(&mut self, at: usize) {
+        let s = &mut self.bookkeeping;
+        s.generation += 1;
+        let b = &self.bodies[at];
+        if b.mass > 0.0 && !b.sleeping {
+            s.activity.woke(at, &mut s.work);
+        }
+        s.position.body_added(at, b);
+        // A reused tombstone already holds its resting values (`body_left`).
+        if s.per_body == Some(s.layout) && at == self.responses.len() {
+            self.responses.push(super::PreparedResponse::default());
+            s.supported.push(true);
+            s.earliest.push(Real::INFINITY);
+        }
+    }
+    /// Position-indexed scratch after the live body at `i` became a tombstone.
+    fn body_left(&mut self, i: usize, awake: bool) {
+        let s = &mut self.bookkeeping;
+        s.generation += 1;
+        if awake {
+            s.activity.left(i);
+        }
+        s.position.body_removed(i);
+        if s.per_body == Some(s.layout) {
+            if let Some(r) = self.responses.get_mut(i) {
+                *r = super::PreparedResponse::default();
+            }
+            if let Some(x) = s.supported.get_mut(i) {
+                *x = true;
+            }
+            if let Some(x) = s.earliest.get_mut(i) {
+                *x = Real::INFINITY;
+            }
+        }
+    }
+    /// Pops trailing tombstones, O(1) each: no live body moves, so the next step finds settled
+    /// storage and keeps its position-indexed scratch (#523).
+    fn truncate_tombstones(&mut self) {
+        let before = self.bodies.len();
+        while self.bodies.last().is_some_and(|b| b.id == BodyId::NONE) {
+            self.bodies.pop();
+            self.tombstones -= 1;
+        }
+        let len = self.bodies.len();
+        if len != before {
+            self.sorted_len = self.sorted_len.min(len);
+            self.responses.truncate(len);
+            self.bookkeeping.supported.truncate(len);
+            self.bookkeeping.earliest.truncate(len);
+        }
+    }
+    /// Compacts once tombstones are half the records: amortized O(1) per removal.
+    fn compact_if_sparse(&mut self) {
+        if 2 * self.tombstones > self.bodies.len() {
+            self.settle_storage();
+        }
+    }
+    /// Takes the body `id` at `i` out of storage. Its contacts and joints are already gone.
+    fn release_body(&mut self, id: BodyId, i: usize) -> Body {
+        self.characters.remove(id);
+        // Sorted by id bits, one target per body.
+        if let Ok(at) = self
+            .kinematic_poses
+            .binary_search_by_key(&id.to_bits(), |t| t.0)
+        {
+            self.kinematic_poses.remove(at);
+        }
+        let synced = self.query_tree.current(self.bookkeeping.generation);
+        let removed = self.bodies[i].clone();
+        self.static_changed(&removed);
+        self.elevated_bodies -= usize::from(removed.additional_solver_iterations > 0);
+        match removed.shape {
+            Shape::HalfSpace => self.halfspaces.retain(|&h| h != id),
+            Shape::TriangleMesh { mesh, .. } => self.triangle_meshes[mesh.0 as usize] = None,
+            Shape::ConvexHull { hull, .. } => self.hulls[hull.0 as usize] = None,
+            _ => {}
+        }
+        self.bodies[i].id = BodyId::NONE;
+        self.tombstones += 1;
+        if self.scene.body_storage == BodyStorage::Indexed {
+            self.order_index.remove(&removed.order);
+        }
+        let slot = id.slot();
+        self.slots[slot as usize].index = FREE_SLOT;
+        self.bookkeeping.drop_box(slot);
+        // Descending, so `pop` reuses the lowest free slot.
+        let at = self.free.partition_point(|&f| f > slot);
+        self.free.insert(at, slot);
+        if let Some(key) = removed.key {
+            self.keys.remove(&key);
+        }
+        let awake = removed.mass > 0.0 && !removed.sleeping;
+        self.bookkeeping.activity.count -= usize::from(awake);
+        self.bookkeeping.activity.dynamic -= usize::from(removed.mass > 0.0);
+        self.body_left(i, awake);
+        if synced {
+            self.query_tree.removed(slot, self.bookkeeping.generation);
+        } else {
+            self.query_tree
+                .sync(&self.bodies, self.bookkeeping.generation);
+            self.bookkeeping.forget_boxes();
+        }
+        removed
+    }
+    /// Removes a body. Bodies in contact with it, or joined to it, wake with their islands, and
+    /// its contacts report `Stopped` at the next successful step. O(contact pairs + joints);
+    /// removing the last records of storage leaves the next step nothing to compact.
     pub fn remove_body(&mut self, id: BodyId) -> Option<Body> {
         let order = self.bodies[self.index(id).ok()?].order;
-        self.characters.remove(id);
-        self.kinematic_poses.retain(|t| t.0 != id.to_bits());
-        self.halfspaces.retain(|&h| h != id);
         // Its joints go with it; the bodies they held wake (#453).
         self.remove_body_joints(order);
         // Bodies in contact with the removed one wake (its contact pairs, in pair order).
@@ -276,45 +383,111 @@ impl World {
         self.cache.retain(|key, points| discard(key, points));
         self.parked.retain(|key, points| discard(key, points));
         let i = self.index(id).ok()?;
-        let synced = self.query_tree.current(self.bookkeeping.generation);
-        let removed = self.bodies[i].clone();
-        self.static_changed(&removed);
-        self.elevated_bodies -= usize::from(removed.additional_solver_iterations > 0);
-        if let Shape::TriangleMesh { mesh, .. } = removed.shape {
-            self.triangle_meshes[mesh.0 as usize] = None;
-        }
-        if let Shape::ConvexHull { hull, .. } = removed.shape {
-            self.hulls[hull.0 as usize] = None;
-        }
-        self.bodies[i].id = BodyId::NONE;
-        self.tombstones += 1;
-        if self.scene.body_storage == BodyStorage::Indexed {
-            self.order_index.remove(&order);
-        }
-        let slot = id.slot();
-        self.slots[slot as usize].index = FREE_SLOT;
-        self.bookkeeping.drop_box(slot);
-        // Descending, so `pop` reuses the lowest free slot.
-        let at = self.free.partition_point(|&f| f > slot);
-        self.free.insert(at, slot);
-        if let Some(key) = removed.key {
-            self.keys.remove(&key);
-        }
-        self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
-        // A tombstone: no position moved, and its edges went above.
-        self.bookkeeping.record_changed();
-        if synced {
-            self.query_tree.removed(slot, self.bookkeeping.generation);
-        } else {
-            self.query_tree
-                .sync(&self.bodies, self.bookkeeping.generation);
-            self.bookkeeping.forget_boxes();
-        }
-        // Tombstones are compacted by the next step, or here once they are half the records:
-        // amortized O(1) per removal.
-        if 2 * self.tombstones > self.bodies.len() {
-            self.settle_storage();
-        }
+        let removed = self.release_body(id, i);
+        self.truncate_tombstones();
+        self.compact_if_sparse();
         Some(removed)
+    }
+    /// Removes every body of `ids` at once: all of them, or none when one is missing
+    /// ([`Error::MissingBody`]) or repeated ([`Error::InvalidInput`]), in which case the world is
+    /// unchanged. The bodies come back in the order of `ids`.
+    ///
+    /// The surviving world and the contact events are those of removing the bodies one by one
+    /// in body order, for any order of `ids`: the survivors in contact with or joined to a
+    /// removed body wake with their islands, and each cached pair stops once. The bodies of
+    /// the batch are not woken, so the returned records keep their `sleeping` state.
+    ///
+    /// One pass over the contact pairs and joints and one island traversal: O(k log k + P + J),
+    /// independent of bodies not in contact.
+    pub fn remove_bodies(&mut self, ids: &[BodyId]) -> Result<Vec<Body>, Error> {
+        let mut batch = Vec::with_capacity(ids.len());
+        for (at, &id) in ids.iter().enumerate() {
+            batch.push((self.bodies[self.index(id)?].order, at, id));
+        }
+        batch.sort_unstable_by_key(|&(order, ..)| order);
+        if batch.windows(2).any(|w| w[0].0 == w[1].0) {
+            return Err(Error::InvalidInput);
+        }
+        let orders = batch.iter().map(|&(order, ..)| order).collect::<Vec<_>>();
+        // The surviving neighbours of the removed bodies are the roots of everything that wakes:
+        // an island reached through a removed body is also reached from a survivor beside it.
+        let mut roots = self.remove_batch_joints(&orders);
+        // Without contact history (`warm_start` off) the geometry names the sleepers in reach.
+        if !self.scene.warm_start {
+            for &(_, _, id) in &batch {
+                let body = &self.bodies[self.index(id)?];
+                if !body.sensor {
+                    let near = self.sleepers_within(body, self.scene.contact_slop * 2.0);
+                    roots.extend(near.into_iter().filter(|o| orders.binary_search(o).is_err()));
+                }
+            }
+        }
+        let warm_start = self.scene.warm_start;
+        if !self.cache.is_empty() || !self.parked.is_empty() {
+            self.sort_storage();
+            let (cache, parked, bodies, changes) = (
+                &mut self.cache,
+                &mut self.parked,
+                &self.bodies,
+                &mut self.contact_changes,
+            );
+            let id_of = |order: Order| match orders.binary_search(&order) {
+                Ok(at) => batch[at].2,
+                Err(_) => {
+                    bodies[bodies
+                        .binary_search_by_key(&order, |b| b.order)
+                        .expect("live contact")]
+                    .id
+                }
+            };
+            let pool = &mut self.bookkeeping;
+            let mut discard = |&(a, b): &(Order, Order), points: &mut Vec<_>| {
+                crate::work::add(crate::work::Counter::CachedPairVisits, 1);
+                let (gone_a, gone_b) = (
+                    orders.binary_search(&a).is_ok(),
+                    orders.binary_search(&b).is_ok(),
+                );
+                if !(gone_a || gone_b) {
+                    return true;
+                }
+                if warm_start && !gone_a {
+                    roots.push(a);
+                }
+                if warm_start && !gone_b {
+                    roots.push(b);
+                }
+                // A pair's changes stay ordered by pair: this order needs no sort by removal.
+                changes.push(super::ContactChange {
+                    key: (a, b),
+                    ids: (id_of(a), id_of(b)),
+                    started: false,
+                    held: false,
+                });
+                pool.recycle_points(std::mem::take(points));
+                false
+            };
+            cache.retain(|key, points| discard(key, points));
+            parked.retain(|key, points| discard(key, points));
+            if !roots.is_empty() {
+                self.bookkeeping.graph.dirty = true;
+            }
+            self.removed_contacts = self.contact_changes.len();
+        }
+        self.geometry.remove_many(&orders);
+        let mut removed = Vec::with_capacity(batch.len());
+        for &(_, at, id) in &batch {
+            let i = self.index(id).expect("validated above");
+            removed.push((at, self.release_body(id, i)));
+        }
+        self.truncate_tombstones();
+        roots.sort_unstable();
+        roots.dedup();
+        if !roots.is_empty() {
+            self.sort_storage();
+            self.wake_islands(&roots);
+        }
+        self.compact_if_sparse();
+        removed.sort_unstable_by_key(|&(at, _)| at);
+        Ok(removed.into_iter().map(|(_, b)| b).collect())
     }
 }

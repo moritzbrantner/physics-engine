@@ -56,6 +56,28 @@ impl Scratch {
     pub fn invalidate(&mut self) {
         self.valid = false;
     }
+    /// `b` joined at storage position `index`; no other body moved.
+    pub fn body_added(&mut self, index: usize, b: &Body) {
+        if self.valid && b.mass == 0.0 && !b.sensor {
+            let at = self.fixed.partition_point(|f| f.index < index);
+            self.fixed.insert(
+                at,
+                FixedCollider {
+                    index,
+                    axes: None,
+                    bounds: b.cached_bounds,
+                },
+            );
+        }
+    }
+    /// The body at storage position `index` left; no other body moved.
+    pub fn body_removed(&mut self, index: usize) {
+        if self.valid
+            && let Ok(at) = self.fixed.binary_search_by_key(&index, |f| f.index)
+        {
+            self.fixed.remove(at);
+        }
+    }
     fn prepare(&mut self, bodies: &[Body], report: &mut PositionReport) {
         if self.valid {
             return;

@@ -68,6 +68,7 @@ impl World {
         self.transaction.begin(self.bodies.len());
         let prior_h = self.last_h;
         let prior_activity = self.bookkeeping.activity.count;
+        let prior_dynamic = self.bookkeeping.activity.dynamic;
         if !self.joints.is_empty() {
             self.joints.begin();
         }
@@ -95,6 +96,7 @@ impl World {
                 self.transaction = journal;
                 self.last_h = prior_h;
                 self.bookkeeping.activity.count = prior_activity;
+                self.bookkeeping.activity.dynamic = prior_dynamic;
                 // The rollback restored the cache: only changes from before the step (removals, held
                 // impacts) remain.
                 self.contact_changes.truncate(self.removed_contacts);
@@ -1088,6 +1090,7 @@ impl World {
                 self.static_changed(&b);
                 let handle = b.id;
                 self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
+                self.bookkeeping.activity.dynamic -= usize::from(b.mass > 0.0);
                 self.elevated_bodies -= usize::from(b.additional_solver_iterations > 0);
                 self.geometry.remove(id);
                 let (bodies, changes, pool) = (
@@ -1353,7 +1356,7 @@ impl World {
         let s = &mut self.bookkeeping;
         s.activity.refresh(&self.bodies, &mut s.work);
         let n = self.bodies.len();
-        if s.per_body == Some(s.generation)
+        if s.per_body == Some(s.layout)
             && self.responses.len() == n
             && s.supported.len() == n
             && s.earliest.len() == n
@@ -1371,7 +1374,7 @@ impl World {
         reserve(&mut s.earliest, n, &mut s.work);
         s.earliest.resize(n, Real::INFINITY);
         s.earliest_set.clear();
-        s.per_body = Some(s.generation);
+        s.per_body = Some(s.layout);
     }
 
     /// Contacts for this substep plus `lookahead`, the rest of the step: pairs within reach

@@ -3314,6 +3314,220 @@
           ]
         }
       ]
+    },
+    {
+      "id": "transient-lane",
+      "description": "BodyStorage::Ordered: one warm MMORPG lane tick (#523): add `pieces` keyless transient bodies (every fourth a fixed box) to a retained town, one World::step, then World::remove_bodies of them all.",
+      "publicContract": "physics_engine::approximate::World::{add_body,step,remove_bodies}",
+      "dimensions": {
+        "statics": {
+          "description": "static boxes in the retained town"
+        },
+        "pieces": {
+          "description": "transient bodies per tick, each in contact with one box"
+        }
+      },
+      "scalePoints": [
+        {
+          "statics": 512,
+          "pieces": 32
+        },
+        {
+          "statics": 1024,
+          "pieces": 32
+        },
+        {
+          "statics": 2048,
+          "pieces": 32
+        },
+        {
+          "statics": 4096,
+          "pieces": 32
+        },
+        {
+          "statics": 8192,
+          "pieces": 32
+        },
+        {
+          "statics": 16384,
+          "pieces": 32
+        },
+        {
+          "statics": 4096,
+          "pieces": 16
+        },
+        {
+          "statics": 4096,
+          "pieces": 64
+        },
+        {
+          "statics": 4096,
+          "pieces": 128
+        },
+        {
+          "statics": 4096,
+          "pieces": 256
+        }
+      ],
+      "metrics": [
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "pieces",
+              "bound": "linear"
+            }
+          ],
+          "notes": "Appending and truncating storage keeps every position-indexed cache current, so the step visits only the awake pieces (#523)."
+        },
+        {
+          "name": "storage-shifts",
+          "unit": "records",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Trailing tombstones are popped; nothing compacts."
+        },
+        {
+          "name": "cached-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "pieces",
+              "bound": "linear"
+            }
+          ],
+          "notes": "One pass over the contact cache per batch, O(P) in the pairs the pieces hold."
+        },
+        {
+          "name": "derived-body-scans",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Awake-set and fixed-collider rebuild scans: incremental updates replace them, so none after warm-up."
+        }
+      ]
+    },
+    {
+      "id": "transient-lane-indexed",
+      "description": "BodyStorage::Indexed: one warm MMORPG lane tick (#523): add `pieces` keyless transient bodies (every fourth a fixed box) to a retained town, one World::step, then World::remove_bodies of them all.",
+      "publicContract": "physics_engine::approximate::World::{add_body,step,remove_bodies}",
+      "dimensions": {
+        "statics": {
+          "description": "static boxes in the retained town"
+        },
+        "pieces": {
+          "description": "transient bodies per tick, each in contact with one box"
+        }
+      },
+      "scalePoints": [
+        {
+          "statics": 512,
+          "pieces": 32
+        },
+        {
+          "statics": 1024,
+          "pieces": 32
+        },
+        {
+          "statics": 2048,
+          "pieces": 32
+        },
+        {
+          "statics": 4096,
+          "pieces": 32
+        },
+        {
+          "statics": 8192,
+          "pieces": 32
+        },
+        {
+          "statics": 16384,
+          "pieces": 32
+        },
+        {
+          "statics": 4096,
+          "pieces": 16
+        },
+        {
+          "statics": 4096,
+          "pieces": 64
+        },
+        {
+          "statics": 4096,
+          "pieces": 128
+        },
+        {
+          "statics": 4096,
+          "pieces": 256
+        }
+      ],
+      "metrics": [
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "pieces",
+              "bound": "linear"
+            }
+          ],
+          "notes": "Appending and truncating storage keeps every position-indexed cache current, so the step visits only the awake pieces (#523)."
+        },
+        {
+          "name": "storage-shifts",
+          "unit": "records",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Trailing tombstones are popped; nothing compacts."
+        },
+        {
+          "name": "cached-pair-visits",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "pieces",
+              "bound": "linear"
+            }
+          ],
+          "notes": "One pass over the contact cache per batch, O(P) in the pairs the pieces hold."
+        },
+        {
+          "name": "derived-body-scans",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "budget": {
+            "max": 0
+          },
+          "notes": "Awake-set and fixed-collider rebuild scans: incremental updates replace them, so none after warm-up."
+        }
+      ]
     }
   ]
 }

@@ -604,6 +604,85 @@ fn body_churn_is_amortized_over_a_long_sequence() {
     );
 }
 
+/// One tick of the MMORPG lane pattern (#523): `pieces` keyless transient bodies appended, one
+/// step, all removed at once. Every fourth piece is the resting kind: a fixed box.
+fn lane_tick(w: &mut World, pieces: u64, cols: usize) -> u64 {
+    let ids = (0..pieces)
+        .map(|k| {
+            let top = cell(k as usize % cols, k as usize / cols);
+            let body = if k % 4 == 3 {
+                Body::new(
+                    Shape::Box(V(0.2, 0.1, 0.2)),
+                    top + V(0.0, BOX + 0.1, 0.0),
+                    0.0,
+                )
+            } else {
+                Body::new(Shape::Sphere(0.3), top + V(0.0, BOX + 0.3, 0.0), 1.0)
+            };
+            w.add_body(body).unwrap()
+        })
+        .collect::<Vec<_>>();
+    let report = w.step(1.0 / 60.0).unwrap();
+    w.remove_bodies(&ids).unwrap();
+    report.position.index_body_scans + report.bookkeeping.active_body_scans
+}
+
+#[test]
+fn transient_lane_work_follows_the_pieces_not_the_town() {
+    for (storage, operation) in [
+        (BodyStorage::Ordered, "transient-lane"),
+        (BodyStorage::Indexed, "transient-lane-indexed"),
+    ] {
+        let mut samples = Vec::new();
+        let points = SIZES
+            .iter()
+            .map(|&s| (s, 32u64))
+            .chain([16u64, 64, 128, 256].iter().map(|&k| (12, k)));
+        for (log2, pieces) in points {
+            let statics = 1usize << log2;
+            let cols = 1 << log2.div_ceil(2);
+            let mut w = World::new(Config {
+                body_storage: storage,
+                ..Config::default()
+            })
+            .unwrap();
+            for k in 0..statics {
+                let p = cell(k % cols, k / cols);
+                w.add_body(Body::keyed(k as u64, Shape::Box(V(BOX, BOX, BOX)), p, 0.0))
+                    .unwrap();
+            }
+            // Warm up: the first ticks size the scratch and settle storage.
+            for _ in 0..3 {
+                lane_tick(&mut w, pieces, cols);
+            }
+            work::reset();
+            let scans = lane_tick(&mut w, pieces, cols);
+            assert_eq!(w.body_count(), statics);
+            samples.push((
+                vec![("statics", statics as u64), ("pieces", pieces)],
+                vec![
+                    ("body-visits", work::get(Counter::BodyVisits)),
+                    ("storage-shifts", work::get(Counter::StorageShifts)),
+                    ("cached-pair-visits", work::get(Counter::CachedPairVisits)),
+                    ("derived-body-scans", scans),
+                ],
+            ));
+        }
+        judge(
+            operation,
+            &samples,
+            &[
+                ("body-visits", "statics", "constant"),
+                ("body-visits", "pieces", "linear"),
+                ("storage-shifts", "", "zero"),
+                ("derived-body-scans", "", "zero"),
+                ("cached-pair-visits", "statics", "constant"),
+                ("cached-pair-visits", "pieces", "linear"),
+            ],
+        );
+    }
+}
+
 /// Independent sphere-on-box contacts (rather than the contact-free churn town), plus a
 /// separate unsupported sphere, movable fixed box and removable fixed box. Only `pairs`
 /// bodies touch: adding inert fixed bodies changes the world size, not the cached pair count.

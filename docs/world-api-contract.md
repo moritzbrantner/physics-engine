@@ -77,11 +77,18 @@ checks that both produce the same traces. Only the cost of adding and removing b
 | Add after every body | amortized O(1) | O(log n) |
 | Add in the middle of the order | O(n) (later records move) | O(log n) |
 | Remove any body | amortized O(1) | O(log n) |
-| Next step after adds and removes | O(n) compaction if bodies were removed | O(n + k log k) sort of the k out-of-order adds |
+| Next step after adds and removes | O(1) after removing the last records of storage (#523), O(n) compaction otherwise | O(1) likewise; O(n + k log k) sort of the k out-of-order adds, O(n) compaction if bodies left a gap |
 | Steps, queries, characters | contiguous, in body order | the same (the step sorts the arena first) |
 
 A removal leaves a tombstone. The next step compacts the tombstones away, or a removal does it
-once tombstones are half the records. Removing a body that touches others also costs
+once tombstones are half the records. Removing the last records of storage, as transient keyless
+bodies are (they sort after every other body), truncates them instead: no body moves, and
+appending and truncating keep every position-indexed cache current, so an add/step/remove tick of
+such bodies costs nothing per static body (#523). `remove_bodies(&[BodyId])` removes a batch at
+once, atomically (a missing or repeated id changes nothing), with one contact-cache and one joint
+pass and one island traversal: the surviving world and the contact events are those of removing
+them one by one in body order, and the batch does not wake its own bodies, so the returned records
+keep their sleeping state. The records come back in the caller's order. Removing a body that touches others also costs
 O(contact pairs), because its contacts wake their islands. `set_velocity`, `apply_impulse` and
 `add_force` sort `Indexed` storage first when bodies were added out of order, because waking an
 island searches storage by body order.
@@ -463,7 +470,7 @@ contact as well.
   that lands through a swept impulse and rests starts once; a bounce stops one step later.
 - Ordered by pair (`a`, then `b`, in body order), so identical across worker counts and storage
   modes, and, for keyed bodies, independent of insertion order.
-- `remove_body` stops the removed body's contacts; the next successful step reports them, with
+- `remove_body` and `remove_bodies` stop the removed bodies' contacts; the next successful step reports them, with
   the removed body's id (as Rapier's `Stopped` with `REMOVED`). A body retired on impact reports
   its `Stopped` in the step that retires it. A keyed body re-added with the same key is a new
   pair.
