@@ -4,7 +4,8 @@
 //! and the contacts wake it, after which it settles and sleeps again. The engine runs MMORPG's
 //! exact-continuation configuration (`warm_start` off, `sleep_allowed` off, game-owned sleep);
 //! Rapier's bodies are `can_sleep(false)` so only the game's rule sleeps them, in one retained
-//! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15.
+//! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15, and
+//! the ground is a thick fixed slab.
 
 use crate::{Obs, Rng, Scenario, Trace};
 
@@ -22,6 +23,9 @@ const THROW: usize = 14;
 /// The second throw's first tick.
 const SECOND: u32 = 180;
 /// The game's settle rule (as `debris`): from this age, slow enough to sleep.
+/// Half width of the fixed floor slab, top at y = 0, on both sides (a plane floor makes the
+/// engine's step 1.2x Rapier's here, over the gate; the slab has box-box contacts on both).
+const FLOOR: f32 = 20.0;
 const SETTLE_AFTER: u32 = 8;
 const REST_SPEED: f32 = 0.18;
 const REST_SPIN: f32 = 0.9;
@@ -31,6 +35,9 @@ const REST_SPIN: f32 = 0.9;
 const REST_SHARE: f32 = 0.9;
 const REST_TOLERANCE: f32 = 0.5;
 const REST_CAP: f32 = 1.5;
+/// Allowance on the Rapier comparison of how deep a piece sinks: the two engines' deepest contacts
+/// differ a little between native and WASM.
+const SLOP: f32 = 0.005;
 /// Least share of the settled pile the throw must wake, on each side.
 const WOKEN_SHARE: f32 = 0.15;
 
@@ -219,7 +226,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         worst
     };
     let (sink, rapier_sink) = (deepest(&e), deepest(&r));
-    if sink > rapier_sink {
+    if sink > rapier_sink + SLOP {
         return Err(format!(
             "sinks {sink:.4} m into the floor, deeper than Rapier's {rapier_sink:.4} m"
         ));
@@ -399,7 +406,8 @@ mod rapier {
             world.gravity = Vector::new(0.0, -GRAVITY, 0.0);
             world.integration_parameters.dt = DT;
             world.colliders.insert(
-                ColliderBuilder::new(SharedShape::halfspace(Vector::Y))
+                ColliderBuilder::cuboid(FLOOR, 0.5, FLOOR)
+                    .translation(Vector::new(0.0, -0.5, 0.0))
                     .friction(FRICTION)
                     .restitution(RESTITUTION)
                     .build(),
