@@ -115,8 +115,10 @@ When to pick which:
 - Queries traverse AABB trees (`bvh-kernels`) kept current by `add_body`, `remove_body` and
   `step`: an incremental tree of moving bodies, and for fixed bodies a four-wide `WideBvh` built
   once by its first use, the first ray or shape query or the first step with an awake body
-  (#415, #528); adding fixed bodies only records their bounds. The trees change which bodies
-  are tested, never a result.
+  (#415, #528); adding fixed bodies only records their bounds. A fixed body added after that
+  build waits in the moving tree and joins a rebuild only once it has stayed for two step ends,
+  so fixed bodies added for one step and removed after it (a transient lane's resting pieces,
+  #523) never rebuild the wide tree. The trees change which bodies are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
 ## Terrain

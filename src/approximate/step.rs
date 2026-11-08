@@ -57,6 +57,7 @@ impl World {
         let mut report = Report::default();
         if self.is_quiescent() {
             self.elapsed += dt;
+            self.query_tree.step_ended();
             self.finish_bookkeeping(&mut report);
             report.contact_events = self.take_contact_events();
             self.last_report = report.clone();
@@ -192,6 +193,7 @@ impl World {
         };
         self.query_tree
             .sync_step(&self.bodies, moved, generation, dt as Real);
+        self.query_tree.step_ended();
     }
     fn advance_substeps(&mut self, dt: Scalar) -> Result<Report, Error> {
         let mut report = Report::default();
