@@ -105,7 +105,10 @@ impl Adjacency {
         joints: impl ExactSizeIterator<Item = (Order, Order)>,
         work: &mut BookkeepingStats,
     ) {
-        if !self.dirty && self.offsets.len() == bodies.len() + 1 {
+        if !self.dirty && !self.offsets.is_empty() {
+            // Only edgeless records can have come or gone at the tail since the build (a record
+            // with an edge marks the graph dirty): their runs are empty.
+            self.offsets.resize(bodies.len() + 1, self.neighbors.len());
             return;
         }
         work.adjacency_rebuilds += 1;
@@ -293,6 +296,11 @@ pub(super) struct BroadBox {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Scratch {
+    /// Emptied contact-point buffers of removed pairs, reused by new ones: transient bodies
+    /// make and drop their pairs every tick. Never longer than the peak of cached pairs.
+    pub point_pool: Vec<Vec<CachedPoint>>,
+    /// The new pairs of one contact-cache walk, inserted after it.
+    pub fresh_pairs: Vec<((Order, Order), Vec<CachedPoint>)>,
     pub position: super::position::Scratch,
     pub activity: Activity,
     pub graph: Adjacency,
@@ -359,11 +367,22 @@ impl Scratch {
             e.epoch = 0;
         }
     }
+    /// Storage positions moved: everything indexed by position is stale.
     pub fn layout_changed(&mut self) {
+        self.record_changed();
+        self.graph.dirty = true;
+    }
+    /// A record came or went without moving any other, so the contact graph stays valid: a
+    /// record with contact pairs or joints marks it dirty where those change.
+    pub fn record_changed(&mut self) {
         self.generation += 1;
         self.activity.dirty = true;
-        self.graph.dirty = true;
         self.poses_changed();
+    }
+    /// Keeps a removed pair's point buffer for the next new pair.
+    pub fn recycle_points(&mut self, mut points: Vec<CachedPoint>) {
+        points.clear();
+        push(&mut self.point_pool, points, &mut self.work);
     }
     /// A body moved outside a step: derived pose caches are stale, the layout, the awake set
     /// and the contact graph are not.
@@ -381,7 +400,9 @@ impl Scratch {
     /// Excludes the broad-phase boxes, which persist with the query tree (its storage is not
     /// counted either).
     pub fn retained_bytes(&self) -> usize {
-        bytes(&self.activity.indices)
+        bytes(&self.point_pool)
+            + bytes(&self.fresh_pairs)
+            + bytes(&self.activity.indices)
             + self.graph.retained_bytes()
             + self.traversal.retained_bytes()
             + bytes(&self.bounds)

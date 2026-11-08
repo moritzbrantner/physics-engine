@@ -849,7 +849,6 @@ impl World {
             .chunk_by(|x, y| x.a == y.a && x.b == y.b)
             .peekable();
         let mut entries = self.cache.iter_mut().peekable();
-        let mut fresh = Vec::new();
         let mut impacts = Vec::new();
         loop {
             let run_key = runs
@@ -899,7 +898,15 @@ impl World {
                 None => {
                     self.transaction.pair(key, None);
                     scratch.graph.dirty = true;
-                    Some(new.insert(Vec::new()))
+                    // Pooled, or sized for the run: each row adds at most one point.
+                    Some(
+                        new.insert(
+                            scratch
+                                .point_pool
+                                .pop()
+                                .unwrap_or_else(|| Vec::with_capacity(run.len())),
+                        ),
+                    )
                 }
             };
             for c in run {
@@ -939,14 +946,14 @@ impl World {
                     started: true,
                     held: false,
                 });
-                fresh.push((key, points));
+                push(&mut scratch.fresh_pairs, (key, points), &mut scratch.work);
             } else if !cached && run.iter().any(|c| c.normal_impulse > 0.0) {
                 // An impulse without a cached point (a bounce or a retiring projectile's hit):
                 // recorded after the removal of the pair's old entry below.
                 impacts.extend(super::ContactChange::impact(a, b));
             }
         }
-        self.cache.extend(fresh);
+        self.cache.extend(scratch.fresh_pairs.drain(..));
         let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
         self.cache.retain(|&key, points| {
             if points.is_empty() {
@@ -964,6 +971,7 @@ impl World {
                     started: false,
                     held: false,
                 });
+                scratch.recycle_points(std::mem::take(points));
                 false
             } else {
                 true
@@ -1058,7 +1066,11 @@ impl World {
                 self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
                 self.elevated_bodies -= usize::from(b.additional_solver_iterations > 0);
                 self.geometry.remove(id);
-                let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
+                let (bodies, changes, pool) = (
+                    &self.bodies,
+                    &mut self.contact_changes,
+                    &mut self.bookkeeping,
+                );
                 self.cache.retain(|&(a, b), points| {
                     if a == id || b == id {
                         self.transaction.pair((a, b), Some(points));
@@ -1080,6 +1092,7 @@ impl World {
                             started: false,
                             held: false,
                         });
+                        pool.recycle_points(std::mem::take(points));
                         false
                     } else {
                         true
@@ -1231,6 +1244,15 @@ impl World {
     fn sleep_quiet_islands(&mut self) {
         let s = &mut self.bookkeeping;
         s.activity.refresh(&self.bodies, &mut s.work);
+        // An island sleeps only when every awake member is eligible: without one eligible awake
+        // body no island can, and the graph and traversal below have nothing to decide.
+        let sleep_seconds = self.scene.sleep_seconds;
+        if !s.activity.indices.iter().any(|&i| {
+            let b = &self.bodies[i];
+            b.sleep_allowed && b.quiet_time >= sleep_seconds
+        }) {
+            return;
+        }
         s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
         s.traversal.begin(self.bodies.len(), &mut s.work);
         let mut slept = 0;
