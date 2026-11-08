@@ -19,6 +19,7 @@ pub mod debris_town;
 pub mod embedded_starts;
 pub mod greyhaven_rocks;
 pub mod materials;
+pub mod mixed_iterations;
 pub mod mmorpg_tick;
 pub mod platforms;
 pub mod platonic_proxy;

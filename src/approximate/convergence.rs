@@ -256,6 +256,58 @@ pub(super) fn solve_selected(
     )
 }
 
+/// `iterations` further passes over `selected` rows (all rows for `None`): fixed passes without
+/// `tolerance`, else with the usual residual probes after 2/4/8/... of these passes.
+pub(super) fn solve_extra(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+    selected: Option<&[usize]>,
+    iterations: u8,
+    tolerance: Option<Convergence>,
+    report: &mut Report,
+) -> Outcome {
+    let all = All(constraints.len());
+    match (selected, tolerance) {
+        (None, None) => solve_rows::<false, 0, false, _>(
+            bodies,
+            responses,
+            constraints,
+            all,
+            iterations,
+            Convergence::default(),
+            report,
+        ),
+        (None, Some(tolerance)) => solve_rows::<true, 0, false, _>(
+            bodies,
+            responses,
+            constraints,
+            all,
+            iterations,
+            tolerance,
+            report,
+        ),
+        (Some(rows), None) => solve_rows::<false, 0, false, _>(
+            bodies,
+            responses,
+            constraints,
+            rows,
+            iterations,
+            Convergence::default(),
+            report,
+        ),
+        (Some(rows), Some(tolerance)) => solve_rows::<true, 0, false, _>(
+            bodies,
+            responses,
+            constraints,
+            rows,
+            iterations,
+            tolerance,
+            report,
+        ),
+    }
+}
+
 pub(super) fn solve_all_after_prefix(
     bodies: &mut [Body],
     responses: &[PreparedResponse],

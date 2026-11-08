@@ -233,6 +233,9 @@ pub struct World {
     kinematic_poses: Vec<(u64, Vector, Quaternion)>,
     /// [`World::static_revision`].
     static_revision: u64,
+    /// Live bodies with [`Body::additional_solver_iterations`] above zero. While zero, the
+    /// solver never looks for elevated islands.
+    elevated_bodies: usize,
 }
 /// One contact cache insertion or removal, with the pair's ids at that moment.
 #[derive(Clone, Copy, Debug)]
@@ -337,6 +340,7 @@ impl World {
             joints: joint::Joints::default(),
             kinematic_poses: Vec::new(),
             static_revision: 0,
+            elevated_bodies: 0,
         })
     }
     /// Work from the most recent step attempt, including a numerical failure.

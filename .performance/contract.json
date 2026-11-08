@@ -2379,6 +2379,91 @@
       ]
     },
     {
+      "id": "step-additional-iterations",
+      "description": "One warm World::step (1/60 s, default config with fixed passes) of `plain` and `elevated` awake boxes resting on one static slab, each its own contact island; the elevated boxes set Body::additional_solver_iterations = 3 (#521).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "plain": {
+          "description": "awake boxes without extra passes"
+        },
+        "elevated": {
+          "description": "awake boxes requesting three extra passes"
+        }
+      },
+      "scalePoints": [
+        {
+          "plain": 64,
+          "elevated": 8
+        },
+        {
+          "plain": 128,
+          "elevated": 8
+        },
+        {
+          "plain": 256,
+          "elevated": 8
+        },
+        {
+          "plain": 512,
+          "elevated": 8
+        },
+        {
+          "plain": 128,
+          "elevated": 1
+        },
+        {
+          "plain": 128,
+          "elevated": 2
+        },
+        {
+          "plain": 128,
+          "elevated": 4
+        },
+        {
+          "plain": 128,
+          "elevated": 16
+        },
+        {
+          "plain": 128,
+          "elevated": 32
+        }
+      ],
+      "metrics": [
+        {
+          "name": "elevated-islands",
+          "unit": "islands",
+          "signal": "operation-count",
+          "notes": "Report::islands.elevated_islands: islands given extra passes, summed over substeps. A new operation (#521): one per island holding a requesting body, independent of the plain islands.",
+          "growth": [
+            {
+              "dimension": "plain",
+              "bound": "constant"
+            },
+            {
+              "dimension": "elevated",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "extra-constraint-visits",
+          "unit": "rows",
+          "signal": "operation-count",
+          "notes": "Report::islands.extra_constraint_visits: row visits of the extra passes, O(extra × rows of the elevated islands). Finding those islands is one scan of the substep's rows (as Rapier's union-find over the awake set), only while the world holds a requesting body; a world without one does nothing new.",
+          "growth": [
+            {
+              "dimension": "plain",
+              "bound": "constant"
+            },
+            {
+              "dimension": "elevated",
+              "bound": "linear"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "static-mesh-query",
       "description": "One short ray plus one fixed-orientation capsule cast in a retained mesh of distant disjoint triangles. Local geometry remains constant while irrelevant triangles double; 16 samples per size.",
       "publicContract": "physics_engine::approximate::World::{cast_ray_first,cast_shape,add_triangle_mesh}",

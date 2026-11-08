@@ -791,6 +791,16 @@ impl World {
                 report,
             ),
         }
+        if self.elevated_bodies > 0 {
+            islands::solve_extra(
+                &mut self.bodies,
+                &self.responses,
+                constraints,
+                self.scene.convergence,
+                &mut self.island_scratch,
+                report,
+            );
+        }
     }
     /// Contact cache phase: the solved rows' impulses become the cache's warm-start history,
     /// and support propagates from kinematic and resting bodies.
@@ -1035,6 +1045,7 @@ impl World {
                 self.static_changed(&b);
                 let handle = b.id;
                 self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
+                self.elevated_bodies -= usize::from(b.additional_solver_iterations > 0);
                 self.geometry.remove(id);
                 let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
                 self.cache.retain(|&(a, b), points| {

@@ -14,7 +14,7 @@
 
 use crate::{Obs, Scenario, Trace};
 
-const TICKS: u32 = 150;
+pub(crate) const TICKS: u32 = 150;
 const DT: f32 = 1.0 / 30.0;
 const GRAVITY: f32 = 9.0;
 /// Metres per game unit, metres per second per unit/tick, rad/s per rad/tick.
@@ -327,7 +327,7 @@ fn sinking(p: [f32; 3], q: [f32; 4], half: [f32; 3]) -> f32 {
 }
 
 /// Per tick and piece: position, rotation and whether it has settled.
-fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
+pub(crate) fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let starts = starts();
     let per_tick = 3 * starts.len();
     if engine.0.len() != rapier.0.len() || engine.0.len() != per_tick * TICKS as usize {
@@ -392,7 +392,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 }
 
 #[cfg(feature = "engine")]
-mod engine {
+pub(crate) mod engine {
     use super::*;
     use physics_engine::{
         BodyId,
@@ -401,7 +401,7 @@ mod engine {
 
     use crate::kcc::engine::v;
 
-    struct Piece {
+    pub(crate) struct Piece {
         id: BodyId,
         key: u64,
         half: [f32; 3],
@@ -431,52 +431,62 @@ mod engine {
                 ..Config::default()
             })
             .unwrap();
-            let mut floor = Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0);
-            material(&mut floor);
-            world.add_body(floor).unwrap();
-            let terrain = world
-                .add_heightfield(
-                    HeightfieldDesc {
-                        origin: Vector(ORIGIN, 0.0, ORIGIN),
-                        cell_size: (CELL, CELL),
-                        columns: N,
-                        rows: N,
-                        heights: heights(),
-                        removed_cells: Some(removed_cells()),
-                        material: Material {
-                            friction: FRICTION,
-                            restitution: RESTITUTION,
-                            ..Material::default()
-                        },
-                    },
-                    Some(2),
-                )
-                .unwrap();
-            let _ = terrain;
-            let pieces = starts()
-                .iter()
-                .enumerate()
-                .map(|(k, s)| {
-                    let key = 16 + k as u64;
-                    let mut body = Body::keyed(key, Shape::Box(v(s.half)), v(s.position), s.mass());
-                    let [x, y, z, w] = s.rotation;
-                    body.orientation = Quaternion(x, y, z, w);
-                    body.velocity = v(s.velocity);
-                    body.angular_velocity = v(s.spin);
-                    body.linear_damping = LINEAR_DAMPING;
-                    body.angular_damping = ANGULAR_DAMPING;
-                    body.sleep_allowed = false;
-                    material(&mut body);
-                    Piece {
-                        id: world.add_body(body).unwrap(),
-                        key,
-                        half: s.half,
-                        resting: false,
-                    }
-                })
-                .collect();
+            add_ground(&mut world);
+            let pieces = add_pieces(&mut world, 0);
             Self { world, pieces }
         }
+    }
+
+    /// The floor plane (key 1) and the hill (key 2).
+    pub(crate) fn add_ground(world: &mut World) {
+        let mut floor = Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0);
+        material(&mut floor);
+        world.add_body(floor).unwrap();
+        world
+            .add_heightfield(
+                HeightfieldDesc {
+                    origin: Vector(ORIGIN, 0.0, ORIGIN),
+                    cell_size: (CELL, CELL),
+                    columns: N,
+                    rows: N,
+                    heights: heights(),
+                    removed_cells: Some(removed_cells()),
+                    material: Material {
+                        friction: FRICTION,
+                        restitution: RESTITUTION,
+                        ..Material::default()
+                    },
+                },
+                Some(2),
+            )
+            .unwrap();
+    }
+
+    /// Every thrown piece (keys from 16), with `extra` additional solver iterations.
+    pub(crate) fn add_pieces(world: &mut World, extra: u8) -> Vec<Piece> {
+        starts()
+            .iter()
+            .enumerate()
+            .map(|(k, s)| {
+                let key = 16 + k as u64;
+                let mut body = Body::keyed(key, Shape::Box(v(s.half)), v(s.position), s.mass());
+                let [x, y, z, w] = s.rotation;
+                body.orientation = Quaternion(x, y, z, w);
+                body.velocity = v(s.velocity);
+                body.angular_velocity = v(s.spin);
+                body.linear_damping = LINEAR_DAMPING;
+                body.angular_damping = ANGULAR_DAMPING;
+                body.sleep_allowed = false;
+                body.additional_solver_iterations = extra;
+                material(&mut body);
+                Piece {
+                    id: world.add_body(body).unwrap(),
+                    key,
+                    half: s.half,
+                    resting: false,
+                }
+            })
+            .collect()
     }
 
     impl crate::Sim for Sim {
@@ -484,36 +494,46 @@ mod engine {
             if self.pieces.iter().any(|p| !p.resting) {
                 self.world.step(f64::from(DT)).unwrap();
             }
-            for piece in &mut self.pieces {
-                let body = self.world.body(piece.id).unwrap();
-                let (position, orientation) = (body.position, body.orientation);
-                if !piece.resting {
-                    let w = body.angular_velocity;
-                    let u = body.velocity;
-                    if settles(tick + 1, [u.0, u.1, u.2], [w.0, w.1, w.2]) {
-                        // The game's settle rule: the piece becomes a fixed box.
-                        self.world.remove_body(piece.id);
-                        let mut fixed =
-                            Body::keyed(piece.key, Shape::Box(v(piece.half)), position, 0.0);
-                        fixed.orientation = orientation;
-                        material(&mut fixed);
-                        piece.id = self.world.add_body(fixed).unwrap();
-                        piece.resting = true;
-                    }
+            settle_and_record(&mut self.world, &mut self.pieces, tick, trace);
+        }
+    }
+
+    /// After a step: the game's settle rule, then every piece's pose and whether it rests.
+    pub(crate) fn settle_and_record(
+        world: &mut World,
+        pieces: &mut [Piece],
+        tick: u32,
+        trace: &mut Trace,
+    ) {
+        for piece in pieces {
+            let body = world.body(piece.id).unwrap();
+            let (position, orientation) = (body.position, body.orientation);
+            if !piece.resting {
+                let w = body.angular_velocity;
+                let u = body.velocity;
+                if settles(tick + 1, [u.0, u.1, u.2], [w.0, w.1, w.2]) {
+                    // The game's settle rule: the piece becomes a fixed box.
+                    world.remove_body(piece.id);
+                    let mut fixed =
+                        Body::keyed(piece.key, Shape::Box(v(piece.half)), position, 0.0);
+                    fixed.orientation = orientation;
+                    material(&mut fixed);
+                    piece.id = world.add_body(fixed).unwrap();
+                    piece.resting = true;
                 }
-                let q = orientation;
-                trace
-                    .0
-                    .push(Obs::Position([position.0, position.1, position.2]));
-                trace.0.push(Obs::Rotation([q.0, q.1, q.2, q.3]));
-                trace.0.push(Obs::Grounded(piece.resting));
             }
+            let q = orientation;
+            trace
+                .0
+                .push(Obs::Position([position.0, position.1, position.2]));
+            trace.0.push(Obs::Rotation([q.0, q.1, q.2, q.3]));
+            trace.0.push(Obs::Grounded(piece.resting));
         }
     }
 }
 
 #[cfg(feature = "rapier")]
-mod rapier {
+pub(crate) mod rapier {
     use super::*;
     use rapier3d::parry::shape::{HeightField, HeightFieldCellStatus};
     use rapier3d::parry::utils::Array2;
@@ -521,14 +541,14 @@ mod rapier {
 
     use crate::kcc::rapier::v;
 
-    struct Piece {
+    pub(crate) struct Piece {
         position: Vector,
         rotation: Rotation,
         velocity: Vector,
         spin: Vector,
         half: [f32; 3],
         resting: bool,
-        handle: Option<RigidBodyHandle>,
+        pub(crate) handle: Option<RigidBodyHandle>,
     }
 
     pub struct Sim {
@@ -538,7 +558,7 @@ mod rapier {
         rebuild: bool,
     }
 
-    fn terrain() -> SharedShape {
+    pub(crate) fn terrain() -> SharedShape {
         // parry: rows along Z, columns along X, column-major storage.
         let h = heights();
         let data = (0..N * N).map(|k| h[(k % N) * N + k / N]).collect();
@@ -554,7 +574,8 @@ mod rapier {
         SharedShape::new(field)
     }
 
-    fn statics(world: &mut PhysicsWorld, terrain: &SharedShape) {
+    /// Gravity, the step and the ground: the floor plane and the hill.
+    pub(crate) fn statics(world: &mut PhysicsWorld, terrain: &SharedShape) {
         world.gravity = Vector::new(0.0, -GRAVITY, 0.0);
         world.integration_parameters.dt = DT;
         world.colliders.insert(
@@ -573,8 +594,13 @@ mod rapier {
         );
     }
 
-    /// MMORPG's `step_dynamic` insertion: a settled piece is a fixed collider.
-    fn insert(world: &mut PhysicsWorld, p: &Piece) -> Option<RigidBodyHandle> {
+    /// MMORPG's `step_dynamic` insertion: a settled piece is a fixed collider; a moving one
+    /// takes `extra` additional solver iterations.
+    pub(crate) fn insert(
+        world: &mut PhysicsWorld,
+        p: &Piece,
+        extra: usize,
+    ) -> Option<RigidBodyHandle> {
         let collider = ColliderBuilder::cuboid(p.half[0], p.half[1], p.half[2])
             .friction(FRICTION)
             .restitution(RESTITUTION)
@@ -591,6 +617,7 @@ mod rapier {
                 .angvel(p.spin)
                 .linear_damping(LINEAR_DAMPING)
                 .angular_damping(ANGULAR_DAMPING)
+                .additional_solver_iterations(extra)
                 .build(),
         );
         world
@@ -604,26 +631,10 @@ mod rapier {
             let terrain = terrain();
             let mut world = PhysicsWorld::new();
             statics(&mut world, &terrain);
-            let mut pieces: Vec<_> = starts()
-                .into_iter()
-                .map(|s| Piece {
-                    position: v(s.position),
-                    rotation: Rotation::from_xyzw(
-                        s.rotation[0],
-                        s.rotation[1],
-                        s.rotation[2],
-                        s.rotation[3],
-                    ),
-                    velocity: v(s.velocity),
-                    spin: v(s.spin),
-                    half: s.half,
-                    resting: false,
-                    handle: None,
-                })
-                .collect();
+            let mut pieces = pieces();
             if !rebuild {
                 for p in &mut pieces {
-                    p.handle = insert(&mut world, p);
+                    p.handle = insert(&mut world, p, 0);
                 }
             }
             Self {
@@ -643,7 +654,7 @@ mod rapier {
                     let mut world = PhysicsWorld::new();
                     statics(&mut world, &self.terrain);
                     for p in &mut self.pieces {
-                        p.handle = insert(&mut world, p);
+                        p.handle = insert(&mut world, p, 0);
                     }
                     world.step();
                     self.world = world;
@@ -651,30 +662,68 @@ mod rapier {
                     self.world.step();
                 }
             }
-            for p in &mut self.pieces {
-                if !p.resting
-                    && let Some(body) = p.handle.and_then(|h| self.world.bodies.get_mut(h))
-                {
-                    p.position = body.translation();
-                    p.rotation = body.rotation().normalize();
-                    p.velocity = body.linvel();
-                    p.spin = body.angvel();
-                    if settles(tick + 1, p.velocity.to_array(), p.spin.to_array()) {
-                        p.resting = true;
-                        p.velocity = Vector::ZERO;
-                        p.spin = Vector::ZERO;
-                        if !self.rebuild {
-                            body.set_body_type(RigidBodyType::Fixed, true);
-                        }
+            read_back(&mut self.world, &mut self.pieces, tick, !self.rebuild);
+            record(&self.pieces, trace);
+        }
+    }
+
+    /// Every thrown piece at its start.
+    pub(crate) fn pieces() -> Vec<Piece> {
+        starts()
+            .into_iter()
+            .map(|s| Piece {
+                position: v(s.position),
+                rotation: Rotation::from_xyzw(
+                    s.rotation[0],
+                    s.rotation[1],
+                    s.rotation[2],
+                    s.rotation[3],
+                ),
+                velocity: v(s.velocity),
+                spin: v(s.spin),
+                half: s.half,
+                resting: false,
+                handle: None,
+            })
+            .collect()
+    }
+
+    /// Reads the moving pieces back after a step and applies the game's settle rule; a
+    /// `retained` world turns a settled piece's body fixed.
+    pub(crate) fn read_back(
+        world: &mut PhysicsWorld,
+        pieces: &mut [Piece],
+        tick: u32,
+        retained: bool,
+    ) {
+        for p in pieces {
+            if !p.resting
+                && let Some(body) = p.handle.and_then(|h| world.bodies.get_mut(h))
+            {
+                p.position = body.translation();
+                p.rotation = body.rotation().normalize();
+                p.velocity = body.linvel();
+                p.spin = body.angvel();
+                if settles(tick + 1, p.velocity.to_array(), p.spin.to_array()) {
+                    p.resting = true;
+                    p.velocity = Vector::ZERO;
+                    p.spin = Vector::ZERO;
+                    if retained {
+                        body.set_body_type(RigidBodyType::Fixed, true);
                     }
                 }
-                let q = p.rotation;
-                trace
-                    .0
-                    .push(Obs::Position([p.position.x, p.position.y, p.position.z]));
-                trace.0.push(Obs::Rotation([q.x, q.y, q.z, q.w]));
-                trace.0.push(Obs::Grounded(p.resting));
             }
+        }
+    }
+
+    pub(crate) fn record(pieces: &[Piece], trace: &mut Trace) {
+        for p in pieces {
+            let q = p.rotation;
+            trace
+                .0
+                .push(Obs::Position([p.position.x, p.position.y, p.position.z]));
+            trace.0.push(Obs::Rotation([q.x, q.y, q.z, q.w]));
+            trace.0.push(Obs::Grounded(p.resting));
         }
     }
 }

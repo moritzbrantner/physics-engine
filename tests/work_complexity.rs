@@ -2118,3 +2118,67 @@ fn turning_kinematic_bodies_follow_the_blades_not_the_town() {
         ],
     );
 }
+
+/// `plain` and then `elevated` awake boxes resting on one static slab, each its own contact
+/// island; the elevated ones request three additional solver iterations (#521).
+fn elevated_yard(plain: u64, elevated: u64) -> World {
+    let mut w = World::new(Config {
+        // Fixed passes: every island visits exactly its passes.
+        convergence: None,
+        ..Config::default()
+    })
+    .unwrap();
+    w.add_body(Body::keyed(
+        0,
+        Shape::Box(V(300.0, 0.1, 300.0)),
+        V(0.0, -0.1, 0.0),
+        0.0,
+    ))
+    .unwrap();
+    for k in 0..plain + elevated {
+        let p = cell((k % 64) as usize * 2, (k / 64) as usize * 2) - V(0.0, BOX - 0.5, 0.0);
+        let mut b = Body::keyed(1 + k, Shape::Box(V(0.5, 0.5, 0.5)), p, 1.0);
+        b.sleep_allowed = false;
+        b.additional_solver_iterations = if k >= plain { 3 } else { 0 };
+        w.add_body(b).unwrap();
+    }
+    w
+}
+
+/// Extra passes follow the islands holding a requesting body, not the others (#521).
+#[test]
+fn additional_solver_iterations_follow_the_elevated_islands() {
+    let mut samples = Vec::new();
+    let points = [64u64, 128, 256, 512]
+        .iter()
+        .map(|&p| (p, 8u64))
+        .chain([1u64, 2, 4, 16, 32].iter().map(|&e| (128, e)));
+    for (plain, elevated) in points {
+        let mut w = elevated_yard(plain, elevated);
+        w.step(1.0 / 60.0).unwrap();
+        let report = w.step(1.0 / 60.0).unwrap();
+        let substeps = u64::from(Config::default().substeps);
+        assert_eq!(report.islands.elevated_islands, elevated * substeps);
+        assert_eq!(report.islands.extra_iterations, 3 * elevated * substeps);
+        samples.push((
+            vec![("plain", plain), ("elevated", elevated)],
+            vec![
+                ("elevated-islands", report.islands.elevated_islands),
+                (
+                    "extra-constraint-visits",
+                    report.islands.extra_constraint_visits,
+                ),
+            ],
+        ));
+    }
+    judge(
+        "step-additional-iterations",
+        &samples,
+        &[
+            ("elevated-islands", "plain", "constant"),
+            ("elevated-islands", "elevated", "linear"),
+            ("extra-constraint-visits", "plain", "constant"),
+            ("extra-constraint-visits", "elevated", "linear"),
+        ],
+    );
+}
