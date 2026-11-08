@@ -36,6 +36,68 @@ pub(super) struct TriangleMesh {
     pub prepared: Arc<PreparedTriangleMesh3>,
 }
 
+/// A mesh prepared once ([`Self::new`], its local BVH build) and admitted into any number of
+/// worlds with [`World::add_prepared_triangle_mesh`]. Clones and admissions share the
+/// immutable prepared bytes through an `Arc`.
+#[derive(Clone, Debug)]
+pub struct PreparedTriangleMesh {
+    prepared: Arc<PreparedTriangleMesh3>,
+    centre: V,
+    half_extents: V,
+}
+
+impl PreparedTriangleMesh {
+    /// Prepares authored local vertices and triangles (see [`TriangleMeshDesc`]; same validation
+    /// as [`World::add_triangle_mesh`]).
+    pub fn new(vertices: &[V], triangles: Vec<[u32; 3]>) -> Result<Self, Error> {
+        if vertices.is_empty()
+            || vertices
+                .iter()
+                .any(|v| !v.finite() || v.abs().max_component() >= 1e12)
+        {
+            return Err(Error::InvalidInput);
+        }
+        let (min, max) = vertices.iter().fold(
+            (
+                V(Real::INFINITY, Real::INFINITY, Real::INFINITY),
+                V(Real::NEG_INFINITY, Real::NEG_INFINITY, Real::NEG_INFINITY),
+            ),
+            |(min, max), &v| (min.min(v), max.max(v)),
+        );
+        let centre = min * 0.5 + max * 0.5;
+        let vertices = vertices
+            .iter()
+            .map(|v| {
+                [
+                    f64::from(v.0) - f64::from(centre.0),
+                    f64::from(v.1) - f64::from(centre.1),
+                    f64::from(v.2) - f64::from(centre.2),
+                ]
+            })
+            .collect();
+        let prepared = PreparedTriangleMesh3::try_new(TriangleMeshData3 {
+            vertices,
+            triangles,
+        })
+        .map_err(|_| Error::InvalidInput)?;
+        let (min, max) = prepared.bounds();
+        let half_extents = V(
+            primitive::round_up(min[0].abs().max(max[0].abs())),
+            primitive::round_up(min[1].abs().max(max[1].abs())),
+            primitive::round_up(min[2].abs().max(max[2].abs())),
+        );
+        crate::work::add(
+            crate::work::Counter::MeshPreparations,
+            prepared.data().triangles.len() as u64,
+        );
+        Ok(Self {
+            prepared: Arc::new(prepared),
+            centre,
+            half_extents,
+        })
+    }
+}
+
 pub(super) fn failure(error: TriangleMeshError3) -> SweepFailure {
     match error {
         TriangleMeshError3::NonFiniteComputation => SweepFailure::NonFiniteComputation,
@@ -246,68 +308,44 @@ impl World {
         desc: TriangleMeshDesc,
         key: Option<u64>,
     ) -> Result<BodyId, Error> {
-        if !desc.position.finite()
-            || desc.position.abs().max_component() >= 1e12
-            || desc.vertices.is_empty()
-            || desc
-                .vertices
-                .iter()
-                .any(|v| !v.finite() || v.abs().max_component() >= 1e12)
-        {
+        if !desc.position.finite() || desc.position.abs().max_component() >= 1e12 {
             return Err(Error::InvalidInput);
         }
-        let (min, max) = desc.vertices.iter().fold(
-            (
-                V(Real::INFINITY, Real::INFINITY, Real::INFINITY),
-                V(Real::NEG_INFINITY, Real::NEG_INFINITY, Real::NEG_INFINITY),
-            ),
-            |(min, max), &v| (min.min(v), max.max(v)),
-        );
-        let centre = min * 0.5 + max * 0.5;
-        let vertices = desc
-            .vertices
-            .iter()
-            .map(|v| {
-                [
-                    f64::from(v.0) - f64::from(centre.0),
-                    f64::from(v.1) - f64::from(centre.1),
-                    f64::from(v.2) - f64::from(centre.2),
-                ]
-            })
-            .collect();
-        let prepared = PreparedTriangleMesh3::try_new(TriangleMeshData3 {
-            vertices,
-            triangles: desc.triangles,
-        })
-        .map_err(|_| Error::InvalidInput)?;
-        let (min, max) = prepared.bounds();
-        let half = V(
-            primitive::round_up(min[0].abs().max(max[0].abs())),
-            primitive::round_up(min[1].abs().max(max[1].abs())),
-            primitive::round_up(min[2].abs().max(max[2].abs())),
-        );
+        let prepared = PreparedTriangleMesh::new(&desc.vertices, desc.triangles)?;
+        self.add_prepared_triangle_mesh(&prepared, desc.position, desc.material, key)
+    }
+
+    /// [`Self::add_triangle_mesh`] for geometry already prepared by
+    /// [`PreparedTriangleMesh::new`]: results are identical and no preparation runs.
+    pub fn add_prepared_triangle_mesh(
+        &mut self,
+        prepared: &PreparedTriangleMesh,
+        position: V,
+        material: Material,
+        key: Option<u64>,
+    ) -> Result<BodyId, Error> {
+        if !position.finite() || position.abs().max_component() >= 1e12 {
+            return Err(Error::InvalidInput);
+        }
         let mesh = TriangleMeshId(
             u32::try_from(self.triangle_meshes.len()).map_err(|_| Error::InvalidInput)?,
         );
-        let triangles = prepared.data().triangles.len() as u64;
         self.triangle_meshes.push(Some(TriangleMesh {
-            prepared: Arc::new(prepared),
+            prepared: prepared.prepared.clone(),
         }));
         let mut body = Body::new(
             Shape::TriangleMesh {
                 mesh,
-                half_extents: half,
+                half_extents: prepared.half_extents,
             },
-            desc.position + centre,
+            position + prepared.centre,
             0.0,
         );
         body.key = key;
-        body.set_material(desc.material);
-        let id = self.insert_body(body).inspect_err(|_| {
+        body.set_material(material);
+        self.insert_body(body).inspect_err(|_| {
             self.triangle_meshes.pop();
-        })?;
-        crate::work::add(crate::work::Counter::MeshPreparations, triangles);
-        Ok(id)
+        })
     }
 
     pub(super) fn triangle_mesh(&self, id: TriangleMeshId) -> &PreparedTriangleMesh3 {
