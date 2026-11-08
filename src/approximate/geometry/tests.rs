@@ -372,8 +372,8 @@ fn rotating_pairs_share_frames_without_retaining_pair_payloads() {
         bits(&contact::current(&bodies[0], &bodies[1], 0.02))
     );
     assert_eq!(
-        work.frame_preparations, 2,
-        "reused IDs must not reuse old indexed frames"
+        work.frame_preparations, 1,
+        "the changed body is prepared again; the unchanged one keeps its frame"
     );
 }
 

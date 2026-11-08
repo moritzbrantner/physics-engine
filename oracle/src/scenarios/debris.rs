@@ -145,17 +145,17 @@ fn ground(x: f32, z: f32) -> f32 {
 
 /// A piece's initial state, in metres and seconds.
 #[derive(Clone, Copy)]
-struct Start {
-    position: [f32; 3],
-    rotation: [f32; 4],
-    velocity: [f32; 3],
-    spin: [f32; 3],
-    half: [f32; 3],
+pub(crate) struct Start {
+    pub(crate) position: [f32; 3],
+    pub(crate) rotation: [f32; 4],
+    pub(crate) velocity: [f32; 3],
+    pub(crate) spin: [f32; 3],
+    pub(crate) half: [f32; 3],
 }
 
 impl Start {
     #[cfg(feature = "engine")]
-    fn mass(&self) -> f32 {
+    pub(crate) fn mass(&self) -> f32 {
         DENSITY * 8.0 * self.half[0] * self.half[1] * self.half[2]
     }
 }
@@ -166,7 +166,7 @@ fn radians(yaw: u16) -> f32 {
 
 /// MMORPG's `throw_debris` for every break: the prop stands with its lowest footprint point
 /// on the ground, faces `facing` and is broken by a player 1.5 m away.
-fn starts() -> Vec<Start> {
+pub(crate) fn starts() -> Vec<Start> {
     let mut out = Vec::new();
     for b in 0..BREAKS {
         let k = b % 8;
@@ -231,7 +231,7 @@ fn starts() -> Vec<Start> {
 }
 
 /// MMORPG's settle rule for a piece of `age` ticks.
-fn settles(age: u32, velocity: [f32; 3], spin: [f32; 3]) -> bool {
+pub(crate) fn settles(age: u32, velocity: [f32; 3], spin: [f32; 3]) -> bool {
     let length = |v: [f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     age >= SETTLE_AFTER && length(velocity) < REST_SPEED && length(spin) < REST_SPIN
 }
@@ -328,9 +328,14 @@ fn sinking(p: [f32; 3], q: [f32; 4], half: [f32; 3]) -> f32 {
 
 /// Per tick and piece: position, rotation and whether it has settled.
 pub(crate) fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
+    check_ticks(engine, rapier, TICKS)
+}
+
+/// [`check`] over a run of `ticks` ticks.
+pub(crate) fn check_ticks(engine: &Trace, rapier: &Trace, ticks: u32) -> Result<(), String> {
     let starts = starts();
     let per_tick = 3 * starts.len();
-    if engine.0.len() != rapier.0.len() || engine.0.len() != per_tick * TICKS as usize {
+    if engine.0.len() != rapier.0.len() || engine.0.len() != per_tick * ticks as usize {
         return Err("trace lengths differ".into());
     }
     let at = |t: &Trace, tick: usize, k: usize| {
@@ -343,7 +348,7 @@ pub(crate) fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     let deepest = |t: &Trace| {
         let mut worst = (0.0, 0, 0);
         for (k, start) in starts.iter().enumerate() {
-            for tick in 0..TICKS as usize {
+            for tick in 0..ticks as usize {
                 let (p, q, _) = at(t, tick, k);
                 let sink = sinking(p, q, start.half);
                 if sink > worst.0 {
@@ -363,7 +368,7 @@ pub(crate) fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
     }
     let mut near = 0;
     for (k, start) in starts.iter().enumerate() {
-        let last = TICKS as usize - 1;
+        let last = ticks as usize - 1;
         let (p, _, rest) = at(engine, last, k);
         if !rest {
             return Err(format!("piece {k} still moves at tick {last}: {p:?}"));
@@ -413,7 +418,7 @@ pub(crate) mod engine {
         pieces: Vec<Piece>,
     }
 
-    fn material(body: &mut Body) {
+    pub(crate) fn material(body: &mut Body) {
         body.friction = FRICTION;
         body.restitution = RESTITUTION;
     }
@@ -547,7 +552,7 @@ pub(crate) mod rapier {
         velocity: Vector,
         spin: Vector,
         half: [f32; 3],
-        resting: bool,
+        pub(crate) resting: bool,
         pub(crate) handle: Option<RigidBodyHandle>,
     }
 

@@ -350,7 +350,8 @@ impl World {
         };
         // Fixed and external roots are traversal boundaries. Removing a transient
         // body commonly reaches its static mesh; there is no island to index or wake.
-        if !self.bodies[root].movable() {
+        // No sleeper anywhere: no island has anything to wake (#523).
+        if !self.bodies[root].movable() || !self.bookkeeping.activity.any_sleeper() {
             self.bookkeeping.traversal.island.clear();
             return 0;
         }
@@ -359,6 +360,32 @@ impl World {
         s.traversal.begin(self.bodies.len(), &mut s.work);
         s.traversal
             .collect(root, &self.bodies, &s.graph, &mut s.work);
+        self.wake_collected()
+    }
+    /// Wakes the sleepers of the islands reached from `roots` (body orders), which must be
+    /// live; one traversal, so each island is visited once however many roots reach it.
+    pub(super) fn wake_islands(&mut self, roots: &[Order]) {
+        debug_assert!(
+            self.storage_sorted(),
+            "island traversal over unsorted storage"
+        );
+        if roots.is_empty() || !self.bookkeeping.activity.any_sleeper() {
+            return;
+        }
+        let s = &mut self.bookkeeping;
+        s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
+        s.traversal.begin(self.bodies.len(), &mut s.work);
+        for &root in roots {
+            let root = self.index_of_order(root).expect("wake root is a live body");
+            let s = &mut self.bookkeeping;
+            s.traversal
+                .collect(root, &self.bodies, &s.graph, &mut s.work);
+            self.wake_collected();
+        }
+    }
+    /// Wakes the sleepers of the traversal's current island.
+    fn wake_collected(&mut self) -> u64 {
+        let s = &mut self.bookkeeping;
         // Retain only newly awakened indices for same-substep force preparation.
         // The next traversal resets this scratch; no persistent wake-state copy is added.
         s.traversal.island.retain(|&i| {

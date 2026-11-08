@@ -184,8 +184,9 @@ impl GeometryCache {
         self.retained_bytes = self.measure_retained_bytes();
     }
     pub fn begin(&mut self, bodies: usize) {
-        if self.frames.len() != bodies {
-            self.frames.clear();
+        // Frames are valid for one epoch only, so stale positions are never read; grown, not
+        // rebuilt, so a body added or removed costs nothing per body (#523).
+        if self.frames.len() < bodies {
             self.frames.resize(bodies, None);
         }
         self.epoch = self.epoch.wrapping_add(1);
@@ -450,10 +451,15 @@ impl GeometryCache {
         work.retained_bytes = self.retained_bytes as u64;
     }
     pub fn remove(&mut self, id: Order) {
-        self.pairs.retain(|&(a, b), _| a != id && b != id);
-        self.hull_boxes.retain(|&(a, b), _| a != id && b != id);
-        // Body indices may all move, including remove/reinsert with the same length and id.
-        self.frames.clear();
+        self.remove_many(std::slice::from_ref(&id));
+    }
+    /// Forgets every pair with a body in `gone` (sorted): one pass over the pairs.
+    pub fn remove_many(&mut self, gone: &[Order]) {
+        let keep = |&(a, b): &(Order, Order)| {
+            gone.binary_search(&a).is_err() && gone.binary_search(&b).is_err()
+        };
+        self.pairs.retain(|k, _| keep(k));
+        self.hull_boxes.retain(|k, _| keep(k));
         self.retained_bytes = self.measure_retained_bytes();
     }
     /// Storage positions moved (compaction); per-position frames are dropped.

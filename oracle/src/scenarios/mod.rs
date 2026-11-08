@@ -15,6 +15,7 @@ pub mod contact_events;
 pub mod crowd;
 pub mod crowd_fight;
 pub mod debris;
+pub mod debris_lane;
 pub mod debris_town;
 pub mod embedded_starts;
 pub mod float;
