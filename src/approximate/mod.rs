@@ -76,9 +76,11 @@ mod static_sphere;
 mod terrain;
 mod triangle_mesh;
 pub use character::{Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded};
-pub use convex_hull::{ConvexHullDesc, ConvexHullId, ConvexHullStats};
+pub use convex_hull::{ConvexHullDesc, ConvexHullId, ConvexHullStats, PreparedConvexHull};
 pub use terrain::{HeightfieldDesc, TerrainId};
-pub use triangle_mesh::{TriangleMeshDesc, TriangleMeshId, TriangleMeshStats};
+pub use triangle_mesh::{
+    PreparedTriangleMesh, TriangleMeshDesc, TriangleMeshId, TriangleMeshStats,
+};
 mod math;
 mod response;
 mod step;

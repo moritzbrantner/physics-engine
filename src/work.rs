@@ -50,9 +50,12 @@ pub enum Counter {
     HullPreparations,
     /// Convex hull face planes tested by rigid sphere contacts and sweeps (#519).
     HullPlanes,
+    /// Full query-tree builds: the lazy first build of a fixed or wide tree and every
+    /// amortized rebuild of an incremental tree.
+    TreeBuilds,
 }
 
-const COUNTERS: usize = 19;
+const COUNTERS: usize = 20;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

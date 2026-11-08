@@ -13,6 +13,7 @@ use geometry_kernels::{
     segment_hull::{PreparedSegmentHull, SegmentHullWork},
     support::{ConvexHull3, SupportMap3},
 };
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ConvexHullId(pub(super) u32);
@@ -43,10 +44,21 @@ struct Plane {
     face: u32,
 }
 
+/// A hull prepared once ([`Self::new`], the expensive QuickHull step) and admitted into any
+/// number of worlds with [`World::add_prepared_convex_hull`], for several worlds holding the
+/// same rock. Clones and admissions share the immutable prepared bytes through `Arc`s. Each
+/// admission has its own derived query cache, so worlds stay independent.
+#[derive(Clone, Debug)]
+pub struct PreparedConvexHull {
+    hull: Arc<PreparedSegmentHull>,
+    planes: Arc<[Plane]>,
+    pub(super) half_extents: V,
+}
+
 #[derive(Debug)]
 pub(super) struct PreparedHull {
-    pub(super) hull: std::sync::Arc<PreparedSegmentHull>,
-    planes: Vec<Plane>,
+    pub(super) hull: Arc<PreparedSegmentHull>,
+    planes: Arc<[Plane]>,
     pub(super) box_query: std::sync::Mutex<Option<super::primitive::BoxOverlapFrame>>,
 }
 
@@ -103,19 +115,35 @@ impl World {
         if !desc.position.finite() || desc.position.abs().max_component() >= 1e12 {
             return Err(Error::InvalidInput);
         }
-        let (prepared, half) = prepare(&desc.vertices)?;
+        let prepared = PreparedConvexHull::new(&desc.vertices)?;
+        self.add_prepared_convex_hull(&prepared, desc.position, desc.material, key)
+    }
+
+    /// [`Self::add_convex_hull`] for geometry already prepared by [`PreparedConvexHull::new`]:
+    /// results are identical and no preparation runs.
+    pub fn add_prepared_convex_hull(
+        &mut self,
+        prepared: &PreparedConvexHull,
+        position: V,
+        material: Material,
+        key: Option<u64>,
+    ) -> Result<BodyId, Error> {
+        if !position.finite() || position.abs().max_component() >= 1e12 {
+            return Err(Error::InvalidInput);
+        }
         let id = ConvexHullId(u32::try_from(self.hulls.len()).map_err(|_| Error::InvalidInput)?);
-        self.hulls.push(Some(std::sync::Arc::new(prepared)));
+        self.hulls
+            .push(Some(Arc::new(PreparedHull::admitted(prepared.clone()))));
         let mut body = Body::new(
             Shape::ConvexHull {
                 hull: id,
-                half_extents: half,
+                half_extents: prepared.half_extents,
             },
-            desc.position,
+            position,
             0.0,
         );
         body.key = key;
-        body.set_material(desc.material);
+        body.set_material(material);
         self.insert_body(body).inspect_err(|_| {
             self.hulls.pop();
         })
@@ -134,7 +162,7 @@ impl World {
             triangles: stats.triangles_prepared,
             edges: stats.edges_prepared,
             retained_bytes: stats.retained_bytes
-                + prepared.planes.capacity() * size_of::<Plane>()
+                + prepared.planes.len() * size_of::<Plane>()
                 + prepared
                     .box_query
                     .lock()
@@ -151,8 +179,26 @@ impl World {
     }
 }
 
-/// Canonical preparation shared by live admission and checkpoint reconstruction.
-pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
+impl PreparedHull {
+    /// One world's own copy of `prepared`: shared geometry, a fresh query cache.
+    pub(super) fn admitted(prepared: PreparedConvexHull) -> Self {
+        Self {
+            hull: prepared.hull,
+            planes: prepared.planes,
+            box_query: std::sync::Mutex::new(None),
+        }
+    }
+}
+
+impl PreparedConvexHull {
+    /// Canonical preparation of authored local vertices (see [`ConvexHullDesc`]; same validation
+    /// as [`World::add_convex_hull`]), shared by live admission and checkpoint reconstruction.
+    pub fn new(vertices: &[V]) -> Result<Self, Error> {
+        prepare(vertices)
+    }
+}
+
+fn prepare(vertices: &[V]) -> Result<PreparedConvexHull, Error> {
     if vertices.len() < 4
         || vertices.len() > 65_536
         || vertices
@@ -201,14 +247,11 @@ pub(super) fn prepare(vertices: &[V]) -> Result<(PreparedHull, V), Error> {
         });
     }
     let hull = PreparedSegmentHull::new(hull).ok_or(Error::InvalidInput)?;
-    Ok((
-        PreparedHull {
-            hull: std::sync::Arc::new(hull),
-            planes,
-            box_query: std::sync::Mutex::new(None),
-        },
-        half,
-    ))
+    Ok(PreparedConvexHull {
+        hull: Arc::new(hull),
+        planes: planes.into(),
+        half_extents: half,
+    })
 }
 
 impl PreparedHull {
@@ -241,7 +284,7 @@ impl PreparedHull {
         let mut exit = 1.0_f64;
         let mut entering_face = None;
         let mut initially_outside = false;
-        for plane in &self.planes {
+        for plane in self.planes.iter() {
             work.face_planes_tested += 1;
             let signed = dot(plane.normal, p).min(dot(plane.normal, q)) - radius - plane.offset;
             let motion = dot(plane.normal, d);
@@ -283,7 +326,7 @@ impl PreparedHull {
         );
         // Point-on-face, not merely point-on-its-infinite-plane. The other
         // hull halfspaces also handle triangulated coplanar face polygons.
-        for other in &self.planes {
+        for other in self.planes.iter() {
             work.face_planes_tested += 1;
             if dot(other.normal, surface) > other.offset + 1.0e-8 {
                 return Some(CapsuleClip::LowerBound(enter));
@@ -464,7 +507,7 @@ impl PreparedHull {
         let origin = to64(target.position);
         let c = sub(to64(query.position), origin);
         let mut best: Option<(&Plane, f64)> = None;
-        for plane in &self.planes {
+        for plane in self.planes.iter() {
             work.face_planes_tested += 1;
             let signed = dot(plane.normal, c) - plane.offset;
             if best.is_none_or(|(_, s)| signed > s) {
@@ -605,7 +648,7 @@ impl PreparedHull {
         let mut exit = 1.0f64;
         let mut face = None;
         let mut inside = true;
-        for plane in &self.planes {
+        for plane in self.planes.iter() {
             let signed = dot(plane.normal, o) - plane.offset;
             inside &= signed < -1e-12;
             let velocity = dot(plane.normal, d);
@@ -644,3 +687,6 @@ impl PreparedHull {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

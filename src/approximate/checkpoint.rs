@@ -343,15 +343,17 @@ impl Checkpoint {
         let mut hulls = Vec::with_capacity(self.hulls.len());
         for (slot, vertices) in self.hulls.iter().enumerate() {
             let prepared = if let Some(vertices) = vertices {
-                let (prepared, half) =
-                    convex_hull::prepare(vertices).map_err(|_| CheckpointError::InvalidData)?;
+                let prepared = convex_hull::PreparedConvexHull::new(vertices)
+                    .map_err(|_| CheckpointError::InvalidData)?;
                 let body = self.bodies.iter().find(|b| {
                     matches!(b.shape, Shape::ConvexHull { hull, .. } if hull.0 as usize == slot)
                 }).ok_or(CheckpointError::InvalidData)?;
-                if body.shape.half_extents() != half {
+                if body.shape.half_extents() != prepared.half_extents {
                     return Err(CheckpointError::InvalidData);
                 }
-                Some(std::sync::Arc::new(prepared))
+                Some(std::sync::Arc::new(convex_hull::PreparedHull::admitted(
+                    prepared,
+                )))
             } else {
                 None
             };
