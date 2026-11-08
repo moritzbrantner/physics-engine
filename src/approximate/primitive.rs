@@ -13,8 +13,8 @@ use super::{
 };
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveSweepError3, PrimitiveWork3,
-    bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
-    try_swept_time as kernel_swept_time,
+    SubmergedError3, bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
+    try_submerged_properties, try_swept_time as kernel_swept_time,
 };
 
 pub(super) use geometry_kernels::primitive3::PrimitiveKind3 as PrimitiveKind;
@@ -436,6 +436,42 @@ pub(super) fn volume_properties(
     geometry_kernels::primitive3::PrimitiveVolumeError3,
 > {
     geometry_kernels::primitive3::try_volume_properties(shape(value))
+}
+
+/// What a medium's surface leaves of a body below it, in the body's own terms. Ratios narrow
+/// to nearest; the world centroid never narrows, so the offset from the body keeps its
+/// precision far from the origin.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Submerged {
+    /// Submerged volume over the whole volume, in `0..=1`.
+    pub fraction: Real,
+    /// `density * submerged volume / mass`: buoyancy per unit of gravity.
+    pub buoyancy: Real,
+    /// Submerged centroid relative to the body position.
+    pub offset: V,
+}
+
+pub(super) fn submerged(
+    body: &Body,
+    medium: &super::medium::BodyMedium,
+) -> Result<Submerged, SubmergedError3> {
+    let position = to_array(body.position);
+    let properties = try_submerged_properties(
+        shape(body.shape),
+        position,
+        kernel_axes(body.orientation),
+        to_array(medium.medium.surface_point),
+        to_array(medium.medium.surface_normal),
+    )?;
+    Ok(Submerged {
+        fraction: nearest(properties.volume / medium.volume),
+        buoyancy: nearest(widen(medium.medium.density) * properties.volume / widen(body.mass)),
+        offset: V(
+            nearest(properties.centroid[0] - position[0]),
+            nearest(properties.centroid[1] - position[1]),
+            nearest(properties.centroid[2] - position[2]),
+        ),
+    })
 }
 
 fn shape(shape: Shape) -> PrimitiveShape3 {

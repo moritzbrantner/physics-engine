@@ -7,7 +7,7 @@ use super::{
     Body, BodyId, BookkeepingStats, CachedPoint, Constraint, Convergence, ConvergenceScope, Error,
     FailedStepWork, Order, PreparedResponse, Real, Report, Shape, TransactionStats, Vector, World,
     bookkeeping, ccd, contact, convergence, drop_boxes_near, islands, narrow_time, pair_friction,
-    pair_restitution, reserve, substep_length, widen_time,
+    pair_restitution, primitive, reserve, substep_length, widen_time,
 };
 use crate::numeric::Scalar;
 
@@ -34,6 +34,7 @@ impl World {
     /// and the previous successful report. Panics are outside this guarantee.
     pub fn step(&mut self, dt: Scalar) -> Result<Report, Error> {
         self.failed_work = None;
+        self.force_failure = None;
         self.last_transaction = TransactionStats {
             vector_capacity_bytes: self.transaction.capacity_bytes(),
             ..TransactionStats::default()
@@ -203,6 +204,9 @@ impl World {
             let lookahead = h * Real::from(self.scene.substeps - 1 - substep);
             report.substeps += 1;
             self.prepare_substep(substep == 0, reuse, h, &mut report);
+            if let Some(error) = self.force_failure.take() {
+                return Err(self.fail(&report, error));
+            }
             let mut pairs = std::mem::take(&mut self.manifold_scratch);
             let mut reuse_next = reuse;
             if !reuse {
@@ -212,6 +216,11 @@ impl World {
                         self.manifold_scratch = pairs;
                         return Err(self.fail(&report, error));
                     }
+                }
+                // Bodies woken by this substep's contacts received their forces there.
+                if let Some(error) = self.force_failure.take() {
+                    self.manifold_scratch = pairs;
+                    return Err(self.fail(&report, error));
                 }
             }
             let mut constraints = std::mem::take(&mut self.constraints);
@@ -822,8 +831,10 @@ impl World {
         );
         for &i in &scratch.activity.indices {
             let b = &self.bodies[i];
+            // A floating body at equilibrium is held up by its medium.
             scratch.supported[i] =
-                b.external && b.velocity == Vector::ZERO && b.angular_velocity == Vector::ZERO;
+                (b.external && b.velocity == Vector::ZERO && b.angular_velocity == Vector::ZERO)
+                    || b.medium.as_ref().is_some_and(|m| m.balanced);
         }
         // Reuse point allocations when the pair survives. Warm starting has already read the
         // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
@@ -1153,17 +1164,59 @@ impl World {
         }
     }
     fn apply_substep_forces(&mut self, index: usize, h: Real, report: &mut Report) {
+        if self.bodies[index].medium.is_some() {
+            if let Err(error) = self.apply_medium_forces(index, h, report) {
+                self.force_failure.get_or_insert(error);
+            }
+            return;
+        }
         let b = &mut self.bodies[index];
         self.transaction.body(index, b);
         let prepared = self.responses[index];
         b.velocity += (self.scene.gravity + b.force / b.mass) * h;
         b.angular_velocity += prepared.inertia(b.torque, report) * h;
-        if b.linear_damping > 0.0 {
-            b.velocity = b.velocity * (1.0 / (1.0 + h * b.linear_damping));
-        }
-        if b.angular_damping > 0.0 {
-            b.angular_velocity = b.angular_velocity * (1.0 / (1.0 + h * b.angular_damping));
-        }
+        damp(b, h);
+    }
+    /// The force phase of a body with a medium: buoyancy joins gravity and the external forces
+    /// at the submerged centroid, then drag, implicit as damping is, pulls the velocity toward
+    /// the flow (#525). The body counts as balanced while the forces on it, summed by magnitude,
+    /// could not bring it to the sleep speed over the sleep time, so a floating body can sleep
+    /// while one sinking at its terminal speed, balanced only in sum, stays awake.
+    #[inline(never)]
+    fn apply_medium_forces(
+        &mut self,
+        index: usize,
+        h: Real,
+        report: &mut Report,
+    ) -> Result<(), Error> {
+        let gravity = self.scene.gravity;
+        let (sleep_speed, sleep_seconds) = (self.scene.sleep_speed, self.scene.sleep_seconds);
+        let b = &mut self.bodies[index];
+        self.transaction.body(index, b);
+        crate::work::add(crate::work::Counter::MediumForces, 1);
+        let prepared = self.responses[index];
+        let state = b.medium.as_deref().expect("the caller checked");
+        let submerged = primitive::submerged(b, state).map_err(|_| Error::NonFiniteState(b.id))?;
+        let medium = state.medium;
+        let lift = -gravity * submerged.buoyancy;
+        let acceleration = gravity + b.force / b.mass + lift;
+        let spin = prepared.inertia(b.torque + submerged.offset.cross(lift * b.mass), report);
+        b.velocity += acceleration * h;
+        b.angular_velocity += spin * h;
+        damp(b, h);
+        let linear = medium.linear_drag * submerged.fraction;
+        let angular = medium.angular_drag * submerged.fraction;
+        let slip = b.velocity - medium.flow;
+        b.velocity = medium.flow + slip * (1.0 / (1.0 + h * linear));
+        b.angular_velocity = b.angular_velocity * (1.0 / (1.0 + h * angular));
+        let unbalanced =
+            acceleration.length() + slip.length() * linear + spin.length() * b.shape.radius();
+        b.medium
+            .as_deref_mut()
+            .expect("the caller checked")
+            .balanced = submerged.fraction > 0.0
+            && unbalanced * sleep_seconds < sleep_speed * super::medium::BALANCE_MARGIN;
+        Ok(())
     }
     fn finish_bookkeeping(&mut self, report: &mut Report) {
         report.islands.scratch_retained_bytes = self.island_scratch.retained_bytes();
@@ -1315,7 +1368,8 @@ impl World {
             let angular = b.angular_velocity.length() * b.shape.radius() * interval;
             // Gravity and forces keep accelerating the body through the later substeps.
             let drift = step_drift(b, self.scene.gravity, gain).abs();
-            let pad = Vector(angular, angular, angular)
+            let reach = angular + b.medium_reach(self.scene.gravity, gain, lookahead);
+            let pad = Vector(reach, reach, reach)
                 + drift
                 + Vector(1.0, 1.0, 1.0)
                     * (self.scene.contact_slop
@@ -1533,7 +1587,8 @@ impl World {
                         // for boxes on terrain. A sphere's one point needs no regeneration for
                         // spin, so later substeps reuse the row as Rapier does (#378).
                         let approach = moving.velocity.length() * interval
-                            + step_drift(moving, self.scene.gravity, gain).length();
+                            + step_drift(moving, self.scene.gravity, gain).length()
+                            + moving.medium_reach(self.scene.gravity, gain, lookahead);
                         if let Some(m) = super::static_sphere::manifold(
                             surface,
                             a,
@@ -1612,6 +1667,7 @@ impl World {
                         };
                         let approach = moving.velocity.length() * interval
                             + step_drift(moving, self.scene.gravity, gain).length()
+                            + moving.medium_reach(self.scene.gravity, gain, lookahead)
                             + moving.angular_velocity.length() * moving.shape.radius() * interval;
                         report.narrow_tests += 1;
                         regenerate = true;
@@ -1658,6 +1714,7 @@ impl World {
                     report.narrow_tests += 1;
                     let approach = moving.velocity.length() * interval
                         + step_drift(moving, self.scene.gravity, gain).length()
+                        + moving.medium_reach(self.scene.gravity, gain, lookahead)
                         + moving.angular_velocity.length() * moving.shape.radius() * interval;
                     contact::heightfield_box(
                         a,
@@ -1702,6 +1759,7 @@ impl World {
                         }
                         let approach = moving.velocity.length() * interval
                             + step_drift(moving, self.scene.gravity, gain).length()
+                            + moving.medium_reach(self.scene.gravity, gain, lookahead)
                             + moving.angular_velocity.length() * moving.shape.radius() * interval;
                         // A full-interval bound below the accepted contact tolerance cannot
                         // introduce a feature farther than that tolerance. Reuse these rows
@@ -1771,6 +1829,8 @@ impl World {
                         + (step_drift(b, self.scene.gravity, gain)
                             - step_drift(a, self.scene.gravity, gain))
                         .length()
+                        + a.medium_reach(self.scene.gravity, gain, lookahead)
+                        + b.medium_reach(self.scene.gravity, gain, lookahead)
                 };
                 // Separated co-moving CCD pairs never get here: the broad phase drops them
                 // (`skip_separated_ccd`).
@@ -1864,6 +1924,7 @@ impl World {
                 report.narrow_tests += 1;
                 let approach = (-b.velocity.dot(n)).max(0.0) * interval
                     + (-step_drift(b, self.scene.gravity, gain).dot(n)).max(0.0)
+                    + b.medium_reach(self.scene.gravity, gain, lookahead)
                     + b.angular_velocity.length() * b.shape.radius() * interval;
                 let (i, j) = if a.order < b.order {
                     (plane, k)
@@ -1980,6 +2041,14 @@ fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
         Vector::ZERO
     }
 }
+fn damp(b: &mut Body, h: Real) {
+    if b.linear_damping > 0.0 {
+        b.velocity = b.velocity * (1.0 / (1.0 + h * b.linear_damping));
+    }
+    if b.angular_damping > 0.0 {
+        b.angular_velocity = b.angular_velocity * (1.0 / (1.0 + h * b.angular_damping));
+    }
+}
 /// Whether the narrow phase would skip the candidate pair `a`, `b` without a query: two
 /// colliding bodies, one of them CCD, both without force drift, whose padded axis gap stays
 /// open under their relative translation. Swept *world* bounds overlap for every pair of
@@ -2004,6 +2073,8 @@ fn skip_separated_ccd(
         && (a.inverse_mass() > 0.0 || b.inverse_mass() > 0.0)
         && step_drift(a, gravity, gain) == Vector::ZERO
         && step_drift(b, gravity, gain) == Vector::ZERO
+        && a.medium.is_none()
+        && b.medium.is_none()
         && separated_ccd_translation(a, b, h, slop)
 }
 /// Proves an axis gap stays open under the pair's relative *translation*. A conservative
