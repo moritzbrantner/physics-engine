@@ -4,8 +4,7 @@
 //! and the contacts wake it, after which it settles and sleeps again. The engine runs MMORPG's
 //! exact-continuation configuration (`warm_start` off, `sleep_allowed` off, game-owned sleep);
 //! Rapier's bodies are `can_sleep(false)` so only the game's rule sleeps them, in one retained
-//! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15 and
-//! the ground is a thick fixed slab.
+//! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15.
 
 use crate::{Obs, Rng, Scenario, Trace};
 
@@ -28,14 +27,10 @@ const REST_SPEED: f32 = 0.18;
 const REST_SPIN: f32 = 0.9;
 /// Acceptance: at least this share of the final rest points lie within `REST_TOLERANCE` of
 /// Rapier's or a quarter of Rapier's throw; every one within `REST_CAP`; no piece sinks into
-/// the floor deeper than Rapier's deepest piece plus the 5 mm slop.
-const REST_SHARE: f32 = 0.85;
-const REST_TOLERANCE: f32 = 0.6;
-const REST_CAP: f32 = 2.5;
-const SLOP: f32 = 0.005;
-/// Half width of the fixed floor slab, whose top is y = 0 (a plane lets Rapier press a thin
-/// piece through and lose it).
-const FLOOR: f32 = 20.0;
+/// the floor deeper than Rapier's deepest piece.
+const REST_SHARE: f32 = 0.9;
+const REST_TOLERANCE: f32 = 0.5;
+const REST_CAP: f32 = 1.5;
 /// Least share of the settled pile the throw must wake, on each side.
 const WOKEN_SHARE: f32 = 0.15;
 
@@ -115,7 +110,8 @@ fn starts() -> Vec<Piece> {
 }
 
 /// Whether a piece of `age` ticks is slow enough; the game sleeps the whole pile once every
-/// live piece is (sleeping a body beside an awake one makes Rapier lose floor contacts).
+/// live piece is (sleeping pieces beside awake ones, as a per-piece rule does, loses Rapier floor contacts in
+/// this scene: pieces fall through).
 fn settles(age: u32, velocity: [f32; 3], spin: [f32; 3]) -> bool {
     let length = |v: [f32; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     age >= SETTLE_AFTER && length(velocity) < REST_SPEED && length(spin) < REST_SPIN
@@ -223,16 +219,14 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
         worst
     };
     let (sink, rapier_sink) = (deepest(&e), deepest(&r));
-    if sink > rapier_sink + SLOP {
+    if sink > rapier_sink {
         return Err(format!(
             "sinks {sink:.4} m into the floor, deeper than Rapier's {rapier_sink:.4} m"
         ));
     }
     let sleep_tick = SECOND - 1;
     // The pile settled and the game slept it, before the second throw, on both sides.
-    // Rapier re-wakes islands on any contact from an awake body, so its count flickers: the
-    // engine must have the settled pile asleep, Rapier most of it.
-    for (name, reader, share) in [("engine", &e, 0.9), ("rapier", &r, 0.6)] {
+    for (name, reader, share) in [("engine", &e, 0.9), ("rapier", &r, 0.9)] {
         let asleep = reader.lines(sleep_tick).iter().filter(|s| s.2).count();
         if (asleep as f32) < share * PILE as f32 {
             return Err(format!(
@@ -255,7 +249,7 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
              need {needed}"
         ));
     }
-    // The engine sleeps everything by the end (Rapier keeps flickering awake), near Rapier's rest
+    // The engine sleeps everything by the end, near Rapier's rest
     // points.
     let last = TICKS - 1;
     let mut near = 0;
@@ -309,8 +303,8 @@ mod engine {
             let mut world = World::new(Config {
                 body_storage: storage,
                 gravity: Vector(0.0, -GRAVITY, 0.0),
-                // Rapier's default single solver step of four passes; no warm starting: the
-                // exact-continuation lane.
+                // One substep of four passes, Rapier's default step; no warm starting: the
+                // exact-continuation lane. (Two substeps cost 2.3x Rapier's here: the gate fails.)
                 substeps: 1,
                 velocity_iterations: 4,
                 warm_start: false,
@@ -405,8 +399,7 @@ mod rapier {
             world.gravity = Vector::new(0.0, -GRAVITY, 0.0);
             world.integration_parameters.dt = DT;
             world.colliders.insert(
-                ColliderBuilder::cuboid(FLOOR, 0.5, FLOOR)
-                    .translation(Vector::new(0.0, -0.5, 0.0))
+                ColliderBuilder::new(SharedShape::halfspace(Vector::Y))
                     .friction(FRICTION)
                     .restitution(RESTITUTION)
                     .build(),
