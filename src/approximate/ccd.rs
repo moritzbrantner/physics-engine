@@ -306,7 +306,7 @@ impl World {
             ],
         };
         let mut candidates = always.to_vec();
-        let nodes = self.query_tree.visit_broad_aabb(query, |leaf| {
+        let nodes = self.query_tree.visit_aabb(query, |leaf| {
             let index = self.slot_index(leaf.id);
             if !Self::ccd_unpruned_target(&self.bodies[index]) {
                 candidates.push(index);

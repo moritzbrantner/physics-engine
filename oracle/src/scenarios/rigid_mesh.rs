@@ -16,7 +16,24 @@ pub fn scenario() -> Scenario {
         capabilities: "C23",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: |storage| Box::new(engine::Sim::new(storage)),
+        engine: |storage| Box::new(engine::Sim::new(storage, false)),
+        #[cfg(feature = "rapier")]
+        rapier: || Box::new(rapier::Sim::new(true)),
+        #[cfg(feature = "rapier")]
+        rapier_raw: Some(|| Box::new(rapier::Sim::new(false))),
+        check,
+    }
+}
+
+/// The same crate and panel with every cave chunk prepared once and shared by both isolated
+/// response worlds (#528), as MMORPG's lanes hold the same cave.
+pub fn shared_scenario() -> Scenario {
+    Scenario {
+        name: "redbrand-rigid-mesh-shared",
+        capabilities: "C23",
+        ticks: TICKS,
+        #[cfg(feature = "engine")]
+        engine: |storage| Box::new(engine::Sim::new(storage, true)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
@@ -112,14 +129,26 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 #[cfg(feature = "engine")]
 mod engine {
     use super::*;
-    use physics_engine::approximate::{Body, BodyStorage, Config, Shape, Vector as V, World};
+    use physics_engine::approximate::{
+        Body, BodyStorage, Config, Material, PreparedTriangleMesh, Shape, TriangleMeshDesc,
+        Vector as V, World,
+    };
     pub struct Sim {
         templates: Vec<World>,
         boxes: Vec<Option<Body>>,
         static_bodies: usize,
     }
     impl Sim {
-        pub fn new(storage: BodyStorage) -> Self {
+        pub fn new(storage: BodyStorage, shared: bool) -> Self {
+            let chunks = super::super::redbrand_cave::chunks();
+            let prepared: Vec<_> = chunks
+                .iter()
+                .filter(|_| shared)
+                .map(|chunk| {
+                    let vertices: Vec<V> = chunk.vertices.iter().copied().map(v).collect();
+                    PreparedTriangleMesh::new(&vertices, chunk.triangles.clone()).unwrap()
+                })
+                .collect();
             let templates: Vec<World> = (0..LANES)
                 .map(|lane| {
                     let mut world = World::new(Config {
@@ -130,18 +159,29 @@ mod engine {
                         ..Config::default()
                     })
                     .unwrap();
-                    for chunk in super::super::redbrand_cave::chunks() {
-                        world
-                            .add_triangle_mesh(
-                                physics_engine::approximate::TriangleMeshDesc {
-                                    position: v(chunk.position),
-                                    vertices: chunk.vertices.into_iter().map(v).collect(),
-                                    triangles: chunk.triangles,
-                                    material: Default::default(),
-                                },
-                                Some(chunk.key),
-                            )
-                            .unwrap();
+                    for (i, chunk) in chunks.iter().enumerate() {
+                        if shared {
+                            world
+                                .add_prepared_triangle_mesh(
+                                    &prepared[i],
+                                    v(chunk.position),
+                                    Material::default(),
+                                    Some(chunk.key),
+                                )
+                                .unwrap();
+                        } else {
+                            world
+                                .add_triangle_mesh(
+                                    TriangleMeshDesc {
+                                        position: v(chunk.position),
+                                        vertices: chunk.vertices.iter().copied().map(v).collect(),
+                                        triangles: chunk.triangles.clone(),
+                                        material: Default::default(),
+                                    },
+                                    Some(chunk.key),
+                                )
+                                .unwrap();
+                        }
                     }
                     world
                 })

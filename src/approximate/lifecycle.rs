@@ -63,6 +63,7 @@ impl World {
             self.halfspaces.push(id);
         }
         let len = self.bodies.len();
+        let mut shifted = false;
         let at = match self.scene.body_storage {
             BodyStorage::Ordered => {
                 let i = self.bodies.partition_point(|b| b.order < order);
@@ -79,6 +80,7 @@ impl World {
                     crate::work::add(crate::work::Counter::StorageShifts, (len - i) as u64);
                     self.shift_slots(i + 1);
                     self.sorted_len += 1;
+                    shifted = i != len;
                     i
                 }
             }
@@ -117,7 +119,11 @@ impl World {
         if let Some(key) = key {
             self.keys.insert(key, id);
         }
-        self.bookkeeping.layout_changed();
+        if shifted {
+            self.bookkeeping.layout_changed();
+        } else {
+            self.bookkeeping.record_changed();
+        }
         if synced {
             self.query_tree
                 .inserted(&self.bodies[at], self.bookkeeping.generation);
@@ -211,6 +217,7 @@ impl World {
             })
             .collect::<Vec<_>>();
         if !neighbors.is_empty() {
+            self.bookkeeping.graph.dirty = true;
             self.sort_storage();
             for n in neighbors {
                 // Its contacts stop; the next successful step reports them.
@@ -232,9 +239,14 @@ impl World {
         }
         // O(contact pairs), independent of the body count.
         self.geometry.remove(order);
-        self.cache.retain(|&(a, b), _| {
+        let pool = &mut self.bookkeeping;
+        self.cache.retain(|&(a, b), points| {
             crate::work::add(crate::work::Counter::CachedPairVisits, 1);
-            a != order && b != order
+            let keep = a != order && b != order;
+            if !keep {
+                pool.recycle_points(std::mem::take(points));
+            }
+            keep
         });
         let i = self.index(id).ok()?;
         let synced = self.query_tree.current(self.bookkeeping.generation);
@@ -262,7 +274,8 @@ impl World {
             self.keys.remove(&key);
         }
         self.bookkeeping.activity.count -= usize::from(removed.mass > 0.0 && !removed.sleeping);
-        self.bookkeeping.layout_changed();
+        // A tombstone: no position moved, and its edges went above.
+        self.bookkeeping.record_changed();
         if synced {
             self.query_tree.removed(slot, self.bookkeeping.generation);
         } else {

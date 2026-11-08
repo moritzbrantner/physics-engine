@@ -183,6 +183,8 @@ pub fn all() -> Vec<Scenario> {
         scenarios::greyhaven_rocks::scenario(),
         scenarios::rigid_rocks::scenario(),
         scenarios::rigid_mesh::scenario(),
+        scenarios::rigid_rocks::shared_scenario(),
+        scenarios::rigid_mesh::shared_scenario(),
         scenarios::boulder_slope::scenario(),
         scenarios::stairs::scenario(),
         scenarios::stairs_pace::scenario(),

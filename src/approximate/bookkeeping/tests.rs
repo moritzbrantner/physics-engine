@@ -95,6 +95,22 @@ fn adjacency_matches_full_edge_scan_and_does_not_bridge_fixed_or_external_bodies
     check_activity(&mut w);
 }
 #[test]
+fn edgeless_tail_records_keep_the_adjacency_graph() {
+    let mut w = graph_fixture();
+    check_components(&mut w);
+    let built = w.bookkeeping.work.adjacency_rebuilds;
+    let far = Vector(0.0, 1000.0, 0.0);
+    let tail = w.add_body(body(1000, far, 1.0)).unwrap();
+    check_components(&mut w);
+    w.remove_body(tail).unwrap();
+    check_components(&mut w);
+    assert_eq!(w.bookkeeping.work.adjacency_rebuilds, built);
+    // A record in the middle moves the bodies after it.
+    w.add_body(body(15, far, 1.0)).unwrap();
+    check_components(&mut w);
+    assert_eq!(w.bookkeeping.work.adjacency_rebuilds, built + 1);
+}
+#[test]
 fn contact_removal_and_same_id_reinsertion_invalidate_indexed_adjacency() {
     let mut w = graph_fixture();
     check_components(&mut w);
@@ -371,7 +387,8 @@ fn warmed_bookkeeping_visits_only_active_neighborhood_and_reuses_buffer_capacity
         let r = w.step(1.0 / 60.0).unwrap();
         assert_eq!(r.bookkeeping.active_view_rebuilds, 0);
         assert_eq!(r.bookkeeping.adjacency_rebuilds, 0);
-        assert_eq!(r.bookkeeping.island_body_visits, 4);
+        // No awake body may sleep (`sleep_allowed` is off): no island is traversed.
+        assert_eq!(r.bookkeeping.island_body_visits, 0);
         assert_eq!(r.bookkeeping.island_edge_visits, 0);
         // Contacts are generated once per step, not per substep (#378).
         assert_eq!(r.bookkeeping.bounds_updates, 1);

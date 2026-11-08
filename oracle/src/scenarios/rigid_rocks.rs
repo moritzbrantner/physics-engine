@@ -17,7 +17,24 @@ pub fn scenario() -> Scenario {
         capabilities: "C18",
         ticks: TICKS,
         #[cfg(feature = "engine")]
-        engine: |storage| Box::new(engine::Sim::new(storage)),
+        engine: |storage| Box::new(engine::Sim::new(storage, false)),
+        #[cfg(feature = "rapier")]
+        rapier: || Box::new(rapier::Sim::new()),
+        #[cfg(feature = "rapier")]
+        rapier_raw: None,
+        check,
+    }
+}
+
+/// The same crate and panel, each in its own isolated response world holding the same rock
+/// prepared once (#528): MMORPG's character world and response lanes.
+pub fn shared_scenario() -> Scenario {
+    Scenario {
+        name: "greyhaven-rigid-rocks-shared",
+        capabilities: "C18",
+        ticks: TICKS,
+        #[cfg(feature = "engine")]
+        engine: |storage| Box::new(engine::Sim::new(storage, true)),
         #[cfg(feature = "rapier")]
         rapier: || Box::new(rapier::Sim::new()),
         #[cfg(feature = "rapier")]
@@ -114,38 +131,61 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
 mod engine {
     use super::*;
     use physics_engine::approximate::{
-        Body, BodyStorage, Config, ConvexHullDesc, Material, Shape, Vector as V, World,
+        Body, BodyStorage, Config, ConvexHullDesc, Material, PreparedConvexHull, Shape,
+        Vector as V, World,
     };
     pub struct Sim {
-        world: World,
-        boxes: Vec<physics_engine::BodyId>,
+        worlds: Vec<World>,
+        boxes: Vec<(usize, physics_engine::BodyId)>,
     }
     impl Sim {
-        pub fn new(storage: BodyStorage) -> Self {
-            let mut world = World::new(Config {
-                body_storage: storage,
-                gravity: V(0.0, -9.0, 0.0),
-                substeps: 2,
-                ..Config::default()
-            })
-            .unwrap();
-            world
-                .add_body(Body::new(Shape::HalfSpace, V::ZERO, 0.0))
+        pub fn new(storage: BodyStorage, shared: bool) -> Self {
+            let world = || {
+                let mut world = World::new(Config {
+                    body_storage: storage,
+                    gravity: V(0.0, -9.0, 0.0),
+                    substeps: 2,
+                    ..Config::default()
+                })
                 .unwrap();
-            for lane in 0..LANES {
                 world
-                    .add_convex_hull(
+                    .add_body(Body::new(Shape::HalfSpace, V::ZERO, 0.0))
+                    .unwrap();
+                world
+            };
+            let vertices: Vec<V> = crate::greyhaven_fixture::vertices()
+                .into_iter()
+                .map(v)
+                .collect();
+            let mut worlds = Vec::new();
+            if shared {
+                let hull = PreparedConvexHull::new(&vertices).unwrap();
+                for lane in 0..LANES {
+                    let mut lane_world = world();
+                    lane_world
+                        .add_prepared_convex_hull(
+                            &hull,
+                            v(rock(lane)),
+                            Material::default(),
+                            Some(lane as u64 + 1),
+                        )
+                        .unwrap();
+                    worlds.push(lane_world);
+                }
+            } else {
+                let mut one = world();
+                for lane in 0..LANES {
+                    one.add_convex_hull(
                         ConvexHullDesc {
                             position: v(rock(lane)),
-                            vertices: crate::greyhaven_fixture::vertices()
-                                .into_iter()
-                                .map(v)
-                                .collect(),
+                            vertices: vertices.clone(),
                             material: Material::default(),
                         },
                         Some(lane as u64 + 1),
                     )
                     .unwrap();
+                }
+                worlds.push(one);
             }
             let boxes = (0..LANES)
                 .map(|lane| {
@@ -165,10 +205,11 @@ mod engine {
                     if lane == 1 {
                         body.angular_velocity = V(0.7, 0.3, -0.5);
                     }
-                    world.add_body(body).unwrap()
+                    let index = if shared { lane } else { 0 };
+                    (index, worlds[index].add_body(body).unwrap())
                 })
                 .collect();
-            Self { world, boxes }
+            Self { worlds, boxes }
         }
     }
     fn v(p: [f32; 3]) -> V {
@@ -176,11 +217,13 @@ mod engine {
     }
     impl crate::Sim for Sim {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
-            self.world
-                .step(f64::from(DT))
-                .unwrap_or_else(|e| panic!("rigid rock tick {tick}: {e:?}"));
-            for id in &self.boxes {
-                let body = self.world.body(*id).unwrap();
+            for world in &mut self.worlds {
+                world
+                    .step(f64::from(DT))
+                    .unwrap_or_else(|e| panic!("rigid rock tick {tick}: {e:?}"));
+            }
+            for (world, id) in &self.boxes {
+                let body = self.worlds[*world].body(*id).unwrap();
                 let p = body.position;
                 trace.0.push(Obs::Position([p.0, p.1, p.2]));
                 trace.0.push(Obs::Velocity([

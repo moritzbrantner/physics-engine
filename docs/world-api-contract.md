@@ -106,9 +106,10 @@ When to pick which:
   [floating ray queries](floating-ray-queries.md). `cast_ray_first` returns only the earliest
   hit (ties by lower BodyId), the same hit as `cast_ray(..)[0]`, without collecting the rest.
 - Queries traverse AABB trees (`bvh-kernels`) kept current by `add_body`, `remove_body` and
-  `step`: an incremental tree of moving bodies, and for fixed bodies an exact incremental tree
-  plus a four-wide `WideBvh` that the first ray or shape query builds (#415). The trees change
-  which bodies are tested, never a result.
+  `step`: an incremental tree of moving bodies, and for fixed bodies a four-wide `WideBvh` built
+  once by its first use, the first ray or shape query or the first step with an awake body
+  (#415, #528); adding fixed bodies only records their bounds. The trees change which bodies
+  are tested, never a result.
 - `has_support` is a solver-facing support predicate.
 
 ## Terrain
@@ -159,6 +160,13 @@ the local proxy is asymmetric. The game owns the asset-to-scene fit and units (t
 proxies are fitted and quarter-turned by MMORPG). The engine owns contact queries, broad-phase
 admission and stable body/face identities. `add_body` cannot forge a hull id; remove and re-add
 releases/rebuilds the prepared geometry. No dynamic hull mass/inertia or hull×hull solver is added.
+
+`PreparedConvexHull::new(&vertices)` runs the QuickHull preparation once; admit the handle into any
+number of worlds with `World::add_prepared_convex_hull(&prepared, position, material, key)` (#528).
+Results are identical to `add_convex_hull`, which is the same preparation plus admission. Worlds
+share the immutable prepared bytes through `Arc`s and each keeps its own derived query cache, so
+sharing adds no mutable cross-world state. A checkpoint still stores vertices and rebuilds its own
+preparation on restore, unshared.
 
 In this first consumer slice, rays hit the **real convex faces** (with
 `RayFeature::ConvexHullFace`), and spheres/oriented capsules have overlap and translation-only
@@ -622,6 +630,10 @@ is centred on its geometry bounds, as fixed primitives are. Finite, nondegenerat
 valid indices are required; invalid admission is atomic. Surfaces are two-sided, including
 arbitrary winding, and open boundaries remain open. A mesh is a set of surfaces, not a filled
 bounding box. Triangles retain their input indices across preparation and storage modes.
+`PreparedTriangleMesh::new(&vertices, triangles)` with
+`World::add_prepared_triangle_mesh(&prepared, position, material, key)` prepares one chunk once
+for several worlds, as prepared convex hulls do, with results identical to `add_triangle_mesh`
+(#528).
 
 Each chunk retains a local BVH prepared by `rust-kernels`. `triangle_mesh_stats(body)` reports
 prepared triangle/node counts and retained geometry bytes (excluding allocator overhead and the

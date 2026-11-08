@@ -52,9 +52,12 @@ pub enum Counter {
     HullPlanes,
     /// Bodies given buoyancy and drag by their medium, one per body per substep (#525).
     MediumForces,
+    /// Full query-tree builds: the lazy first build of the wide tree and every amortized
+    /// rebuild of the moving tree.
+    TreeBuilds,
 }
 
-const COUNTERS: usize = 20;
+const COUNTERS: usize = 21;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {
