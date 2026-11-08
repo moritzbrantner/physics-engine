@@ -4,8 +4,7 @@
 //! and the contacts wake it, after which it settles and sleeps again. The engine runs MMORPG's
 //! exact-continuation configuration (`warm_start` off, `sleep_allowed` off, game-owned sleep);
 //! Rapier's bodies are `can_sleep(false)` so only the game's rule sleeps them, in one retained
-//! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15, and
-//! the ground is a thick fixed slab.
+//! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15.
 
 use crate::{Obs, Rng, Scenario, Trace};
 
@@ -23,9 +22,6 @@ const THROW: usize = 14;
 /// The second throw's first tick.
 const SECOND: u32 = 180;
 /// The game's settle rule (as `debris`): from this age, slow enough to sleep.
-/// Half width of the fixed floor slab, top at y = 0, on both sides (a plane floor makes the
-/// engine's step 1.2x Rapier's here, over the gate; the slab has box-box contacts on both).
-const FLOOR: f32 = 20.0;
 const SETTLE_AFTER: u32 = 8;
 const REST_SPEED: f32 = 0.18;
 const REST_SPIN: f32 = 0.9;
@@ -310,20 +306,14 @@ mod engine {
             let mut world = World::new(Config {
                 body_storage: storage,
                 gravity: Vector(0.0, -GRAVITY, 0.0),
-                // One substep of four passes, Rapier's default step; no warm starting: the
-                // exact-continuation lane. (Two substeps cost 2.3x Rapier's here: the gate fails.)
-                substeps: 1,
+                // MMORPG's debris lane settings, without warm starting: the exact-continuation lane.
+                substeps: 2,
                 velocity_iterations: 4,
                 warm_start: false,
                 ..Config::default()
             })
             .unwrap();
-            let mut floor = Body::keyed(
-                1,
-                Shape::Box(Vector(FLOOR, 0.5, FLOOR)),
-                Vector(0.0, -0.5, 0.0),
-                0.0,
-            );
+            let mut floor = Body::keyed(1, Shape::HalfSpace, Vector::ZERO, 0.0);
             floor.friction = FRICTION;
             floor.restitution = RESTITUTION;
             world.add_body(floor).unwrap();
@@ -406,8 +396,7 @@ mod rapier {
             world.gravity = Vector::new(0.0, -GRAVITY, 0.0);
             world.integration_parameters.dt = DT;
             world.colliders.insert(
-                ColliderBuilder::cuboid(FLOOR, 0.5, FLOOR)
-                    .translation(Vector::new(0.0, -0.5, 0.0))
+                ColliderBuilder::new(SharedShape::halfspace(Vector::Y))
                     .friction(FRICTION)
                     .restitution(RESTITUTION)
                     .build(),

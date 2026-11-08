@@ -418,7 +418,10 @@ impl World {
                 let body = &self.bodies[self.index(id)?];
                 if !body.sensor {
                     let near = self.sleepers_within(body, self.scene.contact_slop * 2.0);
-                    roots.extend(near.into_iter().filter(|o| orders.binary_search(o).is_err()));
+                    roots.extend(
+                        near.into_iter()
+                            .filter(|o| orders.binary_search(o).is_err()),
+                    );
                 }
             }
         }
