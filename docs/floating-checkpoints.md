@@ -16,11 +16,16 @@ algorithm 14 adds box/hull response; algorithm 15 adds non-CCD box/mesh response
 (see below). Algorithm 16 skips finite zero solver corrections. Algorithm 17
 preserves character height while crossing a grazing
 triangle support edge before snapping. Algorithm 18 (#519) gives rigid spheres
-contacts and swept CCD against heightfield terrain and fixed convex hulls. Current algorithm 19
+contacts and swept CCD against heightfield terrain and fixed convex hulls. Algorithm 19
 (#520) sweeps a turning kinematic (external) body's rotation (conservative advancement), reuses
 its rows across the step's substeps and leaves a kinematic body at rest unintegrated, so a world
 with a spinning external body continues differently; format 10 is unchanged and the empty-world
-digest changes only for the algorithm header. Older algorithm checkpoints are rejected.
+digest changes only for the algorithm header. Current algorithm 20 (#524): with
+`warm_start: false`, no contact history crosses a step boundary for the restitution gate and wake
+reach comes from current geometry within twice the slop, so such a world continues differently;
+format 12 is unchanged and the empty-world digest changes only for the algorithm header. Parked
+contact pairs of sleeping bodies are written with the rest, in pair order. Older algorithm
+checkpoints are rejected.
 
 Format 12 (#525) adds each body's [`Medium`](world-api-contract.md#media) after its
 `additional_solver_iterations`: a presence byte (0 or 1), then for a body with one the surface

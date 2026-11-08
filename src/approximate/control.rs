@@ -180,16 +180,24 @@ impl World {
             return Ok(());
         }
         let order = body.order;
+        let solid = !body.sensor && !body.shape.query_only();
+        // Sleepers it was in contact with: the contact history, or (`warm_start` off) the
+        // geometry within twice the slop at its old pose, which a rebuilt world sees too.
         let mut wake = self
             .cache
             .keys()
+            .chain(self.parked.keys())
             .filter_map(|&(a, b)| {
                 crate::work::add(crate::work::Counter::CachedPairVisits, 1);
                 (a == order)
                     .then_some(b)
                     .or_else(|| (b == order).then_some(a))
             })
+            .filter(|_| self.scene.warm_start)
             .collect::<Vec<_>>();
+        if !self.scene.warm_start && solid {
+            wake.extend(self.sleepers_within(&self.bodies[i], self.scene.contact_slop * 2.0));
+        }
         self.static_revision += 1;
         let body = &mut self.bodies[i];
         let before = body.cached_bounds;
@@ -225,7 +233,7 @@ impl World {
         let sleeper = |b: &super::Body| b.movable() && b.sleeping;
         let mut wake = Vec::new();
         let mut excluded = false;
-        for &(a, b) in self.cache.keys() {
+        for &(a, b) in self.cache.keys().chain(self.parked.keys()) {
             crate::work::add(crate::work::Counter::CachedPairVisits, 1);
             let other = match (a == order, b == order) {
                 (true, _) => b,
@@ -233,11 +241,23 @@ impl World {
                 _ => continue,
             };
             let j = self.index_of_order(other).expect("live contact");
-            if !layers.collides_with(self.bodies[j].layers) {
+            if self.scene.warm_start && !layers.collides_with(self.bodies[j].layers) {
                 excluded = true;
                 if sleeper(&self.bodies[j]) {
                     wake.push(other);
                 }
+            }
+        }
+        // Without contact history, the pairs the change excludes come from geometry; a
+        // sleeping body that changes wakes without searching for what it stopped touching.
+        if !self.scene.warm_start {
+            excluded = true;
+            if solid {
+                let near = self.sleepers_within(&self.bodies[i], self.scene.contact_slop * 2.0);
+                wake.extend(near.into_iter().filter(|&other| {
+                    let j = self.index_of_order(other).expect("live body");
+                    !layers.collides_with(self.bodies[j].layers)
+                }));
             }
         }
         if excluded && sleeper(&self.bodies[i]) {
@@ -354,11 +374,16 @@ impl World {
             self.bookkeeping.traversal.island.clear();
             return 0;
         }
+        if self.scene.warm_start {
+            let s = &mut self.bookkeeping;
+            s.ensure_graph(&self.bodies, &self.cache, &self.parked, self.joints.pairs());
+            s.traversal.begin(self.bodies.len(), &mut s.work);
+            s.traversal
+                .collect(root, &self.bodies, &s.graph, &mut s.work);
+        } else {
+            self.collect_touching_sleepers(root);
+        }
         let s = &mut self.bookkeeping;
-        s.ensure_graph(&self.bodies, &self.cache, self.joints.pairs());
-        s.traversal.begin(self.bodies.len(), &mut s.work);
-        s.traversal
-            .collect(root, &self.bodies, &s.graph, &mut s.work);
         // Retain only newly awakened indices for same-substep force preparation.
         // The next traversal resets this scratch; no persistent wake-state copy is added.
         s.traversal.island.retain(|&i| {
@@ -376,7 +401,53 @@ impl World {
         for &i in &s.traversal.island {
             s.activity.woke(i, &mut s.work);
         }
+        // A woken body's contact history rejoins the pairs the step walks.
+        if !self.parked.is_empty() {
+            for n in 0..count {
+                let i = self.bookkeeping.traversal.island[n];
+                let cache = &mut self.cache;
+                self.parked.drain_body(self.bodies[i].order, |key, points| {
+                    cache.insert(key, points);
+                });
+            }
+        }
         count as u64
+    }
+    /// Without contact history (`warm_start` off), `root` and the sleeping bodies reached from it
+    /// through solid contact within twice the slop, plus joints. Awake bodies other than the root
+    /// end a path: they respond to a disturbance through their own contacts.
+    fn collect_touching_sleepers(&mut self, root: usize) {
+        if !self.joints.is_empty() {
+            let s = &mut self.bookkeeping;
+            s.ensure_joint_graph(&self.bodies, self.joints.pairs());
+        }
+        let margin = self.scene.contact_slop * 2.0;
+        let mut traversal = std::mem::take(&mut self.bookkeeping.traversal);
+        let mut work = std::mem::take(&mut self.bookkeeping.work);
+        traversal.begin(self.bodies.len(), &mut work);
+        let (this, graph) = (&*self, &self.bookkeeping.graph);
+        let has_joints = !self.joints.is_empty();
+        traversal.walk(root, &self.bodies, &mut work, |i, stack, work| {
+            let b = &this.bodies[i];
+            if has_joints {
+                let neighbors = graph.neighbors(i);
+                work.island_edge_visits += neighbors.len() as u64;
+                stack.extend_from_slice(neighbors);
+            }
+            if b.sensor || b.shape.query_only() || (i != root && !b.sleeping) {
+                return;
+            }
+            let near = this.sleepers_within(b, margin);
+            work.island_edge_visits += near.len() as u64;
+            for order in near {
+                let j = this.index_of_order(order).expect("live body");
+                if !this.bodies[j].sensor {
+                    stack.push(j);
+                }
+            }
+        });
+        self.bookkeeping.work = work;
+        self.bookkeeping.traversal = traversal;
     }
     pub fn has_support(&self, id: BodyId) -> bool {
         let Ok(i) = self.index(id) else {
@@ -384,12 +455,15 @@ impl World {
         };
         let id = self.bodies[i].order;
         let up = (-self.scene.gravity).unit();
-        self.cache.iter().any(|(&(a, b), p)| {
-            crate::work::add(crate::work::Counter::CachedPairVisits, 1);
-            p.iter().any(|p| {
-                (b == id && p.normal.dot(up) > 0.5) || (a == id && p.normal.dot(up) < -0.5)
+        self.cache
+            .iter()
+            .chain(self.parked.iter())
+            .any(|(&(a, b), p)| {
+                crate::work::add(crate::work::Counter::CachedPairVisits, 1);
+                p.iter().any(|p| {
+                    (b == id && p.normal.dot(up) > 0.5) || (a == id && p.normal.dot(up) < -0.5)
+                })
             })
-        })
     }
     /// A resting body's bounds change between `before` and its current bounds (it moved, was
     /// added or is about to be removed): broad-phase boxes near either may lack its leaf.

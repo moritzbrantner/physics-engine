@@ -1370,6 +1370,30 @@ fn debris_town(statics: usize, cols: usize, awake: u64) -> World {
     w
 }
 
+/// `sleepers` boxes resting two high on the box tops past the awake block, added to
+/// `debris_town`, settled for a step and put to sleep by the game; their contact pairs stay in
+/// the world but out of the step (#524). `settled` runs that first step, else they sleep at once
+/// as a world rebuilt from canonical state would have them.
+fn add_sleepers(w: &mut World, cols: usize, sleepers: u64, settled: bool) {
+    let ids: Vec<_> = (0..sleepers)
+        .map(|k| {
+            let at = (k / 2) as usize;
+            let top = 2.0 * BOX + 0.3 + 0.6 * (k % 2) as f32;
+            let p = cell(at % cols, 16 + at / cols) + V(0.0, top - BOX, 0.0);
+            let mut b = Body::keyed(4_000_000 + k, Shape::Box(V(0.3, 0.3, 0.3)), p, 1.0);
+            b.rotation_locked = true;
+            b.sleep_allowed = false;
+            w.add_body(b).unwrap()
+        })
+        .collect();
+    if settled {
+        w.step(1.0 / 60.0).unwrap();
+    }
+    for id in ids {
+        w.set_sleeping(id, true).unwrap();
+    }
+}
+
 /// Work of one warm step: (pair tests, tree nodes, body visits, contact points).
 fn step_work(w: &mut World) -> (u64, u64, u64, u64) {
     work::reset();
@@ -1506,34 +1530,55 @@ fn dense_ccd_search_work_is_bounded() {
     );
 }
 
-/// A step's broadphase and per-body loops follow the awake bodies, not the static town (#412).
+/// A step's broadphase and per-body loops follow the awake bodies, not the static town (#412) nor
+/// the sleeping rubble (#524): sleepers and their contact pairs add nothing per tick.
 #[test]
 fn a_step_follows_awake_bodies_not_the_static_town() {
     let mut samples = Vec::new();
     let points = SIZES
         .iter()
-        .map(|&s| (s, 8u64))
-        .chain([1u64, 2, 4, 16, 32, 64, 128].iter().map(|&a| (12, a)));
-    for (log2, awake) in points {
+        .map(|&s| (s, 8u64, 1u64))
+        .chain([1u64, 2, 4, 16, 32, 64, 128].iter().map(|&a| (12, a, 1)))
+        .chain([128u64, 256, 512, 1024, 2048].iter().map(|&n| (12, 8, n)));
+    for (log2, awake, sleepers) in points {
         let statics = 1usize << log2;
-        let mut w = debris_town(statics, 1 << log2.div_ceil(2), awake);
+        let cols = 1usize << log2.div_ceil(2);
         // The first step makes every awake body's broad-phase box (one tree query each); warm
-        // steps keep the boxes.
-        let (_, nodes, _, _) = step_work(&mut w);
+        // steps keep the boxes. Sleepers go to sleep before this first step, like a rebuilt world.
+        let mut first = debris_town(statics, cols, awake);
+        add_sleepers(&mut first, cols, sleepers, false);
+        let (_, nodes, _, _) = step_work(&mut first);
+        // The measured world settles its sleepers with real contacts first, so their pairs exist.
+        let mut w = debris_town(statics, cols, awake);
+        add_sleepers(&mut w, cols, sleepers, true);
+        w.step(1.0 / 60.0).unwrap();
         w.step(1.0 / 60.0).unwrap();
         let (pairs, _, visits, contacts) = step_work(&mut w);
+        let cached_pairs = work::get(Counter::StepCachedPairs);
         let resting = w
             .bodies()
-            .filter(|b| b.mass > 0.0)
+            .filter(|b| b.mass > 0.0 && !b.is_sleeping())
             .all(|b| (b.position.1 - (2.0 * BOX + 0.3)).abs() < 0.01);
         assert!(resting, "debris left the box tops");
+        if sleepers > 1 {
+            let sleeper = w.body_id(4_000_000).unwrap();
+            assert!(
+                w.is_sleeping(sleeper) && w.has_support(sleeper),
+                "a sleeper lost its rest"
+            );
+        }
         samples.push((
-            vec![("statics", statics as u64), ("awake", awake)],
+            vec![
+                ("statics", statics as u64),
+                ("awake", awake),
+                ("sleepers", sleepers),
+            ],
             vec![
                 ("pair-tests", pairs),
                 ("box-query-nodes", nodes),
                 ("body-visits", visits),
                 ("contact-points", contacts),
+                ("cached-pair-walks", cached_pairs),
             ],
         ));
     }
@@ -1543,8 +1588,14 @@ fn a_step_follows_awake_bodies_not_the_static_town() {
         &[
             ("body-visits", "statics", "constant"),
             ("body-visits", "awake", "linear"),
+            ("body-visits", "sleepers", "constant"),
             ("contact-points", "statics", "constant"),
             ("contact-points", "awake", "linear"),
+            ("contact-points", "sleepers", "constant"),
+            ("pair-tests", "sleepers", "constant"),
+            ("cached-pair-walks", "statics", "constant"),
+            ("cached-pair-walks", "awake", "linear"),
+            ("cached-pair-walks", "sleepers", "constant"),
         ],
     );
 }

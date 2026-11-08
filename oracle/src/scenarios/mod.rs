@@ -31,6 +31,7 @@ pub mod redbrand_cave;
 pub mod rigid_rocks;
 pub mod rope_joints;
 pub mod rotating_kinematic;
+pub mod rubble_wake;
 pub mod slopes;
 pub mod stairs;
 pub mod stairs_pace;

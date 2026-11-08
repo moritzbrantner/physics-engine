@@ -46,6 +46,9 @@ pub struct Config {
     pub sleep_speed: Real,
     /// Seconds below `sleep_speed` before a body sleeps, default 0.5 as in Rapier.
     pub sleep_seconds: Real,
+    /// Reapply cached contact impulses as a first guess. When off, no contact history crosses a
+    /// step boundary for the restitution gate or wake reach, so a world rebuilt from canonical
+    /// state continues exactly (see docs/world-api-contract.md).
     pub warm_start: bool,
     /// None retains the fixed-pass reference. Some permits a checked early exit.
     pub convergence: Option<Convergence>,

@@ -149,7 +149,7 @@ pub fn fixed_target_restitution_and_speculative_contact() {
     }
 }
 
-pub fn persistent_contact_gates_restitution_even_without_warm_start() {
+pub fn restitution_history_gate_needs_warm_start() {
     for warm_start in [false, true] {
         let mut w = world(V::ZERO, warm_start);
         for (id, position) in [(1, -V::X), (2, V::X)] {
@@ -161,14 +161,17 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
         w.set_velocity(w.body_id(1).unwrap(), V::X * 2.0).unwrap();
         w.set_velocity(w.body_id(2).unwrap(), -V::X * 2.0).unwrap();
         step(&mut w);
-        assert_eq!(
-            w.body_id(1).and_then(|id| w.body(id)).unwrap().velocity,
-            V::ZERO
-        );
-        assert_eq!(
-            w.body_id(2).and_then(|id| w.body(id)).unwrap().velocity,
-            V::ZERO
-        );
+        let velocity =
+            |w: &World, id: u64| w.body_id(id).and_then(|id| w.body(id)).unwrap().velocity;
+        if warm_start {
+            // Retained history: the persistent pair is not new, so it does not bounce.
+            assert_eq!(velocity(&w, 1), V::ZERO);
+            assert_eq!(velocity(&w, 2), V::ZERO);
+        } else {
+            // No history crosses a step boundary: each step's touching pair is new.
+            close(velocity(&w, 1).0, -2.0);
+            close(velocity(&w, 2).0, 2.0);
+        }
 
         // An actual clear interval removes history; the next contact can bounce again.
         w.set_velocity(w.body_id(1).unwrap(), -V::X * 2.0).unwrap();
@@ -181,6 +184,10 @@ pub fn persistent_contact_gates_restitution_even_without_warm_start() {
         w.step(DT as Scalar).unwrap();
         w.step(DT as Scalar).unwrap();
         w.step(DT as Scalar).unwrap();
+        if !warm_start {
+            // The bounce above already moved the pair apart for one more step.
+            w.step(DT as Scalar).unwrap();
+        }
         step(&mut w);
         close(
             w.body_id(1).and_then(|id| w.body(id)).unwrap().velocity.0,
@@ -342,7 +349,7 @@ pub fn invalid_materials_and_mass_leave_checkpoint_unchanged() {
 pub fn run() {
     restitution_combination_threshold_and_mass_scaling();
     fixed_target_restitution_and_speculative_contact();
-    persistent_contact_gates_restitution_even_without_warm_start();
+    restitution_history_gate_needs_warm_start();
     friction_combination_disk_mass_scaling_and_rotation();
     invalid_materials_and_mass_leave_checkpoint_unchanged();
     linear_support_direction_and_spin_with_dynamic_endpoints();

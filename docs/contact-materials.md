@@ -26,13 +26,18 @@ The pair restitution coefficient is the combined coefficient.
 Restitution uses contact-point relative normal velocity, including permitted spin.
 Its target separating speed is `e * closing_speed` only when closing speed is
 strictly greater than **1 m/s** (`Config::length_unit` scene units per second), witness
-separation is at most `Config::contact_slop`, and the pair has no retained contact-history entry.
+separation is at most `Config::contact_slop`, and the pair has no history under the gate below.
 This speed threshold does not scale with mass, dimensions or timestep.
 
-The history gate applies even with `warm_start: false`; that option disables
-reapplication of old impulses, rather than contact history. A clear interval which
-removes the pair's history permits a new bounce. Removal/same-ID replacement also
-invalidates that history. Persistent contact does not receive repeated restitution
+With `warm_start: false`, no contact history carries across a step boundary for this gate
+(owner decision, #524): only pairs that held a contact earlier in the same step are
+persistent, so a pair still touching and driven together at 2 m/s bounces at the next step,
+exactly as a world rebuilt from canonical state does, and as MMORPG's per-tick transient
+lane has always done. Within a step the gate works as before. With `warm_start: true` the
+gate reads the retained history: a clear interval which removes the pair's history permits a
+new bounce, and removal/same-ID replacement also invalidates that history. Rapier's own gate
+is per contact point (`impulse == 0` at preparation, or restitution 1): a persistent pair
+without warm-started impulse is new there too, and a loaded one stays gated. Persistent contact does not receive repeated restitution
 targets just because another force or command drives its endpoints together.
 
 Separated speculative constraints always use `-separation / substep_seconds` as

@@ -1719,60 +1719,111 @@
         },
         "awake": {
           "description": "awake dynamic bodies, each resting on one box"
+        },
+        "sleepers": {
+          "description": "sleeping dynamic boxes with cached contact pairs, put to sleep by the game (one sleeper at the points that scale something else)"
         }
       },
       "scalePoints": [
         {
           "statics": 512,
-          "awake": 8
+          "awake": 8,
+          "sleepers": 1
         },
         {
           "statics": 1024,
-          "awake": 8
+          "awake": 8,
+          "sleepers": 1
         },
         {
           "statics": 2048,
-          "awake": 8
+          "awake": 8,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 8
+          "awake": 8,
+          "sleepers": 1
         },
         {
           "statics": 8192,
-          "awake": 8
+          "awake": 8,
+          "sleepers": 1
         },
         {
           "statics": 16384,
-          "awake": 8
+          "awake": 8,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 1
+          "awake": 1,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 2
+          "awake": 2,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 4
+          "awake": 4,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 16
+          "awake": 16,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 32
+          "awake": 32,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 64
+          "awake": 64,
+          "sleepers": 1
         },
         {
           "statics": 4096,
-          "awake": 128
+          "awake": 128,
+          "sleepers": 1
+        },
+
+        {
+          "statics": 4096,
+          "awake": 8,
+          "sleepers": 128
+
+        },
+
+        {
+          "statics": 4096,
+          "awake": 8,
+          "sleepers": 256
+
+        },
+
+        {
+          "statics": 4096,
+          "awake": 8,
+          "sleepers": 512
+
+        },
+
+        {
+          "statics": 4096,
+          "awake": 8,
+          "sleepers": 1024
+
+        },
+
+        {
+          "statics": 4096,
+          "awake": 8,
+          "sleepers": 2048
+
         }
       ],
       "metrics": [
@@ -1801,6 +1852,10 @@
                   "bound": "logarithmic"
                 }
               ]
+            },
+            {
+              "dimension": "sleepers",
+              "bound": "constant"
             }
           ]
         },
@@ -1830,6 +1885,11 @@
                   "bound": "logarithmic"
                 }
               ]
+            },
+            {
+              "dimension": "sleepers",
+              "bound": "logarithmic",
+              "tolerance": 1
             }
           ]
         },
@@ -1846,6 +1906,10 @@
             {
               "dimension": "awake",
               "bound": "linear"
+            },
+            {
+              "dimension": "sleepers",
+              "bound": "constant"
             }
           ]
         },
@@ -1862,6 +1926,30 @@
             {
               "dimension": "awake",
               "bound": "linear"
+            },
+            {
+              "dimension": "sleepers",
+              "bound": "constant"
+            }
+          ]
+        },
+        {
+          "name": "cached-pair-walks",
+          "unit": "pairs",
+          "signal": "operation-count",
+          "notes": "Contact-cache entries the per-substep walks (warm-start lookup and writeback, Counter::StepCachedPairs) visit in one warm step. Sleeping pairs live in a separate map (#524): a body that falls asleep parks its pairs at the next step start and a wake moves them back, so the walks follow the awake pairs; neither statics nor sleepers add entries.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "awake",
+              "bound": "linear"
+            },
+            {
+              "dimension": "sleepers",
+              "bound": "constant"
             }
           ]
         }
