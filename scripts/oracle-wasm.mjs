@@ -5,6 +5,7 @@
 // size measurement), which size-budget.sh builds in its own CARGO_TARGET_DIR.
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
+import v8 from "node:v8";
 
 const target = `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/physics_oracle.wasm`;
 const build = (features) => {
@@ -30,11 +31,29 @@ if (only === null) {
 }
 if (process.argv.includes("--size-only")) process.exit(0);
 build("engine,rapier");
+// Time optimized code only. V8 otherwise starts WASM in its Liftoff baseline compiler and tiers
+// up in the background, so short scenarios were mostly timed unoptimized (physics-engine#549:
+// brook-mesh-edge ran 9.3 µs/tick that way, 3.5 µs/tick optimized). Must precede compilation.
+v8.setFlagsFromString("--no-liftoff");
 const env = { oracle_now: () => performance.now() };
 const { instance } = await WebAssembly.instantiate(await readFile(target), { env });
 const e = instance.exports;
 const name = (i) => new TextDecoder().decode(new Uint8Array(e.memory.buffer, e.oracle_name_ptr(i), e.oracle_name_len(i)));
 const median = (v) => v.sort((a, b) => a - b)[v.length >> 1];
+// One sample is the mean µs/tick of back-to-back runs (each on a freshly built world, build
+// untimed) spanning at least this long, so a scenario of a few dozen microseconds is not
+// timed from a single run.
+const SAMPLE_MS = 5;
+const sample = (i, side) => {
+  const start = performance.now();
+  let sum = 0;
+  let runs = 0;
+  do {
+    sum += e.oracle_time(i, side);
+    runs++;
+  } while (performance.now() - start < SAMPLE_MS);
+  return sum / runs;
+};
 
 // Fail when the engine's WASM median is more than 10% slower than either Rapier figure.
 const MARGIN = 1.1;
@@ -48,11 +67,14 @@ for (let i = 0; i < e.oracle_scenarios(); i++) {
   failed ||= !ok;
   const hasRaw = e.oracle_has_raw(i) === 1;
   const engine = [], indexed = [], rapier = [], bare = [];
+  const sides = hasRaw ? [0, 3, 1, 2] : [0, 3, 1];
+  // Untimed warm-up: the first call of each side compiles its functions.
+  for (const side of sides) e.oracle_time(i, side);
   for (let s = 0; s < 11; s++) {
-    engine.push(e.oracle_time(i, 0));
-    indexed.push(e.oracle_time(i, 3));
-    rapier.push(e.oracle_time(i, 1));
-    if (hasRaw) bare.push(e.oracle_time(i, 2));
+    engine.push(sample(i, 0));
+    indexed.push(sample(i, 3));
+    rapier.push(sample(i, 1));
+    if (hasRaw) bare.push(sample(i, 2));
   }
   const [pe, px, ra] = [median(engine), median(indexed), median(rapier)];
   const raw = hasRaw ? median(bare) : null;
