@@ -35,6 +35,21 @@ const { instance } = await WebAssembly.instantiate(await readFile(target), { env
 const e = instance.exports;
 const name = (i) => new TextDecoder().decode(new Uint8Array(e.memory.buffer, e.oracle_name_ptr(i), e.oracle_name_len(i)));
 const median = (v) => v.sort((a, b) => a - b)[v.length >> 1];
+// One sample is the mean µs/tick of back-to-back runs (each on a freshly built world, build
+// untimed) spanning at least this long, so a scenario of a few dozen microseconds is not
+// timed from a single run.
+const SAMPLE_MS = 5;
+const WARM_UP_MS = 100;
+const sample = (i, side) => {
+  const start = performance.now();
+  let sum = 0;
+  let runs = 0;
+  do {
+    sum += e.oracle_time(i, side);
+    runs++;
+  } while (performance.now() - start < SAMPLE_MS);
+  return sum / runs;
+};
 
 // Fail when the engine's WASM median is more than 10% slower than either Rapier figure.
 const MARGIN = 1.1;
@@ -48,11 +63,21 @@ for (let i = 0; i < e.oracle_scenarios(); i++) {
   failed ||= !ok;
   const hasRaw = e.oracle_has_raw(i) === 1;
   const engine = [], indexed = [], rapier = [], bare = [];
+  const sides = hasRaw ? [0, 3, 1, 2] : [0, 3, 1];
+  // Untimed warm-up long enough for V8 to tier the hot functions up from its Liftoff baseline
+  // compiler, so samples time optimized code: short scenarios were otherwise mostly timed
+  // unoptimized (#549: brook-mesh-edge 9.3 µs/tick that way, about 2 µs/tick warmed up).
+  // Disabling Liftoff instead crashes V8's speculative inlining on current Node LTS.
+  for (const side of sides) {
+    const start = performance.now();
+    do e.oracle_time(i, side);
+    while (performance.now() - start < WARM_UP_MS);
+  }
   for (let s = 0; s < 11; s++) {
-    engine.push(e.oracle_time(i, 0));
-    indexed.push(e.oracle_time(i, 3));
-    rapier.push(e.oracle_time(i, 1));
-    if (hasRaw) bare.push(e.oracle_time(i, 2));
+    engine.push(sample(i, 0));
+    indexed.push(sample(i, 3));
+    rapier.push(sample(i, 1));
+    if (hasRaw) bare.push(sample(i, 2));
   }
   const [pe, px, ra] = [median(engine), median(indexed), median(rapier)];
   const raw = hasRaw ? median(bare) : null;
