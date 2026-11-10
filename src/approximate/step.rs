@@ -501,7 +501,10 @@ impl World {
                         && b.angular_velocity.length() * b.shape.radius() * lookahead
                             > self.scene.contact_slop
                 };
-                m.swept || (!plane && (tumbles(a) || tumbles(b)))
+                m.swept
+                    || (!plane
+                        && self.scene.contact_generation == super::ContactGeneration::Adaptive
+                        && (tumbles(a) || tumbles(b)))
             }))
     }
     /// Constraint phase: fresh rows for this substep's pairs, warm-started from the contact
@@ -846,12 +849,16 @@ impl World {
             crate::work::Counter::BodyVisits,
             scratch.activity.indices.len() as u64,
         );
+        // Propagated support only feeds the quiet timers of bodies the engine may put to sleep:
+        // with none awake (game-owned sleep), the support graph is skipped.
+        let mut timed = false;
         for &i in &scratch.activity.indices {
             let b = &self.bodies[i];
             // A floating body at equilibrium is held up by its medium.
             scratch.supported[i] =
                 (b.external && b.velocity == Vector::ZERO && b.angular_velocity == Vector::ZERO)
                     || b.medium.as_ref().is_some_and(|m| m.balanced);
+            timed |= b.movable() && b.sleep_allowed;
         }
         // Reuse point allocations when the pair survives. Warm starting has already read the
         // old impulses; only adjacency-key changes invalidate the graph, not updated impulses.
@@ -954,10 +961,10 @@ impl World {
                         impulse: c.normal_impulse,
                         tangent: c.t1 * c.tangent_impulse[0] + c.t2 * c.tangent_impulse[1],
                     });
-                    if c.n.dot(up) > 0.5 {
+                    if timed && c.n.dot(up) > 0.5 {
                         push(&mut scratch.support_edges, (c.a, c.b), &mut scratch.work);
                     }
-                    if c.n.dot(up) < -0.5 {
+                    if timed && c.n.dot(up) < -0.5 {
                         push(&mut scratch.support_edges, (c.b, c.a), &mut scratch.work);
                     }
                 }
@@ -1012,11 +1019,13 @@ impl World {
             self.bookkeeping.support_edges = edges;
         }
         let scratch = &mut self.bookkeeping;
-        scratch.support.propagate(
-            &mut scratch.supported,
-            &scratch.support_edges,
-            &mut scratch.work,
-        );
+        if timed {
+            scratch.support.propagate(
+                &mut scratch.supported,
+                &scratch.support_edges,
+                &mut scratch.work,
+            );
+        }
     }
     /// Integrate phase: awake bodies move by their solved velocities (and CCD offsets), and
     /// their quiet time and bounds update.
@@ -1859,20 +1868,26 @@ impl World {
                 }
                 let speed = (b.velocity - a.velocity).length();
                 let travel = speed * h;
+                let per_step = self.scene.contact_generation == super::ContactGeneration::PerStep;
+                // Travel within this substep that could carry one shape through the other.
+                let deep = travel
+                    > 0.5
+                        * a.shape
+                            .half_extents()
+                            .min_component()
+                            .min(b.shape.half_extents().min_component());
                 // Retain full-interval discovery after response preparation wakes the
                 // body; the second geometry pass must not discard an admitted sweep.
                 // A fixed boundary may be crossed below the shape-sized fast threshold.
                 // The current margin only rules out travel no larger than that margin.
+                // On the debris path (#543), a deep pair of two non-CCD bodies is admitted
+                // speculatively over the rest of the step, this substep included, instead of
+                // taking this substep's sweep, as Rapier's is.
                 let fast = driven_contact_candidate
                     || a.ccd
                     || b.ccd
                     || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.scene.contact_slop)
-                    || travel
-                        > 0.5
-                            * a.shape
-                                .half_extents()
-                                .min_component()
-                                .min(b.shape.half_extents().min_component());
+                    || (!per_step && deep);
                 // A tolerance-only manifold is not wake evidence. Probe the actual surface
                 // and full interval before replacing the parked body's zero response.
                 let margin = if driven_wake_candidate {
@@ -1883,13 +1898,18 @@ impl World {
                 // A separated pair slow enough to skip the sweep is admitted speculatively
                 // when it can close before the step ends; a fast pair keeps this substep's
                 // sweep instead.
-                let reach = if fast || lookahead == 0.0 {
+                let window = if per_step && deep {
+                    interval
+                } else {
+                    lookahead
+                };
+                let reach = if fast || window == 0.0 {
                     0.0
                 } else {
                     (speed
                         + a.angular_velocity.length() * a.shape.radius()
                         + b.angular_velocity.length() * b.shape.radius())
-                        * lookahead
+                        * window
                         + (step_drift(b, self.scene.gravity, gain)
                             - step_drift(a, self.scene.gravity, gain))
                         .length()
@@ -1899,11 +1919,19 @@ impl World {
                 // Separated co-moving CCD pairs never get here: the broad phase drops them
                 // (`skip_separated_ccd`).
                 report.narrow_tests += 1;
+                // The debris path takes current and speculative contacts in one query.
+                let single = per_step && reach > 0.0;
                 // GeometryCache shares read-only frames even for rotating pairs; it retains
                 // complete pair results only when both orientation dependencies are stable.
                 let current = self
                     .geometry
-                    .query_interval([i, j], [a, b], h, margin, &mut report.geometry)
+                    .query_interval(
+                        [i, j],
+                        [a, b],
+                        h,
+                        if single { margin + reach } else { margin },
+                        &mut report.geometry,
+                    )
                     // A CCD body still separated by a gap it closes well within this
                     // substep would stop at the surface on a speculative row and bounce
                     // only after the substep, losing the rest of its travel. Its swept
@@ -1930,7 +1958,7 @@ impl World {
                             bodies: [a.id, b.id],
                             reason,
                         })?
-                } else if reach > 0.0 {
+                } else if reach > 0.0 && !single {
                     let margin = margin + reach;
                     let speculative = self.geometry.query_interval(
                         [i, j],

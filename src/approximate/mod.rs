@@ -115,7 +115,7 @@ mod sleep;
 mod storage;
 pub use body::Body;
 pub(crate) use body::Order;
-pub use config::{BodyStorage, Config, PositionCorrection};
+pub use config::{BodyStorage, Config, ContactGeneration, PositionCorrection};
 use control::drop_boxes_near;
 pub use error::{Error, SweepFailure};
 pub use material::{CombineRule, Material};

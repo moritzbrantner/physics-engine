@@ -63,6 +63,26 @@ pub struct Config {
     pub length_unit: Real,
     /// Body storage layout, fixed for the world's lifetime.
     pub body_storage: BodyStorage,
+    /// When contacts are regenerated within a step; see [`ContactGeneration`].
+    pub contact_generation: ContactGeneration,
+}
+
+/// When a step regenerates its contacts; fixed when the world is created. See
+/// docs/world-api-contract.md (contact generation).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContactGeneration {
+    /// The general solver: contacts are generated on the first substep and reused by later
+    /// substeps until something the reused rows cannot represent happens, including a tumbling
+    /// corner and two dynamic bodies that can close within the step.
+    #[default]
+    Adaptive,
+    /// The opt-in gameplay-debris path (#543): contacts are generated once per step and reused
+    /// by every later substep, as Rapier does. Tumbling corners and closing dynamic pairs do
+    /// not regenerate: such pairs are admitted speculatively over the rest of the step instead,
+    /// and a pair of non-CCD dynamic bodies fast enough to pass through each other within a
+    /// substep is admitted over the whole step instead of taking that substep's sweep. Sweeps,
+    /// wakes, CCD advances and retirements still regenerate.
+    PerStep,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -80,6 +100,7 @@ impl Default for Config {
             convergence_scope: ConvergenceScope::ContactIslands,
             length_unit: 1.0,
             // The test-only `indexed-storage` feature runs every suite on `Indexed` storage.
+            contact_generation: ContactGeneration::Adaptive,
             body_storage: if cfg!(feature = "indexed-storage") {
                 BodyStorage::Indexed
             } else {
