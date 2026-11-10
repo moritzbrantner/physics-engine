@@ -1,8 +1,9 @@
-//! C26 (MMORPG persistent keyed debris lane, #524): a throw of debris settles into a pile on the
+//! C26 (MMORPG persistent keyed debris lane, #524, #543): a throw of debris settles into a pile on the
 //! floor plane; the game puts each settled piece to sleep (Rapier's `RigidBody::sleep()`, the
 //! engine's `World::set_sleeping`, the same rule as `debris`); a second throw lands on the pile
 //! and the contacts wake it, after which it settles and sleeps again. The engine runs MMORPG's
-//! exact-continuation configuration (`warm_start` off, `sleep_allowed` off, game-owned sleep);
+//! exact-continuation configuration (`warm_start` off, `sleep_allowed` off, game-owned sleep) on the
+//! opt-in gameplay-debris contact path (`ContactGeneration::PerStep`, owner decision D8);
 //! Rapier's bodies are `can_sleep(false)` so only the game's rule sleeps them, in one retained
 //! world, MMORPG's persistent lane. Every collider uses friction 0.8 and restitution 0.15.
 
@@ -305,6 +306,7 @@ mod engine {
                 body_storage: storage,
                 gravity: Vector(0.0, -GRAVITY, 0.0),
                 // MMORPG's debris lane settings, without warm starting: the exact-continuation lane.
+                // Gameplay debris takes the opt-in per-step contact path (#543).
                 substeps: 2,
                 velocity_iterations: 4,
                 warm_start: false,
