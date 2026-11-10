@@ -81,7 +81,9 @@ for (let i = 0; i < e.oracle_scenarios(); i++) {
   }
   const [pe, px, ra] = [median(engine), median(indexed), median(rapier)];
   const raw = hasRaw ? median(bare) : null;
-  const slow = [pe, px].some((t) => t > ra * MARGIN || (raw !== null && t > raw * MARGIN));
+  // Bare Rapier gates too unless the scenario reports it only (`Scenario::bare_gated`).
+  const gatedRaw = raw !== null && e.oracle_bare_gated(i) === 1 ? raw : null;
+  const slow = [pe, px].some((t) => t > ra * MARGIN || (gatedRaw !== null && t > gatedRaw * MARGIN));
   failed ||= slow;
   console.log(`${name(i).padEnd(20)} ${pe.toFixed(2).padStart(14)} ${px.toFixed(2).padStart(15)} ${ra.toFixed(2).padStart(14)} ${(pe / ra).toFixed(2).padStart(7)} ${(raw === null ? "-" : raw.toFixed(2)).padStart(11)}  ${ok ? "ok" : "FAILED"}${slow ? " SLOWER THAN RAPIER" : ""}`);
 }

@@ -277,6 +277,8 @@ the mesh BVH and has its own logarithmic-node/constant-nearby-triangle work cont
 The intended authored prop/debris adapter pattern uses isolated retained static worlds and
 transient rigid body admission/removal, with the game's one upright/four free solver
 iterations and no retained character state. The oracle measures that pattern on both
-engines against persistent bare Rapier; final adoption remains consumer-owned. Physical
+engines; the perf gate is Rapier with that pattern, and persistent bare Rapier, which keeps
+the body and its contacts across ticks, is printed as information (#553, as `debris-lane`
+#523). Final adoption remains consumer-owned. Physical
 continuation across transient cleanup is covered, including the pending removal `Stopped`
 events a checkpoint captured after cleanup carries into the next step (format 10, #505).

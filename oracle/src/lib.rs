@@ -80,9 +80,14 @@ pub struct Scenario {
     /// Rapier with the consumer's actual call pattern: the perf gate's baseline.
     #[cfg(feature = "rapier")]
     pub rapier: fn() -> Box<dyn Sim>,
-    /// Rapier without the consumer's workarounds (printed only): its raw cost.
+    /// Rapier without the consumer's workarounds: its raw cost.
     #[cfg(feature = "rapier")]
     pub rapier_raw: Option<fn() -> Box<dyn Sim>>,
+    /// Whether the perf gate also applies to `rapier_raw`. False for adapter lanes that re-add
+    /// every response body each tick, where bare persistent Rapier is a different workload: the
+    /// figure is printed only (owner decision, #523, #553).
+    #[cfg(feature = "rapier")]
+    pub bare_gated: bool,
     /// Behaviour invariants over both traces (engine, rapier).
     pub check: fn(&Trace, &Trace) -> Result<(), String>,
 }

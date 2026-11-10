@@ -25,6 +25,8 @@ pub fn scenario() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(false))),
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |e, r| {
             for (tick, (e, r)) in e.0.iter().zip(&r.0).enumerate() {
                 let (Obs::Position(e), Obs::Position(r)) = (e, r) else {
