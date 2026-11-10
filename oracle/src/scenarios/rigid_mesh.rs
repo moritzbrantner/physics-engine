@@ -1,7 +1,9 @@
 //! The rigid box contacts with the actual authored Redbrand Cave surfaces (#182).
 //! Uses the shipped cave and the game's crate/panel material, gravity and 60 Hz tick.
 //! Measures intended authored adapter body churn in retained isolated static worlds on both
-//! engines; bare Rapier additionally retains response across ticks. Game adoption is separate.
+//! engines; bare Rapier additionally retains response across ticks, a different workload, so
+//! the perf gate is the adapter pattern only and bare Rapier is printed (#553, as #523).
+//! Game adoption is separate.
 use crate::{Obs, Scenario, Trace};
 const TICKS: u32 = 360;
 const DT: f32 = 1.0 / 60.0;
@@ -21,6 +23,8 @@ pub fn scenario() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(false))),
+        #[cfg(feature = "rapier")]
+        bare_gated: false,
         check,
     }
 }
@@ -38,6 +42,8 @@ pub fn shared_scenario() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(true)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(false))),
+        #[cfg(feature = "rapier")]
+        bare_gated: false,
         check,
     }
 }

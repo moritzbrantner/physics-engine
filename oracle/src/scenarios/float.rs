@@ -148,6 +148,8 @@ pub fn scenario() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(BROOK, true)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(BROOK, false))),
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |engine, rapier| check(engine, rapier, BROOK),
     }
 }
@@ -163,6 +165,8 @@ pub fn scenario_marsh() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(MARSH, true)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(MARSH, false))),
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |engine, rapier| check(engine, rapier, MARSH),
     }
 }

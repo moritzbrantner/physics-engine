@@ -150,6 +150,8 @@ pub fn scenario() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(&TOWN)),
         #[cfg(feature = "rapier")]
         rapier_raw: None,
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |e, r| check(&TOWN, e, r),
     }
 }
@@ -165,6 +167,8 @@ pub fn scenario_tumble() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(&TUMBLE)),
         #[cfg(feature = "rapier")]
         rapier_raw: None,
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |e, r| check(&TUMBLE, e, r),
     }
 }

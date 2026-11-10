@@ -168,11 +168,13 @@ fn main() -> ExitCode {
             }
         }
         let (e, x, r) = (median(engine), median(indexed), median(rapier));
-        // Rapier without the consumer's workarounds: gated too, so the engine beats bare Rapier.
+        // Rapier without the consumer's workarounds: gated too, so the engine beats bare Rapier,
+        // unless the scenario reports it only (`bare_gated`).
         let raw = (!raw.is_empty()).then(|| median(raw));
+        let gated_raw = raw.filter(|_| scenario.bare_gated);
         let slow = [e, x]
             .into_iter()
-            .any(|e| e > r * MARGIN || raw.is_some_and(|raw| e > raw * MARGIN));
+            .any(|e| e > r * MARGIN || gated_raw.is_some_and(|raw| e > raw * MARGIN));
         failed |= slow;
         println!(
             "{:<20} {:<12} {:>14.2} {:>14.2} {:>14.2} {:>7.2} {:>11}  {}",

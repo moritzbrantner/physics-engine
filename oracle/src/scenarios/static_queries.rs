@@ -116,6 +116,8 @@ pub fn scenario() -> Scenario {
         rapier: || Box::new(rapier::Sim::new()),
         #[cfg(feature = "rapier")]
         rapier_raw: None,
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check,
     }
 }

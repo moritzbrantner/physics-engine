@@ -48,6 +48,19 @@ pub extern "C" fn oracle_has_raw(index: u32) -> i32 {
     i32::from(raw)
 }
 
+/// Whether the perf gate applies to the bare Rapier figure (see `Scenario::bare_gated`).
+#[unsafe(no_mangle)]
+pub extern "C" fn oracle_bare_gated(index: u32) -> i32 {
+    #[cfg(feature = "rapier")]
+    let gated = all()[index as usize].bare_gated;
+    #[cfg(not(feature = "rapier"))]
+    let gated = {
+        let _ = index;
+        false
+    };
+    i32::from(gated)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn oracle_scenarios() -> u32 {
     all().len() as u32

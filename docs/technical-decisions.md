@@ -67,7 +67,9 @@ CI checks behaviour invariants — no tunneling, grounding/support, normals with
 state and the scenario's own expectations — and **fails when Physics Engine is slower than Rapier**
 on that scenario natively (more than 5% slower than Rapier with the consumer's call pattern or
 than bare Rapier), and in WASM when more than 10% slower than either; both figures are always
-printed. Every parity change adds its
+printed. Adapter lanes that re-add every response body each tick gate on the consumer pattern
+only and print bare persistent Rapier, a different workload, as information (owner decisions:
+`debris-lane` #523, the Redbrand rigid-mesh lanes #553). Every parity change adds its
 scenario to the harness. The harness stays lean: no attestation, fingerprints or evidence
 packaging.
 

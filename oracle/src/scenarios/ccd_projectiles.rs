@@ -59,6 +59,8 @@ pub fn ricochet() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(0, RAPIER_STEPS)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(0, 1))),
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |engine, rapier| check(0, engine, rapier),
     }
 }
@@ -74,6 +76,8 @@ pub fn glancing() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(1, RAPIER_STEPS)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(1, 1))),
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |engine, rapier| check(1, engine, rapier),
     }
 }
@@ -89,6 +93,8 @@ pub fn moving() -> Scenario {
         rapier: || Box::new(rapier::Sim::new(2, RAPIER_STEPS)),
         #[cfg(feature = "rapier")]
         rapier_raw: Some(|| Box::new(rapier::Sim::new(2, 1))),
+        #[cfg(feature = "rapier")]
+        bare_gated: true,
         check: |engine, rapier| check(2, engine, rapier),
     }
 }
