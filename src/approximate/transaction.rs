@@ -177,6 +177,10 @@ impl Journal {
         };
         let at = self.cursor.min(self.pairs.len());
         if at > 0 && key <= self.pairs[at - 1].0 {
+            // The writeback journals a pair twice in a row (clear, then refill).
+            if key == self.pairs[at - 1].0 {
+                return Ok(at - 1);
+            }
             return search(&self.pairs[..at]);
         }
         match self.pairs.get(at) {

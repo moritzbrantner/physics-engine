@@ -616,9 +616,10 @@ sleep sets `Body::sleep_allowed = false` so the engine's quiet timers stay out o
 Sleepers cost nothing per step: their contact pairs are parked out of the per-substep walks, so
 a step's work follows the awake bodies and pairs only (see the `step` contract, #524).
 
-This capability has no Rapier oracle scenario or speed gate yet ([#543](https://github.com/moritzbrantner/physics-engine/issues/543)): its behaviour against
-Rapier and its cost relative to Rapier are unverified. The exact-continuation guarantee below is
-checked by `tests/sleeping_debris.rs`.
+The `rubble-wake` oracle scenario (C26, #543) checks a pile that settles, is put to sleep and is
+woken by a second throw against Rapier's `RigidBody::sleep()`, at MMORPG's lane settings with
+[`ContactGeneration::PerStep`](#contact-generation). The exact-continuation guarantee below is
+checked by `tests/sleeping_debris.rs` with both contact-generation modes.
 
 **Exact continuation.** With `Config::warm_start = false` and `sleep_allowed = false` on every
 awake dynamic body, a world rebuilt from canonical state (keys, poses, velocities and sleep flags;
@@ -641,6 +642,39 @@ its contacts as `Started` on its first step and answers no support until a step 
 kinematic drive, characters and pending forces are outside it, as is any body the engine put to
 sleep itself (`sleep_allowed = true`), whose quiet timers are not canonical state. Worlds with
 `warm_start = true` keep their cached traversal and full restitution history.
+
+## Contact generation
+
+`Config::contact_generation` selects when a step regenerates its contacts. It is part of the
+configuration: fixed for the world's lifetime and checkpointed.
+
+- `ContactGeneration::Adaptive` (the default) is the general solver. Contacts are generated on a
+  step's first substep and their rows reused by later substeps, unless something the reused rows
+  cannot represent happens: a sweep or CCD advance, a wake, a sleep or a retirement, a tumbling
+  corner of a non-plane pair, or two dynamic bodies that can close within the step (their
+  speculative rows would make stacks rock, so the next substep regenerates instead). A pair of
+  bodies that can travel more than half the thinner one's smallest half extent within a substep
+  takes that substep's swept test.
+- `ContactGeneration::PerStep` is the opt-in path for gameplay debris
+  ([D8](technical-decisions.md#d8--two-tier-mmorpg-debris-an-opt-in-per-step-contact-path-543)):
+  contacts are generated once per step and reused by every later substep, as Rapier does. It
+  differs from `Adaptive` only in three simplifications:
+  - a tumbling corner does not force a regeneration (the rows advance by their bodies' point
+    velocities);
+  - a pair of two dynamic bodies that can close within the step is admitted with speculative
+    rows instead of being left to the next substep;
+  - such a pair that is fast enough to pass through the thinner body within one substep is
+    admitted speculatively over the whole rest of the step, the current substep included,
+    instead of taking a sweep that covers only the current substep. Each non-swept pair takes
+    one geometry query, at the slop plus its reach over the step.
+
+  Everything else is the general solver's: CCD bodies, driven (kinematic) contacts and pairs with
+  a fixed body still take swept tests, which regenerate the next substep, as do wakes, sleeps,
+  CCD advances and retirements; halfspace contacts, the solver, restitution, sleep and events are
+  unchanged. Exact continuation from canonical state holds for both modes.
+
+The `rubble-wake` oracle scenario times and checks `PerStep` against Rapier; every other scenario
+runs `Adaptive`.
 
 ## Failure behaviour
 

@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 use sha2::{Digest, Sha256};
 
 use super::{
-    Body, BodyId, BodyStorage, CachedPoint, CharacterSettings, CombineRule, Config, Convergence,
-    ConvergenceScope, ConvexHullId, Embedded, HeightfieldDesc, Order, PositionCorrection,
-    Quaternion, REAL_BITS, Real, Scalar, Shape, TerrainId, TriangleMeshId, Vector, World,
-    character, contact, convex_hull, narrow_time, substep_length, terrain, widen_time,
+    Body, BodyId, BodyStorage, CachedPoint, CharacterSettings, CombineRule, Config,
+    ContactGeneration, Convergence, ConvergenceScope, ConvexHullId, Embedded, HeightfieldDesc,
+    Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, TerrainId,
+    TriangleMeshId, Vector, World, character, contact, convex_hull, narrow_time, substep_length,
+    terrain, widen_time,
 };
 use crate::CollisionLayers3d;
 
@@ -20,7 +21,7 @@ const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
 } else {
     MAGIC_F64
 };
-const FORMAT: u32 = 12;
+const FORMAT: u32 = 13;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 20;
 const DIGEST_BYTES: usize = 32;
@@ -1016,7 +1017,8 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
     let position =
         u8::from(config.position_correction == PositionCorrection::AdmittedContacts) << 1;
     let storage = u8::from(config.body_storage == BodyStorage::Indexed) << 2;
-    out.push(position | storage);
+    let generation = u8::from(config.contact_generation == ContactGeneration::PerStep) << 3;
+    out.push(position | storage | generation);
 }
 fn encode_body(out: &mut Vec<u8>, b: &Body) {
     out.extend_from_slice(&b.id.to_bits().to_le_bytes());
@@ -1278,10 +1280,11 @@ impl<'a> Reader<'a> {
             },
             length_unit: 1.0,
             body_storage: BodyStorage::Ordered,
+            contact_generation: ContactGeneration::Adaptive,
         };
         config.length_unit = self.scalar()?;
         let policies = self.u8()?;
-        if policies & !7 != 0 {
+        if policies & !15 != 0 {
             return Err(CheckpointError::InvalidData);
         }
         if policies & 2 != 0 {
@@ -1289,6 +1292,9 @@ impl<'a> Reader<'a> {
         }
         if policies & 4 != 0 {
             config.body_storage = BodyStorage::Indexed;
+        }
+        if policies & 8 != 0 {
+            config.contact_generation = ContactGeneration::PerStep;
         }
         let soft = policies & 1 != 0;
         if soft {

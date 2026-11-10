@@ -123,6 +123,21 @@ mmorpg#300 (trap/trigger entry, Q33), mmorpg#290 (thrown and bouncing weapons, Q
 (movement and surface spells, Q34), mmorpg#379 (action timing, Q32 sweep sampling). #3 (CCD
 roadmap) stays closed. Recording these decisions establishes neither parity nor adoption.
 
+## D8 — Two-tier MMORPG debris; an opt-in per-step contact path (#543)
+
+Owner decision 2026-11-09 (#543). Gameplay-significant debris chunks stay server-authoritative
+dynamic bodies: collision-capable, sleeping and waking, and bit-identically recoverable from
+canonical snapshots under the #524 contract. Small visual fragments may be cosmetic, with no
+authoritative collision, damage, blocking or canonical body state; MMORPG and its asset
+presentation own them, and they never affect simulation or replay. Which object is in which tier
+is the game's explicit, tested classification, not a silent size threshold.
+
+The general solver is unchanged. The gameplay-debris tier may opt into a simpler contact path,
+`Config::contact_generation = ContactGeneration::PerStep`, which generates contacts once per step as
+Rapier does; see [contact generation](world-api-contract.md#contact-generation). It is benchmarked
+separately by the `rubble-wake` oracle scenario (C26) and verified by its own tests; no other
+scenario or test changes behaviour.
+
 ## Standing rules
 
 These earlier rules remain compatible with the direction above:

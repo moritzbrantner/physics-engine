@@ -2,8 +2,8 @@ use physics_engine::{
     CollisionLayers3d,
     approximate::{
         Body, Checkpoint, CheckpointContext, CheckpointError, CheckpointLimits, CombineRule,
-        Config, ConvergenceScope, PositionCorrection, Quaternion, Report, Shape, Vector as V,
-        World,
+        Config, ContactGeneration, ConvergenceScope, PositionCorrection, Quaternion, Report, Shape,
+        Vector as V, World,
     },
 };
 use physics_engine::{
@@ -134,24 +134,39 @@ fn config() -> Config {
 
 #[test]
 fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
-    for (warm_start, convergence, scope) in [
+    for (warm_start, convergence, scope, generation) in [
         (
             true,
             Config::default().convergence,
             ConvergenceScope::ContactIslands,
+            ContactGeneration::Adaptive,
         ),
         (
             true,
             Config::default().convergence,
             ConvergenceScope::WholeWorld,
+            ContactGeneration::Adaptive,
         ),
-        (false, None, ConvergenceScope::ContactIslands),
+        (
+            false,
+            None,
+            ConvergenceScope::ContactIslands,
+            ContactGeneration::Adaptive,
+        ),
+        // The debris path (#543) is part of the encoded configuration.
+        (
+            false,
+            Config::default().convergence,
+            ConvergenceScope::ContactIslands,
+            ContactGeneration::PerStep,
+        ),
     ] {
         let make = || {
             fixture(Config {
                 warm_start,
                 convergence,
                 convergence_scope: scope,
+                contact_generation: generation,
                 ..config()
             })
         };
@@ -175,6 +190,7 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
         let saved = bytes(&captured);
         drop(captured);
         let mut continued = restore(&saved);
+        assert_eq!(continued.config().contact_generation, generation);
         same(&continued, &uninterrupted);
         assert!(continued.last_report.retired.is_empty());
         assert_eq!(continued.last_report.substeps, 0);
@@ -617,7 +633,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_twelve_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
+fn format_thirteen_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -627,13 +643,13 @@ fn format_twelve_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
     .unwrap();
     let encoded = bytes(&world);
     assert_eq!(&encoded[..8], b"PEFLT32\0");
-    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 12);
+    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 13);
     assert_eq!(
         Sha256::digest(&encoded)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "1cbf9eaa7d9a47336814ca50bff4c9cb9ec736e91ae9fb6fed3882429123f579"
+        "82e34d45100694febddaafa2b4b151dd2aed1129cbd4d55b5278a63622e4e4b7"
     );
 }
 

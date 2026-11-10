@@ -1,19 +1,20 @@
 //! Game-owned sleep and exact continuation from canonical state (#524).
 use physics_engine::approximate::{
-    Body, BodyStorage, Config, Quaternion, Shape, Vector as V, World,
+    Body, BodyStorage, Config, ContactGeneration, Quaternion, Shape, Vector as V, World,
 };
 
 const DT: f64 = 1.0 / 30.0;
 /// Dynamic keys start here; statics take keys below it.
 const DYNAMIC: u64 = 1000;
 
-fn config(storage: BodyStorage) -> Config {
+fn config(storage: BodyStorage, generation: ContactGeneration) -> Config {
     Config {
         body_storage: storage,
         gravity: V(0.0, -9.0, 0.0),
         substeps: 2,
         velocity_iterations: 4,
         warm_start: false,
+        contact_generation: generation,
         ..Config::default()
     }
 }
@@ -55,8 +56,8 @@ fn piece(k: u64) -> Body {
     b
 }
 
-fn live_world(storage: BodyStorage) -> World {
-    let mut w = World::new(config(storage)).unwrap();
+fn live_world(storage: BodyStorage, generation: ContactGeneration) -> World {
+    let mut w = World::new(config(storage, generation)).unwrap();
     add_statics(&mut w);
     for k in 0..24 {
         w.add_body(piece(k)).unwrap();
@@ -98,8 +99,8 @@ fn bits(c: &Canon) -> Vec<(u64, [u32; 16], bool)> {
 
 /// A world rebuilt only from statics and the canonical record, the pieces in reverse key
 /// order (a rebuild's insertion order is not part of the state).
-fn rebuilt(c: &Canon, storage: BodyStorage) -> World {
-    let mut w = World::new(config(storage)).unwrap();
+fn rebuilt(c: &Canon, storage: BodyStorage, generation: ContactGeneration) -> World {
+    let mut w = World::new(config(storage, generation)).unwrap();
     add_statics(&mut w);
     for &(k, p, q, v, spin, sleeping) in c.iter().rev() {
         let mut b = piece(k - DYNAMIC);
@@ -114,8 +115,16 @@ fn rebuilt(c: &Canon, storage: BodyStorage) -> World {
 /// state, through settling, game-owned sleep, a wake from a second throw and bounces.
 #[test]
 fn rebuilt_world_continues_bit_identically() {
-    for storage in [BodyStorage::Ordered, BodyStorage::Indexed] {
-        let mut live = live_world(storage);
+    for (storage, generation) in [BodyStorage::Ordered, BodyStorage::Indexed]
+        .into_iter()
+        .flat_map(|s| {
+            [
+                (s, ContactGeneration::Adaptive),
+                (s, ContactGeneration::PerStep),
+            ]
+        })
+    {
+        let mut live = live_world(storage, generation);
         let mut woke = 0;
         for tick in 0..240 {
             // Game-owned sleep: settled, slow pieces are put to sleep.
@@ -145,7 +154,7 @@ fn rebuilt_world_continues_bit_identically() {
                 }
             }
             let c = canon(&live);
-            let mut copy = rebuilt(&c, storage);
+            let mut copy = rebuilt(&c, storage, generation);
             assert_eq!(
                 bits(&canon(&copy)),
                 bits(&c),
@@ -157,7 +166,7 @@ fn rebuilt_world_continues_bit_identically() {
             assert_eq!(
                 bits(&canon(&copy)),
                 bits(&canon(&live)),
-                "diverged at tick {tick} ({storage:?})"
+                "diverged at tick {tick} ({storage:?}, {generation:?})"
             );
             assert_eq!(report.woken_bodies, copy_report.woken_bodies, "tick {tick}");
             // The rebuild also keeps stepping on: more than one step of continuation.
@@ -201,7 +210,7 @@ fn add_body_keeps_a_unit_orientation_exactly() {
 
 #[test]
 fn set_sleeping_rests_a_body_and_rejects_what_cannot_sleep() {
-    let mut w = World::new(config(BodyStorage::Ordered)).unwrap();
+    let mut w = World::new(config(BodyStorage::Ordered, ContactGeneration::Adaptive)).unwrap();
     let floor = w
         .add_body(Body::keyed(1, Shape::HalfSpace, V::ZERO, 0.0))
         .unwrap();
@@ -241,7 +250,7 @@ fn contact_from_an_awake_body_wakes_the_touching_pile() {
     for warm_start in [false, true] {
         let mut w = World::new(Config {
             warm_start,
-            ..config(BodyStorage::Ordered)
+            ..config(BodyStorage::Ordered, ContactGeneration::Adaptive)
         })
         .unwrap();
         w.add_body(Body::keyed(1, Shape::HalfSpace, V::ZERO, 0.0))
@@ -277,5 +286,54 @@ fn contact_from_an_awake_body_wakes_the_touching_pile() {
             ids.iter().all(|&id| !w.is_sleeping(id)),
             "pile did not wake (warm_start {warm_start})"
         );
+    }
+}
+
+/// The debris path (#543) admits a fast pair of thin dynamic pieces speculatively over the whole
+/// step instead of sweeping each substep: a thin plate thrown down at a thin plank resting on
+/// the floor, from any gap up to a whole step's travel, lands on it and never passes through.
+#[test]
+fn per_step_contacts_stop_a_fast_thin_piece_on_a_thin_piece() {
+    for generation in [ContactGeneration::Adaptive, ContactGeneration::PerStep] {
+        for speed in [6.0, 12.0, 20.0] {
+            // Gaps within one substep's travel, between one substep's and one step's, and
+            // beyond the step's.
+            let substep = speed * DT as f32 / 2.0;
+            for gap in [0.5 * substep, 1.5 * substep, 2.5 * substep] {
+                let mut w = World::new(config(BodyStorage::Ordered, generation)).unwrap();
+                w.add_body(Body::keyed(1, Shape::HalfSpace, V::ZERO, 0.0))
+                    .unwrap();
+                let mut plank =
+                    Body::keyed(2, Shape::Box(V(0.6, 0.05, 0.6)), V(0.0, 0.05, 0.0), 4.0);
+                plank.sleep_allowed = false;
+                let plank = w.add_body(plank).unwrap();
+                let mut plate = Body::keyed(
+                    3,
+                    Shape::Box(V(0.3, 0.04, 0.3)),
+                    V(0.0, 0.14 + gap, 0.0),
+                    2.0,
+                );
+                plate.velocity = V(0.0, -speed, 0.0);
+                plate.sleep_allowed = false;
+                let plate = w.add_body(plate).unwrap();
+                for tick in 0..60 {
+                    w.step(DT).unwrap();
+                    let (p, q) = (w.body(plate).unwrap(), w.body(plank).unwrap());
+                    assert!(
+                        p.position.1 > q.position.1 + 0.05,
+                        "{generation:?}: the plate at {speed} m/s from a {gap} m gap passed the \
+                         plank at tick {tick}: {:?} vs {:?}",
+                        p.position,
+                        q.position
+                    );
+                }
+                let p = w.body(plate).unwrap();
+                assert!(
+                    (p.position.1 - 0.14).abs() < 0.02,
+                    "{generation:?}: the plate rests at {:?}",
+                    p.position
+                );
+            }
+        }
     }
 }
