@@ -34,6 +34,7 @@ pub mod rigid_rocks;
 pub mod rope_joints;
 pub mod rotating_kinematic;
 pub mod rubble_wake;
+pub mod shooter_window;
 pub mod slopes;
 pub mod stairs;
 pub mod stairs_pace;
