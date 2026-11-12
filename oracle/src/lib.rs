@@ -226,5 +226,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::rotating_kinematic::scenario(),
         scenarios::rubble_wake::scenario(),
         scenarios::grapple::scenario(),
+        scenarios::shooter_window::scenario(),
     ]
 }
