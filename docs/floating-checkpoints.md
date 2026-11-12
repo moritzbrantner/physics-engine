@@ -85,6 +85,8 @@ joint silently. A world without joints builds no joint rows, so its continuation
 Likewise a `World::set_next_kinematic_pose` target is not part of the format (#520): between that
 call and the next step `checkpoint` returns `CheckpointError::PendingKinematicPose`; the step
 consumes the target and leaves the body at rest at its pose, which the format already holds.
+A character tether (`World::tether_character`, #557) is not part of the format either: while any
+character holds one, `checkpoint` returns `CheckpointError::UnsupportedTethers`.
 
 ## Terrain and character state (#452)
 

@@ -117,6 +117,64 @@ pub struct CharacterMoveResult {
     pub support: Option<BodyId>,
     /// Number of surfaces the motion touched (at most `max_slides`).
     pub contacts: u8,
+    /// What the character's [`Tether`] added to `desired` before the slide: the outward motion
+    /// it took out and the pull back of a stretched rope (zero without one, or while slack).
+    /// A consumer deriving its velocity from `translation` sees it there already.
+    pub tether: V,
+}
+
+/// A rope from a fixed world point to a character ([`World::tether_character`]; a grapple
+/// hook). Each move of the character keeps the attachment within `length` of `anchor`: the
+/// part of the desired motion that would take it past the rope's length is removed (motion
+/// across the rope is kept, so the character swings), a rope already stretched draws it back
+/// by up to `max_pull`, and the slide then resolves collisions as for any move. Scene units.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tether {
+    /// The fixed world point the rope holds on.
+    pub anchor: V,
+    /// Where the rope holds on the character, relative to its centre (characters stay
+    /// upright, so this is a world-frame offset: the shooter's eye is `(0, 0.75, 0)`).
+    pub attachment: V,
+    /// The rope's length: the most the attachment may be from `anchor` after a move.
+    pub length: Real,
+    /// The most one move draws a stretched rope's character back toward `anchor` (the
+    /// shooter's 24 m/s at 60 Hz: 0.4 m).
+    pub max_pull: Real,
+}
+
+impl Tether {
+    fn valid(&self) -> bool {
+        let point = |p: V| p.finite() && p.abs().max_component() < 1e12;
+        point(self.anchor)
+            && point(self.attachment)
+            && valid_length(self.length)
+            && self.max_pull.is_finite()
+            && (0.0..1e12).contains(&self.max_pull)
+    }
+
+    /// `desired` from a character centred at `centre`, with the rope's change to it.
+    fn constrain(&self, centre: V, desired: V, offset: Real) -> V {
+        let to_anchor = self.anchor - (centre + self.attachment);
+        let span = to_anchor.length();
+        if span <= offset * 1e-3 {
+            return V::ZERO;
+        }
+        let toward = to_anchor * (1.0 / span);
+        // Linearized about the start: the move's motion toward the anchor must make up what
+        // the attachment stands beyond the rope's length (bounded by `max_pull`); a slack rope
+        // admits outward motion up to its slack.
+        let wanted = (span - self.length).min(self.max_pull);
+        let inward = desired.dot(toward);
+        if inward < wanted {
+            toward * (wanted - inward)
+        } else {
+            V::ZERO
+        }
+    }
+}
+
+fn valid_length(length: Real) -> bool {
+    length.is_finite() && length > 0.0 && length < 1e12
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -143,6 +201,10 @@ pub(super) struct Characters {
     /// The latest zero-motion move's support outcome, reused by the next zero-motion move from
     /// the same verified pose while nothing it depends on changed (#526).
     still: Vec<Option<StillMove>>,
+    /// The character's rope ([`World::tether_character`]).
+    tether: Vec<Option<Tether>>,
+    /// How many characters hold a tether (checkpoints reject a world with any).
+    tethers: usize,
     /// Incremented whenever a character is placed rather than moved: a placed character can
     /// overlap any other, so every character checks again once.
     placements: u64,
@@ -208,7 +270,9 @@ impl Characters {
             self.verified_clear.resize(slot + 1, None);
             self.exclude.resize(slot + 1, None);
             self.still.resize(slot + 1, None);
+            self.tether.resize(slot + 1, None);
         }
+        self.release(slot);
         self.ids[slot] = id;
         self.settings[slot] = settings;
         self.clear[slot] = DIRTY;
@@ -272,7 +336,18 @@ impl Characters {
         if let Some(slot) = self.slot(id) {
             self.ids[slot] = BodyId::NONE;
             self.still[slot] = None;
+            self.release(slot);
         }
+    }
+    fn release(&mut self, slot: usize) -> Option<Tether> {
+        let tether = self.tether[slot].take();
+        self.tethers -= usize::from(tether.is_some());
+        tether
+    }
+    /// Whether any character holds a tether.
+    #[cfg(feature = "checkpoints")]
+    pub fn any_tether(&self) -> bool {
+        self.tethers > 0
     }
     fn pushed(&mut self, id: BodyId) -> Option<&mut V> {
         self.slot(id).map(|s| &mut self.pushed[s])
@@ -355,6 +430,45 @@ impl World {
         Ok(())
     }
 
+    /// Ties character `id` to a fixed world point by `tether` (a grapple hook), replacing any
+    /// tether it held: every later move keeps its attachment within the rope's length of the
+    /// anchor (see [`Tether`]). Adding the character again or removing its body releases it.
+    pub fn tether_character(&mut self, id: BodyId, tether: Tether) -> Result<(), Error> {
+        let slot = self.characters.slot(id).ok_or(Error::MissingBody(id))?;
+        if !tether.valid() {
+            return Err(Error::InvalidInput);
+        }
+        self.characters.release(slot);
+        self.characters.tether[slot] = Some(tether);
+        self.characters.tethers += 1;
+        Ok(())
+    }
+
+    /// Sets the length of character `id`'s tether (reeling in or paying out).
+    pub fn set_tether_length(&mut self, id: BodyId, length: Real) -> Result<(), Error> {
+        let slot = self.characters.slot(id).ok_or(Error::MissingBody(id))?;
+        match &mut self.characters.tether[slot] {
+            Some(tether) if valid_length(length) => {
+                tether.length = length;
+                Ok(())
+            }
+            _ => Err(Error::InvalidInput),
+        }
+    }
+
+    /// Releases character `id`'s tether, returning it (`None` without one).
+    pub fn release_tether(&mut self, id: BodyId) -> Option<Tether> {
+        let slot = self.characters.slot(id)?;
+        self.characters.release(slot)
+    }
+
+    /// Character `id`'s tether.
+    pub fn tether(&self, id: BodyId) -> Option<Tether> {
+        self.characters
+            .slot(id)
+            .and_then(|slot| self.characters.tether[slot])
+    }
+
     /// Moves characters by their desired translations. Moves run once each in body order
     /// (keyed bodies by key, then keyless by creation), independent of the order of `moves`;
     /// each later mover sees the earlier ones at their new positions. Characters of the batch
@@ -418,6 +532,7 @@ impl World {
                 ground_contact: false,
                 support: None,
                 contacts: 0,
+                tether: V::ZERO,
             },
         );
         for &(_, n, state) in batch.iter() {
@@ -852,6 +967,7 @@ impl World {
             ground_contact: false,
             support: None,
             contacts: 0,
+            tether: V::ZERO,
         };
         let mut push_budget = s.max_push.unwrap_or(0.0);
 
@@ -910,6 +1026,14 @@ impl World {
             }
             pose.position += push;
             result.depenetration += push;
+        }
+
+        // A tether takes out what would carry the character past its rope from where it now
+        // stands, then the slide resolves the rest as for any move.
+        let mut desired = desired;
+        if let Some(tether) = self.characters.tether[slot] {
+            result.tether = tether.constrain(pose.position, desired, s.offset);
+            desired += result.tether;
         }
 
         // A zero-motion move from a verified clear pose neither slides nor depenetrates: what
