@@ -225,5 +225,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::collision_filters::scenario(),
         scenarios::rotating_kinematic::scenario(),
         scenarios::rubble_wake::scenario(),
+        scenarios::grapple::scenario(),
     ]
 }

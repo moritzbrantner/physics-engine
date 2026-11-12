@@ -338,6 +338,28 @@ it is lifted by the step's height and nudged forward by up to `min_width`. A cap
 step's rounded edge may climb it over several moves, as on Rapier. Snapping to the ground applies
 only to moves whose translation did not rise (as Rapier), so a step or a slide up an edge keeps its
 height.
+`tether_character(id, Tether { anchor, attachment, length, max_pull })` ties a character to a
+fixed world point by a rope (#557, a grapple hook; scene units). Each later move, after the
+character's depenetration and before its slide, measures the attachment (`attachment` from the
+character's centre; characters stay upright) from `anchor` and changes the desired motion so
+its part toward the anchor is at least `min(span − length, max_pull)`: a slack rope admits
+outward motion up to its slack, a taut one removes the outward part and keeps the part across
+the rope (the character swings), and a stretched one draws the character back by at most
+`max_pull` per move. The constraint is linearized about the move's start, so motion across a
+taut rope stretches it by the arc's second-order excess, which the next move draws back. The
+slide, stepping, snapping and grounded test then apply to the changed motion as to any move,
+so a pull into a wall or pillar stops at it and a pull up a face slides up it.
+`CharacterMoveResult::tether` reports the change, part of `translation`'s request; a consumer
+deriving its velocity from `translation` sees it there. `set_tether_length` reels the rope in
+or pays it out (the shooter shortens it to the distance reached; the reel's acceleration is the
+consumer's), `release_tether` returns and removes it, `tether` reads it. Rejected: a body that is
+not a character (`MissingBody`), a non-finite or out-of-range anchor or attachment (1e12), a
+length that is not finite and positive, a negative or non-finite `max_pull`, and
+`set_tether_length` without a tether (`InvalidInput`). Tethering again replaces the rope; adding
+the character again or removing its body releases it. Per move the tether adds constant work to
+the tethered character; a world with a tethered character is not checkpointed
+(`CheckpointError::UnsupportedTethers`). The `grapple` oracle scenario (C27) checks it against
+Rapier's controller with the same rule applied around `move_shape`.
 `set_kinematic_position` places an external body without resolving contact; sleeping bodies
 within twice the contact slop of its old pose, or touching its new one, wake.
 `set_next_kinematic_pose(id, position, orientation)` moves an external body with positive mass
@@ -689,7 +711,8 @@ checkpoints restore only on their own build and target
 ([floating checkpoints](floating-checkpoints.md)). Moving between providers or targets
 reconstructs physics from consumer-owned game state; Rapier state is never deserialized into a
 Physics Engine checkpoint. Worlds with joints are not checkpointed (`UnsupportedJoints`), nor are
-worlds holding a `set_next_kinematic_pose` target for the next step (`PendingKinematicPose`).
+worlds holding a `set_next_kinematic_pose` target for the next step (`PendingKinematicPose`) or a
+tethered character (`UnsupportedTethers`).
 Heightfield heights stay game content: `checkpoint` records a fingerprint of each live
 heightfield's description, `Checkpoint::heightfield_bodies()` lists them and
 `Checkpoint::restore(&[HeightfieldDesc]) -> Result<World, CheckpointError>` takes their

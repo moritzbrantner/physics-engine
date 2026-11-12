@@ -84,6 +84,9 @@ pub enum CheckpointError {
     /// A [`World::set_next_kinematic_pose`] target awaits the next step (#520); checkpoint
     /// after that step, which consumes it. Nothing is captured.
     PendingKinematicPose,
+    /// A character holds a [`World::tether_character`] rope, which checkpoints do not hold
+    /// (#557); release it first. Nothing is captured.
+    UnsupportedTethers,
     /// Restore was given heightfields that differ from the checkpoint's live terrain (#452):
     /// `index` is the first entry of [`Checkpoint::heightfield_bodies`] whose description is
     /// missing, extra or not the one the world was built with. No world is created.
@@ -167,13 +170,16 @@ impl World {
     /// step never calls it. Heightfields are recorded by a fingerprint of their description,
     /// which [`Checkpoint::restore`] takes again; halfspaces are inline bodies. Worlds with
     /// joints are not checkpointed (`UnsupportedJoints`), nor are worlds holding a pose target
-    /// for the next step (`PendingKinematicPose`).
+    /// for the next step (`PendingKinematicPose`) or tethered characters (`UnsupportedTethers`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
         if !self.joints.is_empty() {
             return Err(CheckpointError::UnsupportedJoints);
         }
         if !self.kinematic_poses.is_empty() {
             return Err(CheckpointError::PendingKinematicPose);
+        }
+        if self.characters.any_tether() {
+            return Err(CheckpointError::UnsupportedTethers);
         }
         // Live bodies in body order, whatever the storage holds between steps.
         let bodies = self.bodies().cloned().collect::<Vec<_>>();
