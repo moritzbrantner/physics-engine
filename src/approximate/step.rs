@@ -1168,14 +1168,18 @@ impl World {
             s.stepped.len()
         };
         crate::work::add(crate::work::Counter::BodyVisits, count as u64);
-        for q in 0..count {
-            let i = if all { q } else { s.stepped[q] };
+        let mut clear = |i: usize| {
             let b = &mut self.bodies[i];
             if b.force != Vector::ZERO || b.torque != Vector::ZERO {
                 self.transaction.body(i, b);
             }
             b.force = Vector::ZERO;
             b.torque = Vector::ZERO;
+        };
+        if all {
+            (0..count).for_each(&mut clear);
+        } else {
+            s.stepped.iter().copied().for_each(clear);
         }
     }
     /// Carries the step's constraint rows into the next substep (#378). Normals, arms, masses and
