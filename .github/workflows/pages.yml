@@ -25,12 +25,14 @@ jobs:
       actions: read
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@544af51c921b09b4452b7346347ec9effa58f179
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@6ff3b97a91cfc1feda73dc0ac59c3b284483f123 # main
     with:
       source_sha: ${{ github.event.workflow_run.head_sha || github.sha }}
       artifact_key: physics-engine-pages-v1
       build_command: bash scripts/build-pages.sh
       artifact_paths: pages-dist
+      cache_cargo: true
+      cargo_cache_dependency_path: Cargo.lock
       reuse_across_runs: true
       artifact_retention_days: 7
 
@@ -42,7 +44,7 @@ jobs:
       pages: write
       id-token: write
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@544af51c921b09b4452b7346347ec9effa58f179
+    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@6ff3b97a91cfc1feda73dc0ac59c3b284483f123 # main
     with:
       node_version: ""
       bun_version: ""
