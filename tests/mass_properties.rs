@@ -22,11 +22,8 @@ pub fn sphere_and_zero_skeleton_capsule_share_uniform_products() {
                 4.0 * (std::f64::consts::PI as Real) * radius.powi(3) / 3.0,
             );
             assert_eq!(sphere.local_center_of_mass, Vector::ZERO);
-            for axis in 0..3 {
-                close(
-                    sphere.local_inertia[axis][axis],
-                    0.4 * mass * radius * radius,
-                );
+            for (axis, row) in sphere.local_inertia.iter().enumerate() {
+                close(row[axis], 0.4 * mass * radius * radius);
             }
         }
     }
