@@ -502,9 +502,9 @@ mod rapier {
                 trace.0.push(Obs::Position(self.positions[k]));
                 trace.0.push(Obs::Grounded(self.grounded[k]));
             }
-            for k in 0..LANES {
-                trace.0.push(Obs::Support(self.support[k]));
-            }
+            trace
+                .0
+                .extend(self.support.iter().map(|&gap| Obs::Support(gap)));
         }
     }
 }
