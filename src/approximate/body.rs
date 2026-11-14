@@ -180,6 +180,7 @@ impl Body {
                 && self.mass == 0.0
                 && !self.external))
             && (!matches!(self.shape, Shape::Wedge(_)) || self.rotation_locked || !self.movable())
+            && (!matches!(self.shape, Shape::Compound(_)) || (self.movable() && !self.ccd))
             && (!self.shape.query_only() || (self.mass == 0.0 && !self.external))
             && self.mass.is_finite()
             && (self.mass == 0.0 || self.mass >= 1e-6)

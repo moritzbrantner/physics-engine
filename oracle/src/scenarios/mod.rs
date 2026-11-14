@@ -11,6 +11,7 @@ pub mod ccd_synchronized;
 pub mod character_move;
 pub mod character_rebuild;
 pub mod collision_filters;
+pub mod compound_robots;
 pub mod contact_events;
 pub mod crowd;
 pub mod crowd_fight;

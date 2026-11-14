@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use physics_engine::{
     BodyId, CollisionLayers3d,
     approximate::{
-        Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, Config,
-        DistanceJoint, Error, HeightfieldDesc, Medium, Quaternion, QueryFilter, QueryHit,
-        QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
+        Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, CompoundChild,
+        Config, DistanceJoint, Error, HeightfieldDesc, Medium, PreparedCompound, Quaternion,
+        QueryFilter, QueryHit, QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -2467,6 +2467,73 @@ fn medium_forces_follow_the_bodies_with_a_medium() {
         &[
             ("medium-forces", "plain", "constant"),
             ("medium-forces", "media", "linear"),
+        ],
+    );
+}
+
+/// `plain` boxes and `compounds` robots of `parts` boxes each standing on a floor plane, 4 m
+/// apart (#567).
+fn robot_yard(plain: u64, compounds: u64, parts: u64) -> World {
+    let mut w = World::new(Config::default()).unwrap();
+    w.add_body(Body::keyed(0, Shape::HalfSpace, V::ZERO, 0.0))
+        .unwrap();
+    let children: Vec<_> = (0..parts)
+        .map(|k| {
+            CompoundChild::new(
+                Shape::Box(V(0.2, 0.1, 0.2)),
+                V(0.0, 0.2 * k as f32, 0.0),
+                1.0 + k as f32,
+            )
+        })
+        .collect();
+    let robot = PreparedCompound::new(&children).unwrap();
+    for k in 0..plain + compounds {
+        let p = cell((k % 64) as usize * 4, (k / 64) as usize * 4);
+        let mut body = Body::keyed(k + 1, Shape::Box(V(0.2, 0.1, 0.2)), p, 1.0);
+        body.position.1 = 0.1;
+        body.sleep_allowed = false;
+        if k < plain {
+            w.add_body(body).unwrap();
+        } else {
+            let (position, orientation) = robot.body_pose(body.position, Quaternion::IDENTITY);
+            body.position = position;
+            body.orientation = orientation;
+            w.add_compound(&robot, body).unwrap();
+        }
+    }
+    w
+}
+
+/// A step poses each resting compound's children once against the floor and no other body's
+/// (#567): work linear in compounds times parts, independent of primitive bodies.
+#[test]
+fn compound_children_follow_the_compounds() {
+    let mut samples = Vec::new();
+    let points = [64u64, 128, 256, 512]
+        .iter()
+        .map(|&p| (p, 8u64, 4u64))
+        .chain([1u64, 2, 4, 16, 32].iter().map(|&c| (128, c, 4)))
+        .chain([1u64, 2, 8, 16].iter().map(|&n| (128, 8, n)));
+    for (plain, compounds, parts) in points {
+        let mut w = robot_yard(plain, compounds, parts);
+        w.step(1.0 / 60.0).unwrap();
+        work::reset();
+        w.step(1.0 / 60.0).unwrap();
+        let posed = work::get(Counter::CompoundChildren);
+        // Resting on the plane, a compound's manifolds serve the later substeps too.
+        assert_eq!(posed, compounds * parts);
+        samples.push((
+            vec![("plain", plain), ("compounds", compounds), ("parts", parts)],
+            vec![("compound-children", posed)],
+        ));
+    }
+    judge(
+        "step-compound",
+        &samples,
+        &[
+            ("compound-children", "plain", "constant"),
+            ("compound-children", "compounds", "linear"),
+            ("compound-children", "parts", "linear"),
         ],
     );
 }

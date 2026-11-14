@@ -75,7 +75,8 @@ impl std::fmt::Debug for BodyMedium {
 impl BodyMedium {
     /// The state of `medium` on a body of this shape and mass, `None` when out of range.
     pub(super) fn new(medium: Medium, shape: Shape, mass: Real) -> Option<Box<Self>> {
-        if !medium.valid() {
+        // A compound has no single submerged volume yet (#567): media take primitives only.
+        if !medium.valid() || matches!(shape, Shape::Compound(_)) {
             return None;
         }
         let volume = primitive::volume_properties(shape).ok()?.volume;

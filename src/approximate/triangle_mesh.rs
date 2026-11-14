@@ -281,6 +281,7 @@ impl World {
                 let separation = primitive::round_down(contact.separation);
                 super::QueryHit {
                     body: target.id,
+                    child: None,
                     feature: Some(super::RayFeature::TriangleMeshTriangle(contact.triangle)),
                     fraction,
                     distance: cast.map_or(0.0, |c| c.displacement.length() * fraction),

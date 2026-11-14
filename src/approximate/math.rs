@@ -157,11 +157,28 @@ impl Quaternion {
         }
         v * (2.0 * s.atan2(d.3) / s)
     }
+    /// The inverse rotation of a unit quaternion.
+    pub fn conjugate(self) -> Self {
+        Self(-self.0, -self.1, -self.2, self.3)
+    }
     pub fn axes(self) -> [Vector; 3] {
         [
             self.rotate(Vector::X),
             self.rotate(Vector::Y),
             self.rotate(Vector::Z),
         ]
+    }
+}
+/// Hamilton product: `(a * b).rotate(v)` is `a.rotate(b.rotate(v))`.
+impl Mul for Quaternion {
+    type Output = Self;
+    fn mul(self, b: Self) -> Self {
+        let a = self;
+        Self(
+            a.3 * b.0 + a.0 * b.3 + a.1 * b.2 - a.2 * b.1,
+            a.3 * b.1 - a.0 * b.2 + a.1 * b.3 + a.2 * b.0,
+            a.3 * b.2 + a.0 * b.1 - a.1 * b.0 + a.2 * b.3,
+            a.3 * b.3 - a.0 * b.0 - a.1 * b.1 - a.2 * b.2,
+        )
     }
 }

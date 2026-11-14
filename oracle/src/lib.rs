@@ -41,6 +41,9 @@ pub enum Obs {
     Hit(Option<(u32, f32)>),
     /// The scenario labels (one bit each, labels below 64) a filtered overlap query reports.
     Overlaps(u64),
+    /// A rigid body's principal moments of inertia about its centre of mass, ascending, in
+    /// kg·m².
+    Inertia([f32; 3]),
     /// A contact transition reported by a tick: the pair as scenario labels.
     ContactEvent {
         tick: u32,
@@ -142,7 +145,7 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
             Obs::Ray(Some((t, n))) | Obs::Contact(Some((t, n))) => {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
-            Obs::Position(p) | Obs::Velocity(p) | Obs::Depenetration(p) => {
+            Obs::Position(p) | Obs::Velocity(p) | Obs::Depenetration(p) | Obs::Inertia(p) => {
                 p.iter().all(|v| v.is_finite())
             }
             Obs::Rotation(q) => q.iter().all(|v| v.is_finite()),
@@ -227,5 +230,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::rubble_wake::scenario(),
         scenarios::grapple::scenario(),
         scenarios::shooter_window::scenario(),
+        scenarios::compound_robots::scenario(),
     ]
 }

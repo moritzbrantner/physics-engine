@@ -150,6 +150,7 @@ mod tests {
                     Shape::Heightfield { .. }
                     | Shape::ConvexHull { .. }
                     | Shape::TriangleMesh { .. }
+                    | Shape::Compound(_)
                     | Shape::HalfSpace => {
                         unreachable!("primitives only")
                     }

@@ -30,7 +30,8 @@ impl Shape {
     /// Wedge products describe its geometric COM; they do not change the existing
     /// origin-based body pose or enable rotation for solver-owned dynamic wedges.
     pub fn mass_properties(self, mass: Real) -> Result<MassProperties, MassPropertiesError> {
-        if !self.valid_dimensions() {
+        // A compound's mass properties come from its children ([`super::PreparedCompound`]).
+        if !self.valid_dimensions() || matches!(self, Shape::Compound(_)) {
             return Err(MassPropertiesError::InvalidDimensions);
         }
         if !mass.is_finite() || !(1e-6..1e12).contains(&mass) {

@@ -564,6 +564,65 @@ between the joined bodies stay enabled, as Rapier's default.
 The `rope-joints` oracle scenario (C21) checks dragged and hanging fixtures against Rapier; see
 [consumer capabilities](consumer-capabilities.md).
 
+## Compound bodies
+
+A compound is one dynamic rigid body built from an ordered list of primitive children, each with
+its own pose and mass (#567, for moenarch-games/shooter#73's robots), as Rapier's several
+colliders with `.mass()` on one rigid body.
+
+- **Preparation.** `PreparedCompound::new(&[CompoundChild { shape, position, orientation, mass }])`
+  takes 1 to `MAX_COMPOUND_CHILDREN` (256) boxes, spheres or capsules: valid dimensions, finite
+  positions below 1e12, unit orientations (within 1e-4, normalized) and masses in
+  `[1e-6, 1e12)` (`InvalidInput` otherwise; wedges, terrain and nested compounds are not
+  children). Each child is a uniform solid of its own mass (`Shape::mass_properties`). The total
+  mass, the centre of mass and the full inertia tensor follow in f64: each child's tensor turned
+  into the authoring frame and moved to the common centre of mass by the parallel-axis theorem,
+  then diagonalized (Jacobi). Preparation is deterministic and done once; the same prepared
+  compound is admitted into any number of worlds.
+- **Body frame.** A compound body's `position` is its centre of mass and its `orientation` the
+  principal frame (`PreparedCompound::principal_orientation`, the identity when the authored
+  tensor is already diagonal), so the solver keeps one diagonal inverse inertia about the body
+  position, as for every other body. `body_pose(origin, orientation)` gives the body pose of an
+  authoring origin and `origin_pose(position, orientation)` the inverse; `children()` are in the
+  body frame, `authored_children()` as given. `center_of_mass`, `principal_inertia` and `mass`
+  read the products. Joint anchors and `apply_impulse` points are in that frame and world
+  respectively, as for any body.
+- **Admission.** `World::add_compound(&prepared, body)` adds it: `body` supplies the body pose,
+  velocities, key, material, layers and flags; its `shape` becomes `Shape::Compound` (bounding
+  radius and unit-mass principal moments) and its `mass` the children's total. Compounds are
+  dynamic: `external` or `ccd` is `InvalidInput`, as is `add_body` with a compound shape.
+  `World::compound(id)` returns the prepared compound, `compound_child_pose(id, child)` a
+  child's world pose (for rendering and game hitboxes).
+- **Contacts.** A pair with a compound side runs each pair of children (a primitive side is its
+  own one child) whose bounds, padded by the pair's reach over the step, can meet, through the
+  same narrow phase as primitive bodies, at the child's world pose and its point velocity, in
+  child order; the manifolds' arms move to the compound's centre, so the rows act on the whole
+  body and the pair keeps one contact-cache entry (warm starting, events, support and sleep as
+  for any pair). Halfspaces take each child's contact. Compounds meet primitives, other
+  compounds, halfspaces, heightfields and meshes (box and sphere children, as primitives do) and
+  hulls (box and sphere children).
+- **Sweeps.** Fast pairs take the per-substep translation sweep per child pair as primitive pairs
+  do. A `ccd` projectile sweeps a compound target child by child and stops at the earliest.
+  Persistent projectile CCD on a compound itself is not supported (`ccd` is rejected).
+- **Queries.** `cast_ray`, `cast_ray_first`, `cast_shape` and `overlap_shape` resolve against
+  the children and report one hit per compound, its earliest child (ties keep the lower child),
+  with `RayHit::child` / `QueryHit::child` set to the child's index in the authored list (`None`
+  for every other body). A compound is not a query shape.
+- **Rollback.** A body read back from the world keeps its exact pose bits: removing a compound and
+  adding it again from its read-back `Body` with the same prepared compound continues exactly as
+  any rebuilt body does (the [exact-continuation](#game-owned-sleep-and-exact-continuation)
+  contract, `tests/compound_bodies.rs`). The same holds for a world rebuilt from game state.
+- **Not yet.** Removing a child at runtime (prepare and re-add the remaining children instead),
+  media (`set_medium` is `InvalidInput`), the post-integration position correction (compounds
+  are skipped), and checkpoints (`CheckpointError::UnsupportedCompounds`).
+- **Cost.** A pair with a compound side poses the children it tests (`work::Counter::
+  CompoundChildren`, the `step-compound` complexity contract); queries pose each child of a
+  compound they reach. Children are not separate broad-phase leaves: the body's leaf is its
+  bounding sphere.
+
+The `compound-robots` oracle scenario (C28) checks mass placement, rolling stability and per-child
+hits of twelve robots against Rapier; see [consumer capabilities](consumer-capabilities.md).
+
 ## Additional solver iterations
 
 `Body::additional_solver_iterations` (`u8`, `0..=64`, default 0; larger values are

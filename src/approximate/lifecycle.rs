@@ -10,7 +10,10 @@ impl World {
     pub fn add_body(&mut self, body: Body) -> Result<BodyId, Error> {
         if matches!(
             body.shape,
-            Shape::Heightfield { .. } | Shape::ConvexHull { .. } | Shape::TriangleMesh { .. }
+            Shape::Heightfield { .. }
+                | Shape::ConvexHull { .. }
+                | Shape::TriangleMesh { .. }
+                | Shape::Compound(_)
         ) {
             return Err(Error::InvalidInput);
         }
@@ -171,7 +174,7 @@ impl World {
                     // No closed-form contact here: the bounds overlap is the reach.
                     true
                 } else {
-                    contact::current(b, body, margin).is_some()
+                    super::compound::touching(&self.compounds, b, body, margin)
                 }
         };
         let mut wake = Vec::new();

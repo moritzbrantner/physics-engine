@@ -50,6 +50,8 @@ impl RayCast {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RayHit {
     pub body: BodyId,
+    /// The compound child hit (its index in the authored list); `None` for other bodies.
+    pub child: Option<u32>,
     pub fraction: Real,
     pub distance: Real,
     /// Surface entry point, or the original interior point for an initial overlap.
@@ -245,6 +247,7 @@ impl World {
             stats.geometry_preparations += 1;
             let mut work = PrimitiveRayWork3::default();
             let mut rock_face = None;
+            let mut child_index = None;
             let result = if target.shape == Shape::HalfSpace {
                 let (point, normal) = super::super::terrain::plane_of(target);
                 let start = [cast.origin.0, cast.origin.1, cast.origin.2].map(f64::from);
@@ -337,6 +340,23 @@ impl World {
                         starts_inside: hit.starts_inside,
                     }),
                 )
+            } else if let children = super::super::compound::children(&self.compounds, target)
+                && !children.is_empty()
+            {
+                // A compound: its earliest child entry (ties keep the lower child).
+                let mut best: Option<geometry_kernels::primitive3::PrimitiveRayHit3> = None;
+                for (k, c) in children.iter().enumerate() {
+                    let child = super::super::compound::child_body(target, c);
+                    if let Some(hit) =
+                        primitive::snapshot_ray(&child, cast.origin, cast.displacement, &mut work)
+                            .map_err(failure)?
+                        && best.is_none_or(|best| hit.fraction < best.fraction)
+                    {
+                        child_index = Some(k as u32);
+                        best = Some(hit);
+                    }
+                }
+                Ok(best)
             } else {
                 primitive::snapshot_ray(target, cast.origin, cast.displacement, &mut work)
             };
@@ -370,6 +390,7 @@ impl World {
             }
             let grew = hits.push(RayHit {
                 body: target.id,
+                child: child_index,
                 fraction,
                 distance: distance * fraction,
                 point,

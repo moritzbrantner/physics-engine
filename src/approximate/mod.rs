@@ -47,6 +47,8 @@ fn substep_length(dt: Scalar, substeps: u8) -> Real {
 }
 
 mod bookkeeping;
+mod compound;
+pub use compound::{CompoundChild, CompoundShape, MAX_COMPOUND_CHILDREN, PreparedCompound};
 mod contact;
 mod mass;
 mod medium;
@@ -66,6 +68,7 @@ pub use convergence::{Convergence, ConvergenceStats};
 pub use islands::{ConvergenceScope, IslandStats};
 mod geometry;
 mod joint;
+mod narrow;
 pub use bookkeeping::BookkeepingStats;
 use bookkeeping::{Scratch, reserve};
 use geometry::GeometryCache;
@@ -211,6 +214,9 @@ pub struct World {
     triangle_meshes: Vec<Option<triangle_mesh::TriangleMesh>>,
     /// Static hull geometry, retained by live bodies and shared by cloned worlds.
     hulls: Vec<Option<std::sync::Arc<convex_hull::PreparedHull>>>,
+    /// Compound children by body slot (#567), shared by cloned worlds. A slot keeps its last
+    /// compound until another compound takes it; only a live compound body reads it.
+    compounds: Vec<Option<std::sync::Arc<PreparedCompound>>>,
     /// Halfspace bodies, which every query tests (they have no finite bounds).
     halfspaces: Vec<BodyId>,
     slots: Vec<Slot>,
@@ -340,6 +346,7 @@ impl World {
             terrains: Vec::new(),
             triangle_meshes: Vec::new(),
             hulls: Vec::new(),
+            compounds: Vec::new(),
             halfspaces: Vec::new(),
             slots: Vec::new(),
             free: Vec::new(),

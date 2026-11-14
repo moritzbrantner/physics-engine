@@ -138,6 +138,8 @@ impl World {
                         || self.bodies[i].sensor
                         || self.bodies[j].sensor
                         || !self.bodies[i].layers.collides_with(self.bodies[j].layers)
+                        // Compounds take no position correction yet (#567).
+                        || super::narrow::compound_pair(&self.bodies[i], &self.bodies[j])
                     {
                         continue;
                     }
@@ -240,7 +242,11 @@ impl World {
             // Both views preserve BodyId order. A correction can move into a later collider;
             // never prefilter an entire pass from the body's old bounds.
             for &i in &s.activity.indices {
-                if !self.bodies[i].movable() || self.bodies[i].sleeping || self.bodies[i].sensor {
+                if !self.bodies[i].movable()
+                    || self.bodies[i].sleeping
+                    || self.bodies[i].sensor
+                    || matches!(self.bodies[i].shape, Shape::Compound(_))
+                {
                     continue;
                 }
                 report.body_visits += 1;

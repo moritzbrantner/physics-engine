@@ -87,6 +87,9 @@ pub enum CheckpointError {
     /// A character holds a [`World::tether_character`] rope, which checkpoints do not hold
     /// (#557); release it first. Nothing is captured.
     UnsupportedTethers,
+    /// The world has compound bodies (#567), which checkpoints do not hold; rebuild them from
+    /// game state instead. Nothing is captured.
+    UnsupportedCompounds,
     /// Restore was given heightfields that differ from the checkpoint's live terrain (#452):
     /// `index` is the first entry of [`Checkpoint::heightfield_bodies`] whose description is
     /// missing, extra or not the one the world was built with. No world is created.
@@ -170,13 +173,21 @@ impl World {
     /// step never calls it. Heightfields are recorded by a fingerprint of their description,
     /// which [`Checkpoint::restore`] takes again; halfspaces are inline bodies. Worlds with
     /// joints are not checkpointed (`UnsupportedJoints`), nor are worlds holding a pose target
-    /// for the next step (`PendingKinematicPose`) or tethered characters (`UnsupportedTethers`).
+    /// for the next step (`PendingKinematicPose`) or tethered characters (`UnsupportedTethers`) or
+    /// compound bodies (`UnsupportedCompounds`).
     pub fn checkpoint(&self, context: CheckpointContext) -> Result<Checkpoint, CheckpointError> {
         if !self.joints.is_empty() {
             return Err(CheckpointError::UnsupportedJoints);
         }
         if !self.kinematic_poses.is_empty() {
             return Err(CheckpointError::PendingKinematicPose);
+        }
+        if self
+            .bodies
+            .iter()
+            .any(|b| b.id != BodyId::NONE && matches!(b.shape, Shape::Compound(_)))
+        {
+            return Err(CheckpointError::UnsupportedCompounds);
         }
         if self.characters.any_tether() {
             return Err(CheckpointError::UnsupportedTethers);
@@ -1090,6 +1101,7 @@ fn encode_body(out: &mut Vec<u8>, b: &Body) {
             out.extend_from_slice(&hull.0.to_le_bytes());
             vector(out, half_extents);
         }
+        Shape::Compound(_) => unreachable!("checkpoints reject compound bodies"),
     }
     for x in [
         b.mass,

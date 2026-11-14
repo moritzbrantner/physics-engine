@@ -61,9 +61,12 @@ pub enum Counter {
     /// Leaves the wide fixed-body tree's builds take, its first build and every rebuild after
     /// it was dropped.
     WideTreeLeaves,
+    /// Compound children posed as bodies of their own for the narrow phase, CCD and queries
+    /// (#567).
+    CompoundChildren,
 }
 
-const COUNTERS: usize = 23;
+const COUNTERS: usize = 24;
 
 #[cfg(feature = "work-counters")]
 std::thread_local! {

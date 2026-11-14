@@ -1659,370 +1659,32 @@ impl World {
             candidates.sort_unstable_by_key(|&(i, j)| (self.bodies[i].order, self.bodies[j].order));
         }
         debug_assert!(candidates.windows(2).all(|w| w[0] != w[1]));
+        let narrow = super::narrow::Narrow {
+            scene: &self.scene,
+            meshes: &self.triangle_meshes,
+            terrains: &self.terrains,
+            hulls: &self.hulls,
+            compounds: &self.compounds,
+            h,
+            interval,
+            lookahead,
+            gain,
+        };
         for &(i, j) in &candidates {
-            {
-                let a = &self.bodies[i];
-                let b = &self.bodies[j];
-                let driven_contact_candidate = (a.movable()
-                    && b.external
-                    && (b.velocity != Vector::ZERO || b.angular_velocity != Vector::ZERO))
-                    || (b.movable()
-                        && a.external
-                        && (a.velocity != Vector::ZERO || a.angular_velocity != Vector::ZERO));
-                let driven_wake_candidate = driven_contact_candidate && (a.sleeping || b.sleeping);
-                // Rigid spheres take one-point contacts with fixed meshes, terrain and hulls. A
-                // CCD sphere (and any sphere on a mesh) takes the current contact within the
-                // slop, else the first along this substep's translation, so it keeps its swept
-                // time of impact; a non-CCD sphere on terrain or a hull takes the deepest
-                // contact within the slop plus the step's approach, speculatively (#519).
-                if let Some((surface, surface_first)) = super::static_sphere::Surface::sphere_pair(
-                    a.shape,
-                    b.shape,
-                    &self.triangle_meshes,
-                    &self.terrains,
-                    &self.hulls,
-                ) {
-                    let moving = if surface_first { b } else { a };
-                    if moving.inverse_mass() == 0.0
-                        || a.sensor
-                        || b.sensor
-                        || moving.sleeping
-                        || !a.layers.collides_with(b.layers)
-                    {
-                        continue;
-                    }
-                    report.narrow_tests += 1;
-                    let failure = |reason| Error::CollisionSearchFailed {
-                        bodies: [a.id, b.id],
-                        reason,
-                    };
-                    let deferred = ccd::deferred(a, b);
-                    if !deferred && !matches!(surface, super::static_sphere::Surface::Mesh(_)) {
-                        // Terrain and hulls: the step's approach is the speculative margin, as
-                        // for boxes on terrain. A sphere's one point needs no regeneration for
-                        // spin, so later substeps reuse the row as Rapier does (#378).
-                        let approach = moving.velocity.length() * interval
-                            + step_drift(moving, self.scene.gravity, gain).length()
-                            + moving.medium_reach(self.scene.gravity, gain, lookahead);
-                        if let Some(m) = super::static_sphere::manifold(
-                            surface,
-                            a,
-                            b,
-                            self.scene.contact_slop + approach,
-                            None,
-                            &mut report.geometry,
-                        )
-                        .map_err(failure)?
-                        {
-                            push(out, (i, j, m), &mut s.work);
-                        }
-                        continue;
-                    }
-                    let current = super::static_sphere::manifold(
-                        surface,
-                        a,
-                        b,
-                        self.scene.contact_slop,
-                        None,
-                        &mut report.geometry,
-                    )
-                    .map_err(failure)?;
-                    let current = current.filter(|m| {
-                        !deferred || (&m.points).into_iter().all(|p| p.separation <= 0.0)
-                    });
-                    let m = if current.is_some() {
-                        current
-                    } else {
-                        regenerate = true;
-                        super::static_sphere::manifold(
-                            surface,
-                            a,
-                            b,
-                            self.scene.contact_slop,
-                            Some(h),
-                            &mut report.geometry,
-                        )
-                        .map_err(failure)?
-                    };
-                    if let Some(m) = m {
-                        push(out, (i, j, m), &mut s.work);
-                    }
-                    continue;
-                }
-                // Box/hull rigid contacts use the shared SAT/clipping kernel and the existing
-                // speculative response rows. Unsupported pairs/CCD still fail atomically.
-                if matches!(a.shape, Shape::ConvexHull { .. })
-                    || matches!(b.shape, Shape::ConvexHull { .. })
-                {
-                    let moving = if matches!(a.shape, Shape::ConvexHull { .. }) {
-                        b
-                    } else {
-                        a
-                    };
-                    if !a.sensor
-                        && !b.sensor
-                        && moving.inverse_mass() > 0.0
-                        && !moving.sleeping
-                        && a.layers.collides_with(b.layers)
-                    {
-                        if !matches!(moving.shape, Shape::Box(_)) || moving.ccd {
-                            return Err(Error::CollisionSearchFailed {
-                                bodies: [a.id, b.id],
-                                reason: super::SweepFailure::InvalidGeometryInput,
-                            });
-                        }
-                        let Shape::ConvexHull { hull, .. } =
-                            (if matches!(a.shape, Shape::ConvexHull { .. }) {
-                                a.shape
-                            } else {
-                                b.shape
-                            })
-                        else {
-                            unreachable!()
-                        };
-                        let approach = moving.velocity.length() * interval
-                            + step_drift(moving, self.scene.gravity, gain).length()
-                            + moving.medium_reach(self.scene.gravity, gain, lookahead)
-                            + moving.angular_velocity.length() * moving.shape.radius() * interval;
-                        report.narrow_tests += 1;
-                        regenerate = true;
-                        if let Some(manifold) = self
-                            .geometry
-                            .hull_box(
-                                &self.hulls[hull.0 as usize]
-                                    .as_deref()
-                                    .expect("live convex hull")
-                                    .hull,
-                                a,
-                                b,
-                                self.scene.contact_slop + approach,
-                                &mut report.geometry,
-                            )
-                            .map_err(|reason| Error::CollisionSearchFailed {
-                                bodies: [a.id, b.id],
-                                reason,
-                            })?
-                        {
-                            push(out, (i, j, manifold), &mut s.work);
-                        }
-                    }
-                    continue;
-                }
-                // Boxes take rigid contacts with heightfield terrain, one manifold per triangle.
-                // As with halfspaces, the approach over the step is the speculative margin.
-                if let (Shape::Heightfield { terrain, .. }, body)
-                | (body, Shape::Heightfield { terrain, .. }) = (a.shape, b.shape)
-                    && let Shape::Box(_) = body
-                {
-                    let moving = if matches!(a.shape, Shape::Box(_)) {
-                        a
-                    } else {
-                        b
-                    };
-                    if moving.inverse_mass() == 0.0
-                        || moving.sensor
-                        || moving.sleeping
-                        || !a.layers.collides_with(b.layers)
-                    {
-                        continue;
-                    }
-                    report.narrow_tests += 1;
-                    let approach = moving.velocity.length() * interval
-                        + step_drift(moving, self.scene.gravity, gain).length()
-                        + moving.medium_reach(self.scene.gravity, gain, lookahead)
-                        + moving.angular_velocity.length() * moving.shape.radius() * interval;
-                    contact::heightfield_box(
-                        a,
-                        b,
-                        self.terrains[terrain.0 as usize]
-                            .prepared
-                            .as_deref()
-                            .expect("a live heightfield body's terrain"),
-                        self.scene.contact_slop + approach,
-                        interval,
-                        |m| push(out, (i, j, m), &mut s.work),
-                    );
-                    continue;
-                }
-                if let (Shape::TriangleMesh { mesh, .. }, _)
-                | (_, Shape::TriangleMesh { mesh, .. }) = (a.shape, b.shape)
-                {
-                    let moving = if matches!(a.shape, Shape::TriangleMesh { .. }) {
-                        b
-                    } else {
-                        a
-                    };
-                    if moving.inverse_mass() == 0.0
-                        || moving.sensor
-                        || moving.sleeping
-                        || !a.layers.collides_with(b.layers)
-                    {
-                        continue;
-                    }
-                    let prepared = &self.triangle_meshes[mesh.0 as usize]
-                        .as_ref()
-                        .expect("live mesh")
-                        .prepared;
-                    report.narrow_tests += 1;
-                    let failure = |reason| Error::CollisionSearchFailed {
-                        bodies: [a.id, b.id],
-                        reason,
-                    };
-                    if matches!(moving.shape, Shape::Box(_)) {
-                        if moving.ccd {
-                            return Err(failure(super::SweepFailure::InvalidGeometryInput));
-                        }
-                        let approach = moving.velocity.length() * interval
-                            + step_drift(moving, self.scene.gravity, gain).length()
-                            + moving.medium_reach(self.scene.gravity, gain, lookahead)
-                            + moving.angular_velocity.length() * moving.shape.radius() * interval;
-                        // A full-interval bound below the accepted contact tolerance cannot
-                        // introduce a feature farther than that tolerance. Reuse these rows
-                        // for the remaining substeps, as for the shared solver's small spins;
-                        // meaningful translation, force drift or rotation regenerates them.
-                        regenerate |= approach > self.scene.contact_slop;
-                        super::primitive::box_mesh_manifolds(
-                            prepared,
-                            a,
-                            b,
-                            self.scene.contact_slop + approach,
-                            &mut report.geometry,
-                            |m| push(out, (i, j, m), &mut s.work),
-                        )
-                        .map_err(failure)?;
-                        continue;
-                    }
-                    // Spheres were handled above; no other moving shape has mesh contacts.
-                    return Err(failure(super::SweepFailure::InvalidGeometryInput));
-                }
-                if a.sensor
-                    || b.sensor
-                    // Terrain answers queries and character moves; halfspace contacts with
-                    // dynamic bodies are generated after this sweep.
-                    || a.shape.query_only()
-                    || b.shape.query_only()
-                    || !a.layers.collides_with(b.layers)
-                    || (a.inverse_mass() == 0.0
-                        && b.inverse_mass() == 0.0
-                        && !driven_wake_candidate)
-                {
-                    continue;
-                }
-                let speed = (b.velocity - a.velocity).length();
-                let travel = speed * h;
-                let per_step = self.scene.contact_generation == super::ContactGeneration::PerStep;
-                // Travel within this substep that could carry one shape through the other.
-                let deep = travel
-                    > 0.5
-                        * a.shape
-                            .half_extents()
-                            .min_component()
-                            .min(b.shape.half_extents().min_component());
-                // Retain full-interval discovery after response preparation wakes the
-                // body; the second geometry pass must not discard an admitted sweep.
-                // A fixed boundary may be crossed below the shape-sized fast threshold.
-                // The current margin only rules out travel no larger than that margin.
-                // On the debris path (#543), a deep pair of two non-CCD bodies is admitted
-                // speculatively over the rest of the step, this substep included, instead of
-                // taking this substep's sweep, as Rapier's is.
-                let fast = driven_contact_candidate
-                    || a.ccd
-                    || b.ccd
-                    || ((a.mass == 0.0 || b.mass == 0.0) && travel > self.scene.contact_slop)
-                    || (!per_step && deep);
-                // A tolerance-only manifold is not wake evidence. Probe the actual surface
-                // and full interval before replacing the parked body's zero response.
-                let margin = if driven_wake_candidate {
-                    0.0
-                } else {
-                    self.scene.contact_slop
-                };
-                // A separated pair slow enough to skip the sweep is admitted speculatively
-                // when it can close before the step ends; a fast pair keeps this substep's
-                // sweep instead.
-                let window = if per_step && deep {
-                    interval
-                } else {
-                    lookahead
-                };
-                let reach = if fast || window == 0.0 {
-                    0.0
-                } else {
-                    (speed
-                        + a.angular_velocity.length() * a.shape.radius()
-                        + b.angular_velocity.length() * b.shape.radius())
-                        * window
-                        + (step_drift(b, self.scene.gravity, gain)
-                            - step_drift(a, self.scene.gravity, gain))
-                        .length()
-                        + a.medium_reach(self.scene.gravity, gain, lookahead)
-                        + b.medium_reach(self.scene.gravity, gain, lookahead)
-                };
-                // Separated co-moving CCD pairs never get here: the broad phase drops them
-                // (`skip_separated_ccd`).
-                report.narrow_tests += 1;
-                // The debris path takes current and speculative contacts in one query.
-                let single = per_step && reach > 0.0;
-                // GeometryCache shares read-only frames even for rotating pairs; it retains
-                // complete pair results only when both orientation dependencies are stable.
-                let current = self
-                    .geometry
-                    .query_interval(
-                        [i, j],
-                        [a, b],
-                        h,
-                        if single { margin + reach } else { margin },
-                        &mut report.geometry,
-                    )
-                    // A CCD body still separated by a gap it closes well within this
-                    // substep would stop at the surface on a speculative row and bounce
-                    // only after the substep, losing the rest of its travel. Its swept
-                    // time of impact and remaining-time response consume the substep
-                    // instead, as high-resolution Rapier does.
-                    .filter(|m| {
-                        !(ccd::deferred(a, b) && {
-                            let gap = (&m.points)
-                                .into_iter()
-                                .map(|p| p.separation)
-                                .fold(Real::INFINITY, Real::min);
-                            gap > 0.0
-                                && -(b.velocity - a.velocity).dot(m.normal) * h
-                                    > gap + self.scene.contact_slop
-                        })
-                    });
-                let m = if current.is_some() {
-                    current
-                } else if fast {
-                    regenerate = true;
-                    self.geometry
-                        .swept([i, j], [a, b], h, margin, &mut report.geometry)
-                        .map_err(|reason| Error::CollisionSearchFailed {
-                            bodies: [a.id, b.id],
-                            reason,
-                        })?
-                } else if reach > 0.0 && !single {
-                    let margin = margin + reach;
-                    let speculative = self.geometry.query_interval(
-                        [i, j],
-                        [a, b],
-                        h,
-                        margin,
-                        &mut report.geometry,
-                    );
-                    if speculative.is_some() && a.mass > 0.0 && b.mass > 0.0 {
-                        // Speculative rows between two dynamic bodies make stacks rock: such
-                        // a pair is discovered by the next substep's regeneration instead.
-                        regenerate = true;
-                        None
-                    } else {
-                        speculative
-                    }
-                } else {
-                    None
-                };
-                if let Some(m) = m {
-                    push(out, (i, j, m), &mut s.work);
-                }
+            let (a, b) = (&self.bodies[i], &self.bodies[j]);
+            let mut emit = |m| push(out, (i, j, m), &mut s.work);
+            if super::narrow::compound_pair(a, b) {
+                narrow.compound_pair([i, j], a, b, report, &mut regenerate, &mut emit)?;
+            } else {
+                narrow.pair(
+                    &mut super::geometry::PairGeometry::Cached(&mut self.geometry),
+                    [i, j],
+                    a,
+                    b,
+                    report,
+                    &mut regenerate,
+                    &mut emit,
+                )?;
             }
         }
         s.candidates = candidates;
@@ -2056,15 +1718,43 @@ impl World {
                     continue;
                 }
                 report.narrow_tests += 1;
-                let approach = (-b.velocity.dot(n)).max(0.0) * interval
-                    + (-step_drift(b, self.scene.gravity, gain).dot(n)).max(0.0)
-                    + b.medium_reach(self.scene.gravity, gain, lookahead)
-                    + b.angular_velocity.length() * b.shape.radius() * interval;
+                let approach = |b: &Body| {
+                    (-b.velocity.dot(n)).max(0.0) * interval
+                        + (-step_drift(b, self.scene.gravity, gain).dot(n)).max(0.0)
+                        + b.medium_reach(self.scene.gravity, gain, lookahead)
+                        + b.angular_velocity.length() * b.shape.radius() * interval
+                };
                 let (i, j) = if a.order < b.order {
                     (plane, k)
                 } else {
                     (k, plane)
                 };
+                // A compound takes each child's contact with the plane, in child order, at the
+                // child's own point velocity; the arms move to the compound's centre.
+                let children = super::compound::children(&self.compounds, b);
+                if !children.is_empty() {
+                    for c in children {
+                        let child = super::compound::child_body(b, c);
+                        let (x, y) = if i == plane { (a, &child) } else { (&child, a) };
+                        if let Some(mut m) = contact::halfspace(
+                            x,
+                            y,
+                            self.scene.contact_slop + approach(&child),
+                            interval,
+                        ) {
+                            for p in &mut m.points {
+                                if i == plane {
+                                    p.rb = super::compound::parent_arm(&child, b, p.rb);
+                                } else {
+                                    p.ra = super::compound::parent_arm(&child, b, p.ra);
+                                }
+                            }
+                            push(out, (i, j, m), &mut self.bookkeeping.work);
+                        }
+                    }
+                    continue;
+                }
+                let approach = approach(b);
                 if let Some(m) = contact::halfspace(
                     &self.bodies[i],
                     &self.bodies[j],
@@ -2195,7 +1885,7 @@ fn contact_bias(
 }
 /// Extra displacement from gravity and accumulated force, which keep acting on an awake
 /// dynamic body through the rest of the step; `gain` is zero on the step's last substep.
-fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
+pub(super) fn step_drift(b: &Body, gravity: Vector, gain: Real) -> Vector {
     if gain > 0.0 && b.movable() && !b.sleeping {
         (gravity + b.force / b.mass) * gain
     } else {

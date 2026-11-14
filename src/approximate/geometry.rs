@@ -102,6 +102,8 @@ impl ShapeKey {
                 terrain,
                 half_extents: h,
             } => (4 + u64::from(terrain.0), vector_bits(h)),
+            // Compounds enter the cache only as their children.
+            Shape::Compound(c) => (1 << 63, [bits(c.radius()), 0, 0]),
         };
         Self {
             id: b.id,
@@ -499,3 +501,64 @@ impl GeometryCache {
 
 #[cfg(test)]
 mod tests;
+
+/// Where a pair's narrow phase gets its geometry: the world's cache for stored bodies, or
+/// direct (uncached) queries for bodies that are never stored, such as compound children,
+/// whose ids and orders are their parents'.
+pub(super) enum PairGeometry<'g> {
+    Cached(&'g mut GeometryCache),
+    Direct,
+}
+impl PairGeometry<'_> {
+    pub fn query_interval(
+        &mut self,
+        indices: [usize; 2],
+        bodies: [&Body; 2],
+        h: Real,
+        margin: Real,
+        work: &mut GeometryStats,
+    ) -> Option<contact::Manifold> {
+        match self {
+            Self::Cached(cache) => cache.query_interval(indices, bodies, h, margin, work),
+            Self::Direct => {
+                contact::current_interval_counted(bodies[0], bodies[1], h, margin, work)
+            }
+        }
+    }
+    pub fn swept(
+        &mut self,
+        indices: [usize; 2],
+        bodies: [&Body; 2],
+        dt: Real,
+        margin: Real,
+        work: &mut GeometryStats,
+    ) -> Result<Option<contact::Manifold>, SweepFailure> {
+        match self {
+            Self::Cached(cache) => cache.swept(indices, bodies, dt, margin, work),
+            Self::Direct => contact::swept(bodies[0], bodies[1], dt, margin, work),
+        }
+    }
+    pub fn hull_box(
+        &mut self,
+        hull: &std::sync::Arc<geometry_kernels::segment_hull::PreparedSegmentHull>,
+        a: &Body,
+        b: &Body,
+        margin: Real,
+        work: &mut GeometryStats,
+    ) -> Result<Option<contact::Manifold>, SweepFailure> {
+        match self {
+            Self::Cached(cache) => cache.hull_box(hull, a, b, margin, work),
+            Self::Direct => {
+                let moving = if matches!(a.shape, Shape::ConvexHull { .. }) {
+                    b
+                } else {
+                    a
+                };
+                let plan = primitive::prepare_box_hull_frame(hull.clone(), moving, work)?;
+                work.frame_preparations += 1;
+                work.manifold_refreshes += 1;
+                primitive::box_hull_manifold(&plan, a, b, margin, work)
+            }
+        }
+    }
+}
