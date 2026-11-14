@@ -69,7 +69,11 @@ on that scenario natively (more than 5% slower than Rapier with the consumer's c
 than bare Rapier), and in WASM when more than 10% slower than either; both figures are always
 printed. Adapter lanes that re-add every response body each tick gate on the consumer pattern
 only and print bare persistent Rapier, a different workload, as information (owner decisions:
-`debris-lane` #523, the Redbrand rigid-mesh lanes #553). Every parity change adds its
+`debris-lane` #523, the Redbrand rigid-mesh lanes #553). `rubble-wake`'s native timing is printed
+only until #564 closes its per-tick gap (owner decision, 2026-11-14): its whole-run time follows
+the tick each pile settles at, which any physics change moves by enough to swing the ratio by up
+to ±15%, while per awake tick the engine is ~20% slower than Rapier; its invariants and its WASM
+gate still apply. Every parity change adds its
 scenario to the harness. The harness stays lean: no attestation, fingerprints or evidence
 packaging.
 

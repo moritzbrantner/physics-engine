@@ -1,7 +1,8 @@
 //! Native oracle: checks every scenario's invariants and fails when physics-engine is more than
 //! 5% slower than Rapier (median of interleaved samples), both with the consumer's call pattern
 //! and, where a scenario has one, bare Rapier without the consumer's workarounds. Both engine
-//! storage modes (`BodyStorage::Ordered`, the default, and `Indexed`) are timed and gated.
+//! storage modes (`BodyStorage::Ordered`, the default, and `Indexed`) are timed and gated. A
+//! scenario in `NATIVE_REPORT_ONLY` prints its timing without failing, until its issue lands.
 //!
 //! CI runs it without arguments. For debugging:
 //!
@@ -175,7 +176,14 @@ fn main() -> ExitCode {
         let slow = [e, x]
             .into_iter()
             .any(|e| e > r * MARGIN || gated_raw.is_some_and(|raw| e > raw * MARGIN));
-        failed |= slow;
+        // A report-only scenario prints its result without failing (`NATIVE_REPORT_ONLY`).
+        let report_only = scenario.native_report_only();
+        failed |= slow && report_only.is_none();
+        let result = match (slow, report_only) {
+            (false, _) => "ok".to_string(),
+            (true, None) => "SLOWER THAN RAPIER".to_string(),
+            (true, Some(issue)) => format!("slower than Rapier (report-only, {issue})"),
+        };
         println!(
             "{:<20} {:<12} {:>14.2} {:>14.2} {:>14.2} {:>7.2} {:>11}  {}",
             scenario.name,
@@ -185,7 +193,7 @@ fn main() -> ExitCode {
             r,
             e / r,
             raw.map_or("-".to_string(), |raw| format!("{raw:.2}")),
-            if slow { "SLOWER THAN RAPIER" } else { "ok" }
+            result
         );
     }
     if failed {

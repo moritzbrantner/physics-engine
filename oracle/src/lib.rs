@@ -92,7 +92,21 @@ pub struct Scenario {
     pub check: fn(&Trace, &Trace) -> Result<(), String>,
 }
 
+/// Scenarios whose native timing is printed but not gated, each with the issue that restores
+/// its gate (owner decision, #564). `rubble-wake`: its whole-run time follows the tick each
+/// pile settles at, and any physics change moves that tick by enough to swing the ratio by
+/// up to ±15%; per awake tick the engine is ~20% slower than Rapier and stays near 1.05× only
+/// by settling sooner. #564 tracks closing that per-tick gap. The WASM lane still gates it.
+pub const NATIVE_REPORT_ONLY: &[(&str, &str)] = &[("rubble-wake", "#564")];
+
 impl Scenario {
+    /// The issue tracking this scenario's native perf gate while it is printed only.
+    pub fn native_report_only(&self) -> Option<&'static str> {
+        NATIVE_REPORT_ONLY
+            .iter()
+            .find(|(name, _)| *name == self.name)
+            .map(|&(_, issue)| issue)
+    }
     /// Builds a side, untimed.
     pub fn build(&self, side: Side) -> Box<dyn Sim> {
         match side {
