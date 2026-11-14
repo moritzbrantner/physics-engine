@@ -3,6 +3,20 @@
     "github>moritzbrantner/coding-agent-conventions"
   ],
   "platformAutomerge": true,
+  "customManagers": [
+    {
+      "description": "actions/checkout `repository:` + `ref: <sha> # <branch>` pins (the coding-tooling checkouts) are invisible to the github-actions manager; track them as git-refs digests so they move with the matching `uses:` pin in the grouped digest PR.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "repository:\\s*(?<depName>moritzbrantner/[\\w.-]+)\\s*\\n\\s*ref:\\s*(?<currentDigest>[0-9a-f]{40})\\s*#\\s*(?<currentValue>[\\w./-]+)"
+      ],
+      "datasourceTemplate": "git-refs",
+      "packageNameTemplate": "https://github.com/{{{depName}}}"
+    }
+  ],
   "packageRules": [
     {
       "description": "rust-kernels crates share types and must move to the same revision together",

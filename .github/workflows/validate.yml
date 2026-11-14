@@ -57,7 +57,7 @@ jobs:
           node-version: lts/*
 
       - name: Run fast tier
-        uses: moritzbrantner/coding-tooling@da4091a07b79bf276c36008c36d459b827dd3dab
+        uses: moritzbrantner/coding-tooling@85d4a534e81dea765091208e6cd0fd29cb550089 # main
         with:
           tier: fast
           install-mode: none
@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: a878e8c2aa9d00b047f49e084996093f564b31ef
+          ref: 85d4a534e81dea765091208e6cd0fd29cb550089 # main
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -129,7 +129,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: a878e8c2aa9d00b047f49e084996093f564b31ef
+          ref: 85d4a534e81dea765091208e6cd0fd29cb550089 # main
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -153,12 +153,14 @@ jobs:
       actions: read
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@544af51c921b09b4452b7346347ec9effa58f179
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@6ff3b97a91cfc1feda73dc0ac59c3b284483f123 # main
     with:
       source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       artifact_key: physics-engine-pages-v1
       build_command: bash scripts/build-pages.sh
       artifact_paths: pages-dist
+      cache_cargo: true
+      cargo_cache_dependency_path: Cargo.lock
       reuse_across_runs: true
       artifact_retention_days: 7
 
@@ -168,7 +170,7 @@ jobs:
     needs: [docs-scope, tests, work-contracts, oracle, build-pages]
     runs-on: ubuntu-latest
     steps:
-      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@b0f25f241d76af2584dfc9e375084ff5c5cb97da
+      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@6ff3b97a91cfc1feda73dc0ac59c3b284483f123 # main
         with:
           needs: ${{ toJSON(needs) }}
           required: '["docs-scope", "tests", "work-contracts", "oracle", "build-pages"]'

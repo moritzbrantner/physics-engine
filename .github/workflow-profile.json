@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "catalog": "workflow-profiles-v1",
+  "catalogDigest": "sha256:080e5857a87fba19320e9f1e7b890a903d07ff6cdb1be65824449ef9c198de54",
+  "profile": "engine-lab",
+  "enabledRoles": [
+    "pages",
+    "validate"
+  ],
+  "workflows": {
+    "pages": ".github/workflows/pages.yml",
+    "validate": ".github/workflows/validate.yml"
+  },
+  "exceptions": [
+    {
+      "path": ".github/workflows/downstream.yml",
+      "reason": "Advisory game canary (#360): scheduled run against the consuming games that needs issues: write to file regressions; not a validate, pages, evidence or publish role."
+    }
+  ]
+}
