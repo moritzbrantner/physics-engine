@@ -56,6 +56,7 @@ impl World {
         }
         let mut report = Report::default();
         if self.is_quiescent() {
+            self.joints.idle_revolute();
             self.elapsed += dt;
             self.query_tree.step_ended();
             self.finish_bookkeeping(&mut report);
@@ -71,7 +72,7 @@ impl World {
         let prior_activity = self.bookkeeping.activity.count;
         let prior_dynamic = self.bookkeeping.activity.dynamic;
         if !self.joints.is_empty() {
-            self.joints.begin();
+            self.joints.begin(self.scene.warm_start);
         }
         let result = self
             .begin_kinematic_poses(dt)
@@ -237,6 +238,7 @@ impl World {
             // Joint rows follow the contact rows and are rebuilt every substep (#453).
             let contact_rows = constraints.len();
             self.joint_rows(&mut constraints, h, &mut report);
+            self.revolute_rows(h, &mut report);
             self.solve_constraints(&mut constraints, contact_rows, &mut report);
             let (contact_part, joint_part) = constraints.split_at(contact_rows);
             self.cache_contacts(contact_part, joint_part, &mut report);
@@ -259,6 +261,7 @@ impl World {
             self.last_h = widen_time(h);
         }
         self.finish_kinematic_poses();
+        self.joints.finish_revolute(dt as Real);
         self.clear_forces(layout);
         self.elapsed += dt;
         self.finish_bookkeeping(&mut report);
@@ -804,6 +807,42 @@ impl World {
                 [c.normal_impulse, c.tangent_impulse[0], c.tangent_impulse[1]],
             );
         }
+        if !self.joints.prepared.is_empty() {
+            // Revolute joints (#568): every pass solves the contact and rope rows, then the
+            // joint rows, so the joints have the last word. Fixed passes over the whole world:
+            // neither the early exit nor the island partition sees the joint rows.
+            self.warm_start_revolute();
+            let passes = self.scene.velocity_iterations;
+            for _ in 0..passes {
+                report.convergence.constraint_visits +=
+                    (constraints.len() + self.joints.prepared.len()) as u64;
+                convergence::solve_pass(&mut self.bodies, &self.responses, constraints);
+                super::revolute::solve_pass(&mut self.bodies, &mut self.joints.prepared);
+            }
+            convergence::record_substep(
+                convergence::Outcome {
+                    passes,
+                    exit: convergence::Exit::Fixed,
+                },
+                passes,
+                report,
+            );
+        } else {
+            self.solve_rows(constraints, report);
+        }
+        if self.elevated_bodies > 0 {
+            islands::solve_extra(
+                &mut self.bodies,
+                &self.responses,
+                constraints,
+                self.scene.convergence,
+                &mut self.island_scratch,
+                report,
+            );
+        }
+    }
+    /// The contact and rope rows' passes, with the configured early exit and partition.
+    fn solve_rows(&mut self, constraints: &mut [Constraint], report: &mut Report) {
         match self.scene.convergence {
             Some(tolerances)
                 if self.scene.convergence_scope == ConvergenceScope::ContactIslands =>
@@ -834,16 +873,6 @@ impl World {
                 Convergence::default(),
                 report,
             ),
-        }
-        if self.elevated_bodies > 0 {
-            islands::solve_extra(
-                &mut self.bodies,
-                &self.responses,
-                constraints,
-                self.scene.convergence,
-                &mut self.island_scratch,
-                report,
-            );
         }
     }
     /// Contact cache phase: the solved rows' impulses become the cache's warm-start history,
@@ -1044,9 +1073,10 @@ impl World {
             });
         }
         self.contact_changes.append(&mut impacts);
-        if !joint_rows.is_empty() {
+        if !joint_rows.is_empty() || !self.joints.prepared.is_empty() {
             let mut edges = std::mem::take(&mut self.bookkeeping.support_edges);
             self.joint_writeback(joint_rows, &mut edges);
+            self.revolute_writeback(&mut edges);
             self.bookkeeping.support_edges = edges;
         }
         let scratch = &mut self.bookkeeping;
@@ -1659,6 +1689,12 @@ impl World {
             candidates.sort_unstable_by_key(|&(i, j)| (self.bodies[i].order, self.bodies[j].order));
         }
         debug_assert!(candidates.windows(2).all(|w| w[0] != w[1]));
+        // Bodies joined by a revolute joint without contacts never touch (#568).
+        if self.joints.any_contacts_disabled() {
+            let (bodies, joints) = (&self.bodies, &self.joints);
+            candidates
+                .retain(|&(i, j)| !joints.contacts_disabled(bodies[i].order, bodies[j].order));
+        }
         let narrow = super::narrow::Narrow {
             scene: &self.scene,
             meshes: &self.triangle_meshes,

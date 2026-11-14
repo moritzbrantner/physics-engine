@@ -518,8 +518,9 @@ to one on body `b` (each in its body's local frame, scene units) by a rope: the 
 most `max_length` apart and may come closer freely, as Rapier 0.36.1's `RopeJoint`
 (`DistanceJoint::rope(a, b, max_length)` ties the centres). Rapier's coupled linear limit applies
 only its maximum (`FIXME: handle min limit too`), so there is no minimum length here either; a
-fixed attachment, hinges, motors and rope discretization are later slices (#453). Contacts
-between the joined bodies stay enabled, as Rapier's default.
+fixed attachment and rope discretization are later slices (#453), hinges and motors are
+[revolute joints](#revolute-joints). Contacts between the joined bodies stay enabled, as
+Rapier's default.
 
 - **Ids.** `add_joint` returns a `JointId`, a creation serial never reused within the world
   (`JointId::{to_bits, from_bits}` serve adapters). `joint(id)`, `joint_impulse(id)`,
@@ -563,6 +564,80 @@ between the joined bodies stay enabled, as Rapier's default.
 
 The `rope-joints` oracle scenario (C21) checks dragged and hanging fixtures against Rapier; see
 [consumer capabilities](consumer-capabilities.md).
+
+## Revolute joints
+
+`add_revolute_joint(RevoluteJoint { a, b, anchor_a, anchor_b, axis_a, axis_b, reference_a,
+reference_b, limits, motor, contacts })` hinges body `b` to body `a` (#568, for
+moenarch-games/shooter#73's wheels, rotors and turrets), as Rapier 0.36.1's `RevoluteJoint`: the
+two anchors coincide and the two axes align in the world, leaving one rotational degree of
+freedom. Anchors, axes and references are in each body's local frame; for a compound body that
+is its body frame at the centre of mass, and `PreparedCompound::{body_point, body_direction}`
+convert a mounting point and axis from the authoring frame. `RevoluteJoint::new(a, b, axis)`
+hinges about the same local axis on both bodies through their centres, with `.anchors(..)`,
+`.axes(..)`, `.limits(min, max)` and `.motor(..)` to refine it. The mounting is authoritative:
+a wheel mounted about a different axis drives that way and nothing corrects it.
+
+- **Angle.** The joint angle is the right-handed turn of `reference_b` from `reference_a` about
+  `a`'s world axis, in `[-π, π]`; the rate is `b`'s angular velocity relative to `a`'s about
+  that axis. `RevoluteJoint::perpendicular(axis)`, the default reference, is the image of +Y under
+  the shortest rotation taking +X onto the axis (Rapier's revolute frame), so `new` measures the
+  angle as Rapier's `RevoluteJoint::angle` does. `add_revolute_joint` normalizes the axes and
+  makes each reference a unit vector perpendicular to its axis.
+- **Limits.** `Some([min, max])`, `-π <= min <= max <= π`: one-sided rows that admit closing up
+  to a limit within the substep and push a violated limit back. Angles wrap at ±π, so a limit
+  range keeps the joint away from the seam; `None` turns freely.
+- **Motors.** `Motor::Velocity { rate, max_torque }` drives the joint at `rate` (a rotor or a
+  wheel) with at most `max_torque`: under a heavier load it slows or stalls. `Motor::Position
+  { angle, max_rate, max_torque }` is a servo: it turns towards `angle` (wrapped, the shorter
+  way) at up to `max_rate` and at most `max_torque`, closing the remaining error with a 0.05 s
+  time constant so it slows into the target, and holds it. `Motor::Off` is a free hinge. Motors
+  are stiff but not rigid: each gives up 1% of the rate change its impulse would make on its
+  own, so several motors driving one body through sticking contacts (a robot's wheels) share
+  the load instead of locking in an arbitrary split (under a steady load the rate falls a
+  fraction of a percent short; a servo holds its angle within about 1e-3 rad). Torques are N·m (mass · scene units² / s²). The game
+  sets the command with `set_revolute_motor(id, motor)` every tick; a changed command wakes the
+  joined bodies. `set_revolute_limits` changes the limits.
+- **Readback.** `revolute_state(id)` returns the angle and rate at the current poses, the motor
+  torque averaged over the last step (`motor_torque`, signed like the rate, zero while the bodies
+  sleep) and whether the motor was at its `max_torque` in the last substep (`saturated`). A
+  stall is `saturated` with a rate far from the command; the game charges energy from the
+  torque and the rate.
+- **Contacts.** `contacts: false` (the default, Rapier's `contacts_enabled(false)`) drops every
+  contact between the two joined bodies in the broad phase and CCD, so a wheel or turret mounted
+  against its chassis never touches it; other bodies, including other parts of the same robot,
+  still collide.
+- **Ids, lifecycle and order.** Revolute joints share `JointId`s with distance joints (one
+  serial, never reused). `revolute_joint(id)`, `revolute_joints()` (canonical order: by the
+  pair's body orders, then id) and `remove_revolute_joint(id)` read and remove them (`joint`,
+  `joint_impulse` and `remove_joint` answer only distance joints). Validation, removal with a
+  body and waking are those of [distance joints](#joints). Chains (a body in several joints, as
+  a turret's yaw ring between the chassis and the barrel) need nothing more.
+- **Solver.** Each substep, every revolute joint with an awake dynamic side becomes one row
+  from the current poses: a 3 × 3 block holding the anchors together, a 2 × 2 block aligning the
+  axes (half of each position error corrected per substep, at most 3 m/s or 3 rad/s), and
+  scalar rows along the axis for the motor (impulse bounded by `max_torque × h`) and each limit.
+  While a world has revolute rows, each of the substep's `velocity_iterations` passes solves
+  every contact and rope row, then every revolute row (alignment, anchor, motor, limits), so the
+  joints have the last word: solved before the contacts, the joints' leftover error fed back as
+  a jitter of chassis and turrets on their wheels. Those substeps run their fixed passes over
+  the whole world, without the convergence early exit or the island partition. Rows warm-start from the
+  previous substep's impulses, and from the previous step's only with `Config::warm_start`.
+  `Report::joint_rows` counts revolute rows with the rope rows.
+- **Islands and sleep.** Joined bodies are one island and support crosses a joint both ways, so
+  a robot resting on its wheels sleeps as a whole once still.
+- **Exact continuation.** With `warm_start` off nothing about a revolute joint crosses a step
+  boundary but its definition and motor command: a world rebuilt from read-back bodies, the same
+  joints and the same commands steps bit-identically (`tests/revolute_joints.rs`).
+- **Cost.** O(revolute joints) per substep and per pass; lookups O(joints); adding or removing
+  one O(joints · log). `work::Counter::JointRows` counts the record visits
+  (`step-revolute-joints` complexity contract).
+- **Failure and checkpoints.** A failed step restores every revolute impulse, torque and
+  saturation with the rest of the transaction. Worlds with revolute joints are not
+  checkpointed (`UnsupportedJoints`).
+
+The `revolute-robots` oracle scenario (C29) drives twelve robots with eight joints each against
+Rapier; see [consumer capabilities](consumer-capabilities.md).
 
 ## Compound bodies
 

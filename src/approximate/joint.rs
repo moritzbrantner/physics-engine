@@ -2,7 +2,9 @@
 //! `RopeJoint`. Each joint becomes one row of the existing velocity solve (the contact rows'
 //! kernel with no friction), rebuilt every substep from the current poses and warm-started
 //! from its last impulse. Joints link islands for sleep and wake. See
-//! docs/world-api-contract.md#joints.
+//! docs/world-api-contract.md#joints. Revolute joints (#568, `revolute.rs`) share the ids, the
+//! record list's lifecycle and the island links kept here.
+use super::revolute;
 use super::{Body, BodyId, Constraint, Error, Order, Real, Report, Vector, World, narrow_time};
 
 /// A joint's stable id: a creation serial, never reused within a world, so the id of a
@@ -75,28 +77,88 @@ pub(super) struct Joints {
     saved: Vec<Real>,
     /// The record of each joint row the current substep built.
     rows: Vec<u32>,
+    /// Revolute joints (#568) in canonical order: by the pair's body orders, then by id.
+    pub(super) revolute: Vec<revolute::Record>,
+    /// The revolute rows the current substep built.
+    pub(super) prepared: Vec<revolute::Row>,
+    /// Before-images of the revolute solver states for a step's rollback.
+    pub(super) saved_revolute: Vec<revolute::Solved>,
+    /// The body pairs joined by a revolute joint without `contacts`, sorted and deduplicated:
+    /// the broad phase drops their contacts.
+    no_contact: Vec<(Order, Order)>,
 }
+/// The joined body pairs of both joint kinds.
+pub(super) struct Pairs<'a> {
+    distance: std::slice::Iter<'a, Record>,
+    revolute: std::slice::Iter<'a, revolute::Record>,
+}
+impl Iterator for Pairs<'_> {
+    type Item = (Order, Order);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.distance
+            .next()
+            .map(|r| r.key)
+            .or_else(|| self.revolute.next().map(|r| r.key))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.distance.len() + self.revolute.len();
+        (n, Some(n))
+    }
+}
+impl ExactSizeIterator for Pairs<'_> {}
 impl Joints {
     pub fn is_empty(&self) -> bool {
-        self.records.is_empty()
+        self.records.is_empty() && self.revolute.is_empty()
     }
     /// The joined body pairs, for the island graph.
-    pub fn pairs(&self) -> impl ExactSizeIterator<Item = (Order, Order)> + '_ {
-        self.records.iter().map(|r| r.key)
+    pub fn pairs(&self) -> Pairs<'_> {
+        Pairs {
+            distance: self.records.iter(),
+            revolute: self.revolute.iter(),
+        }
     }
     fn find(&self, id: JointId) -> Option<usize> {
         self.records.iter().position(|r| r.id == id)
     }
+    /// A new joint id, never reused within the world.
+    pub(super) fn issue(&mut self) -> JointId {
+        let id = JointId(self.next);
+        self.next += 1;
+        id
+    }
+    /// After revolute joints were added or removed: the pairs without contacts follow.
+    /// O(revolute joints · log), and marks the island graph dirty.
+    pub(super) fn joined_changed(&mut self) {
+        self.no_contact.clear();
+        self.no_contact.extend(
+            self.revolute
+                .iter()
+                .filter(|r| !r.joint.contacts)
+                .map(|r| r.key),
+        );
+        self.no_contact.sort_unstable();
+        self.no_contact.dedup();
+    }
+    /// Whether the broad phase drops contacts between the bodies with orders `a < b`.
+    #[inline]
+    pub(super) fn contacts_disabled(&self, a: Order, b: Order) -> bool {
+        self.no_contact.binary_search(&(a, b)).is_ok()
+    }
+    pub(super) fn any_contacts_disabled(&self) -> bool {
+        !self.no_contact.is_empty()
+    }
     /// Saves the impulses a step may change (O(joints), nothing without joints).
-    pub fn begin(&mut self) {
+    pub fn begin(&mut self, warm_start: bool) {
         self.saved.clear();
         self.saved.extend(self.records.iter().map(|r| r.impulse));
+        self.begin_revolute(warm_start);
     }
     /// Restores the impulses saved by [`Self::begin`] after a failed step.
     pub fn rollback(&mut self) {
         for (r, &impulse) in self.records.iter_mut().zip(&self.saved) {
             r.impulse = impulse;
         }
+        self.rollback_revolute();
     }
 }
 
@@ -118,8 +180,7 @@ impl World {
         } else {
             (b.order, a.order)
         };
-        let id = JointId(self.joints.next);
-        self.joints.next += 1;
+        let id = self.joints.issue();
         // New ids are the largest: the joint goes after every joint of its pair.
         let at = self.joints.records.partition_point(|r| r.key <= key);
         self.joints.records.insert(
@@ -159,7 +220,7 @@ impl World {
         self.joints.records.len()
     }
     /// Wakes the islands of a joined pair's dynamic bodies.
-    fn wake_joined(&mut self, (a, b): (Order, Order)) {
+    pub(super) fn wake_joined(&mut self, (a, b): (Order, Order)) {
         self.sort_storage();
         for order in [a, b] {
             if self
@@ -177,15 +238,21 @@ impl World {
             return;
         }
         let mut partners = Vec::new();
-        self.joints.records.retain(|r| {
+        let mut keep = |key: (Order, Order)| {
             crate::work::add(crate::work::Counter::JointRows, 1);
-            if r.key.0 == order || r.key.1 == order {
-                partners.push(if r.key.0 == order { r.key.1 } else { r.key.0 });
+            if key.0 == order || key.1 == order {
+                partners.push(if key.0 == order { key.1 } else { key.0 });
                 false
             } else {
                 true
             }
-        });
+        };
+        self.joints.records.retain(|r| keep(r.key));
+        let revolute = self.joints.revolute.len();
+        self.joints.revolute.retain(|r| keep(r.key));
+        if self.joints.revolute.len() != revolute {
+            self.joints.joined_changed();
+        }
         if partners.is_empty() {
             return;
         }
@@ -209,10 +276,9 @@ impl World {
         if self.joints.is_empty() {
             return roots;
         }
-        let before = self.joints.records.len();
-        self.joints.records.retain(|r| {
+        let before = (self.joints.records.len(), self.joints.revolute.len());
+        let mut keep = |(a, b): (Order, Order)| {
             crate::work::add(crate::work::Counter::JointRows, 1);
-            let (a, b) = r.key;
             let (gone_a, gone_b) = (
                 orders.binary_search(&a).is_ok(),
                 orders.binary_search(&b).is_ok(),
@@ -223,16 +289,24 @@ impl World {
                 roots.push(a);
             }
             !(gone_a || gone_b)
-        });
-        self.bookkeeping.graph.dirty |= self.joints.records.len() != before;
+        };
+        self.joints.records.retain(|r| keep(r.key));
+        self.joints.revolute.retain(|r| keep(r.key));
+        if self.joints.revolute.len() != before.1 {
+            self.joints.joined_changed();
+        }
+        self.bookkeeping.graph.dirty |=
+            (self.joints.records.len(), self.joints.revolute.len()) != before;
         roots
     }
     /// Contacts phase: a sleeping body held by a moving kinematic body wakes (its island
     /// roots), as a moving kinematic contact wakes what it touches.
     pub(super) fn joint_roots(&self, roots: &mut Vec<Order>) {
-        for r in &self.joints.records {
+        let distance = self.joints.records.iter().map(|r| (r.joint.a, r.joint.b));
+        let revolute = self.joints.revolute.iter().map(|r| (r.joint.a, r.joint.b));
+        for (a, b) in distance.chain(revolute) {
             crate::work::add(crate::work::Counter::JointRows, 1);
-            let (Ok(a), Ok(b)) = (self.index(r.joint.a), self.index(r.joint.b)) else {
+            let (Ok(a), Ok(b)) = (self.index(a), self.index(b)) else {
                 continue;
             };
             let (a, b) = (&self.bodies[a], &self.bodies[b]);

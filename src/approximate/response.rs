@@ -61,6 +61,17 @@ impl PreparedResponse {
         let [x, y, z] = self.world_inverse_inertia;
         Vector(x.dot(v), y.dot(v), z.dot(v))
     }
+
+    /// [`Self::inertia`] without the diagnostic counter, for the revolute joint solver's
+    /// inner loop (#568), which counts its rows instead.
+    #[inline]
+    pub fn turn(self, v: Vector) -> Vector {
+        if !self.spin {
+            return Vector::ZERO;
+        }
+        let [x, y, z] = self.world_inverse_inertia;
+        Vector(x.dot(v), y.dot(v), z.dot(v))
+    }
 }
 
 #[cfg(test)]

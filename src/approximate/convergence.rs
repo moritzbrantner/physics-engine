@@ -236,6 +236,18 @@ pub(super) fn solve<const EARLY: bool>(
     record_substep(outcome, iterations, report);
 }
 
+/// One fixed pass over every row, the fixed-iteration kernel: the revolute joint solve (#568)
+/// interleaves these with its own passes.
+pub(super) fn solve_pass(
+    bodies: &mut [Body],
+    responses: &[PreparedResponse],
+    constraints: &mut [Constraint],
+) {
+    for c in constraints {
+        solve_row::<false>(bodies, responses, c);
+    }
+}
+
 pub(super) fn solve_selected(
     bodies: &mut [Body],
     responses: &[PreparedResponse],

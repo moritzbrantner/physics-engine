@@ -13,8 +13,9 @@ use physics_engine::{
     BodyId, CollisionLayers3d,
     approximate::{
         Body, BodyStorage, CharacterMove, CharacterMoveResult, CheckpointContext, CompoundChild,
-        Config, DistanceJoint, Error, HeightfieldDesc, Medium, PreparedCompound, Quaternion,
-        QueryFilter, QueryHit, QueryPose, RayCast, RayHit, Shape, ShapeCast, Vector as V, World,
+        Config, DistanceJoint, Error, HeightfieldDesc, Medium, Motor, PreparedCompound, Quaternion,
+        QueryFilter, QueryHit, QueryPose, RayCast, RayHit, RevoluteJoint, Shape, ShapeCast,
+        Vector as V, World,
     },
     work::{self, Counter},
 };
@@ -1790,6 +1791,87 @@ fn joint_rows_follow_the_joints_not_the_town() {
     }
     judge(
         "step-joints",
+        &samples,
+        &[
+            ("joint-rows", "statics", "constant"),
+            ("joint-rows", "joints", "linear"),
+            ("joint-record-visits", "statics", "constant"),
+            ("joint-record-visits", "joints", "linear"),
+            ("body-visits", "statics", "constant"),
+            ("body-visits", "joints", "linear"),
+            ("pair-tests", "statics", "constant"),
+        ],
+    );
+}
+
+/// `rotors` arms turned by velocity motors on hinges at fixed axles high above a static town of
+/// `statics` boxes (#568): one revolute row per joint per substep, and the town is never visited.
+fn rotor_town(statics: usize, rotors: u64) -> World {
+    let mut w = debris_town(statics, 1 << (statics.trailing_zeros().div_ceil(2)), 0);
+    for k in 0..rotors {
+        let top = cell((k % 16) as usize * 2, (k / 16) as usize * 2) + V(0.0, 20.0, 0.0);
+        let mut axle = Body::keyed(3_000_000 + k, Shape::Sphere(0.05), top, 0.0);
+        axle.sensor = true;
+        let axle = w.add_body(axle).unwrap();
+        let arm = w
+            .add_body(Body::keyed(
+                4_000_000 + k,
+                Shape::Box(V(0.5, 0.05, 0.05)),
+                top + V(0.5, 0.0, 0.0),
+                1.0,
+            ))
+            .unwrap();
+        w.add_revolute_joint(
+            RevoluteJoint::new(axle, arm, V::Z)
+                .anchors(V::ZERO, V(-0.5, 0.0, 0.0))
+                .motor(Motor::Velocity {
+                    rate: 6.0,
+                    max_torque: 50.0,
+                }),
+        )
+        .unwrap();
+    }
+    w
+}
+
+/// Revolute rows are linear in the joints and independent of the static town (#568).
+#[test]
+fn revolute_rows_follow_the_joints_not_the_town() {
+    let mut samples = Vec::new();
+    let points = [9u32, 10, 11, 12, 13]
+        .iter()
+        .map(|&s| (s, 8u64))
+        .chain([1u64, 2, 4, 16, 32, 64].iter().map(|&r| (12, r)));
+    for (log2, rotors) in points {
+        let statics = 1usize << log2;
+        let mut w = rotor_town(statics, rotors);
+        w.step(1.0 / 60.0).unwrap();
+        w.step(1.0 / 60.0).unwrap();
+        work::reset();
+        let report = w.step(1.0 / 60.0).unwrap();
+        let (visits, records) = (
+            work::get(Counter::BodyVisits),
+            work::get(Counter::JointRows),
+        );
+        let substeps = u64::from(Config::default().substeps);
+        assert_eq!(report.joint_rows, rotors * substeps);
+        let turning = w
+            .bodies()
+            .filter(|b| b.mass > 0.0)
+            .all(|b| !b.is_sleeping() && b.angular_velocity.length() > 1.0);
+        assert!(turning, "every arm still turns");
+        samples.push((
+            vec![("statics", statics as u64), ("joints", rotors)],
+            vec![
+                ("joint-rows", report.joint_rows),
+                ("joint-record-visits", records),
+                ("body-visits", visits),
+                ("pair-tests", report.pair_tests),
+            ],
+        ));
+    }
+    judge(
+        "step-revolute-joints",
         &samples,
         &[
             ("joint-rows", "statics", "constant"),

@@ -74,6 +74,8 @@ use bookkeeping::{Scratch, reserve};
 use geometry::GeometryCache;
 pub use geometry::GeometryStats;
 pub use joint::{DistanceJoint, JointId};
+mod revolute;
+pub use revolute::{Motor, RevoluteJoint, RevoluteState};
 mod ccd;
 mod character;
 mod convex_hull;
