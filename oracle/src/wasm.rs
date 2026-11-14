@@ -119,7 +119,7 @@ pub extern "C" fn oracle_ticks(index: u32) -> u32 {
 /// display-only mapping: 1 ray, 2 penetration, 3 position, 4 rotation, 5 grounded,
 /// 6 depenetration, 7 contact, 8 blocked, 9 support, 10 contact transition,
 /// 11 linear velocity, 12 joint tension, 13 labelled first hit, 14 overlap label set,
-/// 15 principal moments of inertia.
+/// 15 principal moments of inertia, 16 revolute joint (angle, rate, motor torque).
 fn display_values(obs: &Obs) -> (u8, [f64; 6]) {
     let mut data = [0.0; 6];
     let kind = match *obs {
@@ -150,6 +150,10 @@ fn display_values(obs: &Obs) -> (u8, [f64; 6]) {
         Obs::Inertia(moments) => {
             data[..3].copy_from_slice(&moments.map(f64::from));
             15
+        }
+        Obs::Joint(state) => {
+            data[..3].copy_from_slice(&state.map(f64::from));
+            16
         }
         Obs::Tension(t) => {
             data[0] = f64::from(t);

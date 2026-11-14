@@ -392,6 +392,16 @@ impl PreparedCompound {
             (orientation * self.principal_orientation).normalized(),
         )
     }
+    /// A point given in the authoring frame (a joint's mounting point) in the body frame, as
+    /// joint anchors take it.
+    pub fn body_point(&self, point: Vector) -> Vector {
+        self.principal_orientation
+            .inverse_rotate(point - self.center_of_mass)
+    }
+    /// A direction given in the authoring frame (a joint's axis) in the body frame.
+    pub fn body_direction(&self, direction: Vector) -> Vector {
+        self.principal_orientation.inverse_rotate(direction)
+    }
     /// The authoring origin's pose for a body at `position` with `orientation`: the inverse of
     /// [`Self::body_pose`] (to rounding).
     pub fn origin_pose(&self, position: Vector, orientation: Quaternion) -> (Vector, Quaternion) {

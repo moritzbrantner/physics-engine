@@ -2358,6 +2358,127 @@
       ]
     },
     {
+      "id": "step-revolute-joints",
+      "description": "One warm World::step (1/60 s, default config) with `joints` arms turned by velocity motors on RevoluteJoint hinges at fixed axles high above a static town of `statics` boxes (#568).",
+      "publicContract": "physics_engine::approximate::World::step",
+      "dimensions": {
+        "statics": {
+          "description": "static boxes in the town (doubling sizes), never reached by an arm"
+        },
+        "joints": {
+          "description": "motored hinges, each turning one awake arm"
+        }
+      },
+      "scalePoints": [
+        {
+          "statics": 512,
+          "joints": 8
+        },
+        {
+          "statics": 1024,
+          "joints": 8
+        },
+        {
+          "statics": 2048,
+          "joints": 8
+        },
+        {
+          "statics": 4096,
+          "joints": 8
+        },
+        {
+          "statics": 8192,
+          "joints": 8
+        },
+        {
+          "statics": 4096,
+          "joints": 1
+        },
+        {
+          "statics": 4096,
+          "joints": 2
+        },
+        {
+          "statics": 4096,
+          "joints": 4
+        },
+        {
+          "statics": 4096,
+          "joints": 16
+        },
+        {
+          "statics": 4096,
+          "joints": 32
+        },
+        {
+          "statics": 4096,
+          "joints": 64
+        }
+      ],
+      "metrics": [
+        {
+          "name": "joint-rows",
+          "unit": "rows",
+          "signal": "operation-count",
+          "notes": "Report::joint_rows: one revolute row (anchor, alignment, motor and limit blocks) per joint with an awake dynamic side per substep, rebuilt from the current poses and solved in the same passes as the contact rows. A new operation (#568): O(joints), independent of the town.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "joints",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "joint-record-visits",
+          "unit": "records",
+          "signal": "operation-count",
+          "notes": "work::Counter::JointRows: revolute records visited by the step (each substep's row build plus the contact phase's kinematic-wake test). O(joints) per substep; a world without joints visits none.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "joints",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "body-visits",
+          "unit": "bodies",
+          "signal": "operation-count",
+          "notes": "work::Counter::BodyVisits: the step's per-body loops still follow the awake bodies only (#412); joints add none.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            },
+            {
+              "dimension": "joints",
+              "bound": "linear"
+            }
+          ]
+        },
+        {
+          "name": "pair-tests",
+          "unit": "tests",
+          "signal": "operation-count",
+          "notes": "Broad-phase candidate tests: the arms never reach the town or each other.",
+          "growth": [
+            {
+              "dimension": "statics",
+              "bound": "constant"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "step-kinematic-pose",
       "description": "One World::step (1/60 s, default config) after World::set_next_kinematic_pose turns `blades` kinematic blades 1 rad about their own centres, each through a small sphere in its path, high above a static town of `statics` boxes (#520).",
       "publicContract": "physics_engine::approximate::World::set_next_kinematic_pose",

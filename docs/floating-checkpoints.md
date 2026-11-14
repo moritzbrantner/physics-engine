@@ -79,9 +79,9 @@ holds the live bodies in body order whatever the storage held between steps. For
 configuration's length unit. Format 3 stores each body's handle, key (or creation serial), the slot generations and the
 next creation serial, so restored ids stay valid and stale ids stay rejected.
 
-Joints (#453) are not part of the format: `checkpoint` of a world with any joint returns
-`CheckpointError::UnsupportedJoints` without capturing anything, so a checkpoint never drops a
-joint silently. A world without joints builds no joint rows, so its continuation is unaffected.
+Joints (distance #453, revolute #568) are not part of the format: `checkpoint` of a world with
+any joint returns `CheckpointError::UnsupportedJoints` without capturing anything, so a
+checkpoint never drops a joint silently. A world without joints builds no joint rows, so its continuation is unaffected.
 Likewise a `World::set_next_kinematic_pose` target is not part of the format (#520): between that
 call and the next step `checkpoint` returns `CheckpointError::PendingKinematicPose`; the step
 consumes the target and leaves the body at rest at its pose, which the format already holds.

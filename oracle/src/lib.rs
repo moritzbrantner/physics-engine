@@ -44,6 +44,9 @@ pub enum Obs {
     /// A rigid body's principal moments of inertia about its centre of mass, ascending, in
     /// kg·m².
     Inertia([f32; 3]),
+    /// A revolute joint after a tick: angle (radians), rate (radians per second) and motor
+    /// torque about its axis (N·m).
+    Joint([f32; 3]),
     /// A contact transition reported by a tick: the pair as scenario labels.
     ContactEvent {
         tick: u32,
@@ -145,9 +148,11 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
             Obs::Ray(Some((t, n))) | Obs::Contact(Some((t, n))) => {
                 t.is_finite() && n.iter().all(|v| v.is_finite())
             }
-            Obs::Position(p) | Obs::Velocity(p) | Obs::Depenetration(p) | Obs::Inertia(p) => {
-                p.iter().all(|v| v.is_finite())
-            }
+            Obs::Position(p)
+            | Obs::Velocity(p)
+            | Obs::Depenetration(p)
+            | Obs::Inertia(p)
+            | Obs::Joint(p) => p.iter().all(|v| v.is_finite()),
             Obs::Rotation(q) => q.iter().all(|v| v.is_finite()),
             Obs::Tension(t) => t.is_finite(),
             _ => true,
@@ -231,5 +236,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::grapple::scenario(),
         scenarios::shooter_window::scenario(),
         scenarios::compound_robots::scenario(),
+        scenarios::revolute_robots::scenario(),
     ]
 }

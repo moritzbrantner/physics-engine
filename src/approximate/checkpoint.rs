@@ -79,7 +79,8 @@ pub enum CheckpointError {
     IncompatibleTarget,
     UnsupportedPolicy,
     ResourceLimit,
-    /// The world has joints, which checkpoints do not hold (#453); nothing is captured.
+    /// The world has distance or revolute joints, which checkpoints do not hold (#453, #568);
+    /// nothing is captured.
     UnsupportedJoints,
     /// A [`World::set_next_kinematic_pose`] target awaits the next step (#520); checkpoint
     /// after that step, which consumes it. Nothing is captured.

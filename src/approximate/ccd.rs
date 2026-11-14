@@ -893,6 +893,15 @@ impl World {
             if other.sensor || !probe.layers.collides_with(other.layers) {
                 continue;
             }
+            // Bodies joined by a revolute joint without contacts never touch (#568).
+            let (lo, hi) = if probe.order < other.order {
+                (probe.order, other.order)
+            } else {
+                (other.order, probe.order)
+            };
+            if self.joints.any_contacts_disabled() && self.joints.contacts_disabled(lo, hi) {
+                continue;
+            }
             report.pair_tests += 1;
             let mut target = other.clone();
             if let Some((_, position)) = search.frozen.iter().find(|(index, _)| *index == j) {
