@@ -196,14 +196,20 @@ impl GeometryCache {
             self.frames.fill(None);
         }
     }
+    /// A body's frame, prepared once per pass: the reuse inlined, the preparation out of line.
+    #[inline]
     fn frame(&mut self, index: usize, b: &Body, work: &mut GeometryStats) -> [Vector; 3] {
-        if let Some(f) = self.frames[index]
+        if let Some(f) = &self.frames[index]
             && f.epoch == self.epoch
             && f.key.id == b.id
         {
             work.frame_reuses += 1;
             return f.axes;
         }
+        self.prepare_frame(index, b, work)
+    }
+    #[cold]
+    fn prepare_frame(&mut self, index: usize, b: &Body, work: &mut GeometryStats) -> [Vector; 3] {
         let key = ShapeKey::new(b);
         if let Some(f) = &mut self.frames[index]
             && f.key == key
