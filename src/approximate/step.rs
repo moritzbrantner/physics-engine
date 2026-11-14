@@ -494,7 +494,8 @@ impl World {
                 // a contact its rotation brings within the step is swept, which regenerates
                 // (#520).
                 let (a, b) = (&self.bodies[i], &self.bodies[j]);
-                let plane = a.shape == Shape::HalfSpace || b.shape == Shape::HalfSpace;
+                let plane =
+                    matches!(a.shape, Shape::HalfSpace) || matches!(b.shape, Shape::HalfSpace);
                 let tumbles = |b: &Body| {
                     !b.external
                         && !matches!(b.shape, Shape::Sphere(_))
@@ -526,7 +527,7 @@ impl World {
         let mut history = self.cache.iter().peekable();
         let warm_start = self.scene.warm_start;
         let mut last_history = None;
-        for (i, j, m) in pairs.drain(..) {
+        for &(i, j, ref m) in pairs.iter() {
             // Remaining-time advancement already resolved every contact of an advanced CCD
             // body along its actual path; start-pose constraints would act on its response
             // velocity a second time.
@@ -606,23 +607,41 @@ impl World {
             let used = &mut self.bookkeeping.used;
             used.clear();
             reserve(used, m.points.len(), &mut self.bookkeeping.work);
+            // Per pair: the material combines, the fixed-box interval, the midpoint rule and the
+            // finiteness of every row term but the angular ones (`prepare_finite_response`).
+            let restitution = if new_pair {
+                pair_restitution(a, b)
+            } else {
+                0.0
+            };
+            let friction = if linear { 0.0 } else { pair_friction(a, b) };
+            // Additional corners can limit approach while still separated at the admitted
+            // contact time. They have no frictional load yet.
+            let closing = (!linear && contact::fixed_box_interval(a, b))
+                .then(|| (b.velocity - a.velocity).dot(n) * h * m.time);
+            let midpoint = !m.swept
+                && !linear
+                && a.movable()
+                && b.movable()
+                && !a.sleeping
+                && !b.sleeping
+                && response == [true, true];
+            let boxes = matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_)));
+            let offset = b.position - a.position;
+            let finite_pair = n.finite()
+                && t1.finite()
+                && t2.finite()
+                && (0..2).all(|side| !response[side] || prepared[side].inverse_mass.is_finite());
             for point in &m.points {
                 let mut point = *point;
-                if !m.swept
-                    && !linear
-                    && a.movable()
-                    && b.movable()
-                    && !a.sleeping
-                    && !b.sleeping
-                    && response == [true, true]
-                {
+                if midpoint {
                     // Opposite impulses at separate witnesses create an internal
                     // friction couple. Reciprocal dynamic current contacts share
                     // the midpoint along the contact normal. Projecting the witness
                     // gap avoids feeding tangential reconstruction roundoff into
                     // resting friction rows; separation still owns the target.
-                    let delta = (b.position - a.position) + point.rb - point.ra;
-                    let gap = if matches!((a.shape, b.shape), (Shape::Box(_), Shape::Box(_))) {
+                    let delta = offset + point.rb - point.ra;
+                    let gap = if boxes {
                         // Box clipping projects witnesses along this normal;
                         // generic primitive support vertices need the full gap.
                         n * delta.dot(n)
@@ -665,14 +684,8 @@ impl World {
                 }
                 let rel =
                     contact_velocity(b, point.rb, !linear) - contact_velocity(a, point.ra, !linear);
-                let restitution = if new_pair {
-                    pair_restitution(a, b)
-                } else {
-                    0.0
-                };
                 // Rapier's restitution seed: a new contact closing faster than the restitution
                 // speed bounces once the step is solved, speculative ones included (#458).
-                let key = (a.order, b.order);
                 let mut bounce = 0.0;
                 if restitution > 0.0 && rel.dot(n) < -self.restitution_speed {
                     bounce = -restitution * rel.dot(n);
@@ -698,53 +711,16 @@ impl World {
                     self.scene.contact_slop,
                     self.restitution_speed,
                 );
-                let mut c = Constraint {
-                    a: i,
-                    b: j,
-                    n,
-                    ra: point.ra,
-                    rb: point.rb,
-                    t1,
-                    t2,
-                    angular,
-                    finite_response: false,
-                    normal_mass: 1.0 / k,
-                    tangent_mass: if spins {
-                        [mass(1, t1).recip(), mass(2, t2).recip()]
-                    } else {
-                        [k.recip(); 2]
-                    },
-                    bias,
-                    // Additional corners can limit approach while still separated at the
-                    // admitted contact time. They have no frictional load yet.
-                    friction: if linear
-                        || (contact::fixed_box_interval(a, b)
-                            && point.separation + (b.velocity - a.velocity).dot(n) * h * m.time
-                                > self.scene.contact_slop)
-                    {
-                        0.0
-                    } else {
-                        pair_friction(a, b)
-                    },
-                    normal_impulse: 0.0,
-                    tangent_impulse: [0.0; 2],
-                    sep: point.separation,
-                    swept: m.swept,
-                    response,
-                    spin: row_spin,
-                    offset: b.position - a.position,
-                    restitution,
-                    bounce,
-                };
-                c.prepare_finite_response(&self.responses);
+                let mut normal_impulse = 0.0;
+                let mut tangent_impulse = [0.0; 2];
                 if self.scene.warm_start
                     && warm_reach > 0.0
                     && point.separation <= self.scene.contact_slop
                     && self.last_h > 0.0
                     && let Some(old) = cached
                 {
-                    let la = a.orientation.inverse_rotate(c.ra);
-                    let lb = b.orientation.inverse_rotate(c.rb);
+                    let la = a.orientation.inverse_rotate(point.ra);
+                    let lb = b.orientation.inverse_rotate(point.rb);
                     // The nearest unused cached point with this normal; ties keep the first.
                     let mut nearest: Option<(usize, &CachedPoint, Real)> = None;
                     for (idx, p) in old.iter().enumerate() {
@@ -761,14 +737,53 @@ impl World {
                     {
                         used.push(idx);
                         let scale = (h / narrow_time(self.last_h)).clamp(0.0, 2.0);
-                        c.normal_impulse = p.impulse * scale;
-                        c.tangent_impulse = [p.tangent.dot(t1) * scale, p.tangent.dot(t2) * scale];
+                        normal_impulse = p.impulse * scale;
+                        tangent_impulse = [p.tangent.dot(t1) * scale, p.tangent.dot(t2) * scale];
                     }
                 }
                 report.max_penetration = report.max_penetration.max((-point.separation).max(0.0));
-                constraints.push(c);
+                // Pushed complete: the row is written once.
+                constraints.push(Constraint {
+                    a: i,
+                    b: j,
+                    n,
+                    ra: point.ra,
+                    rb: point.rb,
+                    t1,
+                    t2,
+                    angular,
+                    finite_response: finite_pair
+                        && (!row_spin
+                            || (0..2).all(|side| {
+                                !response[side] || angular[side].iter().all(|v| v.finite())
+                            })),
+                    normal_mass: 1.0 / k,
+                    tangent_mass: if spins {
+                        [mass(1, t1).recip(), mass(2, t2).recip()]
+                    } else {
+                        [k.recip(); 2]
+                    },
+                    bias,
+                    friction: if closing
+                        .is_some_and(|closing| point.separation + closing > self.scene.contact_slop)
+                    {
+                        0.0
+                    } else {
+                        friction
+                    },
+                    normal_impulse,
+                    tangent_impulse,
+                    sep: point.separation,
+                    swept: m.swept,
+                    response,
+                    spin: row_spin,
+                    offset,
+                    restitution,
+                    bounce,
+                });
             }
         }
+        pairs.clear();
     }
     /// Solve phase: warm-start impulses, then the velocity iterations.
     fn solve_constraints(
@@ -874,6 +889,10 @@ impl World {
             .peekable();
         let mut entries = self.cache.iter_mut().peekable();
         let mut impacts = Vec::new();
+        // Whether the walk left an entry without points: only then does the cache shrink below.
+        let mut emptied = false;
+        // The step's pairs from earlier substeps, and a cursor into them.
+        let (step_known, mut known) = (scratch.step_pairs.len(), 0);
         loop {
             if entries.peek().is_some() {
                 crate::work::add(crate::work::Counter::StepCachedPairs, 1);
@@ -909,6 +928,7 @@ impl World {
                 points
             });
             let Some(run) = run else {
+                emptied |= entry.is_some_and(|points| points.is_empty());
                 continue;
             };
             let a = &self.bodies[run[0].a];
@@ -916,8 +936,16 @@ impl World {
             let key = (a.order, b.order);
             let cached = run.iter().any(|c| c.sep <= self.scene.contact_slop * 2.0);
             if cached && !self.scene.warm_start {
-                push(&mut scratch.step_pairs, key, &mut scratch.work);
+                // An earlier substep's pairs are sorted: only a pair new to the step is added.
+                while known < step_known && scratch.step_pairs[known] < key {
+                    known += 1;
+                }
+                if known == step_known || scratch.step_pairs[known] != key {
+                    push(&mut scratch.step_pairs, key, &mut scratch.work);
+                }
             }
+            // A cached run refills its entry below; any other entry may be left empty.
+            emptied |= !cached && entry.as_ref().is_some_and(|points| points.is_empty());
             let mut new = None;
             let mut points = match entry {
                 _ if !cached => None,
@@ -984,34 +1012,37 @@ impl World {
             }
         }
         self.cache.extend(scratch.fresh_pairs.drain(..));
-        // Runs arrive in pair order within one substep; substeps merge here.
+        // Runs arrive in pair order within one substep; a later substep adds only the pairs new
+        // to the step, merged here.
         if !scratch.step_pairs.is_sorted() {
             scratch.step_pairs.sort_unstable();
-            scratch.step_pairs.dedup();
         }
         let (bodies, changes) = (&self.bodies, &mut self.contact_changes);
-        self.cache.retain(|&key, points| {
-            if points.is_empty() {
-                self.transaction.pair(key, Some(points));
-                scratch.graph.dirty = true;
-                let id = |order| {
-                    bodies[bodies
-                        .binary_search_by_key(&order, |b| b.order)
-                        .expect("live contact")]
-                    .id
-                };
-                changes.push(super::ContactChange {
-                    key,
-                    ids: (id(key.0), id(key.1)),
-                    started: false,
-                    held: false,
-                });
-                scratch.recycle_points(std::mem::take(points));
-                false
-            } else {
-                true
-            }
-        });
+        // Visits every entry, so only when the walk emptied one.
+        if emptied {
+            self.cache.retain(|&key, points| {
+                if points.is_empty() {
+                    self.transaction.pair(key, Some(points));
+                    scratch.graph.dirty = true;
+                    let id = |order| {
+                        bodies[bodies
+                            .binary_search_by_key(&order, |b| b.order)
+                            .expect("live contact")]
+                        .id
+                    };
+                    changes.push(super::ContactChange {
+                        key,
+                        ids: (id(key.0), id(key.1)),
+                        started: false,
+                        held: false,
+                    });
+                    scratch.recycle_points(std::mem::take(points));
+                    false
+                } else {
+                    true
+                }
+            });
+        }
         self.contact_changes.append(&mut impacts);
         if !joint_rows.is_empty() {
             let mut edges = std::mem::take(&mut self.bookkeeping.support_edges);
@@ -1600,17 +1631,24 @@ impl World {
             let pair = if a.order < b.order { (i, j) } else { (j, i) };
             push(&mut candidates, pair, &mut s.work);
         };
+        // One call site, so `consider` inlines: a body with a box visits the leaves it holds,
+        // one without scans every body.
         for &(i, lo, hi) in rows {
             let e = broad[self.bodies[i].id.slot() as usize];
-            if e.epoch != epoch {
+            let scan = e.epoch != epoch;
+            let visits = if scan {
                 crate::work::add(crate::work::Counter::BodyVisits, self.bodies.len() as u64);
-                for j in 0..self.bodies.len() {
-                    consider(i, (lo, hi), j);
-                }
-                continue;
-            }
-            for &slot in &s.broad_slots[e.start as usize..(e.start + e.len) as usize] {
-                consider(i, (lo, hi), self.slots[slot as usize].index as usize);
+                0..self.bodies.len()
+            } else {
+                e.start as usize..(e.start + e.len) as usize
+            };
+            for k in visits {
+                let j = if scan {
+                    k
+                } else {
+                    self.slots[s.broad_slots[k] as usize].index as usize
+                };
+                consider(i, (lo, hi), j);
             }
         }
         // Narrow phase in pair order, so the first failure and every cache visit are canonical.
@@ -2316,7 +2354,7 @@ pub(super) fn apply_tangent(
     apply_components::<false, true>(bodies, responses, c, [0.0, impulse[0], impulse[1]]);
 }
 
-#[inline]
+#[inline(always)]
 fn apply_components<const NORMAL: bool, const TANGENTS: bool>(
     bodies: &mut [Body],
     responses: &[PreparedResponse],

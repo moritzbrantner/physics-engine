@@ -649,7 +649,7 @@ fn sphere_sphere(a: &Body, b: &Body, ra: Real, rb: Real, margin: Real) -> Option
 /// `margin` of the plane become contact points, at most the four deepest (ties by vertex
 /// order); speculative points (positive separation) let the solver close up to the surface.
 pub(super) fn halfspace(a: &Body, b: &Body, margin: Real, horizon: Real) -> Option<Manifold> {
-    let flipped = a.shape != Shape::HalfSpace;
+    let flipped = !matches!(a.shape, Shape::HalfSpace);
     let (plane, body) = if flipped { (b, a) } else { (a, b) };
     debug_assert!(plane.shape == Shape::HalfSpace && !body.shape.query_only());
     let n = plane.orientation.rotate(V::Y);

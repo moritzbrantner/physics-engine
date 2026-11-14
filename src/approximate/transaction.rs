@@ -139,10 +139,15 @@ impl Journal {
             self.epoch = 1;
         }
     }
+    /// Journals a body once per step; the stamp check inlines into the solver loops.
+    #[inline]
     pub fn body(&mut self, index: usize, body: &Body) {
         if !self.active || self.stamps[index] == self.epoch {
             return;
         }
+        self.capture(index, body);
+    }
+    fn capture(&mut self, index: usize, body: &Body) {
         self.stamps[index] = self.epoch;
         let capacity = self.motion.capacity();
         self.motion.push((body.id, Motion::capture(body)));
