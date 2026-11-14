@@ -1,6 +1,6 @@
 //! Collision shapes: dimensions, bounds radii and inverse inertia.
 
-use super::{ConvexHullId, Real, TerrainId, TriangleMeshId, Vector};
+use super::{CompoundShape, ConvexHullId, Real, TerrainId, TriangleMeshId, Vector};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {
@@ -32,6 +32,10 @@ pub enum Shape {
         mesh: TriangleMeshId,
         half_extents: Vector,
     },
+    /// Dynamic compound of primitive children, admitted by
+    /// [`World::add_compound`](super::World::add_compound); the body position is its centre of
+    /// mass and its orientation the principal frame (see [`super::PreparedCompound`]).
+    Compound(CompoundShape),
 }
 impl Shape {
     pub const fn capsule(half_segment: Real, radius: Real) -> Self {
@@ -71,6 +75,7 @@ impl Shape {
                 half_segment,
                 radius,
             } => half_segment + radius,
+            Self::Compound(c) => c.radius(),
         }
     }
     pub fn half_extents(self) -> Vector {
@@ -92,6 +97,8 @@ impl Shape {
                 half_segment,
                 radius,
             } => Vector(radius, half_segment + radius, radius),
+            // The bounding sphere about the centre of mass.
+            Self::Compound(c) => Vector(c.radius(), c.radius(), c.radius()),
         }
     }
     pub(super) fn valid_dimensions(self) -> bool {
@@ -118,6 +125,7 @@ impl Shape {
                     && radius.is_finite()
                     && (1e-6..1e12).contains(&radius)
             }
+            Self::Compound(c) => c.valid(),
         }
     }
     /// Evaluated in f64 in every build (the identity for the default build): with f32 state,
@@ -156,6 +164,7 @@ impl Shape {
                     + sphere_mass * ((2.0 / 5.0) * r * r + h * h + (3.0 / 4.0) * h * r);
                 narrow(1.0 / radial, 1.0 / axial, 1.0 / radial)
             }
+            Self::Compound(c) => c.local_inverse_inertia(mass as Real),
             // Solver-owned dynamic wedges are required to be rotation locked until a COM-centered
             // wedge inertia/pose contract is introduced. Terrain is static.
             Self::Wedge(_)

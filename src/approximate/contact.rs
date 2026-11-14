@@ -116,6 +116,8 @@ pub(super) fn bounds(b: &Body) -> (V, V) {
         | Shape::TriangleMesh { half_extents, .. } => half_extents,
         // Halfspaces are tested outside the bounds structures.
         Shape::HalfSpace => return (b.position, b.position),
+        // A compound's bounding sphere about its centre of mass holds every child.
+        Shape::Compound(c) => V(c.radius(), c.radius(), c.radius()),
         // A box's extents are |R| h, a few roundings off the exact value at most: well inside
         // the padding below, without widening every awake box each substep (#426).
         Shape::Box(h) if b.orientation != Quaternion::IDENTITY => {
@@ -144,10 +146,11 @@ fn radius(b: &Body, n: V) -> Real {
             let a = b.orientation.axes();
             n.dot(a[0]).abs() * h.0 + n.dot(a[1]).abs() * h.1 + n.dot(a[2]).abs() * h.2
         }
-        // Terrain never enters rigid contact pairs.
+        // Terrain never enters rigid contact pairs; compounds enter as their children.
         Shape::Heightfield { .. }
         | Shape::ConvexHull { .. }
         | Shape::TriangleMesh { .. }
+        | Shape::Compound(_)
         | Shape::HalfSpace => 0.0,
     }
 }
@@ -705,8 +708,9 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real, horizon: Real) -> Opti
         Shape::Heightfield { .. }
         | Shape::ConvexHull { .. }
         | Shape::TriangleMesh { .. }
+        | Shape::Compound(_)
         | Shape::HalfSpace => {
-            unreachable!("terrain is query-only")
+            unreachable!("terrain is query-only; compounds take halfspace contacts per child")
         }
     };
     let mut points = [(0.0, Point::default()); 8];

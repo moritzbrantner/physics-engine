@@ -39,6 +39,7 @@ fn kind(shape: Shape) -> &'static str {
         Shape::ConvexHull { .. } => "convex-hull",
         Shape::HalfSpace => "halfspace",
         Shape::TriangleMesh { .. } => "triangle-mesh",
+        Shape::Compound(_) => "compound",
     }
 }
 
@@ -237,6 +238,7 @@ pub fn restrictions_and_validation_remain_explicit() {
                 Shape::Heightfield { .. }
                 | Shape::ConvexHull { .. }
                 | Shape::TriangleMesh { .. }
+                | Shape::Compound(_)
                 | Shape::HalfSpace => {
                     unreachable!("the ledger lists primitives only")
                 }

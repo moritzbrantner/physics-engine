@@ -7,7 +7,8 @@ fn surface_extrema(body: &Body) -> Vec<V> {
         Shape::Heightfield { .. }
         | Shape::HalfSpace
         | Shape::ConvexHull { .. }
-        | Shape::TriangleMesh { .. } => {
+        | Shape::TriangleMesh { .. }
+        | Shape::Compound(_) => {
             unreachable!("authored/static shapes are not primitive bounds fixtures")
         }
         Shape::Sphere(radius) => {

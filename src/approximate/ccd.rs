@@ -925,7 +925,44 @@ impl World {
             } else {
                 (&target, &probe)
             };
-            let swept = if let Some(surface) = super::static_sphere::Surface::of(
+            let children = super::compound::children(&self.compounds, &target);
+            let swept = if !children.is_empty() {
+                // A compound target: the earliest of its children's sweeps (ties keep the
+                // lower child), its arm moved to the compound's centre.
+                let mut earliest: Option<contact::Manifold> = None;
+                for c in children {
+                    let child = super::compound::child_body(&target, c);
+                    let (a, b) = if first {
+                        (&probe, &child)
+                    } else {
+                        (&child, &probe)
+                    };
+                    let m = contact::swept(
+                        a,
+                        b,
+                        clock.remaining(),
+                        self.scene.contact_slop,
+                        &mut report.geometry,
+                    )
+                    .map_err(|reason| Error::CollisionSearchFailed {
+                        bodies: [a.id, b.id],
+                        reason,
+                    })?;
+                    if let Some(mut m) = m
+                        && earliest.as_ref().is_none_or(|e| m.time < e.time)
+                    {
+                        for p in &mut m.points {
+                            if first {
+                                p.rb = super::compound::parent_arm(&child, &target, p.rb);
+                            } else {
+                                p.ra = super::compound::parent_arm(&child, &target, p.ra);
+                            }
+                        }
+                        earliest = Some(m);
+                    }
+                }
+                Ok(earliest)
+            } else if let Some(surface) = super::static_sphere::Surface::of(
                 target.shape,
                 &self.triangle_meshes,
                 &self.terrains,

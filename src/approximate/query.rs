@@ -29,7 +29,7 @@ impl QueryPose {
     fn body(self) -> Option<Body> {
         if matches!(
             self.shape,
-            Shape::TriangleMesh { .. } | Shape::ConvexHull { .. }
+            Shape::TriangleMesh { .. } | Shape::ConvexHull { .. } | Shape::Compound(_)
         ) || !self.shape.valid_dimensions()
             || !self.position.finite()
             || self.position.abs().max_component() >= 1e12
@@ -90,6 +90,8 @@ impl QueryFilter {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct QueryHit {
     pub body: BodyId,
+    /// The compound child hit (its index in the authored list); `None` for other bodies.
+    pub child: Option<u32>,
     /// Stable surface identity for triangle terrain; primitives currently return `None`.
     pub feature: Option<RayFeature>,
     /// Fraction of the requested displacement, in [0, 1]; overlaps/touching start at zero.
@@ -443,6 +445,7 @@ impl World {
                 let capacity = hits.capacity();
                 hits.push(QueryHit {
                     body: target.id,
+                    child: None,
                     feature: None,
                     fraction,
                     distance: distance * fraction,
@@ -543,6 +546,7 @@ impl World {
                 let capacity = hits.capacity();
                 hits.push(QueryHit {
                     body: target.id,
+                    child: None,
                     feature: Some(RayFeature::HeightfieldTriangle(contact.triangle)),
                     fraction,
                     distance: distance * fraction,
@@ -595,6 +599,7 @@ impl World {
                 let capacity = hits.capacity();
                 hits.push(QueryHit {
                     body: target.id,
+                    child: None,
                     feature: contact.face.map(RayFeature::ConvexHullFace),
                     fraction,
                     distance: distance * fraction,
@@ -622,62 +627,117 @@ impl World {
                 }
                 continue;
             }
-            let initial = current(&query, target, stats).map_err(failure)?;
-            let fraction = if initial.separation <= 0.0 {
-                0.0
-            } else if let Some(cast) = cast {
-                let mut work = PrimitiveWork3::default();
-                stats.geometry_preparations += 2;
-                let result = primitive::snapshot_sweep(
-                    &query,
-                    target,
-                    displacement,
-                    cast.max_iterations,
-                    &mut work,
-                );
-                accumulate(stats, work);
-                match result.map_err(failure)? {
-                    Some(fraction) => fraction,
-                    None => continue,
+            // A compound reports its earliest child hit (ties keep the lower child), with the
+            // child's index; a primitive is its own one child.
+            let children = super::compound::children(&self.compounds, target);
+            let hit = if children.is_empty() {
+                primitive_hit(&mut query, pose.position, target, cast, displacement, stats)
+                    .map_err(failure)?
+            } else {
+                let mut best: Option<QueryHit> = None;
+                for (k, c) in children.iter().enumerate() {
+                    let child = super::compound::bounded(super::compound::child_body(target, c));
+                    if prune {
+                        let magnitude = pose
+                            .position
+                            .abs()
+                            .max_component()
+                            .max(child.position.abs().max_component())
+                            .max(displacement.abs().max_component());
+                        let radii = pose.shape.radius() + child.shape.radius();
+                        let pad = 8.0 * Real::EPSILON * (1.0 + magnitude + radii)
+                            + if cast.is_some() {
+                                1e-9 * (1.0 + radii)
+                            } else {
+                                0.0
+                            };
+                        let (lo, hi) = child.cached_bounds;
+                        if (0..3).any(|axis| {
+                            sweep_bounds.1.at(axis) + pad < lo.at(axis)
+                                || hi.at(axis) + pad < sweep_bounds.0.at(axis)
+                        }) {
+                            continue;
+                        }
+                    }
+                    if let Some(mut hit) =
+                        primitive_hit(&mut query, pose.position, &child, cast, displacement, stats)
+                            .map_err(failure)?
+                        && best.is_none_or(|best| hit.fraction < best.fraction)
+                    {
+                        hit.child = Some(k as u32);
+                        best = Some(hit);
+                    }
                 }
-            } else {
-                continue;
+                best
             };
-            if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
-                return Err(failure(SweepFailure::NonFiniteComputation));
+            if let Some(mut hit) = hit {
+                hit.distance = distance * hit.fraction;
+                let capacity = hits.capacity();
+                hits.push(hit);
+                stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
+                stats.hits_admitted += 1;
             }
-            let contact = if fraction == 0.0 {
-                initial
-            } else {
-                query.position = pose.position + displacement * fraction;
-                current(&query, target, stats).map_err(failure)?
-            };
-            let support_velocity = target.velocity
-                + target
-                    .angular_velocity
-                    .cross(contact.point_b - target.position);
-            if !support_velocity.finite() {
-                return Err(failure(SweepFailure::NonFiniteComputation));
-            }
-            let capacity = hits.capacity();
-            hits.push(QueryHit {
-                body: target.id,
-                feature: None,
-                fraction,
-                distance: distance * fraction,
-                normal: -contact.normal,
-                query_point: contact.point_a,
-                target_point: contact.point_b,
-                separation: contact.separation,
-                starts_overlapping: initial.separation < 0.0,
-                support_velocity,
-                sensor: target.sensor,
-            });
-            stats.output_capacity_growths += u64::from(hits.capacity() > capacity);
-            stats.hits_admitted += 1;
         }
         Ok(())
     }
+}
+
+/// The hit of `query` (moved from `start` by `displacement` for a cast) on primitive `target`.
+fn primitive_hit(
+    query: &mut Body,
+    start: V,
+    target: &Body,
+    cast: Option<ShapeCast>,
+    displacement: V,
+    stats: &mut QueryStats,
+) -> Result<Option<QueryHit>, SweepFailure> {
+    query.position = start;
+    let initial = current(query, target, stats)?;
+    let fraction = if initial.separation <= 0.0 {
+        0.0
+    } else if let Some(cast) = cast {
+        let mut work = PrimitiveWork3::default();
+        stats.geometry_preparations += 2;
+        let result =
+            primitive::snapshot_sweep(query, target, displacement, cast.max_iterations, &mut work);
+        accumulate(stats, work);
+        match result? {
+            Some(fraction) => fraction,
+            None => return Ok(None),
+        }
+    } else {
+        return Ok(None);
+    };
+    if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+        return Err(SweepFailure::NonFiniteComputation);
+    }
+    let contact = if fraction == 0.0 {
+        initial
+    } else {
+        query.position = start + displacement * fraction;
+        current(query, target, stats)?
+    };
+    let support_velocity = target.velocity
+        + target
+            .angular_velocity
+            .cross(contact.point_b - target.position);
+    if !support_velocity.finite() {
+        return Err(SweepFailure::NonFiniteComputation);
+    }
+    Ok(Some(QueryHit {
+        body: target.id,
+        child: None,
+        feature: None,
+        fraction,
+        distance: 0.0,
+        normal: -contact.normal,
+        query_point: contact.point_a,
+        target_point: contact.point_b,
+        separation: contact.separation,
+        starts_overlapping: initial.separation < 0.0,
+        support_velocity,
+        sensor: target.sensor,
+    }))
 }
 
 /// Unit-length admission for query poses: 1e-9 in the f64 build, widened to the

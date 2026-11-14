@@ -41,6 +41,7 @@ pub(super) fn canonical_pair(left: Shape, right: Shape) -> (PrimitivePair, bool)
             Shape::Heightfield { .. }
             | Shape::ConvexHull { .. }
             | Shape::TriangleMesh { .. }
+            | Shape::Compound(_)
             | Shape::HalfSpace => {
                 unreachable!("terrain and halfspaces are queried through their closed forms")
             }
@@ -502,6 +503,7 @@ fn shape(shape: Shape) -> PrimitiveShape3 {
         Shape::Heightfield { .. }
         | Shape::ConvexHull { .. }
         | Shape::TriangleMesh { .. }
+        | Shape::Compound(_)
         | Shape::HalfSpace => {
             unreachable!("terrain and halfspaces are queried through their closed forms")
         }
@@ -602,6 +604,7 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
         | Shape::ConvexHull { .. }
         | Shape::Heightfield { .. }
         | Shape::TriangleMesh { .. }
+        | Shape::Compound(_)
         | Shape::HalfSpace => kernel_axes(body.orientation),
     };
     // Force integration can produce a non-finite velocity before the final body check.
