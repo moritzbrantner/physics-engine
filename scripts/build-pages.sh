@@ -21,6 +21,8 @@ if (e.lab_snapshot_len() % 11 !== 0 || e.lab_snapshot_len() === 0) throw new Err
 NODE
 # Checkpoint continuation on WASM (#452); a separate example, not part of the shipped demo.
 bash scripts/checkpoint-wasm.sh
+# Native and WASM steps hash identically (#576); a separate example, not part of the demo.
+bash scripts/cross-target-wasm.sh
 node --input-type=module --check < site/lab.js
 node --input-type=module --check < site/webgl-renderer.js
 node --input-type=module --check < site/compare.js

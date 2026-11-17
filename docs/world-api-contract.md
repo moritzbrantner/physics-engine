@@ -60,8 +60,9 @@ the oracle harness (D4). The per-capability parity status is tracked in
   keyless bodies (projectiles and other transient objects) are deterministic within a run only.
   Persistent contact warm-start state is not part of a rebuild; use checkpoints to continue
   dynamics bit-exactly.
-- Results are identical across worker counts on the same build and target. There is no
-  cross-target bit-identity claim.
+- Results are identical across worker counts on the same build and target. There is no general
+  cross-target bit-identity claim; the engine's own transcendental functions are portable and a
+  pinned fixture hash matches natively and on WASM ([numerics](numerics.md#portable-float-math-576)).
 - `World::bodies()` yields the live bodies in body order; `body_count()` counts them.
 
 ## Body storage

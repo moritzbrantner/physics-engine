@@ -295,7 +295,7 @@ fn wrap(x: Real) -> Real {
 fn angle(joint: &RevoluteJoint, a: super::Quaternion, b: super::Quaternion) -> (Real, Vector) {
     let axis = a.rotate(joint.axis_a);
     let (ra, rb) = (a.rotate(joint.reference_a), b.rotate(joint.reference_b));
-    (ra.cross(rb).dot(axis).atan2(ra.dot(rb)), axis)
+    (libm::atan2f(ra.cross(rb).dot(axis), ra.dot(rb)), axis)
 }
 
 /// Velocity of a body for the joint rows: immovable geometry contributes none.

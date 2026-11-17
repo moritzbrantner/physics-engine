@@ -15,7 +15,7 @@ Domain-neutral geometry and algorithm kernels belong in `rust-kernels`; Physics 
 
 ## Determinism
 
-- Order pairs, events and query ties by stable body id. Results must be identical across worker counts on the same build and target; no cross-target bit-identity claim.
+- Order pairs, events and query ties by stable body id. Results must be identical across worker counts on the same build and target. Across targets the engine's own code avoids the platform libm: transcendental functions come from the `libm` crate (`clippy.toml` bans std's in `src/`), and a pinned state hash is checked natively and on WASM (#576); there is no general cross-target bit-identity claim (`geometry-kernels` still uses std's in media and heightfield preparation).
 - Keep authoritative state and collision decisions independent of JavaScript and rendering.
 - A collision repair must fix tunneling/contact semantics, not hide a failing test.
 
@@ -42,6 +42,7 @@ cargo build --workspace --locked
 cargo test --workspace --locked --features physics-engine/checkpoints
 cargo test --locked --features checkpoints,indexed-storage   # every suite on BodyStorage::Indexed
 bash scripts/build-pages.sh                  # Pages build + WASM smoke test
+bash scripts/cross-target-wasm.sh            # pinned state hash of tests/cross_target_hash.rs on WASM (also run by build-pages.sh)
 cargo run --release --locked -p physics-oracle   # Rapier oracle: invariants + native perf gate
 cargo run --release --locked -p physics-oracle -- --only stairs --no-timing --dump /tmp/traces   # debugging; --list, --keep-going
 cargo run --release --locked -p physics-oracle --bin probe -- --floor --box 2,1,0,0.25,1,2 --at 0,0.8025,0 --desired 2,0,0   # one move on both engines

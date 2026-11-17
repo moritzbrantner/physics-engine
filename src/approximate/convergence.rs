@@ -89,7 +89,7 @@ fn projected_residual_rows<'a>(
             c.tangent_impulse[0] - rel.dot(c.t1) * c.tangent_mass[0],
             c.tangent_impulse[1] - rel.dot(c.t2) * c.tangent_mass[1],
         ];
-        let length = tangent[0].hypot(tangent[1]);
+        let length = libm::hypotf(tangent[0], tangent[1]);
         let limit = c.friction * c.normal_impulse;
         if length > limit && length > 0.0 {
             tangent[0] *= limit / length;
@@ -109,7 +109,7 @@ fn projected_residual_rows<'a>(
         max_residual = max_residual.max(normal_residual);
         // A large accumulated impulse can absorb a nonzero correction when rounded to f64.
         // Check the friction disk's first-order stationarity independently of lambda + delta.
-        let old_length = c.tangent_impulse[0].hypot(c.tangent_impulse[1]);
+        let old_length = libm::hypotf(c.tangent_impulse[0], c.tangent_impulse[1]);
         if limit > 0.0 {
             let vt = [rel.dot(c.t1), rel.dot(c.t2)];
             let mut gradient = [-vt[0] * c.tangent_mass[0], -vt[1] * c.tangent_mass[1]];

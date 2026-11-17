@@ -4,6 +4,8 @@
 //! Rendering, game loops and gameplay rules remain consumer-owned.
 
 #![forbid(unsafe_code)]
+// No platform-libm float functions in the library (clippy.toml, #576).
+#![warn(clippy::disallowed_methods)]
 
 mod body;
 pub mod numeric;
