@@ -841,7 +841,7 @@ impl World {
         let fall = match self.blocking_hit(id, above, -up * reach, hits, solid)? {
             Some(h) => {
                 let n = h.normal;
-                if n.dot(up) < s.max_slope.cos() {
+                if n.dot(up) < libm::cosf(s.max_slope) {
                     let along = rest - n * rest.dot(n).min(0.0);
                     if along.dot(up) >= 0.0 {
                         return Ok(None);
@@ -951,7 +951,7 @@ impl World {
     ) -> Result<CharacterMoveResult, Error> {
         let s = state.settings;
         let up = V::Y;
-        let min_up = s.max_slope.cos();
+        let min_up = libm::cosf(s.max_slope);
         let planar = s.plane.is_some();
         // Planar characters see only the horizontal part of motion and surface normals.
         let flat = |v: V| if planar { V(v.0, 0.0, v.2) } else { v };

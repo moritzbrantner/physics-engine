@@ -398,7 +398,7 @@ mod tests {
             ..Config::default()
         })
         .unwrap();
-        let q = Quaternion(0.0, 0.0, (0.25 as Real).sin(), (0.25 as Real).cos());
+        let q = Quaternion(0.0, 0.0, libm::sinf(0.25), libm::cosf(0.25));
         let mut fixed = Body::fixture(1, Shape::Box(Vector(30.0, 1.0, 30.0)), Vector::ZERO, 0.0);
         fixed.orientation = q;
         let n = q.rotate(Vector::Y);

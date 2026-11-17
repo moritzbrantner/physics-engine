@@ -155,7 +155,7 @@ impl Quaternion {
         if s == 0.0 {
             return Vector::ZERO;
         }
-        v * (2.0 * s.atan2(d.3) / s)
+        v * (2.0 * libm::atan2f(s, d.3) / s)
     }
     /// The inverse rotation of a unit quaternion.
     pub fn conjugate(self) -> Self {

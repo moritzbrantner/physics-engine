@@ -402,6 +402,7 @@ version = "0.1.0"
 dependencies = [
  "bvh-kernels",
  "geometry-kernels",
+ "libm",
  "serde_json",
  "sha2",
  "spatial-kernels",

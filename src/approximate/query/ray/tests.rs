@@ -171,7 +171,7 @@ fn seeded_pruned_rays_match_exhaustive_rotated_geometry() {
             };
             let mut b = Body::fixture(id, shape, V(next(), next(), next()), 0.0);
             let angle = next() * 0.1;
-            b.orientation = Quaternion(0.0, (angle * 0.5).sin(), 0.0, (angle * 0.5).cos());
+            b.orientation = Quaternion(0.0, libm::sinf(angle * 0.5), 0.0, libm::cosf(angle * 0.5));
             b.sensor = id % 5 == 0;
             w.add_body(b).unwrap();
         }
@@ -332,7 +332,10 @@ fn first_hit_matches_the_first_of_all_hits_after_layout_changes() {
             0.1 * (i % 3) as Real,
             -20.0 + (i % 11) as Real,
         );
-        let cast = RayCast::new(origin, V(40.0 * a.cos(), 0.0, 40.0 * a.sin().abs()));
+        let cast = RayCast::new(
+            origin,
+            V(40.0 * libm::cosf(a), 0.0, 40.0 * libm::sinf(a).abs()),
+        );
         w.cast_ray(cast, QueryFilter::default(), &mut hits).unwrap();
         let first = w.cast_ray_first(cast, QueryFilter::default()).unwrap();
         assert_eq!(first, hits.first().copied(), "ray {i}");
@@ -375,7 +378,10 @@ fn fixed_body_churn_after_the_wide_tree_is_built_matches_exhaustive() {
         for i in 0..8 {
             let origin = V(next() * 70.0 - 35.0, next() * 4.0, next() * 70.0 - 35.0);
             let a = next() * 6.3;
-            let cast = RayCast::new(origin, V(30.0 * a.cos(), next() - 0.5, 30.0 * a.sin()));
+            let cast = RayCast::new(
+                origin,
+                V(30.0 * libm::cosf(a), next() - 0.5, 30.0 * libm::sinf(a)),
+            );
             w.cast_ray(cast, QueryFilter::default(), &mut all).unwrap();
             w.ray_query(cast, QueryFilter::default(), &mut exhaustive, false)
                 .unwrap();

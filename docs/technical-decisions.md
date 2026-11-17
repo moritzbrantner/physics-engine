@@ -143,7 +143,9 @@ scenario or test changes behaviour.
 These earlier rules remain compatible with the direction above:
 
 - **Determinism:** identical results across worker counts and schedules on the same build and
-  target; stable-id ordering for pairs, events and ties. No cross-target bit-identity claim.
+  target; stable-id ordering for pairs, events and ties. No general cross-target bit-identity
+  claim, but the engine's own code takes no platform-libm functions and a pinned fixture hash
+  matches natively and on WASM ([numerical policy](numerics.md#portable-float-math-576), #576).
 - **Embedding:** physics is embedded in consumer-owned Rust/WASM; JavaScript crosses only through
   coarse commands and queries, never per-body bridge churn.
 - **Checkpoints:** physical checkpoints restore only on their own build and target; moving between

@@ -40,7 +40,8 @@ fn conservative_bounds_match_exhaustive_current_geometry_for_seeded_rotated_shap
                 0.0,
             );
             let angle = coordinate(&mut seed) * 0.1;
-            body.orientation = Quaternion(0.0, (angle / 2.0).sin(), 0.0, (angle / 2.0).cos());
+            body.orientation =
+                Quaternion(0.0, libm::sinf(angle / 2.0), 0.0, libm::cosf(angle / 2.0));
             body.sensor = id % 5 == 0;
             world.add_body(body).unwrap();
         }

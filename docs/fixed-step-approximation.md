@@ -107,7 +107,8 @@ zero interpenetration or energy conservation. The reference fixture's crate widt
 - Gyroscopic angular terms are omitted. Arrow orientation is fixed at launch in the comparison
   adapter; there is no aerodynamic or skeletal animation model.
 - Floating state is repeatable in tested runs on one build/target. Cross-compiler and cross-target
-  bit identity is not asserted. Hash differences between solver modes are expected.
+  bit identity is not asserted in general; one pinned fixture hash is checked natively and on
+  WASM ([numerics](numerics.md#portable-float-math-576)). Hash differences between solver modes are expected.
 - Finite input/range validation does not make arbitrary extreme-scale scenes supported. Mid-step
   numerical errors roll back touched physical state, pending inputs and contact history before returning.
   See [the returned-error boundary and measured transaction cost](floating-step-transactions.md).
