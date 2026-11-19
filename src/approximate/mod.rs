@@ -86,7 +86,7 @@ pub use character::{
     Autostep, CharacterMove, CharacterMoveResult, CharacterSettings, Embedded, Tether,
 };
 pub use convex_hull::{ConvexHullDesc, ConvexHullId, ConvexHullStats, PreparedConvexHull};
-pub use terrain::{HeightfieldDesc, TerrainId};
+pub use terrain::{HeightfieldDesc, PreparedHeightfield, TerrainId};
 pub use triangle_mesh::{
     PreparedTriangleMesh, TriangleMeshDesc, TriangleMeshId, TriangleMeshStats,
 };

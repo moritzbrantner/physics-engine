@@ -1,8 +1,9 @@
-//! Prepared hulls and meshes (#528): admission through a shared preparation is exactly
-//! `add_convex_hull` / `add_triangle_mesh`.
+//! Prepared hulls, meshes and heightfields (#528): admission through a shared preparation is
+//! exactly `add_convex_hull` / `add_triangle_mesh` / `add_heightfield`.
 use physics_engine::approximate::{
-    Body, Config, ConvexHullDesc, Material, PreparedConvexHull, PreparedTriangleMesh, QueryFilter,
-    RayCast, Shape, TriangleMeshDesc, Vector as V, World,
+    Body, Config, ConvexHullDesc, HeightfieldDesc, Material, PreparedConvexHull,
+    PreparedHeightfield, PreparedTriangleMesh, QueryFilter, RayCast, Shape, TriangleMeshDesc,
+    Vector as V, World,
 };
 
 fn hull_vertices() -> Vec<V> {
@@ -116,6 +117,91 @@ fn prepared_admission_validates_and_rolls_back_like_the_descriptions() {
     assert_eq!(w.body_count(), 1);
     // The handle stays usable after the rejected admission.
     w.add_prepared_triangle_mesh(&mesh, V::ZERO, material, Some(8))
+        .unwrap();
+    assert_eq!(w.body_count(), 2);
+}
+
+fn terrain() -> HeightfieldDesc {
+    let n = 9;
+    let heights = (0..n * n)
+        .map(|i| 0.4 * ((i % n) as f32 * 0.7).sin() * ((i / n) as f32 * 0.5).cos())
+        .collect();
+    let mut removed_cells = vec![false; (n - 1) * (n - 1)];
+    removed_cells[0] = true;
+    HeightfieldDesc {
+        origin: V(-8.0, -1.0, -8.0),
+        cell_size: (2.0, 2.0),
+        columns: n,
+        rows: n,
+        heights,
+        removed_cells: Some(removed_cells),
+        material: Material::default(),
+    }
+}
+
+fn terrain_world(config: Config, ground: impl FnOnce(&mut World)) -> World {
+    let mut w = World::new(config).unwrap();
+    ground(&mut w);
+    let mut ball = Body::keyed(3, Shape::Sphere(0.25), V(0.3, 1.0, 0.1), 1.0);
+    ball.sleep_allowed = false;
+    w.add_body(ball).unwrap();
+    w
+}
+
+#[test]
+fn prepared_heightfield_admission_matches_add_heightfield_in_differently_configured_worlds() {
+    let prepared = PreparedHeightfield::new(&terrain()).unwrap();
+    let lane = Config {
+        substeps: 2,
+        velocity_iterations: 1,
+        ..Config::default()
+    };
+    for config in [Config::default(), lane] {
+        let mut worlds = [
+            terrain_world(config, |w| {
+                w.add_heightfield(terrain(), Some(1)).unwrap();
+            }),
+            terrain_world(config, |w| {
+                w.add_prepared_heightfield(&prepared, Material::default(), Some(1))
+                    .unwrap();
+            }),
+        ];
+        for _ in 0..120 {
+            let states = worlds.each_mut().map(|w| {
+                w.step(1.0 / 60.0).unwrap();
+                let ball = w.bodies().find(|b| b.key == Some(3)).unwrap().clone();
+                let ground = w.bodies().find(|b| b.key == Some(1)).unwrap().clone();
+                let ray = RayCast::new(V(2.2, 3.0, -1.1), V(0.0, -6.0, 0.0));
+                let hit = w.cast_ray_first(ray, QueryFilter::default()).unwrap();
+                (
+                    ball.position,
+                    ball.velocity,
+                    ball.orientation,
+                    ground.position,
+                    ground.shape,
+                    hit.map(|h| (h.fraction.to_bits(), h.normal)),
+                )
+            });
+            assert_eq!(states[0], states[1]);
+        }
+    }
+}
+
+#[test]
+fn prepared_heightfield_validates_and_rolls_back_like_the_description() {
+    let mut bad = terrain();
+    bad.heights.pop();
+    assert!(PreparedHeightfield::new(&bad).is_err());
+    let prepared = PreparedHeightfield::new(&terrain()).unwrap();
+    let mut w = World::new(Config::default()).unwrap();
+    w.add_prepared_heightfield(&prepared, Material::default(), Some(7))
+        .unwrap();
+    assert!(
+        w.add_prepared_heightfield(&prepared, Material::default(), Some(7))
+            .is_err()
+    );
+    assert_eq!(w.body_count(), 1);
+    w.add_prepared_heightfield(&prepared, Material::default(), Some(8))
         .unwrap();
     assert_eq!(w.body_count(), 2);
 }
