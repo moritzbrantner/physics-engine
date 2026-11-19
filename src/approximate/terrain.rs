@@ -97,6 +97,29 @@ pub(super) fn prepare(desc: &HeightfieldDesc) -> Result<(Terrain, V, V), Error> 
     Ok((terrain, (min + max) * 0.5, (max - min) * 0.5))
 }
 
+/// A heightfield prepared once ([`Self::new`], its grid and acceleration build) and admitted
+/// into any number of worlds with [`World::add_prepared_heightfield`], as prepared hulls and
+/// meshes are. Clones and admissions share the immutable prepared terrain through an `Arc`.
+#[derive(Clone, Debug)]
+pub struct PreparedHeightfield {
+    terrain: Terrain,
+    centre: V,
+    half_extents: V,
+}
+
+impl PreparedHeightfield {
+    /// Prepares a description's geometry (same validation as [`World::add_heightfield`]). The
+    /// description's material is ignored here; admission takes the body's material.
+    pub fn new(desc: &HeightfieldDesc) -> Result<Self, Error> {
+        let (terrain, centre, half_extents) = prepare(desc)?;
+        Ok(Self {
+            terrain,
+            centre,
+            half_extents,
+        })
+    }
+}
+
 impl World {
     /// Adds static heightfield terrain and returns its body. `key` is the body's game key.
     pub fn add_heightfield(
@@ -104,20 +127,31 @@ impl World {
         desc: HeightfieldDesc,
         key: Option<u64>,
     ) -> Result<BodyId, Error> {
-        let (prepared, centre, half) = prepare(&desc)?;
+        let prepared = PreparedHeightfield::new(&desc)?;
+        self.add_prepared_heightfield(&prepared, desc.material, key)
+    }
+
+    /// [`Self::add_heightfield`] for terrain already prepared by [`PreparedHeightfield::new`]:
+    /// results are identical and no preparation runs.
+    pub fn add_prepared_heightfield(
+        &mut self,
+        prepared: &PreparedHeightfield,
+        material: Material,
+        key: Option<u64>,
+    ) -> Result<BodyId, Error> {
         let terrain =
             TerrainId(u32::try_from(self.terrains.len()).map_err(|_| Error::InvalidInput)?);
-        self.terrains.push(prepared);
+        self.terrains.push(prepared.terrain.clone());
         let mut body = Body::new(
             Shape::Heightfield {
                 terrain,
-                half_extents: half,
+                half_extents: prepared.half_extents,
             },
-            centre,
+            prepared.centre,
             0.0,
         );
         body.key = key;
-        body.set_material(desc.material);
+        body.set_material(material);
         self.insert_body(body).inspect_err(|_| {
             self.terrains.pop();
         })

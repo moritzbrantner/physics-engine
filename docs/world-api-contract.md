@@ -124,6 +124,10 @@ When to pick which:
 
 ## Terrain
 
+`PreparedHeightfield::new(&desc)` with `World::add_prepared_heightfield(&prepared, material, key)`
+prepares one terrain once for several worlds (whatever their configuration), as prepared hulls
+and meshes do, with results identical to `add_heightfield`; admissions share the prepared grid.
+
 `add_heightfield(HeightfieldDesc { origin, cell_size, columns, rows, heights, removed_cells, material }, key)`
 adds static heightfield terrain (heights row-major, Z rows then X columns, added to `origin.1`;
 `removed_cells`, row-major per cell, cuts holes that rays, queries and characters pass through,
