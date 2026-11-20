@@ -1,12 +1,19 @@
 //! The per-step work report.
 
-use super::{BookkeepingStats, ConvergenceStats, GeometryStats, IslandStats, PositionReport, Real};
+use super::Order;
+use super::{
+    BookkeepingStats, ConvergenceStats, GeometryStats, IslandStats, PositionReport, Real, Vector,
+};
 use crate::BodyId;
 
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     /// Contact enter/exit transitions of this step, in pair order (see [`ContactEvent`]).
     pub contact_events: Vec<ContactEvent>,
+    /// With [`Config::report_contact_impulses`](super::Config::report_contact_impulses): the
+    /// normal impulse each contact took over this step, in pair order (see [`ContactImpulse`]).
+    /// Empty otherwise.
+    pub contact_impulses: Vec<ContactImpulse>,
     pub position: PositionReport,
     pub substeps: u32,
     pub pair_tests: u64,
@@ -65,4 +72,45 @@ impl ContactEvent {
     pub fn started(self) -> bool {
         matches!(self, Self::Started(..))
     }
+}
+
+/// The normal impulse one contact applied over a step (#575), reported with
+/// [`Config::report_contact_impulses`](super::Config::report_contact_impulses).
+///
+/// One entry per pair of touching shapes that took a positive normal impulse: per body pair
+/// and, for a compound body, per child (`child_a`, `child_b`: the child's index in the
+/// authored list, `None` for a primitive side). Rows from several manifolds or points of one
+/// such contact, and from every substep, are summed. `normal_impulse` (mass × length / s, in
+/// scene units) is the sum of the solver's normal impulses: the contact rows' accumulated
+/// impulse per substep, the end-of-step restitution, and remaining-time CCD impacts.
+/// Friction is not included. A resting contact reports its share of the weight times the
+/// step's length; an impact reports its impulse on top.
+///
+/// `normal` is the unit normal from `a` toward `b`: the impulse pushes `b` along it and `a`
+/// against it. Both it and `point`, a world point midway between the two surfaces, are
+/// averages weighted by impulse. Entries are ordered as [`ContactEvent`]s (`a` before `b`
+/// in body order, then by `b`), then by `child_a` and `child_b`. A body retired on impact
+/// keeps its id here. Sensors, query-only shapes, character moves and joints contribute
+/// nothing; neither does a sleeping pair.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContactImpulse {
+    pub a: BodyId,
+    pub b: BodyId,
+    pub child_a: Option<u32>,
+    pub child_b: Option<u32>,
+    pub normal: Vector,
+    pub point: Vector,
+    pub normal_impulse: Real,
+}
+
+/// One recorded contribution to a [`ContactImpulse`]: the impulse and its impulse-weighted
+/// normal and point sums, keyed by pair order and children.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ImpulseRecord {
+    pub key: (Order, Order),
+    pub ids: (BodyId, BodyId),
+    pub children: [u32; 2],
+    pub impulse: Real,
+    pub normal: Vector,
+    pub point: Vector,
 }

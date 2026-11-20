@@ -107,7 +107,13 @@ pub(super) struct Manifold {
     pub swept: bool,
     /// First translation-only time of contact in [0, 1] of this substep.
     pub time: Real,
+    /// The compound child indices (sides a, b) the manifold touches; [`NO_CHILD`] for a
+    /// primitive side.
+    pub children: [u32; 2],
 }
+/// A manifold side that is not a compound child.
+pub(super) const NO_CHILD: u32 = u32::MAX;
+pub(super) const NO_CHILDREN: [u32; 2] = [NO_CHILD; 2];
 
 pub(super) fn bounds(b: &Body) -> (V, V) {
     let e = match b.shape {
@@ -581,6 +587,7 @@ fn box_points(
         },
         swept: false,
         time: 0.0,
+        children: NO_CHILDREN,
     })
 }
 fn sphere_box(s: &Body, b: &Body, r: Real, margin: Real) -> Option<Manifold> {
@@ -624,6 +631,7 @@ fn sphere_box(s: &Body, b: &Body, r: Real, margin: Real) -> Option<Manifold> {
         }),
         swept: false,
         time: 0.0,
+        children: NO_CHILDREN,
     })
 }
 
@@ -644,6 +652,7 @@ fn sphere_sphere(a: &Body, b: &Body, ra: Real, rb: Real, margin: Real) -> Option
         }),
         swept: false,
         time: 0.0,
+        children: NO_CHILDREN,
     })
 }
 
@@ -741,6 +750,7 @@ pub(super) fn halfspace(a: &Body, b: &Body, margin: Real, horizon: Real) -> Opti
         points: Points::selected(&deepest[..len.min(4)]),
         swept: false,
         time: 0.0,
+        children: NO_CHILDREN,
     };
     Some(if flipped {
         flip_manifold(manifold)
@@ -881,6 +891,7 @@ pub(super) fn heightfield_box(
             points: Points::selected(&deepest[..count.min(4)]),
             swept: false,
             time: 0.0,
+            children: NO_CHILDREN,
         };
         emit(if flipped {
             flip_manifold(manifold)
@@ -945,6 +956,7 @@ pub(super) fn current_counted(
                 }),
                 swept: false,
                 time: 0.0,
+                children: NO_CHILDREN,
             })
         }),
     };
@@ -982,6 +994,7 @@ fn reference_current_counted(
                 }),
                 swept: false,
                 time: 0.0,
+                children: NO_CHILDREN,
             })
         }),
     }

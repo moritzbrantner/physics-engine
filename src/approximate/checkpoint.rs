@@ -13,7 +13,7 @@ use crate::CollisionLayers3d;
 
 // Physical values use `Real` (f32) at native width; elapsed/prior-substep time is f64.
 const MAGIC: &[u8; 8] = b"PEFLT32\0";
-const FORMAT: u32 = 13;
+const FORMAT: u32 = 14;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 20;
 const DIGEST_BYTES: usize = 32;
@@ -1012,7 +1012,8 @@ fn encode_config(out: &mut Vec<u8>, config: Config) {
         u8::from(config.position_correction == PositionCorrection::AdmittedContacts) << 1;
     let storage = u8::from(config.body_storage == BodyStorage::Indexed) << 2;
     let generation = u8::from(config.contact_generation == ContactGeneration::PerStep) << 3;
-    out.push(position | storage | generation);
+    let impulses = u8::from(config.report_contact_impulses) << 4;
+    out.push(position | storage | generation | impulses);
 }
 fn encode_body(out: &mut Vec<u8>, b: &Body) {
     out.extend_from_slice(&b.id.to_bits().to_le_bytes());
@@ -1276,10 +1277,11 @@ impl<'a> Reader<'a> {
             length_unit: 1.0,
             body_storage: BodyStorage::Ordered,
             contact_generation: ContactGeneration::Adaptive,
+            report_contact_impulses: false,
         };
         config.length_unit = self.scalar()?;
         let policies = self.u8()?;
-        if policies & !15 != 0 {
+        if policies & !31 != 0 {
             return Err(CheckpointError::InvalidData);
         }
         if policies & 2 != 0 {
@@ -1291,6 +1293,7 @@ impl<'a> Reader<'a> {
         if policies & 8 != 0 {
             config.contact_generation = ContactGeneration::PerStep;
         }
+        config.report_contact_impulses = policies & 16 != 0;
         let soft = policies & 1 != 0;
         if soft {
             return Err(CheckpointError::UnsupportedPolicy);
