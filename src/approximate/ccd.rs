@@ -378,12 +378,18 @@ impl World {
             let step = time * remaining;
             position += self.bodies[i].velocity * (step * h);
             elapsed += step;
+            let at = if self.scene.report_contact_impulses {
+                [position, self.position_at(j, elapsed, h)]
+            } else {
+                [Vector::ZERO; 2]
+            };
             if !self.respond_ccd_impact(
                 (i, j),
                 &m,
                 first,
                 [false, false],
                 TickTime { elapsed, h },
+                at,
                 report,
             ) {
                 // Touching while separating is not an impact and does not use the budget;
@@ -505,12 +511,23 @@ impl World {
                     queued.binary_search(&j).is_ok_and(|k| is_frozen[k]),
                 ]
             };
+            let at = if self.scene.report_contact_impulses {
+                [i, j].map(|k| {
+                    frozen
+                        .iter()
+                        .find(|(index, _)| *index == k)
+                        .map_or_else(|| self.position_at(k, elapsed, h), |(_, p)| *p)
+                })
+            } else {
+                [Vector::ZERO; 2]
+            };
             let closing = self.respond_ccd_impact(
                 (i, j),
                 &event.manifold,
                 event.first,
                 frozen_at_impact,
                 TickTime { elapsed, h },
+                at,
                 report,
             );
             if !closing {
@@ -939,7 +956,7 @@ impl World {
                 // A compound target: the earliest of its children's sweeps (ties keep the
                 // lower child), its arm moved to the compound's centre.
                 let mut earliest: Option<contact::Manifold> = None;
-                for c in children {
+                for (k, c) in children.iter().enumerate() {
                     let child = super::compound::child_body(&target, c);
                     let (a, b) = if first {
                         (&probe, &child)
@@ -967,6 +984,7 @@ impl World {
                                 p.ra = super::compound::parent_arm(&child, &target, p.ra);
                             }
                         }
+                        m.children[usize::from(first)] = k as u32;
                         earliest = Some(m);
                     }
                 }
@@ -1087,6 +1105,11 @@ impl World {
             return;
         }
         let impulse = outward * (-approach / k);
+        if self.scene.report_contact_impulses {
+            let point = self.position_at(mobile, clock.elapsed, clock.h) + arm;
+            let pair = if first { (i, j) } else { (j, i) };
+            self.record_impulse(pair, m.children, m.normal, point, -approach / k);
+        }
         self.transaction.body(mobile, &self.bodies[mobile]);
         let body = &mut self.bodies[mobile];
         let old_velocity = body.velocity;
@@ -1100,6 +1123,8 @@ impl World {
     /// for both participants. A budget-frozen target is stationary, including in the impulse
     /// calculation; retaining its pre-freeze velocity would misclassify genuine incoming hits
     /// as separating touches. Returns false for non-closing touches (which do not use a pass).
+    /// `at` holds the positions of `i` and `j` at the impact, read only to report its impulse.
+    #[allow(clippy::too_many_arguments)]
     fn respond_ccd_impact(
         &mut self,
         (i, j): (usize, usize),
@@ -1107,6 +1132,7 @@ impl World {
         first: bool,
         frozen: [bool; 2],
         clock: TickTime,
+        at: [Vector; 2],
         report: &mut Report,
     ) -> bool {
         let count = m.points.len().max(1) as Real;
@@ -1178,6 +1204,12 @@ impl World {
             for (index, velocity) in [(i, before[0]), (j, before[1])] {
                 let change = self.bodies[index].velocity - velocity;
                 self.bookkeeping.ccd_offsets[index] -= change * (clock.elapsed * clock.h);
+            }
+            if self.scene.report_contact_impulses && normal > 0.0 {
+                // The manifold's sides are in body order, its normal from the first.
+                let point = (at[0] + r_self + at[1] + r_other) * 0.5;
+                let pair = if first { (i, j) } else { (j, i) };
+                self.record_impulse(pair, m.children, m.normal, point, normal);
             }
             if let Some(start) = self.bookkeeping.ccd_start.get_mut(j) {
                 *start = start.max(clock.elapsed);

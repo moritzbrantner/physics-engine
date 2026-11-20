@@ -86,6 +86,7 @@ impl World {
                 self.transaction.commit();
                 self.kinematic_poses.clear();
                 report.contact_events = self.take_contact_events();
+                report.contact_impulses = self.take_contact_impulses();
                 self.last_report = report.clone();
                 Ok(report)
             }
@@ -102,6 +103,7 @@ impl World {
                 // The rollback restored the cache: only changes from before the step (removals, held
                 // impacts) remain.
                 self.contact_changes.truncate(self.removed_contacts);
+                self.impulses.clear();
                 Err(error)
             }
         };
@@ -148,6 +150,89 @@ impl World {
         self.held_contacts = held;
         self.removed_contacts = self.contact_changes.len();
         events
+    }
+    /// Records a normal impulse `impulse` > 0 of the contact between storage indices `i` and
+    /// `j` (`i` first in body order) on `children`, along `normal` (from `i` toward `j`) at
+    /// world `point`. Consecutive records of one contact merge.
+    pub(super) fn record_impulse(
+        &mut self,
+        (i, j): (usize, usize),
+        children: [u32; 2],
+        normal: Vector,
+        point: Vector,
+        impulse: Real,
+    ) {
+        let (a, b) = (&self.bodies[i], &self.bodies[j]);
+        debug_assert!(a.order < b.order);
+        let key = (a.order, b.order);
+        if let Some(last) = self.impulses.last_mut()
+            && last.key == key
+            && last.children == children
+        {
+            last.impulse += impulse;
+            last.normal += normal * impulse;
+            last.point += point * impulse;
+            return;
+        }
+        self.impulses.push(super::report::ImpulseRecord {
+            key,
+            ids: (a.id, b.id),
+            children,
+            impulse,
+            normal: normal * impulse,
+            point: point * impulse,
+        });
+    }
+    /// Records the normal impulses the solved contact rows applied in this substep.
+    fn record_row_impulses(&mut self, rows: &[Constraint]) {
+        for c in rows {
+            if c.normal_impulse > 0.0 {
+                let point = row_point(&self.bodies, c);
+                self.record_impulse((c.a, c.b), c.children, c.n, point, c.normal_impulse);
+            }
+        }
+    }
+    /// The step's recorded impulses as its report: sorted by pair and children (stable, so
+    /// each contact sums in the order it was recorded) and merged per contact. O(r log r) in
+    /// the r records; nothing when reporting is off.
+    fn take_contact_impulses(&mut self) -> Vec<super::ContactImpulse> {
+        if self.impulses.is_empty() {
+            return Vec::new();
+        }
+        self.impulses.sort_by_key(|r| (r.key, r.children));
+        let mut out = Vec::new();
+        for run in self
+            .impulses
+            .chunk_by(|x, y| x.key == y.key && x.children == y.children)
+        {
+            let (mut impulse, mut normal, mut point) = (0.0, Vector::ZERO, Vector::ZERO);
+            for r in run {
+                impulse += r.impulse;
+                normal += r.normal;
+                point += r.point;
+            }
+            let mut normal = normal.unit();
+            if normal == Vector::ZERO {
+                // Opposed normals cancelled: the largest contribution's (the first on ties).
+                let largest = run
+                    .iter()
+                    .reduce(|x, y| if y.impulse > x.impulse { y } else { x })
+                    .expect("a run is not empty");
+                normal = largest.normal.unit();
+            }
+            let child = |k: u32| (k != super::contact::NO_CHILD).then_some(k);
+            out.push(super::ContactImpulse {
+                a: run[0].ids.0,
+                b: run[0].ids.1,
+                child_a: child(run[0].children[0]),
+                child_b: child(run[0].children[1]),
+                normal,
+                point: point * (1.0 / impulse),
+                normal_impulse: impulse,
+            });
+        }
+        self.impulses.clear();
+        out
     }
     /// Commit phase, after the transaction settled: query-tree leaves follow the step's bodies.
     fn sync_query_tree(&mut self, layout: u64, dt: Scalar) {
@@ -240,6 +325,9 @@ impl World {
             self.joint_rows(&mut constraints, h, &mut report);
             self.revolute_rows(h, &mut report);
             self.solve_constraints(&mut constraints, contact_rows, &mut report);
+            if self.scene.report_contact_impulses {
+                self.record_row_impulses(&constraints[..contact_rows]);
+            }
             let (contact_part, joint_part) = constraints.split_at(contact_rows);
             self.cache_contacts(contact_part, joint_part, &mut report);
             self.integrate(h, &mut report)?;
@@ -305,6 +393,10 @@ impl World {
                 c,
                 [dv * c.normal_mass, 0.0, 0.0],
             );
+            if self.scene.report_contact_impulses && dv * c.normal_mass > 0.0 {
+                let point = row_point(&self.bodies, c);
+                self.record_impulse((c.a, c.b), c.children, c.n, point, dv * c.normal_mass);
+            }
         }
     }
     /// Step setup: every per-body loop of the substeps runs over the awake bodies only (#412).
@@ -783,6 +875,7 @@ impl World {
                     offset,
                     restitution,
                     bounce,
+                    children: m.children,
                 });
             }
         }
@@ -1769,7 +1862,7 @@ impl World {
                 // child's own point velocity; the arms move to the compound's centre.
                 let children = super::compound::children(&self.compounds, b);
                 if !children.is_empty() {
-                    for c in children {
+                    for (index, c) in children.iter().enumerate() {
                         let child = super::compound::child_body(b, c);
                         let (x, y) = if i == plane { (a, &child) } else { (&child, a) };
                         if let Some(mut m) = contact::halfspace(
@@ -1785,6 +1878,7 @@ impl World {
                                     p.ra = super::compound::parent_arm(&child, b, p.ra);
                                 }
                             }
+                            m.children[usize::from(i == plane)] = index as u32;
                             push(out, (i, j, m), &mut self.bookkeeping.work);
                         }
                     }
@@ -2113,6 +2207,10 @@ fn apply_components<const NORMAL: bool, const TANGENTS: bool>(
     }
 }
 
+/// The world point midway between a contact row's two witnesses.
+fn row_point(bodies: &[Body], c: &Constraint) -> Vector {
+    (bodies[c.a].position + c.ra + bodies[c.b].position + c.rb) * 0.5
+}
 impl Constraint {
     /// Cache this proof with the row coefficients, not its changing velocities/impulses.
     /// The unguarded response remains the failure path for overflowed mass/inertia.

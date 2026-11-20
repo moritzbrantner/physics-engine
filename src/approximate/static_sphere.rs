@@ -5,7 +5,7 @@
 
 use super::{
     Body, Real, Shape, SweepFailure, Vector as V,
-    contact::{Manifold, Point, Points},
+    contact::{Manifold, NO_CHILDREN, Point, Points},
     convex_hull::{HullWork, PreparedHull},
     primitive, terrain,
     triangle_mesh::TriangleMesh,
@@ -137,6 +137,7 @@ pub(super) fn sphere_manifold(
         }),
         swept: sweep.is_some(),
         time,
+        children: NO_CHILDREN,
     }
 }
 

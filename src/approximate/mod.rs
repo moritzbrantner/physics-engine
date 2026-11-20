@@ -127,7 +127,7 @@ use control::drop_boxes_near;
 pub use error::{Error, SweepFailure};
 pub use material::{CombineRule, Material};
 use material::{pair_friction, pair_restitution};
-pub use report::{ContactEvent, Report};
+pub use report::{ContactEvent, ContactImpulse, Report};
 pub use shape::Shape;
 
 #[derive(Clone, Debug)]
@@ -173,6 +173,9 @@ struct Constraint {
     /// Normal velocity this new contact bounces to at the end of the step (Rapier's
     /// restitution seed, `-restitution * approach` at preparation); zero when it does not.
     bounce: Real,
+    /// The compound child indices (sides a, b) of the row's manifold
+    /// ([`contact::NO_CHILD`] for a primitive side), for the contact impulse report.
+    children: [u32; 2],
 }
 
 const FREE_SLOT: u32 = u32::MAX;
@@ -249,6 +252,9 @@ pub struct World {
     removed_contacts: usize,
     /// Reused buffer for the impacts `take_contact_events` holds for the next step.
     held_contacts: Vec<ContactChange>,
+    /// This step's contact impulses while `report_contact_impulses` is on, in the order
+    /// recorded; `take_contact_impulses` sorts and merges them into the report.
+    impulses: Vec<report::ImpulseRecord>,
     /// Joints in canonical row order (#453).
     joints: joint::Joints,
     /// Pose targets for the next step (`set_next_kinematic_pose`, #520), sorted by body id bits.
@@ -365,6 +371,7 @@ impl World {
             contact_changes: Vec::new(),
             removed_contacts: 0,
             held_contacts: Vec::new(),
+            impulses: Vec::new(),
             joints: joint::Joints::default(),
             kinematic_poses: Vec::new(),
             static_revision: 0,

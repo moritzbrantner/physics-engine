@@ -47,6 +47,13 @@ pub enum Obs {
     /// A revolute joint after a tick: angle (radians), rate (radians per second) and motor
     /// torque about its axis (N·m).
     Joint([f32; 3]),
+    /// The normal impulse one contact slot took over a tick (N·s; zero if none), with its
+    /// impulse-weighted unit normal and world point (zero vectors if none).
+    Impulse {
+        impulse: f32,
+        normal: [f32; 3],
+        point: [f32; 3],
+    },
     /// A contact transition reported by a tick: the pair as scenario labels.
     ContactEvent {
         tick: u32,
@@ -155,6 +162,11 @@ pub fn finite(trace: &Trace) -> Result<(), String> {
             | Obs::Joint(p) => p.iter().all(|v| v.is_finite()),
             Obs::Rotation(q) => q.iter().all(|v| v.is_finite()),
             Obs::Tension(t) => t.is_finite(),
+            Obs::Impulse {
+                impulse,
+                normal,
+                point,
+            } => impulse.is_finite() && normal.iter().chain(point).all(|v| v.is_finite()),
             _ => true,
         };
         if !ok {
@@ -237,5 +249,6 @@ pub fn all() -> Vec<Scenario> {
         scenarios::shooter_window::scenario(),
         scenarios::compound_robots::scenario(),
         scenarios::revolute_robots::scenario(),
+        scenarios::collision_damage::scenario(),
     ]
 }

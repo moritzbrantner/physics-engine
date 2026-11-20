@@ -10,6 +10,7 @@ pub mod ccd_projectiles;
 pub mod ccd_synchronized;
 pub mod character_move;
 pub mod character_rebuild;
+pub mod collision_damage;
 pub mod collision_filters;
 pub mod compound_robots;
 pub mod contact_events;
