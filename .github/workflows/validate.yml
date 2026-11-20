@@ -57,7 +57,7 @@ jobs:
           node-version: lts/*
 
       - name: Run fast tier
-        uses: moritzbrantner/coding-tooling@394516f6372d974d998b6f14c0443324f48d95b4 # main
+        uses: moritzbrantner/coding-tooling@4ad879730ac5403b5c838fd5dd8ab9c39c700662 # main
         with:
           tier: fast
           install-mode: none
@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: 394516f6372d974d998b6f14c0443324f48d95b4 # main
+          ref: 4ad879730ac5403b5c838fd5dd8ab9c39c700662 # main
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -129,7 +129,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: 394516f6372d974d998b6f14c0443324f48d95b4 # main
+          ref: 4ad879730ac5403b5c838fd5dd8ab9c39c700662 # main
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
