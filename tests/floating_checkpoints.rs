@@ -167,6 +167,8 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
                 convergence,
                 convergence_scope: scope,
                 contact_generation: generation,
+                // Contact impulse reporting (#575) is part of the encoded configuration.
+                report_contact_impulses: generation == ContactGeneration::PerStep,
                 ..config()
             })
         };
@@ -191,6 +193,10 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
         drop(captured);
         let mut continued = restore(&saved);
         assert_eq!(continued.config().contact_generation, generation);
+        assert_eq!(
+            continued.config().report_contact_impulses,
+            generation == ContactGeneration::PerStep
+        );
         same(&continued, &uninterrupted);
         assert!(continued.last_report.retired.is_empty());
         assert_eq!(continued.last_report.substeps, 0);
@@ -219,6 +225,10 @@ fn destroyed_world_restores_pending_input_contacts_and_exact_future_state() {
             let expected = uninterrupted.step(dt as Scalar).unwrap();
             let actual = continued.step(dt as Scalar).unwrap();
             assert_eq!(semantic(&actual), semantic(&expected), "tick {tick}");
+            assert_eq!(
+                actual.contact_impulses, expected.contact_impulses,
+                "tick {tick}"
+            );
             same(&continued, &uninterrupted);
         }
     }
@@ -633,7 +643,7 @@ fn diagnostic_soft_policy_is_rejected_by_the_ordinary_build() {
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
-fn format_thirteen_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
+fn format_fourteen_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
     let world = World::new(Config {
         gravity: V::ZERO,
         // The storage mode is part of the encoded configuration.
@@ -643,13 +653,13 @@ fn format_thirteen_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
     .unwrap();
     let encoded = bytes(&world);
     assert_eq!(&encoded[..8], b"PEFLT32\0");
-    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 13);
+    assert_eq!(u32::from_le_bytes(encoded[8..12].try_into().unwrap()), 14);
     assert_eq!(
         Sha256::digest(&encoded)
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>(),
-        "82e34d45100694febddaafa2b4b151dd2aed1129cbd4d55b5278a63622e4e4b7"
+        "213670223a98109c8e5e59914913a813afec00e12685f73acb0837fe2dbc6de8"
     );
 }
 

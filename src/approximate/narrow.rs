@@ -459,6 +459,10 @@ impl Narrow<'_> {
                                 p.ra = compound::parent_arm(pa, a, p.ra);
                                 p.rb = compound::parent_arm(pb, b, p.rb);
                             }
+                            m.children = [
+                                child_index(ka, !ca.is_empty()),
+                                child_index(kb, !cb.is_empty()),
+                            ];
                             emit(m);
                         },
                     )?;
@@ -466,6 +470,16 @@ impl Narrow<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// A manifold side's child index: child `k` of a compound side, [`contact::NO_CHILD`] for a
+/// primitive one.
+pub(super) fn child_index(k: usize, compound: bool) -> u32 {
+    if compound {
+        k as u32
+    } else {
+        contact::NO_CHILD
     }
 }
 

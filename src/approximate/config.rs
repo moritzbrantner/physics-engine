@@ -65,6 +65,10 @@ pub struct Config {
     pub body_storage: BodyStorage,
     /// When contacts are regenerated within a step; see [`ContactGeneration`].
     pub contact_generation: ContactGeneration,
+    /// Fill [`Report::contact_impulses`](super::Report::contact_impulses) with each contact's
+    /// normal impulse over the step (#575). Off by default: the solver then records nothing.
+    /// Reporting never changes the simulation.
+    pub report_contact_impulses: bool,
 }
 
 /// When a step regenerates its contacts; fixed when the world is created. See
@@ -101,6 +105,7 @@ impl Default for Config {
             length_unit: 1.0,
             // The test-only `indexed-storage` feature runs every suite on `Indexed` storage.
             contact_generation: ContactGeneration::Adaptive,
+            report_contact_impulses: false,
             body_storage: if cfg!(feature = "indexed-storage") {
                 BodyStorage::Indexed
             } else {
