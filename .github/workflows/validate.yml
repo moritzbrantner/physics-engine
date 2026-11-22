@@ -153,7 +153,7 @@ jobs:
       actions: read
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@361ab6f0fbb98e0387070fb9b694be6067fa3b3f # main
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@17987ed0bfd274f75bce1923f857782824efab9c # main
     with:
       source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       artifact_key: physics-engine-pages-v1
@@ -170,7 +170,7 @@ jobs:
     needs: [docs-scope, tests, work-contracts, oracle, build-pages]
     runs-on: ubuntu-latest
     steps:
-      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@361ab6f0fbb98e0387070fb9b694be6067fa3b3f # main
+      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@17987ed0bfd274f75bce1923f857782824efab9c # main
         with:
           needs: ${{ toJSON(needs) }}
           required: '["docs-scope", "tests", "work-contracts", "oracle", "build-pages"]'
