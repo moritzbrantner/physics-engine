@@ -18,9 +18,9 @@ rust-version = "1.98"
 description = "Physics engine for the owner's games, measured against Rapier"
 
 [dependencies]
-geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "7c4cc7c9e1c432969a28304db39f8b11e08f8129" }
-bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "7c4cc7c9e1c432969a28304db39f8b11e08f8129" }
-spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", rev = "7c4cc7c9e1c432969a28304db39f8b11e08f8129" }
+geometry-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", branch = "main" }
+bvh-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", branch = "main" }
+spatial-kernels = { git = "https://github.com/moritzbrantner/rust-kernels", branch = "main" }
 # Transcendental functions as the same Rust code on every target (#576); see clippy.toml.
 libm = "0.2.16"
 sha2 = { version = "0.11.0", default-features = false, optional = true }
