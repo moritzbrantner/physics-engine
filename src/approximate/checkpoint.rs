@@ -408,11 +408,8 @@ impl Checkpoint {
         for body in &mut world.bodies {
             body.cached_bounds = contact::bounds(body);
         }
-        world.bookkeeping.activity.count = world
-            .bodies
-            .iter()
-            .filter(|b| b.mass > 0.0 && !b.sleeping)
-            .count();
+        world.bookkeeping.activity.count =
+            world.bodies.iter().filter(|b| b.awake_dynamic()).count();
         world.bookkeeping.activity.dynamic = world.bodies.iter().filter(|b| b.mass > 0.0).count();
         world.elevated_bodies = world
             .bodies

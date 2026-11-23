@@ -288,7 +288,7 @@ impl World {
         }
         // An awake body's leaf no longer holds its box; a resting one changed under others.
         let b = &self.bodies[i];
-        if b.mass > 0.0 && !b.sleeping {
+        if b.awake_dynamic() {
             self.bookkeeping.drop_box(b.id.slot());
         } else {
             self.resting_changed(i, before);

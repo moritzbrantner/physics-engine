@@ -97,7 +97,7 @@ impl Activity {
             bodies
                 .iter()
                 .enumerate()
-                .filter(|(_, b)| b.mass > 0.0 && !b.sleeping)
+                .filter(|(_, b)| b.awake_dynamic())
                 .map(|(i, _)| i),
         );
         debug_assert_eq!(self.indices.len(), self.count);
