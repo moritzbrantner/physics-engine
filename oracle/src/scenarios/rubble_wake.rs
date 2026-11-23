@@ -167,18 +167,34 @@ fn sinking(p: [f32; 3], q: [f32; 4], half: [f32; 3]) -> f32 {
 /// Each tick records the live pieces in throw order (position, rotation, asleep).
 struct Reader<'a> {
     obs: &'a [Obs],
-    starts: Vec<Piece>,
+    /// Per tick, the live pieces and the trace position before the first of them.
+    counts: Vec<usize>,
+    offsets: Vec<usize>,
 }
-impl Reader<'_> {
-    fn count(&self, tick: u32) -> usize {
-        self.starts.iter().filter(|p| p.tick <= tick).count()
+impl<'a> Reader<'a> {
+    fn new(obs: &'a [Obs], starts: &[Piece]) -> Self {
+        let counts: Vec<usize> = (0..TICKS)
+            .map(|t| starts.iter().filter(|p| p.tick <= t).count())
+            .collect();
+        let offsets = counts
+            .iter()
+            .scan(0, |next, &count| {
+                let offset = *next;
+                *next += 3 * count;
+                Some(offset)
+            })
+            .collect();
+        Self {
+            obs,
+            counts,
+            offsets,
+        }
     }
-    /// The trace position of tick `t`, before its first piece.
-    fn offset(&self, t: u32) -> usize {
-        (0..t).map(|t| 3 * self.count(t)).sum()
+    fn count(&self, tick: u32) -> usize {
+        self.counts[tick as usize]
     }
     fn at(&self, t: u32, k: usize) -> ([f32; 3], [f32; 4], bool) {
-        let o = self.offset(t) + 3 * k;
+        let o = self.offsets[t as usize] + 3 * k;
         match (self.obs[o], self.obs[o + 1], self.obs[o + 2]) {
             (Obs::Position(p), Obs::Rotation(q), Obs::Grounded(s)) => (p, q, s),
             other => panic!("unexpected observations at tick {t}: {other:?}"),
@@ -201,14 +217,8 @@ fn check(engine: &Trace, rapier: &Trace) -> Result<(), String> {
             rapier.0.len()
         ));
     }
-    let e = Reader {
-        obs: &engine.0,
-        starts: starts.clone(),
-    };
-    let r = Reader {
-        obs: &rapier.0,
-        starts: starts.clone(),
-    };
+    let e = Reader::new(&engine.0, &starts);
+    let r = Reader::new(&rapier.0, &starts);
     // Never deeper into the floor than Rapier's deepest piece, plus the slop.
     let deepest = |reader: &Reader| {
         let mut worst = 0.0_f32;
