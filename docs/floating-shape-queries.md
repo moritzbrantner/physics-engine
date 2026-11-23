@@ -123,7 +123,7 @@ runs narrow phase against all eligible targets. Whole-call release timings are
 advisory. This is not a before/after solver performance claim: no public floating
 query existed before this slice.
 
-[Recorded local query evidence](floating-query-work-2026-09-30.json), measured with
+Local query evidence recorded on 2026-09-30 (its JSON was removed with the f64 build in `e38d07a`), measured with
 rustc 1.98.0 on `x86_64-unknown-linux-gnu` on 2026-09-30, preserves all 12 control
 results exactly. Each sparse call reduces 512 exact candidates to one; misses reduce
 them to zero. Both paths still visit 512 bodies. Median pruned durations are

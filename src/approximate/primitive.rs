@@ -3,14 +3,11 @@
 //! Reusable shape math lives in `geometry-kernels`. This module retains engine-local body,
 //! quaternion and work-counter boundaries; simulation policy remains owned by Physics Engine.
 //!
-//! The kernels stay f64 in every build. [`Real`] inputs widen exactly to f64. Results narrow
+//! The kernels are f64. [`Real`] (f32) inputs widen exactly to f64. Results narrow
 //! conservatively: time of impact and sweep fractions toward zero (earlier), bounds/extents
-//! outward, separation toward smaller; directions and witnesses round to nearest. In the
-//! default f64 build every conversion is the identity.
+//! outward, separation toward smaller; directions and witnesses round to nearest.
 
-use super::{
-    Body, Quaternion, REAL_BITS, Real, Shape, SweepFailure, Vector as V, geometry::GeometryStats,
-};
+use super::{Body, Quaternion, Real, Shape, SweepFailure, Vector as V, geometry::GeometryStats};
 use geometry_kernels::primitive3::{
     PrimitiveBody3, PrimitiveContact3, PrimitiveShape3, PrimitiveSweepError3, PrimitiveWork3,
     SubmergedError3, bounds_extents as kernel_bounds, query_canonical as kernel_query_canonical,
@@ -326,11 +323,9 @@ pub(super) fn swept_time(
     work: &mut GeometryStats,
 ) -> Result<Option<Real>, SweepFailure> {
     // The f64 kernel would absorb a relative motion that overflows `Real`, but the solver
-    // consumes the impact in `Real`. With f32 state, fail the search as the f64 build's
-    // kernel does for f64 overflow. Never evaluated in the f64 build.
+    // consumes the impact in `Real`, so fail the search as the kernel does for f64 overflow.
     // Non-finite inputs stay the kernel's InvalidInput.
-    if REAL_BITS < 64
-        && a.velocity.finite()
+    if a.velocity.finite()
         && b.velocity.finite()
         && dt.is_finite()
         && !((b.velocity - a.velocity) * dt).finite()
@@ -617,15 +612,11 @@ fn kernel_body(body: &Body) -> PrimitiveBody3 {
     }
 }
 
-/// Kernel frames must be orthonormal to f64 tolerances. The default build passes the solver's
-/// own axes unchanged; the f32 build widens the stored quaternion, renormalizes it and
-/// rotates in f64 so the frame is orthonormal at kernel precision.
+/// Kernel frames must be orthonormal to f64 tolerances: the stored f32 quaternion is widened,
+/// renormalized and rotated in f64 so the frame is orthonormal at kernel precision.
 fn kernel_axes(q: Quaternion) -> [[f64; 3]; 3] {
     if q == Quaternion::IDENTITY {
         return identity_axes();
-    }
-    if REAL_BITS == 64 {
-        return q.axes().map(to_array);
     }
     let [x, y, z, w] = [q.0, q.1, q.2, q.3].map(widen);
     let length = (x * x + y * y + z * z + w * w).sqrt();
@@ -654,18 +645,16 @@ const fn identity_axes() -> [[f64; 3]; 3] {
 }
 
 /// Exact widening of a solver value to the f64 kernel domain.
-#[allow(clippy::unnecessary_cast)]
 pub(super) const fn widen(value: Real) -> f64 {
     value as f64
 }
 
 /// Round-to-nearest narrowing for directions and witness points.
-#[allow(clippy::unnecessary_cast)]
 pub(super) const fn nearest(value: f64) -> Real {
     value as Real
 }
 
-/// Largest `Real` not above `value` (exact in the f64 build; NaN stays NaN).
+/// Largest `Real` not above `value` (NaN stays NaN).
 pub(super) fn round_down(value: f64) -> Real {
     let narrowed = nearest(value);
     if widen(narrowed) > value {
@@ -675,7 +664,7 @@ pub(super) fn round_down(value: f64) -> Real {
     }
 }
 
-/// Smallest `Real` not below `value` (exact in the f64 build; NaN stays NaN).
+/// Smallest `Real` not below `value` (NaN stays NaN).
 pub(super) fn round_up(value: f64) -> Real {
     let narrowed = nearest(value);
     if widen(narrowed) < value {
@@ -913,8 +902,8 @@ mod tests {
         capsule.orientation = Quaternion(
             0.0,
             0.0,
-            crate::approximate::real_consts::FRAC_1_SQRT_2,
-            crate::approximate::real_consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
         );
         let mut work = GeometryStats::default();
         let forward = query(&capsule, &wedge, &mut work).unwrap();

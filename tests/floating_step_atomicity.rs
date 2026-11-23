@@ -1,12 +1,9 @@
 use physics_engine::approximate::{Body, Config, Error, Shape, Vector, World};
-use physics_engine::{
-    approximate::{REAL_BITS, Real},
-    numeric::Scalar,
-};
+use physics_engine::{approximate::Real, numeric::Scalar};
 
 /// Approach distances and speeds near the 1e12 position limit. Adjacent f32 positions there
-/// are 65536 apart, so the f32 build scales them by 2^24 to stay resolvable; f64 is unscaled.
-const EDGE_SCALE: Real = if REAL_BITS == 64 { 1.0 } else { 16_777_216.0 };
+/// are 65536 apart, so they are scaled by 2^24 to stay resolvable.
+const EDGE_SCALE: Real = 16_777_216.0;
 
 fn bodies(world: &World) -> Vec<Body> {
     world.bodies().cloned().collect()

@@ -73,7 +73,7 @@ advisory complete-call timing. This compares query mechanics, not a previous
 ray API or a game/solver speedup. Character collide-and-slide, moving-platform
 policy, shape-cast feature identities and game adoption remain open in #194.
 
-[Recorded evidence](floating-ray-work-2026-09-30.json) uses clean producer
+Evidence recorded on 2026-09-30 (its JSON was removed with the f64 build in `e38d07a`) used clean producer
 `d6b1162` with the merged kernel pin. Sparse 512-body controls keep all 512
 bound visits, reduce exact candidates to one for hits or zero for misses,
 and take 6.8–9.0% of the exhaustive controls’ complete-call time in these

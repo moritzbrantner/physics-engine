@@ -15,31 +15,25 @@
 
 /// Physical-state scalar. Elapsed time stays [`numeric::Scalar`] (`f64`).
 pub type Real = f32;
-#[allow(unused_imports)]
-use std::f32::consts as real_consts;
-/// Bit width of [`Real`] in this build (32 or 64).
-pub const REAL_BITS: u32 = (size_of::<Real>() * 8) as u32;
 
 /// Rounding allowance, in units of `Real::EPSILON`, for re-checking a swept impact after
-/// conservative narrowing. Zero in the f64 build, where narrowing is the identity.
-const NARROWING_ULPS: Real = if REAL_BITS == 64 { 0.0 } else { 16.0 };
+/// conservative narrowing from the f64 kernels.
+const NARROWING_ULPS: Real = 16.0;
 
-/// Rounding-only test tolerance: the f64 reference bound, or `ulps` of `Real::EPSILON`
-/// (scaled by the magnitude under test) when that is larger, as in the f32 build.
+/// Rounding-only test tolerance: `ulps` of `Real::EPSILON` scaled by the magnitude under test,
+/// and never below the absolute floor `reference`.
 #[cfg(test)]
 fn rounding_tolerance(reference: Real, ulps: Real, scale: Real) -> Real {
     reference.max(ulps * Real::EPSILON * scale)
 }
 
-/// Narrows f64 time to the solver scalar once per substep (identity in the f64 build).
-#[allow(clippy::unnecessary_cast)]
+/// Narrows f64 time to the solver scalar once per substep.
 fn narrow_time(seconds: Scalar) -> Real {
     seconds as Real
 }
-/// Widens a solver substep exactly into the f64 time domain (identity in the f64 build).
-#[allow(clippy::unnecessary_cast)]
+/// Widens a solver substep exactly into the f64 time domain.
 fn widen_time(seconds: Real) -> Scalar {
-    seconds as Scalar
+    Scalar::from(seconds)
 }
 /// Substep length in solver precision. The division happens in f64 before one narrowing.
 fn substep_length(dt: Scalar, substeps: u8) -> Real {

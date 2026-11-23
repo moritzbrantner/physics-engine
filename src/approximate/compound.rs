@@ -63,7 +63,6 @@ impl CompoundShape {
             && self.inertia.min_component() > 0.0
     }
     /// Evaluated in f64, as the primitive shapes' inverse inertia.
-    #[allow(clippy::unnecessary_cast)]
     pub(super) fn local_inverse_inertia(self, mass: Real) -> Option<Vector> {
         let mass = mass as f64;
         let k = self.inertia;

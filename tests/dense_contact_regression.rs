@@ -10,12 +10,11 @@ fn glancing_projectile_keeps_the_opposite_contact_face_inside_the_dense_overlap_
 #[test]
 fn failed_dynamic_correction_rolls_back_both_endpoints_and_contact_history() {
     use physics_engine::approximate::{
-        Body, CheckpointContext, Config, Error, PositionCorrection, REAL_BITS, Real, Shape,
-        Vector as V, World,
+        Body, CheckpointContext, Config, Error, PositionCorrection, Real, Shape, Vector as V, World,
     };
-    // Adjacent f32 positions near the 1e12 limit are 65536 apart; the f32 build scales the
-    // fixture's lengths by 2^24 so the overlap stays resolvable. f64 is unscaled.
-    const EDGE_SCALE: Real = if REAL_BITS == 64 { 1.0 } else { 16_777_216.0 };
+    // Adjacent f32 positions near the 1e12 limit are 65536 apart; the fixture's lengths are
+    // scaled by 2^24 so the overlap stays resolvable.
+    const EDGE_SCALE: Real = 16_777_216.0;
     let mut world = World::new(Config {
         gravity: V::ZERO,
         substeps: 1,
