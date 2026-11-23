@@ -1,7 +1,6 @@
 //! Adverse controls at the edge of the documented f32 precision envelope
 //! (docs/numerics.md): positions up to |x| = 16384 units, linear speed 4000 units/s,
-//! default gravity and substeps. They run in both builds with the same physical
-//! thresholds; the f64 build is the reference.
+//! default gravity and substeps, with physical (not rounding) thresholds.
 use physics_engine::approximate::{Body, Config, Real, Shape, Vector as V, World};
 
 /// Envelope edge and the origin control.

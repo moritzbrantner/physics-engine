@@ -100,7 +100,6 @@ mod tests {
                     // The public inertia tensor is `Real`; combinations whose inertia leaves the
                     // `Real` range are outside the f32 envelope.
                     if !(mass * 64.0 * scale * scale * scale).is_finite() {
-                        assert_eq!(super::super::REAL_BITS, 32);
                         continue;
                     }
                     let properties = shape.mass_properties(mass).unwrap();

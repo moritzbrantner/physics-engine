@@ -6,17 +6,14 @@ use physics_engine::{
         Vector as V, World,
     },
 };
-use physics_engine::{
-    approximate::{REAL_BITS, Real},
-    numeric::Scalar,
-};
+use physics_engine::{approximate::Real, numeric::Scalar};
 use sha2::{Digest, Sha256};
 
 /// Encoded width of one physical scalar; elapsed/prior-substep time is always 8 bytes.
 const W: usize = size_of::<Real>();
 /// Approach distances and speeds near the 1e12 position limit. Adjacent f32 positions there
-/// are 65536 apart, so the f32 build scales them by 2^24 to stay resolvable; f64 is unscaled.
-const EDGE_SCALE: Real = if REAL_BITS == 64 { 1.0 } else { 16_777_216.0 };
+/// are 65536 apart, so they are scaled by 2^24 to stay resolvable.
+const EDGE_SCALE: Real = 16_777_216.0;
 
 fn put(bytes: &mut [u8], offset: usize, value: Real) {
     bytes[offset..offset + W].copy_from_slice(&value.to_le_bytes());
@@ -653,52 +650,27 @@ fn format_thirteen_algorithm_twenty_f32_empty_world_wire_fixture_is_stable() {
     );
 }
 
-/// Re-label a valid checkpoint as the other scalar width's encoding. Only the magic
-/// changes; the width check must reject it before reading versions or the digest.
-fn other_width_header(mut bytes: Vec<u8>) -> (Vec<u8>, u32) {
-    let (magic, bits): (&[u8; 8], u32) = if REAL_BITS == 64 {
-        (b"PEFLT32\0", 32)
-    } else {
-        (b"PEFLOAT\0", 64)
-    };
-    bytes[..8].copy_from_slice(magic);
-    (bytes, bits)
-}
-
 #[test]
-fn checkpoints_from_the_other_scalar_width_are_rejected_before_parsing() {
+fn foreign_magics_are_rejected_before_parsing() {
     let saved = bytes(&simple());
-    let own: &[u8; 8] = if REAL_BITS == 64 {
-        b"PEFLOAT\0"
-    } else {
-        b"PEFLT32\0"
-    };
-    assert_eq!(&saved[..8], own);
-    let (foreign, found_bits) = other_width_header(saved.clone());
-    assert_eq!(
-        Checkpoint::from_bytes(&foreign, CONTEXT, CheckpointLimits::default()).unwrap_err(),
-        CheckpointError::ScalarWidthMismatch {
-            expected_bits: REAL_BITS,
-            found_bits,
-        }
-    );
-    // A hand-built header from the other build: magic, format/algorithm, then nothing.
-    let mut header = foreign[..16].to_vec();
-    header.extend_from_slice(&[0; 32]);
-    assert_eq!(
-        Checkpoint::from_bytes(&header, CONTEXT, CheckpointLimits::default()).unwrap_err(),
-        CheckpointError::ScalarWidthMismatch {
-            expected_bits: REAL_BITS,
-            found_bits,
-        }
-    );
-    // Unknown magics remain ordinary invalid data.
-    let mut unknown = saved;
-    unknown[..8].copy_from_slice(b"PEFLT16\0");
-    assert_eq!(
-        Checkpoint::from_bytes(&unknown, CONTEXT, CheckpointLimits::default()).unwrap_err(),
-        CheckpointError::InvalidData
-    );
+    assert_eq!(&saved[..8], b"PEFLT32\0");
+    // The removed f64 build's magic and unknown magics are ordinary invalid data, checked
+    // before the versions or the digest.
+    for magic in [b"PEFLOAT\0", b"PEFLT16\0"] {
+        let mut foreign = saved.clone();
+        foreign[..8].copy_from_slice(magic);
+        assert_eq!(
+            Checkpoint::from_bytes(&foreign, CONTEXT, CheckpointLimits::default()).unwrap_err(),
+            CheckpointError::InvalidData
+        );
+        // A bare header: magic, format/algorithm, then a zero digest.
+        let mut header = foreign[..16].to_vec();
+        header.extend_from_slice(&[0; 32]);
+        assert_eq!(
+            Checkpoint::from_bytes(&header, CONTEXT, CheckpointLimits::default()).unwrap_err(),
+            CheckpointError::InvalidData
+        );
+    }
 }
 
 #[test]
@@ -737,11 +709,7 @@ fn capture_rejects_nonfinite_state_and_preserves_finite_inputs_that_fail_on_step
         1.0,
     );
     // Squares underflow to subnormals, so normalization loses unit length.
-    let tiny_component = if REAL_BITS == 64 {
-        1e-160_f64 as Real
-    } else {
-        1e-20
-    };
+    let tiny_component = 1e-20;
     tiny.orientation = Quaternion(tiny_component, 0.0, 0.0, tiny_component);
     tiny.rotation_locked = true;
     tiny_orientation.add_body(tiny).unwrap();

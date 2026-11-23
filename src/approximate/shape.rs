@@ -128,10 +128,8 @@ impl Shape {
             Self::Compound(c) => c.valid(),
         }
     }
-    /// Evaluated in f64 in every build (the identity for the default build): with f32 state,
-    /// `mass * length^2` can overflow for accepted inputs although the inverse inertia is
-    /// representable. The narrowed result rounds to nearest.
-    #[allow(clippy::unnecessary_cast)]
+    /// Evaluated in f64: in f32, `mass * length^2` can overflow for accepted inputs although
+    /// the inverse inertia is representable. The narrowed result rounds to nearest.
     pub(super) fn local_inverse_inertia(self, mass: Real) -> Option<Vector> {
         let mass = mass as f64;
         let narrow = |x: f64, y: f64, z: f64| Some(Vector(x as Real, y as Real, z as Real));

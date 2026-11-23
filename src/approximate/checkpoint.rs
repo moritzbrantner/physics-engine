@@ -6,21 +6,13 @@ use sha2::{Digest, Sha256};
 use super::{
     Body, BodyId, BodyStorage, CachedPoint, CharacterSettings, CombineRule, Config,
     ContactGeneration, Convergence, ConvergenceScope, ConvexHullId, Embedded, HeightfieldDesc,
-    Order, PositionCorrection, Quaternion, REAL_BITS, Real, Scalar, Shape, TerrainId,
-    TriangleMeshId, Vector, World, character, contact, convex_hull, narrow_time, substep_length,
-    terrain, widen_time,
+    Order, PositionCorrection, Quaternion, Real, Scalar, Shape, TerrainId, TriangleMeshId, Vector,
+    World, character, contact, convex_hull, narrow_time, substep_length, terrain, widen_time,
 };
 use crate::CollisionLayers3d;
 
-// Each scalar width has its own magic; the layout is otherwise shared. Physical
-// values use `Real` at native width; elapsed/prior-substep time is always f64.
-const MAGIC_F64: &[u8; 8] = b"PEFLOAT\0";
-const MAGIC_F32: &[u8; 8] = b"PEFLT32\0";
-const MAGIC: &[u8; 8] = if REAL_BITS == 32 {
-    MAGIC_F32
-} else {
-    MAGIC_F64
-};
+// Physical values use `Real` (f32) at native width; elapsed/prior-substep time is f64.
+const MAGIC: &[u8; 8] = b"PEFLT32\0";
 const FORMAT: u32 = 13;
 // Bump when continuation semantics change, even if the byte layout does not.
 const ALGORITHM: u32 = 20;
@@ -96,12 +88,6 @@ pub enum CheckpointError {
     /// missing, extra or not the one the world was built with. No world is created.
     TerrainMismatch {
         index: usize,
-    },
-    /// The bytes come from a build whose floating-solver scalar width differs
-    /// from this build's `Real`. Rejected before the version fields.
-    ScalarWidthMismatch {
-        expected_bits: u32,
-        found_bits: u32,
     },
 }
 impl std::fmt::Display for CheckpointError {
@@ -558,15 +544,8 @@ impl Checkpoint {
             .ok_or(CheckpointError::InvalidData)?;
         let (payload, digest) = bytes.split_at(payload_len);
         let mut reader = Reader { bytes: payload };
-        match &reader.array::<8>()? {
-            magic if magic == MAGIC => {}
-            magic if magic == MAGIC_F64 || magic == MAGIC_F32 => {
-                return Err(CheckpointError::ScalarWidthMismatch {
-                    expected_bits: REAL_BITS,
-                    found_bits: if magic == MAGIC_F32 { 32 } else { 64 },
-                });
-            }
-            _ => return Err(CheckpointError::InvalidData),
+        if &reader.array::<8>()? != MAGIC {
+            return Err(CheckpointError::InvalidData);
         }
         let format = reader.u32()?;
         if format != FORMAT {

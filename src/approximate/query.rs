@@ -740,13 +740,9 @@ fn primitive_hit(
     }))
 }
 
-/// Unit-length admission for query poses: 1e-9 in the f64 build, widened to the
-/// rounding of one `Real` normalization (64 ulps of 1) when `Real` is f32.
-const UNIT_ORIENTATION_TOLERANCE: Real = if 64.0 * Real::EPSILON > 1e-9 {
-    64.0 * Real::EPSILON
-} else {
-    1e-9
-};
+/// Unit-length admission for query poses: the rounding of one `Real` normalization
+/// (64 ulps of 1).
+const UNIT_ORIENTATION_TOLERANCE: Real = 64.0 * Real::EPSILON;
 fn unit_orientation(q: Quaternion) -> bool {
     q.finite()
         && (q.0 * q.0 + q.1 * q.1 + q.2 * q.2 + q.3 * q.3 - 1.0).abs() <= UNIT_ORIENTATION_TOLERANCE

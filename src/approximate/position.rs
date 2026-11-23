@@ -413,7 +413,7 @@ mod tests {
         assert!(d.dot(n) > 0.45);
         assert!(d.cross(n).length() < super::super::rounding_tolerance(1e-12, 16.0, 1.0));
         let m = super::super::contact::current(&w.bodies[0], &w.bodies[1], 0.0).unwrap();
-        // Slop 0.02 plus a rounding-only allowance (1e-9 in the f64 build).
+        // Slop 0.02 plus a rounding-only allowance.
         let limit = -(0.02 + super::super::rounding_tolerance(1e-9, 16.0, 2.0));
         assert!((&m.points).into_iter().all(|p| p.separation >= limit));
     }

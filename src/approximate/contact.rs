@@ -1185,8 +1185,7 @@ pub(super) fn box_swept_with_frames(
 ///
 /// With f32 state, the impact time rounds earlier and the advanced poses round to `Real`, so
 /// the surfaces can sit a few ulps beyond the sweep's own target. The allowance covers only
-/// that rounding, scaled by the pose and travel magnitudes. It is exactly zero in the default
-/// f64 build ([`super::NARROWING_ULPS`]), which keeps `margin.max(1e-6)` bit for bit.
+/// that rounding ([`super::NARROWING_ULPS`]), scaled by the pose and travel magnitudes.
 fn impact_margin(a: &Body, b: &Body, dt: Real, margin: Real) -> Real {
     let scale = a
         .position

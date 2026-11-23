@@ -1,17 +1,11 @@
 //! Minimized broad-phase rejection: narrow phase admits this rotated corner contact.
-use physics_engine::approximate::{
-    Body, Config, Quaternion, REAL_BITS, Real, Shape, Vector as V, World,
-};
+use physics_engine::approximate::{Body, Config, Quaternion, Real, Shape, Vector as V, World};
 
-/// The f64 build keeps the original sub-ulp fixture (radius 1e-6 at |x| near 11). With f32
-/// state an ulp there is ~1e-6, so the sphere uses a resolvable radius and the contact inset
-/// and separated gap are a few ulps; the rounded corner can differ from the kernel's by ulps.
+/// An f32 ulp at |x| near 11 is ~1e-6, so the sphere uses a resolvable radius and the contact
+/// inset and separated gap are a few ulps; the rounded corner can differ from the kernel's by
+/// ulps.
 fn fixture() -> (Real, usize, Real) {
-    if REAL_BITS == 64 {
-        (1e-6, 1, 1e-14)
-    } else {
-        (1e-3, 8, 4e-5)
-    }
+    (1e-3, 8, 4e-5)
 }
 
 #[cfg_attr(test, test)]
