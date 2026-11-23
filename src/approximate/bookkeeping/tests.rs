@@ -154,7 +154,7 @@ fn check_activity(w: &mut World) {
         .bodies
         .iter()
         .enumerate()
-        .filter(|(_, b)| b.mass > 0.0 && !b.sleeping)
+        .filter(|(_, b)| b.awake_dynamic())
         .map(|(i, _)| i)
         .collect::<Vec<_>>();
     assert_eq!(s.activity.indices, expected);
@@ -203,7 +203,7 @@ fn check_bounds(w: &mut World, h: Real) {
         .bodies
         .iter()
         .enumerate()
-        .filter(|(_, b)| b.mass > 0.0 && !b.sleeping)
+        .filter(|(_, b)| b.awake_dynamic())
         .map(|(i, b)| {
             let (lo, hi) = b.cached_bounds;
             let delta = if b.sleeping {
@@ -286,7 +286,7 @@ fn tower_pair() -> World {
         "awake {:?}",
         w.bodies
             .iter()
-            .filter(|b| b.mass > 0.0 && !b.sleeping)
+            .filter(|b| b.awake_dynamic())
             .map(|b| (b.id, b.velocity, b.quiet_time))
             .collect::<Vec<_>>()
     );

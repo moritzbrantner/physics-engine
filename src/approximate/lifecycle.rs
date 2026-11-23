@@ -60,7 +60,7 @@ impl World {
                 }
             }
         }
-        self.bookkeeping.activity.count += usize::from(body.mass > 0.0 && !body.sleeping);
+        self.bookkeeping.activity.count += usize::from(body.awake_dynamic());
         self.bookkeeping.activity.dynamic += usize::from(body.mass > 0.0);
         self.elevated_bodies += usize::from(body.additional_solver_iterations > 0);
         let synced = self.query_tree.current(self.bookkeeping.generation);
@@ -143,7 +143,7 @@ impl World {
         // (an awake one makes its own box). The broad phase sizes `broad` for new slots.
         self.bookkeeping.drop_box(id.slot());
         let b = &self.bodies[at];
-        if !(b.mass > 0.0 && !b.sleeping) {
+        if !b.awake_dynamic() {
             let bounds = b.cached_bounds;
             self.resting_changed(at, bounds);
         }
@@ -218,7 +218,7 @@ impl World {
         let s = &mut self.bookkeeping;
         s.generation += 1;
         let b = &self.bodies[at];
-        if b.mass > 0.0 && !b.sleeping {
+        if b.awake_dynamic() {
             s.activity.woke(at, &mut s.work);
         }
         s.position.body_added(at, b);
@@ -305,7 +305,7 @@ impl World {
         if let Some(key) = removed.key {
             self.keys.remove(&key);
         }
-        let awake = removed.mass > 0.0 && !removed.sleeping;
+        let awake = removed.awake_dynamic();
         self.bookkeeping.activity.count -= usize::from(awake);
         self.bookkeeping.activity.dynamic -= usize::from(removed.mass > 0.0);
         self.body_left(i, awake);

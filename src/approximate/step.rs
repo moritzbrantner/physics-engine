@@ -1161,7 +1161,7 @@ impl World {
                 let b = self.bodies.remove(i);
                 self.static_changed(&b);
                 let handle = b.id;
-                self.bookkeeping.activity.count -= usize::from(b.mass > 0.0 && !b.sleeping);
+                self.bookkeeping.activity.count -= usize::from(b.awake_dynamic());
                 self.bookkeeping.activity.dynamic -= usize::from(b.mass > 0.0);
                 self.elevated_bodies -= usize::from(b.additional_solver_iterations > 0);
                 self.geometry.remove(id);
@@ -1416,7 +1416,7 @@ impl World {
             let at_rest = |order| {
                 bodies
                     .binary_search_by_key(&order, |b| b.order)
-                    .is_ok_and(|i| !(bodies[i].mass > 0.0 && !bodies[i].sleeping))
+                    .is_ok_and(|i| !bodies[i].awake_dynamic())
             };
             if at_rest(a) && at_rest(b) {
                 parked.insert((a, b), std::mem::take(points));
@@ -1620,7 +1620,7 @@ impl World {
             if j == i || b.id == BodyId::NONE {
                 return;
             }
-            let (bl, bh) = if b.mass > 0.0 && !b.sleeping {
+            let (bl, bh) = if b.awake_dynamic() {
                 let e = broad[b.id.slot() as usize];
                 let (_, bl, bh) = rows[e.row as usize];
                 match (has_box(&self.bodies[i]), has_box(b)) {

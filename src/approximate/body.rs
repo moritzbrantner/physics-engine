@@ -147,6 +147,10 @@ impl Body {
     pub(super) fn movable(&self) -> bool {
         self.mass > 0.0 && !self.external
     }
+    /// Dynamic and not asleep: what the step integrates and `Activity::count` counts.
+    pub(super) fn awake_dynamic(&self) -> bool {
+        self.mass > 0.0 && !self.sleeping
+    }
     pub(super) fn inverse_mass(&self) -> Real {
         if self.movable() && !self.sleeping {
             1.0 / self.mass
