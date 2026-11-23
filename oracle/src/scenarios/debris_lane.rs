@@ -1,8 +1,9 @@
-//! C18 retained debris lane (#523, mmorpg#648), the MMORPG adapter pattern: one world holds the
-//! town and a heightfield, about 3,500 static features, and every 60 Hz tick the 110 thrown
-//! pieces of 16 broken props (`debris`) are added as keyless transient bodies, stepped once at
-//! 2 substeps × 4 passes and removed together. A piece that settles by the game's rule is
-//! re-added as a fixed box on later ticks. The pieces' invariants are `debris`'s.
+//! C18 retained debris lane (#523, mmorpg#648, mmorpg#666), the MMORPG response-lane pattern: one
+//! world holds the town and a heightfield, about 3,500 static features, and every 60 Hz tick the
+//! moving pieces of the 110 thrown from 16 broken props (`debris`) are added as transient bodies
+//! keyed by piece, stepped once at 2 substeps × 4 passes and removed together. A piece that
+//! settles by the game's rule joins the world once as a fixed keyed box and stays. The pieces'
+//! invariants are `debris`'s.
 //!
 //! The Rapier side rebuilds the world per tick, statics included, as MMORPG's adapter did. The
 //! perf gate is that pattern only (owner decision, #523): bare persistent Rapier keeps bodies and
@@ -79,6 +80,14 @@ mod engine {
         world: World,
         pieces: Vec<Piece>,
         ids: Vec<BodyId>,
+        /// Indices into `pieces` of this tick's transient bodies, parallel to `ids`.
+        stepped: Vec<usize>,
+    }
+
+    /// A piece's key: above every static key and ascending with the piece, as MMORPG's
+    /// `piece_key` (mmorpg#666), so pieces keep slice order whether moving or resting.
+    const fn piece_key(index: usize) -> u64 {
+        (1 << 63) | index as u64
     }
 
     impl Sim {
@@ -133,6 +142,7 @@ mod engine {
                 world,
                 pieces,
                 ids: Vec::new(),
+                stepped: Vec::new(),
             }
         }
     }
@@ -141,29 +151,27 @@ mod engine {
         fn tick(&mut self, tick: u32, trace: &mut Trace) {
             if self.pieces.iter().any(|p| !p.resting) {
                 self.ids.clear();
-                for p in &self.pieces {
+                self.stepped.clear();
+                for (index, p) in self.pieces.iter().enumerate() {
+                    if p.resting {
+                        continue;
+                    }
                     let shape = Shape::Box(v(p.start.half));
-                    let mut body = if p.resting {
-                        Body::new(shape, p.position, 0.0)
-                    } else {
-                        let mut b = Body::new(shape, p.position, p.start.mass());
-                        b.velocity = p.velocity;
-                        b.angular_velocity = p.spin;
-                        b.linear_damping = 0.2;
-                        b.angular_damping = 0.8;
-                        b.sleep_allowed = false;
-                        b
-                    };
+                    let mut body = Body::keyed(piece_key(index), shape, p.position, p.start.mass());
+                    body.velocity = p.velocity;
+                    body.angular_velocity = p.spin;
+                    body.linear_damping = 0.2;
+                    body.angular_damping = 0.8;
+                    body.sleep_allowed = false;
                     body.orientation = p.orientation;
                     material(&mut body);
                     self.ids.push(self.world.add_body(body).unwrap());
+                    self.stepped.push(index);
                 }
                 self.world.step(f64::from(DT)).unwrap();
                 let removed = self.world.remove_bodies(&self.ids).unwrap();
-                for (piece, body) in self.pieces.iter_mut().zip(removed) {
-                    if piece.resting {
-                        continue;
-                    }
+                for (&index, body) in self.stepped.iter().zip(removed) {
+                    let piece = &mut self.pieces[index];
                     piece.position = body.position;
                     piece.orientation = body.orientation;
                     piece.velocity = body.velocity;
@@ -173,6 +181,12 @@ mod engine {
                         piece.resting = true;
                         piece.velocity = Vector::ZERO;
                         piece.spin = Vector::ZERO;
+                        // Retained as a fixed body from now on, as MMORPG's `retain_resting`.
+                        let shape = Shape::Box(v(piece.start.half));
+                        let mut fixed = Body::keyed(piece_key(index), shape, piece.position, 0.0);
+                        fixed.orientation = piece.orientation;
+                        material(&mut fixed);
+                        self.world.add_body(fixed).unwrap();
                     }
                 }
             }
