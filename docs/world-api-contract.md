@@ -513,8 +513,38 @@ body touched or now touches, so a crate left behind falls and its contact stops 
 (#456; placement: one query-tree descent at each pose, no contact-cache scan). Not covered: a
 character move does not wake a sleeping body the character leaves, so their contact stays until
 that body wakes. Rapier's sensor intersection events,
-contact forces and per-collider opt-in (`ActiveEvents`) are not provided. Pending transitions are
+contact force events and per-collider opt-in (`ActiveEvents`) are not provided; per-step
+contact impulses are [opt-in](#contact-impulses). Pending transitions are
 not checkpointed: a restored world's events start from its restored cache.
+
+## Contact impulses
+
+With `Config::report_contact_impulses` (off by default; #575, collision damage for
+moenarch-games/shooter#75) a successful step fills `Report::contact_impulses` with what each
+contact did over the step:
+`ContactImpulse { a, b, child_a, child_b, normal, point, normal_impulse }`.
+
+- One entry per pair of touching shapes that took a positive normal impulse: per body pair and,
+  for a compound body, per child (`child_a`/`child_b` is the child's index in the authored list,
+  `None` for a primitive side). Several manifolds or points of one such contact (a box's
+  corners, heightfield triangles) and every substep sum into the one entry.
+- `normal_impulse` is in mass × scene length / s: the solver's accumulated normal impulse of
+  every contact row in every substep, the end-of-step restitution, and remaining-time CCD
+  impacts (a fast bullet's hit, reported in the step it happens). Friction is not included. A
+  resting contact reports its share of the weight times the step length, an impact its momentum
+  change on top, so a game thresholds the impulse (or impulse over effective mass) per step. As
+  Rapier's `ContactPair::total_impulse`, which also sums over the step.
+- `normal` is the impulse-weighted unit normal from `a` toward `b` (the impulse pushes `b` along
+  it); `point` the impulse-weighted world point midway between the surfaces, at the pose each
+  row was solved from.
+- Ordered as contact events (`a` before `b` in body order, then by `b`), then by `child_a` and
+  `child_b`: identical across worker counts and storage modes. A body retired on impact keeps its
+  id in the entry of the step that retired it. Sensors, query-only shapes, character moves,
+  joints and sleeping pairs contribute nothing. A failed step, `step(0.0)` and a quiescent step
+  report none.
+- Reporting never changes the simulation. Off, the step records nothing; on, O(r log r) per
+  step in the r rows with a positive impulse. The flag is checkpointed (format 14). Checked
+  against Rapier by the `collision-damage` oracle scenario (C30).
 
 ## Joints
 

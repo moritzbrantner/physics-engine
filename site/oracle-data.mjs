@@ -4,6 +4,7 @@ export const KINDS = Object.freeze({
   1: "Ray", 2: "Penetrates", 3: "Position", 4: "Rotation", 5: "Grounded",
   6: "Depenetration", 7: "Contact", 8: "Blocked", 9: "Support", 10: "Contact event",
   11: "Velocity", 12: "Tension", 13: "Hit", 14: "Overlaps", 15: "Inertia", 16: "Joint",
+  17: "Impulse",
 });
 
 const decoder = new TextDecoder();
@@ -97,6 +98,7 @@ export function observationText(row) {
     case 12: return `Tension · ${fmt(v[0])} N`;
     case 13: return v[0] ? `Hit · body ${v[1]} at t=${fmt(v[2])}` : "Hit · none";
     case 15: return `Inertia · ${vector(v, 3)} kg·m²`;
+    case 17: return v[0] ? `Impulse · ${fmt(v[0])} N·s along ${vector(v.slice(1), 3)}` : "Impulse · none";
     case 16: return `Joint · angle ${fmt(v[0])} rad, rate ${fmt(v[1])} rad/s, motor ${fmt(v[2])} N·m`;
     case 14: {
       const labels = [];

@@ -417,6 +417,7 @@ impl World {
                 offset: b.position - a.position,
                 restitution: 0.0,
                 bounce: 0.0,
+                children: super::contact::NO_CHILDREN,
             };
             constraint.prepare_finite_response(&self.responses);
             rows.push(constraint);

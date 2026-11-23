@@ -28,6 +28,7 @@ fn row(a: usize, b: usize) -> Constraint {
         offset: V::ZERO,
         restitution: 0.0,
         bounce: 0.0,
+        children: crate::approximate::contact::NO_CHILDREN,
     }
 }
 

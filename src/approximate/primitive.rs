@@ -204,6 +204,7 @@ pub(super) fn box_hull_manifold(
             points: super::contact::Points::selected(&points[..contact.len]),
             swept: false,
             time: 0.0,
+            children: super::contact::NO_CHILDREN,
         }
     }))
 }
@@ -265,6 +266,7 @@ pub(super) fn box_mesh_manifolds(
                 points: super::contact::Points::selected(&points[..contact.len]),
                 swept: false,
                 time: 0.0,
+                children: super::contact::NO_CHILDREN,
             });
         },
     );
