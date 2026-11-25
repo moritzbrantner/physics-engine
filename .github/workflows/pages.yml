@@ -25,7 +25,7 @@ jobs:
       actions: read
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@488c3355abc7fb7be1b00cac17feeb1d27ff7ae2 # main
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@f17cd13868ab7d956b9e8a9afae926a84b368d0d # main
     with:
       source_sha: ${{ github.event.workflow_run.head_sha || github.sha }}
       artifact_key: physics-engine-pages-v1
@@ -44,7 +44,7 @@ jobs:
       pages: write
       id-token: write
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@488c3355abc7fb7be1b00cac17feeb1d27ff7ae2 # main
+    uses: moritzbrantner/reusable-workflows/.github/workflows/deploy-pages.yml@f17cd13868ab7d956b9e8a9afae926a84b368d0d # main
     with:
       node_version: ""
       bun_version: ""
