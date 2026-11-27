@@ -57,7 +57,7 @@ jobs:
           node-version: lts/*
 
       - name: Run fast tier
-        uses: moritzbrantner/coding-tooling@a565ad01cbea3ca6b246b3b17bc519c2f3f611e3 # main
+        uses: moritzbrantner/coding-tooling@1d89f753b857fd39451f2f44a76f376657b99f9d # main
         with:
           tier: fast
           install-mode: none
@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: a565ad01cbea3ca6b246b3b17bc519c2f3f611e3 # main
+          ref: 1d89f753b857fd39451f2f44a76f376657b99f9d # main
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -129,7 +129,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: moritzbrantner/coding-tooling
-          ref: a565ad01cbea3ca6b246b3b17bc519c2f3f611e3 # main
+          ref: 1d89f753b857fd39451f2f44a76f376657b99f9d # main
           path: .coding-tooling-src
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -153,7 +153,7 @@ jobs:
       actions: read
       contents: read
       packages: read
-    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@5b171742843ac37864c3b39f38c080466a07426c # main
+    uses: moritzbrantner/reusable-workflows/.github/workflows/build-artifact.yml@6b908ac2a438f537cdc6b5825bf839cf7184863b # main
     with:
       source_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       artifact_key: physics-engine-pages-v1
@@ -170,7 +170,7 @@ jobs:
     needs: [docs-scope, tests, work-contracts, oracle, build-pages]
     runs-on: ubuntu-latest
     steps:
-      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@5b171742843ac37864c3b39f38c080466a07426c # main
+      - uses: moritzbrantner/reusable-workflows/.github/actions/merge-ready@6b908ac2a438f537cdc6b5825bf839cf7184863b # main
         with:
           needs: ${{ toJSON(needs) }}
           required: '["docs-scope", "tests", "work-contracts", "oracle", "build-pages"]'
